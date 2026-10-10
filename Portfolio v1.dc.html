@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,500;0,600;1,400&family=Jost:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    html { scroll-behavior: smooth; }
+    body { margin: 0; }
+    ::selection { background: oklch(0.72 0.12 85 / 0.35); }
+  </style>
+</helmet>
+
+<div style="background: oklch(0.955 0.017 78); color: oklch(0.22 0.02 140); font-family: 'EB Garamond', serif; position: relative; overflow-x: hidden;">
+
+  <!-- crest symbol def, reused -->
+  <svg width="0" height="0" style="position:absolute">
+    <defs>
+      <g id="crest-mark">
+        <circle cx="60" cy="60" r="54" fill="none" stroke="currentColor" stroke-width="2.5"></circle>
+        <circle cx="60" cy="60" r="45" fill="none" stroke="currentColor" stroke-width="1"></circle>
+        <path id="motto-path" d="M 20 66 A 40 40 0 1 1 100 66" fill="none"></path>
+        <text font-family="Jost, sans-serif" font-size="8.5" letter-spacing="2.5" fill="currentColor">
+          <textPath href="#motto-path" startOffset="50%" text-anchor="middle">SPERO MELIORA</textPath>
+        </text>
+        <g transform="translate(60,66)" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round">
+          <line x1="-11" y1="-11" x2="11" y2="11"></line>
+          <line x1="11" y1="-11" x2="-11" y2="11"></line>
+          <line x1="0" y1="-24" x2="0" y2="-2"></line>
+          <line x1="-6" y1="-18" x2="6" y2="-18"></line>
+        </g>
+        <path d="M 34 78 Q 44 66 60 66 Q 76 66 86 78 L 82 88 Q 71 78 60 78 Q 49 78 38 88 Z" fill="currentColor"></path>
+        <g stroke="currentColor" stroke-width="1.5" fill="none">
+          <rect x="26" y="34" width="10" height="7" rx="1"></rect>
+          <line x1="31" y1="41" x2="31" y2="48"></line>
+        </g>
+      </g>
+    </defs>
+  </svg>
+
+  <!-- fixed left rail nav -->
+  <nav style="position: fixed; left: 0; top: 0; bottom: 0; width: 88px; display: flex; flex-direction: column; align-items: center; justify-content: space-between; padding: 28px 0; z-index: 50;">
+    <a href="#top" aria-label="Home" style="color: oklch(0.28 0.045 155); width: 44px; height: 44px; display: block;">
+      <svg viewBox="0 0 120 120" width="44" height="44"><use href="#crest-mark"></use></svg>
+    </a>
+    <div style="display: flex; flex-direction: column; gap: 22px; align-items: center;">
+      <a href="#about" style="font-family: 'Jost', sans-serif; font-size: 11px; letter-spacing: 1.5px; color: oklch(0.35 0.05 155); text-decoration: none; writing-mode: vertical-rl; display: flex; gap: 8px; align-items: center;">
+        <span style="color: oklch(0.68 0.12 85);">01</span> ABOUT
+      </a>
+      <a href="#work" style="font-family: 'Jost', sans-serif; font-size: 11px; letter-spacing: 1.5px; color: oklch(0.35 0.05 155); text-decoration: none; writing-mode: vertical-rl; display: flex; gap: 8px; align-items: center;">
+        <span style="color: oklch(0.68 0.12 85);">02</span> WORK
+      </a>
+      <a href="#projects" style="font-family: 'Jost', sans-serif; font-size: 11px; letter-spacing: 1.5px; color: oklch(0.35 0.05 155); text-decoration: none; writing-mode: vertical-rl; display: flex; gap: 8px; align-items: center;">
+        <span style="color: oklch(0.68 0.12 85);">03</span> PROJECTS
+      </a>
+    </div>
+    <div style="width: 1px; height: 60px; background: oklch(0.68 0.12 85 / 0.5);"></div>
+  </nav>
+
+  <!-- HERO -->
+  <section id="top" style="min-height: 100svh; display: flex; flex-direction: column; justify-content: center; padding: 0 10vw 0 108px; position: relative;">
+    <div style="position:absolute; inset:0; background-image: repeating-linear-gradient(0deg, oklch(0.3 0.04 155 / 0.035) 0px, oklch(0.3 0.04 155 / 0.035) 1px, transparent 1px, transparent 96px); pointer-events:none;"></div>
+    <div style="font-family: 'Jost', sans-serif; font-size: 12px; letter-spacing: 3px; color: oklch(0.62 0.13 80); margin-bottom: 22px;">COMPUTER SCIENTIST &nbsp;·&nbsp; B.S. 2025</div>
+    <h1 style="font-size: clamp(48px, 8vw, 108px); line-height: 0.98; margin: 0; font-weight: 500; color: oklch(0.24 0.045 150);">Ryan Moffitt</h1>
+    <p style="font-family: 'Jost', sans-serif; font-size: clamp(15px, 1.6vw, 19px); letter-spacing: 0.3px; color: oklch(0.32 0.03 140); margin: 26px 0 0; max-width: 620px;">Data Analyst &amp; Business Systems Developer. Pizza enthusiast. Occasionally writes software that has no business existing.</p>
+    <div style="display: flex; gap: 28px; margin-top: 46px; align-items: center;">
+      <a href="https://github.com/Sintfoap" target="_blank" rel="noopener" style="font-family: 'Jost', sans-serif; font-size: 13px; letter-spacing: 1.5px; color: oklch(0.28 0.045 155); text-decoration: none; border-bottom: 1px solid oklch(0.68 0.12 85); padding-bottom: 4px;">GITHUB ↗</a>
+      <a href="https://www.linkedin.com/in/ryan-moffitt-808604228/" target="_blank" rel="noopener" style="font-family: 'Jost', sans-serif; font-size: 13px; letter-spacing: 1.5px; color: oklch(0.28 0.045 155); text-decoration: none; border-bottom: 1px solid oklch(0.68 0.12 85); padding-bottom: 4px;">LINKEDIN ↗</a>
+    </div>
+    <div style="position: absolute; bottom: 40px; left: 108px; font-family: 'Jost', sans-serif; font-size: 10px; letter-spacing: 2px; color: oklch(0.5 0.03 140);">SCROLL ↓</div>
+  </section>
+
+  <!-- ABOUT -->
+  <section id="about" style="padding: 140px 10vw 120px 108px; background: oklch(0.925 0.022 72); border-top: 1px solid oklch(0.68 0.12 85 / 0.4);">
+    <div style="display: grid; grid-template-columns: minmax(0,1fr) minmax(260px, 340px); gap: 80px;">
+      <div>
+        <div style="font-family: 'Jost', sans-serif; font-size: 12px; letter-spacing: 3px; color: oklch(0.62 0.13 80); margin-bottom: 18px;">01 — ABOUT</div>
+        <h2 style="font-size: clamp(30px, 3.4vw, 44px); font-weight: 500; margin: 0 0 30px; color: oklch(0.24 0.045 150);">A little background.</h2>
+        <p style="font-size: 19px; line-height: 1.75; color: oklch(0.26 0.025 140); max-width: 62ch;">I graduated with a Bachelor's in Computer Science in 2025, and now spend my days as a business systems developer, wiring up internal tools and untangling data for people who ask too many questions in meetings. When I'm not doing that, I'm building things nobody asked for &mdash; compilers, calendars, and the occasional argument about pizza toppings.</p>
+        <p style="font-size: 19px; line-height: 1.75; color: oklch(0.26 0.025 140); max-width: 62ch; margin-top: 22px;">I read constantly, code compulsively, and believe most problems are best solved with a good night's sleep and a better data model.</p>
+      </div>
+      <div style="border-left: 1px solid oklch(0.68 0.12 85 / 0.5); padding-left: 36px;">
+        <div style="font-family: 'Jost', sans-serif; font-size: 11px; letter-spacing: 2px; color: oklch(0.35 0.05 155); margin-bottom: 20px;">PERSONALLY</div>
+        <div style="display: flex; flex-direction: column; gap: 18px;">
+          <div>
+            <div style="font-family: 'Jost', sans-serif; font-size: 11px; letter-spacing: 1.5px; color: oklch(0.62 0.13 80);">READING</div>
+            <div style="font-size: 17px; margin-top: 4px;">Whatever's overdue at the library &mdash; history, sci-fi, and things I probably won't finish.</div>
+          </div>
+          <div>
+            <div style="font-family: 'Jost', sans-serif; font-size: 11px; letter-spacing: 1.5px; color: oklch(0.62 0.13 80);">BUILDING</div>
+            <div style="font-size: 17px; margin-top: 4px;">Side projects that solve problems only I have.</div>
+          </div>
+          <div>
+            <div style="font-family: 'Jost', sans-serif; font-size: 11px; letter-spacing: 1.5px; color: oklch(0.62 0.13 80);">EATING</div>
+            <div style="font-size: 17px; margin-top: 4px;">Pizza. Obviously.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- WORK -->
+  <section id="work" style="padding: 140px 10vw 120px 108px; background: oklch(0.955 0.017 78);">
+    <div style="font-family: 'Jost', sans-serif; font-size: 12px; letter-spacing: 3px; color: oklch(0.62 0.13 80); margin-bottom: 18px;">02 — WORK EXPERIENCE</div>
+    <h2 style="font-size: clamp(30px, 3.4vw, 44px); font-weight: 500; margin: 0 0 56px; color: oklch(0.24 0.045 150);">Where I've worked.</h2>
+
+    <div style="display: flex; flex-direction: column;">
+      <div style="display: grid; grid-template-columns: 200px 1fr; gap: 40px; padding: 34px 0; border-top: 1px solid oklch(0.68 0.12 85 / 0.5);">
+        <div style="font-family: 'Jost', sans-serif; font-size: 13px; letter-spacing: 1px; color: oklch(0.4 0.03 140);">Jun 2025 &mdash; Present<br><span style="color: oklch(0.55 0.03 140);">1 yr 2 mos</span></div>
+        <div>
+          <h3 style="font-size: 24px; font-weight: 500; margin: 0; color: oklch(0.24 0.045 150);">Junior Software Developer</h3>
+          <div style="font-family: 'Jost', sans-serif; font-size: 14px; color: oklch(0.62 0.13 80); margin-top: 6px;">SuiteRep</div>
+          <div style="font-family: 'Jost', sans-serif; font-size: 12px; letter-spacing: 0.5px; color: oklch(0.5 0.03 140); margin-top: 6px;">Full&#8209;time &nbsp;·&nbsp; United States &nbsp;·&nbsp; Hybrid</div>
+          <p style="font-size: 17px; line-height: 1.7; color: oklch(0.28 0.025 140); margin-top: 16px; max-width: 60ch;">Building and maintaining internal business systems tooling, with a steady stream of data analysis and reporting work along the way.</p>
+        </div>
+      </div>
+
+      <div style="display: grid; grid-template-columns: 200px 1fr; gap: 40px; padding: 34px 0; border-top: 1px solid oklch(0.68 0.12 85 / 0.5); border-bottom: 1px solid oklch(0.68 0.12 85 / 0.5);">
+        <div style="font-family: 'Jost', sans-serif; font-size: 13px; letter-spacing: 1px; color: oklch(0.4 0.03 140);">Jan 2023 &mdash; May 2025<br><span style="color: oklch(0.55 0.03 140);">2 yrs 5 mos</span></div>
+        <div>
+          <h3 style="font-size: 24px; font-weight: 500; margin: 0; color: oklch(0.24 0.045 150);">Software Intern</h3>
+          <div style="font-family: 'Jost', sans-serif; font-size: 14px; color: oklch(0.62 0.13 80); margin-top: 6px;">VisioStack Inc.</div>
+          <div style="font-family: 'Jost', sans-serif; font-size: 12px; letter-spacing: 0.5px; color: oklch(0.5 0.03 140); margin-top: 6px;">Internship &nbsp;·&nbsp; United States &nbsp;·&nbsp; Hybrid</div>
+          <p style="font-size: 17px; line-height: 1.7; color: oklch(0.28 0.025 140); margin-top: 16px; max-width: 60ch;">Python development and software infrastructure work throughout my undergrad years.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- PROJECTS -->
+  <section id="projects" style="padding: 140px 10vw 160px 108px; background: oklch(0.925 0.022 72); border-top: 1px solid oklch(0.68 0.12 85 / 0.4);">
+    <div style="font-family: 'Jost', sans-serif; font-size: 12px; letter-spacing: 3px; color: oklch(0.62 0.13 80); margin-bottom: 18px;">03 — PROJECTS</div>
+    <h2 style="font-size: clamp(30px, 3.4vw, 44px); font-weight: 500; margin: 0 0 56px; color: oklch(0.24 0.045 150);">Things I've built.</h2>
+
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1px; background: oklch(0.68 0.12 85 / 0.5); border: 1px solid oklch(0.68 0.12 85 / 0.5);">
+      <a href="https://github.com/Sintfoap" target="_blank" rel="noopener" style="text-decoration: none; color: inherit; background: oklch(0.925 0.022 72); padding: 40px 34px; display: flex; flex-direction: column; gap: 16px; transition: background 0.2s;">
+        <div style="font-family: 'Jost', sans-serif; font-size: 12px; letter-spacing: 1.5px; color: oklch(0.62 0.13 80);">LANGUAGE</div>
+        <h3 style="font-size: 25px; font-weight: 500; margin: 0; color: oklch(0.24 0.045 150);">cRust</h3>
+        <p style="font-size: 16px; line-height: 1.65; color: oklch(0.3 0.025 140); margin: 0;">A custom programming language, built from scratch out of pure curiosity about how the sausage gets made.</p>
+        <div style="font-family: 'Jost', sans-serif; font-size: 12px; letter-spacing: 1px; color: oklch(0.35 0.05 155); margin-top: auto; padding-top: 8px;">VIEW ON GITHUB ↗</div>
+      </a>
+      <a href="https://github.com/Sintfoap" target="_blank" rel="noopener" style="text-decoration: none; color: inherit; background: oklch(0.925 0.022 72); padding: 40px 34px; display: flex; flex-direction: column; gap: 16px; transition: background 0.2s;">
+        <div style="font-family: 'Jost', sans-serif; font-size: 12px; letter-spacing: 1.5px; color: oklch(0.62 0.13 80);">DIRECTORY</div>
+        <h3 style="font-size: 25px; font-weight: 500; margin: 0; color: oklch(0.24 0.045 150);">Friends &amp; Associates</h3>
+        <p style="font-size: 16px; line-height: 1.65; color: oklch(0.3 0.025 140); margin: 0;">A small, growing directory of websites belonging to friends and associates &mdash; the personal web, kept alive.</p>
+        <div style="font-family: 'Jost', sans-serif; font-size: 12px; letter-spacing: 1px; color: oklch(0.35 0.05 155); margin-top: auto; padding-top: 8px;">VIEW ON GITHUB ↗</div>
+      </a>
+      <a href="https://github.com/Sintfoap" target="_blank" rel="noopener" style="text-decoration: none; color: inherit; background: oklch(0.925 0.022 72); padding: 40px 34px; display: flex; flex-direction: column; gap: 16px; transition: background 0.2s;">
+        <div style="font-family: 'Jost', sans-serif; font-size: 12px; letter-spacing: 1.5px; color: oklch(0.62 0.13 80);">SYSTEM</div>
+        <h3 style="font-size: 25px; font-weight: 500; margin: 0; color: oklch(0.24 0.045 150);">Yggdrasil</h3>
+        <p style="font-size: 16px; line-height: 1.65; color: oklch(0.3 0.025 140); margin: 0;">A custom time system that dissects the day into powers of nine, for reasons that made sense at 2am.</p>
+        <div style="font-family: 'Jost', sans-serif; font-size: 12px; letter-spacing: 1px; color: oklch(0.35 0.05 155); margin-top: auto; padding-top: 8px;">VIEW ON GITHUB ↗</div>
+      </a>
+    </div>
+  </section>
+
+  <!-- FOOTER -->
+  <footer style="padding: 56px 10vw 56px 108px; background: oklch(0.955 0.017 78); display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 24px; border-top: 1px solid oklch(0.68 0.12 85 / 0.4);">
+    <div style="display: flex; align-items: center; gap: 16px;">
+      <svg viewBox="0 0 120 120" width="34" height="34" style="color: oklch(0.35 0.05 155);"><use href="#crest-mark"></use></svg>
+      <div style="font-family: 'Jost', sans-serif; font-size: 12px; letter-spacing: 1px; color: oklch(0.45 0.03 140);">© 2026 Ryan Moffitt</div>
+    </div>
+    <div style="display: flex; gap: 26px;">
+      <a href="https://github.com/Sintfoap" target="_blank" rel="noopener" style="font-family: 'Jost', sans-serif; font-size: 12px; letter-spacing: 1px; color: oklch(0.35 0.05 155); text-decoration: none;">GITHUB</a>
+      <a href="https://www.linkedin.com/in/ryan-moffitt-808604228/" target="_blank" rel="noopener" style="font-family: 'Jost', sans-serif; font-size: 12px; letter-spacing: 1px; color: oklch(0.35 0.05 155); text-decoration: none;">LINKEDIN</a>
+    </div>
+  </footer>
+
+</div>
+
+</x-dc>
+</body>
+</html>
