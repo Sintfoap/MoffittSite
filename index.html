@@ -11,169 +11,374 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,500;0,600;1,400&family=Jost:wght@400;500;600&display=swap" rel="stylesheet">
   <style>
-    html { scroll-behavior: smooth; }
-    body { margin: 0; }
-    ::selection { background: oklch(0.72 0.12 85 / 0.35); }
+    html, body { margin: 0; padding: 0; background: #0b0f0a; height: 100%; overflow: hidden; overscroll-behavior: none; }
+    ::selection { background: oklch(0.72 0.12 85 / 0.4); color: #1a1206; }
+    a { color: inherit; }
   </style>
 </helmet>
 
-<div style="background: oklch(0.955 0.017 78); color: oklch(0.22 0.02 140); font-family: 'EB Garamond', serif; position: relative; overflow-x: hidden;">
+<div style="position: relative; font-family: 'EB Garamond', serif;">
 
-  <!-- crest symbol def, reused -->
-  <svg width="0" height="0" style="position:absolute">
-    <defs>
-      <g id="crest-mark">
-        <circle cx="60" cy="60" r="54" fill="none" stroke="currentColor" stroke-width="2.5"></circle>
-        <circle cx="60" cy="60" r="45" fill="none" stroke="currentColor" stroke-width="1"></circle>
-        <path id="motto-path" d="M 20 66 A 40 40 0 1 1 100 66" fill="none"></path>
-        <text font-family="Jost, sans-serif" font-size="8.5" letter-spacing="2.5" fill="currentColor">
-          <textPath href="#motto-path" startOffset="50%" text-anchor="middle">SPERO MELIORA</textPath>
-        </text>
-        <g transform="translate(60,66)" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round">
-          <line x1="-11" y1="-11" x2="11" y2="11"></line>
-          <line x1="11" y1="-11" x2="-11" y2="11"></line>
-          <line x1="0" y1="-24" x2="0" y2="-2"></line>
-          <line x1="-6" y1="-18" x2="6" y2="-18"></line>
-        </g>
-        <path d="M 34 78 Q 44 66 60 66 Q 76 66 86 78 L 82 88 Q 71 78 60 78 Q 49 78 38 88 Z" fill="currentColor"></path>
-        <g stroke="currentColor" stroke-width="1.5" fill="none">
-          <rect x="26" y="34" width="10" height="7" rx="1"></rect>
-          <line x1="31" y1="41" x2="31" y2="48"></line>
-        </g>
+  <canvas ref="{{ canvasRef }}" style="position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; z-index: 0; background: radial-gradient(circle at 50% 50%, #16261a 0%, #0b0f0a 65%);"></canvas>
+
+  <!-- legibility scrim -->
+  <div style="position: fixed; inset: 0; z-index: 1; pointer-events: none; background: linear-gradient(to bottom, rgba(6,8,5,0.15) 0%, rgba(6,8,5,0.55) 38%, rgba(6,8,5,0.55) 62%, rgba(6,8,5,0.15) 100%);"></div>
+
+  <!-- crest / home -->
+  <a href="javascript:void(0)" onClick="{{ goTo0 }}" aria-label="Home" style="position: fixed; top: 26px; left: 30px; z-index: 20; color: oklch(0.82 0.05 85); width: 62px; height: 62px; display: block; opacity: 0.9;">
+    <svg viewBox="0 0 120 120" width="62" height="62">
+      <circle cx="60" cy="60" r="54" fill="none" stroke="currentColor" stroke-width="2.5"></circle>
+      <circle cx="60" cy="60" r="45" fill="none" stroke="currentColor" stroke-width="1"></circle>
+      <path id="motto-path" d="M 20 66 A 40 40 0 1 1 100 66" fill="none"></path>
+      <text font-family="Jost, sans-serif" font-size="8.5" letter-spacing="2.5" fill="currentColor">
+        <textPath href="#motto-path" startOffset="50%" text-anchor="middle">SPERO MELIORA</textPath>
+      </text>
+      <g transform="translate(60,66)" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round">
+        <line x1="-11" y1="-11" x2="11" y2="11"></line>
+        <line x1="11" y1="-11" x2="-11" y2="11"></line>
+        <line x1="0" y1="-24" x2="0" y2="-2"></line>
+        <line x1="-6" y1="-18" x2="6" y2="-18"></line>
       </g>
-    </defs>
-  </svg>
+      <path d="M 34 78 Q 44 66 60 66 Q 76 66 86 78 L 82 88 Q 71 78 60 78 Q 49 78 38 88 Z" fill="currentColor"></path>
+    </svg>
+  </a>
 
-  <!-- fixed left rail nav -->
-  <nav style="position: fixed; left: 0; top: 0; bottom: 0; width: 88px; display: flex; flex-direction: column; align-items: center; justify-content: space-between; padding: 28px 0; z-index: 50;">
-    <a href="#top" aria-label="Home" style="color: oklch(0.28 0.045 155); width: 44px; height: 44px; display: block;">
-      <svg viewBox="0 0 120 120" width="44" height="44"><use href="#crest-mark"></use></svg>
-    </a>
-    <div style="display: flex; flex-direction: column; gap: 22px; align-items: center;">
-      <a href="#about" style="font-family: 'Jost', sans-serif; font-size: 11px; letter-spacing: 1.5px; color: oklch(0.35 0.05 155); text-decoration: none; writing-mode: vertical-rl; display: flex; gap: 8px; align-items: center;">
-        <span style="color: oklch(0.68 0.12 85);">01</span> ABOUT
-      </a>
-      <a href="#work" style="font-family: 'Jost', sans-serif; font-size: 11px; letter-spacing: 1.5px; color: oklch(0.35 0.05 155); text-decoration: none; writing-mode: vertical-rl; display: flex; gap: 8px; align-items: center;">
-        <span style="color: oklch(0.68 0.12 85);">02</span> WORK
-      </a>
-      <a href="#projects" style="font-family: 'Jost', sans-serif; font-size: 11px; letter-spacing: 1.5px; color: oklch(0.35 0.05 155); text-decoration: none; writing-mode: vertical-rl; display: flex; gap: 8px; align-items: center;">
-        <span style="color: oklch(0.68 0.12 85);">03</span> PROJECTS
-      </a>
-    </div>
-    <div style="width: 1px; height: 60px; background: oklch(0.68 0.12 85 / 0.5);"></div>
-  </nav>
+  <!-- nav dots -->
+  <div style="position: fixed; right: 34px; top: 50%; transform: translateY(-50%); z-index: 20; display: flex; flex-direction: column; gap: 22px; align-items: center;">
+    <a href="javascript:void(0)" onClick="{{ goTo0 }}" style="width: 9px; height: 9px; border-radius: 50%; border: 1px solid oklch(0.75 0.09 85); display: block;"></a>
+    <a href="javascript:void(0)" onClick="{{ goTo1 }}" style="width: 9px; height: 9px; border-radius: 50%; border: 1px solid oklch(0.75 0.09 85); display: block;"></a>
+    <a href="javascript:void(0)" onClick="{{ goTo2 }}" style="width: 9px; height: 9px; border-radius: 50%; border: 1px solid oklch(0.75 0.09 85); display: block;"></a>
+    <a href="javascript:void(0)" onClick="{{ goTo3 }}" style="width: 9px; height: 9px; border-radius: 50%; border: 1px solid oklch(0.75 0.09 85); display: block;"></a>
+  </div>
 
-  <!-- HERO -->
-  <section id="top" style="min-height: 100svh; display: flex; flex-direction: column; justify-content: center; padding: 0 10vw 0 108px; position: relative;">
-    <div style="position:absolute; inset:0; background-image: repeating-linear-gradient(0deg, oklch(0.3 0.04 155 / 0.035) 0px, oklch(0.3 0.04 155 / 0.035) 1px, transparent 1px, transparent 96px); pointer-events:none;"></div>
-    <div style="font-family: 'Jost', sans-serif; font-size: 12px; letter-spacing: 3px; color: oklch(0.62 0.13 80); margin-bottom: 22px;">COMPUTER SCIENTIST &nbsp;·&nbsp; B.S. 2025</div>
-    <h1 style="font-size: clamp(48px, 8vw, 108px); line-height: 0.98; margin: 0; font-weight: 500; color: oklch(0.24 0.045 150);">Ryan Moffitt</h1>
-    <p style="font-family: 'Jost', sans-serif; font-size: clamp(15px, 1.6vw, 19px); letter-spacing: 0.3px; color: oklch(0.32 0.03 140); margin: 26px 0 0; max-width: 620px;">Data Analyst &amp; Business Systems Developer. Pizza enthusiast. Occasionally writes software that has no business existing.</p>
-    <div style="display: flex; gap: 28px; margin-top: 46px; align-items: center;">
-      <a href="https://github.com/Sintfoap" target="_blank" rel="noopener" style="font-family: 'Jost', sans-serif; font-size: 13px; letter-spacing: 1.5px; color: oklch(0.28 0.045 155); text-decoration: none; border-bottom: 1px solid oklch(0.68 0.12 85); padding-bottom: 4px;">GITHUB ↗</a>
-      <a href="https://www.linkedin.com/in/ryan-moffitt-808604228/" target="_blank" rel="noopener" style="font-family: 'Jost', sans-serif; font-size: 13px; letter-spacing: 1.5px; color: oklch(0.28 0.045 155); text-decoration: none; border-bottom: 1px solid oklch(0.68 0.12 85); padding-bottom: 4px;">LINKEDIN ↗</a>
-    </div>
-    <div style="position: absolute; bottom: 40px; left: 108px; font-family: 'Jost', sans-serif; font-size: 10px; letter-spacing: 2px; color: oklch(0.5 0.03 140);">SCROLL ↓</div>
-  </section>
+  <div style="position: relative; z-index: 10; height: 100vh;">
 
-  <!-- ABOUT -->
-  <section id="about" style="padding: 140px 10vw 120px 108px; background: oklch(0.925 0.022 72); border-top: 1px solid oklch(0.68 0.12 85 / 0.4);">
-    <div style="display: grid; grid-template-columns: minmax(0,1fr) minmax(260px, 340px); gap: 80px;">
-      <div>
-        <div style="font-family: 'Jost', sans-serif; font-size: 12px; letter-spacing: 3px; color: oklch(0.62 0.13 80); margin-bottom: 18px;">01 — ABOUT</div>
-        <h2 style="font-size: clamp(30px, 3.4vw, 44px); font-weight: 500; margin: 0 0 30px; color: oklch(0.24 0.045 150);">A little background.</h2>
-        <p style="font-size: 19px; line-height: 1.75; color: oklch(0.26 0.025 140); max-width: 62ch;">I graduated with a Bachelor's in Computer Science in 2025, and now spend my days as a business systems developer, wiring up internal tools and untangling data for people who ask too many questions in meetings. When I'm not doing that, I'm building things nobody asked for &mdash; compilers, calendars, and the occasional argument about pizza toppings.</p>
-        <p style="font-size: 19px; line-height: 1.75; color: oklch(0.26 0.025 140); max-width: 62ch; margin-top: 22px;">I read constantly, code compulsively, and believe most problems are best solved with a good night's sleep and a better data model.</p>
+    <!-- SECTION 0 — HOME / MAIN CARDIOID -->
+    <div ref="{{ s0Ref }}" style="position: fixed; inset: 0; display: flex; flex-direction: column; align-items: flex-end; justify-content: center; text-align: right; padding: 0 11vw 0 24px;">
+      <div style="font-family: 'Jost', sans-serif; font-size: 12px; letter-spacing: 4px; color: oklch(0.78 0.1 85); margin-bottom: 20px;">THE MAIN CARDIOID</div>
+      <h1 style="font-size: clamp(44px, 7vw, 94px); line-height: 1; margin: 0; font-weight: 500; color: oklch(0.95 0.02 80); text-shadow: 0 4px 30px rgba(0,0,0,0.5);">Ryan Moffitt</h1>
+      <p style="font-family: 'Jost', sans-serif; font-size: clamp(14px, 1.4vw, 18px); letter-spacing: 0.5px; color: oklch(0.86 0.04 80); margin: 22px 0 0; max-width: 520px;">Data Analyst. Business Systems Developer. Pizza Enthusiast.</p>
+      <div style="display: flex; gap: 26px; margin-top: 40px;">
+        <a href="https://github.com/Sintfoap" target="_blank" rel="noopener" style="font-family: 'Jost', sans-serif; font-size: 12px; letter-spacing: 1.5px; text-decoration: none; color: oklch(0.9 0.03 80); border-bottom: 1px solid oklch(0.75 0.1 85); padding-bottom: 3px;">GITHUB ↗</a>
+        <a href="https://www.linkedin.com/in/ryan-moffitt-808604228/" target="_blank" rel="noopener" style="font-family: 'Jost', sans-serif; font-size: 12px; letter-spacing: 1.5px; text-decoration: none; color: oklch(0.9 0.03 80); border-bottom: 1px solid oklch(0.75 0.1 85); padding-bottom: 3px;">LINKEDIN ↗</a>
       </div>
-      <div style="border-left: 1px solid oklch(0.68 0.12 85 / 0.5); padding-left: 36px;">
-        <div style="font-family: 'Jost', sans-serif; font-size: 11px; letter-spacing: 2px; color: oklch(0.35 0.05 155); margin-bottom: 20px;">PERSONALLY</div>
-        <div style="display: flex; flex-direction: column; gap: 18px;">
+      <div style="position: absolute; bottom: 36px; right: 11vw; font-family: 'Jost', sans-serif; font-size: 10px; letter-spacing: 2px; color: oklch(0.7 0.04 80);">SCROLL TO ZOOM ↓</div>
+    </div>
+
+    <!-- SECTION 1 — ABOUT / SEAHORSE VALLEY -->
+<div ref="{{ s1Ref }}" style="position: fixed; inset: 0; display: flex; flex-direction: column; align-items: flex-end; justify-content: center; text-align: right; padding: 0 7vw 0 24px; opacity: 0; pointer-events: none;">
+      <div style="font-family: 'Jost', sans-serif; font-size: 12px; letter-spacing: 4px; color: oklch(0.78 0.1 85); margin-bottom: 20px;">01 · ABOUT — SEAHORSE VALLEY</div>
+      <h2 style="font-size: clamp(28px, 4vw, 48px); font-weight: 500; margin: 0 0 26px; color: oklch(0.95 0.02 80); text-shadow: 0 4px 30px rgba(0,0,0,0.5);">A little background.</h2>
+      <p style="font-size: clamp(16px,1.8vw,20px); line-height: 1.75; color: oklch(0.88 0.03 78); max-width: 46ch;">I graduated with a Bachelor's in Computer Science in 2025, and now spend my days as a business systems developer, wiring up internal tools and untangling data for people who ask too many questions in meetings. Off the clock, I build things nobody asked for &mdash; compilers, calendars, and the occasional argument about pizza toppings.</p>
+      <div style="display: flex; flex-direction: column; gap: 10px; margin-top: 30px; font-family: 'Jost', sans-serif; font-size: 13px; letter-spacing: 1px; color: oklch(0.8 0.07 85); align-items: flex-end;">
+        <span>READING &mdash; whatever's overdue at the library</span>
+        <span>BUILDING &mdash; problems only I have</span>
+        <span>EATING &mdash; pizza, obviously</span>
+      </div>
+    </div>
+
+    <!-- SECTION 2 — WORK / SCEPTER VALLEY -->
+<div ref="{{ s2Ref }}" style="position: fixed; inset: 0; opacity: 0; pointer-events: none;">
+      <div style="position: absolute; top: 22vh; left: 6vw; width: 30vw;">
+        <div style="font-family: 'Jost', sans-serif; font-size: 12px; letter-spacing: 4px; color: oklch(0.78 0.1 85); margin-bottom: 20px;">02 · WORK — SCEPTER VALLEY</div>
+        <h2 style="font-size: clamp(24px, 2.6vw, 38px); font-weight: 500; margin: 0 0 30px; color: oklch(0.95 0.02 80); text-shadow: 0 4px 30px rgba(0,0,0,0.5);">Where I've worked.</h2>
+        <div style="display: flex; flex-direction: column; gap: 26px;">
           <div>
-            <div style="font-family: 'Jost', sans-serif; font-size: 11px; letter-spacing: 1.5px; color: oklch(0.62 0.13 80);">READING</div>
-            <div style="font-size: 17px; margin-top: 4px;">Whatever's overdue at the library &mdash; history, sci-fi, and things I probably won't finish.</div>
+            <div style="font-family: 'Jost', sans-serif; font-size: 11px; letter-spacing: 1px; color: oklch(0.78 0.1 85);">Jun 2025 &mdash; Present</div>
+            <h3 style="font-size: 19px; font-weight: 500; margin: 6px 0 2px; color: oklch(0.95 0.02 80);">Junior Software Developer</h3>
+            <div style="font-family: 'Jost', sans-serif; font-size: 13px; color: oklch(0.85 0.04 80); margin-bottom: 8px;">SuiteRep &nbsp;·&nbsp; Full&#8209;time &nbsp;·&nbsp; Hybrid</div>
+            <p style="font-size: 14px; line-height: 1.6; color: oklch(0.85 0.03 78); margin: 0;">Building and maintaining internal business systems tooling, plus a steady stream of data analysis and reporting.</p>
           </div>
           <div>
-            <div style="font-family: 'Jost', sans-serif; font-size: 11px; letter-spacing: 1.5px; color: oklch(0.62 0.13 80);">BUILDING</div>
-            <div style="font-size: 17px; margin-top: 4px;">Side projects that solve problems only I have.</div>
-          </div>
-          <div>
-            <div style="font-family: 'Jost', sans-serif; font-size: 11px; letter-spacing: 1.5px; color: oklch(0.62 0.13 80);">EATING</div>
-            <div style="font-size: 17px; margin-top: 4px;">Pizza. Obviously.</div>
+            <div style="font-family: 'Jost', sans-serif; font-size: 11px; letter-spacing: 1px; color: oklch(0.78 0.1 85);">Jan 2023 &mdash; May 2025</div>
+            <h3 style="font-size: 19px; font-weight: 500; margin: 6px 0 2px; color: oklch(0.95 0.02 80);">Software Intern</h3>
+            <div style="font-family: 'Jost', sans-serif; font-size: 13px; color: oklch(0.85 0.04 80); margin-bottom: 8px;">VisioStack Inc. &nbsp;·&nbsp; Internship &nbsp;·&nbsp; Hybrid</div>
+            <p style="font-size: 14px; line-height: 1.6; color: oklch(0.85 0.03 78); margin: 0;">Python development and software infrastructure work throughout undergrad.</p>
           </div>
         </div>
       </div>
-    </div>
-  </section>
-
-  <!-- WORK -->
-  <section id="work" style="padding: 140px 10vw 120px 108px; background: oklch(0.955 0.017 78);">
-    <div style="font-family: 'Jost', sans-serif; font-size: 12px; letter-spacing: 3px; color: oklch(0.62 0.13 80); margin-bottom: 18px;">02 — WORK EXPERIENCE</div>
-    <h2 style="font-size: clamp(30px, 3.4vw, 44px); font-weight: 500; margin: 0 0 56px; color: oklch(0.24 0.045 150);">Where I've worked.</h2>
-
-    <div style="display: flex; flex-direction: column;">
-      <div style="display: grid; grid-template-columns: 200px 1fr; gap: 40px; padding: 34px 0; border-top: 1px solid oklch(0.68 0.12 85 / 0.5);">
-        <div style="font-family: 'Jost', sans-serif; font-size: 13px; letter-spacing: 1px; color: oklch(0.4 0.03 140);">Jun 2025 &mdash; Present<br><span style="color: oklch(0.55 0.03 140);">1 yr 2 mos</span></div>
-        <div>
-          <h3 style="font-size: 24px; font-weight: 500; margin: 0; color: oklch(0.24 0.045 150);">Junior Software Developer</h3>
-          <div style="font-family: 'Jost', sans-serif; font-size: 14px; color: oklch(0.62 0.13 80); margin-top: 6px;">SuiteRep</div>
-          <div style="font-family: 'Jost', sans-serif; font-size: 12px; letter-spacing: 0.5px; color: oklch(0.5 0.03 140); margin-top: 6px;">Full&#8209;time &nbsp;·&nbsp; United States &nbsp;·&nbsp; Hybrid</div>
-          <p style="font-size: 17px; line-height: 1.7; color: oklch(0.28 0.025 140); margin-top: 16px; max-width: 60ch;">Building and maintaining internal business systems tooling, with a steady stream of data analysis and reporting work along the way.</p>
-        </div>
-      </div>
-
-      <div style="display: grid; grid-template-columns: 200px 1fr; gap: 40px; padding: 34px 0; border-top: 1px solid oklch(0.68 0.12 85 / 0.5); border-bottom: 1px solid oklch(0.68 0.12 85 / 0.5);">
-        <div style="font-family: 'Jost', sans-serif; font-size: 13px; letter-spacing: 1px; color: oklch(0.4 0.03 140);">Jan 2023 &mdash; May 2025<br><span style="color: oklch(0.55 0.03 140);">2 yrs 5 mos</span></div>
-        <div>
-          <h3 style="font-size: 24px; font-weight: 500; margin: 0; color: oklch(0.24 0.045 150);">Software Intern</h3>
-          <div style="font-family: 'Jost', sans-serif; font-size: 14px; color: oklch(0.62 0.13 80); margin-top: 6px;">VisioStack Inc.</div>
-          <div style="font-family: 'Jost', sans-serif; font-size: 12px; letter-spacing: 0.5px; color: oklch(0.5 0.03 140); margin-top: 6px;">Internship &nbsp;·&nbsp; United States &nbsp;·&nbsp; Hybrid</div>
-          <p style="font-size: 17px; line-height: 1.7; color: oklch(0.28 0.025 140); margin-top: 16px; max-width: 60ch;">Python development and software infrastructure work throughout my undergrad years.</p>
+      <div style="position: absolute; top: 22vh; right: 3.2vw; width: 22vw;">
+        <div style="font-family: 'Jost', sans-serif; font-size: 11px; letter-spacing: 2px; color: oklch(0.78 0.1 85); margin-bottom: 14px;">TOOLKIT</div>
+        <div style="display: flex; flex-direction: column; gap: 6px; font-family: 'Jost', sans-serif; font-size: 14px; color: oklch(0.9 0.03 80);">
+          <div>Python</div>
+          <div>SQL</div>
+          <div>Azure</div>
+          <div>NixOS</div>
+          <div>Anthropic/OpenAI</div>
+          <div>PostgreSQL</div>
+          <div>SuiteScript</div>
+          <div>SuiteQL</div>
+          <div>Data Analytics</div>
+          <div>Data Engineering</div>
+          <div>Data Science</div>
         </div>
       </div>
     </div>
-  </section>
 
-  <!-- PROJECTS -->
-  <section id="projects" style="padding: 140px 10vw 160px 108px; background: oklch(0.925 0.022 72); border-top: 1px solid oklch(0.68 0.12 85 / 0.4);">
-    <div style="font-family: 'Jost', sans-serif; font-size: 12px; letter-spacing: 3px; color: oklch(0.62 0.13 80); margin-bottom: 18px;">03 — PROJECTS</div>
-    <h2 style="font-size: clamp(30px, 3.4vw, 44px); font-weight: 500; margin: 0 0 56px; color: oklch(0.24 0.045 150);">Things I've built.</h2>
-
-    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1px; background: oklch(0.68 0.12 85 / 0.5); border: 1px solid oklch(0.68 0.12 85 / 0.5);">
-      <a href="https://github.com/Sintfoap" target="_blank" rel="noopener" style="text-decoration: none; color: inherit; background: oklch(0.925 0.022 72); padding: 40px 34px; display: flex; flex-direction: column; gap: 16px; transition: background 0.2s;">
-        <div style="font-family: 'Jost', sans-serif; font-size: 12px; letter-spacing: 1.5px; color: oklch(0.62 0.13 80);">LANGUAGE</div>
-        <h3 style="font-size: 25px; font-weight: 500; margin: 0; color: oklch(0.24 0.045 150);">cRust</h3>
-        <p style="font-size: 16px; line-height: 1.65; color: oklch(0.3 0.025 140); margin: 0;">A custom programming language, built from scratch out of pure curiosity about how the sausage gets made.</p>
-        <div style="font-family: 'Jost', sans-serif; font-size: 12px; letter-spacing: 1px; color: oklch(0.35 0.05 155); margin-top: auto; padding-top: 8px;">VIEW ON GITHUB ↗</div>
-      </a>
-      <a href="https://github.com/Sintfoap" target="_blank" rel="noopener" style="text-decoration: none; color: inherit; background: oklch(0.925 0.022 72); padding: 40px 34px; display: flex; flex-direction: column; gap: 16px; transition: background 0.2s;">
-        <div style="font-family: 'Jost', sans-serif; font-size: 12px; letter-spacing: 1.5px; color: oklch(0.62 0.13 80);">DIRECTORY</div>
-        <h3 style="font-size: 25px; font-weight: 500; margin: 0; color: oklch(0.24 0.045 150);">Friends &amp; Associates</h3>
-        <p style="font-size: 16px; line-height: 1.65; color: oklch(0.3 0.025 140); margin: 0;">A small, growing directory of websites belonging to friends and associates &mdash; the personal web, kept alive.</p>
-        <div style="font-family: 'Jost', sans-serif; font-size: 12px; letter-spacing: 1px; color: oklch(0.35 0.05 155); margin-top: auto; padding-top: 8px;">VIEW ON GITHUB ↗</div>
-      </a>
-      <a href="https://github.com/Sintfoap" target="_blank" rel="noopener" style="text-decoration: none; color: inherit; background: oklch(0.925 0.022 72); padding: 40px 34px; display: flex; flex-direction: column; gap: 16px; transition: background 0.2s;">
-        <div style="font-family: 'Jost', sans-serif; font-size: 12px; letter-spacing: 1.5px; color: oklch(0.62 0.13 80);">SYSTEM</div>
-        <h3 style="font-size: 25px; font-weight: 500; margin: 0; color: oklch(0.24 0.045 150);">Yggdrasil</h3>
-        <p style="font-size: 16px; line-height: 1.65; color: oklch(0.3 0.025 140); margin: 0;">A custom time system that dissects the day into powers of nine, for reasons that made sense at 2am.</p>
-        <div style="font-family: 'Jost', sans-serif; font-size: 12px; letter-spacing: 1px; color: oklch(0.35 0.05 155); margin-top: auto; padding-top: 8px;">VIEW ON GITHUB ↗</div>
-      </a>
+    <!-- SECTION 3 — PROJECTS / ELEPHANT VALLEY -->
+<div ref="{{ s3Ref }}" style="position: fixed; inset: 0; display: flex; flex-direction: column; align-items: flex-start; justify-content: flex-start; text-align: left; padding: 90px 0 0 32px; opacity: 0; pointer-events: none;">
+      <div style="margin-bottom: 14px;">
+      <div style="font-family: 'Jost', sans-serif; font-size: 12px; letter-spacing: 2.5px; color: oklch(0.78 0.1 85); margin-bottom: 8px;">03 · PROJECTS</div>
+      <h2 style="font-size: 22px; font-weight: 500; margin: 0; color: oklch(0.95 0.02 80); text-shadow: 0 4px 20px rgba(0,0,0,0.6); white-space: nowrap;">Things I've built.</h2>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 5px;">
+        <a href="https://github.com/Sintfoap" target="_blank" rel="noopener" style="text-decoration: none; width: 210px;">
+          <div style="font-family: 'Jost', sans-serif; font-size: 11px; letter-spacing: 1.5px; color: oklch(0.78 0.1 85);">LANGUAGE</div>
+          <h3 style="font-size: 18px; font-weight: 500; margin: 5px 0 5px; color: oklch(0.95 0.02 80);">cRust</h3>
+          <p style="font-size: 12.5px; line-height: 1.35; color: oklch(0.85 0.03 78); margin: 0;">A custom programming language, built from scratch out of curiosity.</p>
+        </a>
+        <a href="/friends/" style="text-decoration: none; width: 172px;">
+          <div style="font-family: 'Jost', sans-serif; font-size: 11px; letter-spacing: 1.5px; color: oklch(0.78 0.1 85);">DIRECTORY</div>
+          <h3 style="font-size: 18px; font-weight: 500; margin: 5px 0 5px; color: oklch(0.95 0.02 80);">Friends &amp; Associates</h3>
+          <p style="font-size: 12.5px; line-height: 1.35; color: oklch(0.85 0.03 78); margin: 0;">A directory of websites belonging to friends and associates.</p>
+        </a>
+        <a href="https://github.com/Sintfoap" target="_blank" rel="noopener" style="text-decoration: none; width: 128px;">
+          <div style="font-family: 'Jost', sans-serif; font-size: 11px; letter-spacing: 1.5px; color: oklch(0.78 0.1 85);">SYSTEM</div>
+          <h3 style="font-size: 17px; font-weight: 500; margin: 3px 0 3px; color: oklch(0.95 0.02 80);">Yggdrasil</h3>
+          <p style="font-size: 11.5px; line-height: 1.25; color: oklch(0.85 0.03 78); margin: 0;">A time system that dissects the day into powers of nine.</p>
+        </a>
+      </div>
+      <div style="margin-top: 6px; width: 56px; font-family: 'Jost', sans-serif; font-size: 8.5px; line-height: 1.3; letter-spacing: 0.3px; color: oklch(0.7 0.04 80);">© 2026 Ryan Moffitt</div>
     </div>
-  </section>
 
-  <!-- FOOTER -->
-  <footer style="padding: 56px 10vw 56px 108px; background: oklch(0.955 0.017 78); display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 24px; border-top: 1px solid oklch(0.68 0.12 85 / 0.4);">
-    <div style="display: flex; align-items: center; gap: 16px;">
-      <svg viewBox="0 0 120 120" width="34" height="34" style="color: oklch(0.35 0.05 155);"><use href="#crest-mark"></use></svg>
-      <div style="font-family: 'Jost', sans-serif; font-size: 12px; letter-spacing: 1px; color: oklch(0.45 0.03 140);">© 2026 Ryan Moffitt</div>
-    </div>
-    <div style="display: flex; gap: 26px;">
-      <a href="https://github.com/Sintfoap" target="_blank" rel="noopener" style="font-family: 'Jost', sans-serif; font-size: 12px; letter-spacing: 1px; color: oklch(0.35 0.05 155); text-decoration: none;">GITHUB</a>
-      <a href="https://www.linkedin.com/in/ryan-moffitt-808604228/" target="_blank" rel="noopener" style="font-family: 'Jost', sans-serif; font-size: 12px; letter-spacing: 1px; color: oklch(0.35 0.05 155); text-decoration: none;">LINKEDIN</a>
-    </div>
-  </footer>
-
+  </div>
 </div>
 
 </x-dc>
+<script type="text/x-dc" data-dc-script>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.canvasRef = React.createRef();
+    this.s0Ref = React.createRef();
+    this.s1Ref = React.createRef();
+    this.s2Ref = React.createRef();
+    this.s3Ref = React.createRef();
+    this.camP = 0;
+    this.targetIndex = 0;
+    this.animFrom = 0;
+    this.animTo = 0;
+    this.animStart = 0;
+    this.animDuration = 900;
+    this.wheelAccum = 0;
+    this.cooldown = false;
+    this.keyframes = [
+      { center: [-0.55, 0.02], scale: 0.6, iter: 150, bias: [-0.085, 0] },
+      { center: [-0.743643887037151, 0.13182590420533], scale: 0.010, iter: 380, bias: [0.34, 0] },
+      { center: [-1.2601, 0.0328], scale: 0.02, iter: 320, bias: [-0.03, 0] },
+      { center: [0.28175, 0.00825], scale: 0.018, iter: 320, bias: [0.15, 0.15] }
+    ];
+  }
+
+  componentDidMount() {
+    const canvas = this.canvasRef.current;
+    const glOpts = { preserveDrawingBuffer: true };
+    const gl = canvas.getContext('webgl', glOpts) || canvas.getContext('experimental-webgl', glOpts);
+    if (!gl) return;
+    this.gl = gl;
+
+    const vsSrc = 'attribute vec2 a_pos; void main(){ gl_Position = vec4(a_pos,0.0,1.0); }';
+    const fsSrc = [
+      'precision highp float;',
+      'uniform vec2 u_resolution;',
+      'uniform vec2 u_center;',
+      'uniform float u_scale;',
+      'uniform float u_iter;',
+      'uniform vec2 u_bias;',
+      'vec3 palette(float t){',
+      '  t = fract(t);',
+      '  vec3 c0 = vec3(0.035,0.045,0.032);',
+      '  vec3 c1 = vec3(0.09,0.20,0.13);',
+      '  vec3 c2 = vec3(0.64,0.49,0.20);',
+      '  vec3 c3 = vec3(0.82,0.72,0.53);',
+      '  float seg = t*4.0;',
+      '  if(seg<1.0) return mix(c0,c1,seg);',
+      '  else if(seg<2.0) return mix(c1,c2,seg-1.0);',
+      '  else if(seg<3.0) return mix(c2,c3,seg-2.0);',
+      '  else return mix(c3,c0,seg-3.0);',
+      '}',
+      'void main(){',
+      '  vec2 uv = (gl_FragCoord.xy - 0.5*u_resolution) / u_resolution.y;',
+      '  float aspect = u_resolution.x / u_resolution.y;',
+      '  const float refAspect = 1.71;',
+      '  if(aspect > refAspect){ uv.x *= refAspect / aspect; } else { uv.y *= aspect / refAspect; }',
+      '  vec2 c = u_center + (uv + u_bias) * u_scale * 2.0;',
+      '  vec2 z = vec2(0.0,0.0);',
+      '  float n = 0.0; float m2 = 0.0;',
+      '  const int MAXI = 500;',
+      '  for(int i=0;i<MAXI;i++){',
+      '    if(n >= u_iter){ break; }',
+      '    z = vec2(z.x*z.x - z.y*z.y + c.x, 2.0*z.x*z.y + c.y);',
+      '    m2 = dot(z,z);',
+      '    if(m2 > 256.0){ break; }',
+      '    n += 1.0;',
+      '  }',
+      '  vec3 col;',
+      '  if(m2 <= 256.0){ col = vec3(0.035,0.045,0.032); }',
+      '  else {',
+      '    float sl = n - log2(log2(m2)) + 4.0;',
+      '    float t = sl / u_iter;',
+      '    col = palette(pow(t,0.65)*3.0);',
+      '  }',
+      '  gl_FragColor = vec4(col,1.0);',
+      '}'
+    ].join('\n');
+
+    const compile = (type, src) => {
+      const sh = gl.createShader(type);
+      gl.shaderSource(sh, src);
+      gl.compileShader(sh);
+      return sh;
+    };
+    const vs = compile(gl.VERTEX_SHADER, vsSrc);
+    const fs = compile(gl.FRAGMENT_SHADER, fsSrc);
+    const prog = gl.createProgram();
+    gl.attachShader(prog, vs);
+    gl.attachShader(prog, fs);
+    gl.linkProgram(prog);
+    gl.useProgram(prog);
+    this.prog = prog;
+
+    const buf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, 1,-1, 1,1, -1,1]), gl.STATIC_DRAW);
+    const posLoc = gl.getAttribLocation(prog, 'a_pos');
+    gl.enableVertexAttribArray(posLoc);
+    gl.vertexAttribPointer(posLoc, 2, gl.FLOAT, false, 0, 0);
+
+    this.uRes = gl.getUniformLocation(prog, 'u_resolution');
+    this.uCenter = gl.getUniformLocation(prog, 'u_center');
+    this.uScale = gl.getUniformLocation(prog, 'u_scale');
+    this.uIter = gl.getUniformLocation(prog, 'u_iter');
+    this.uBias = gl.getUniformLocation(prog, 'u_bias');
+
+    this.resize = () => {
+      const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
+      canvas.width = Math.floor(window.innerWidth * dpr);
+      canvas.height = Math.floor(window.innerHeight * dpr);
+      gl.viewport(0, 0, canvas.width, canvas.height);
+    };
+    this.resize();
+    window.addEventListener('resize', this.resize);
+
+    const startAnim = (next) => {
+      this.animFrom = this.camP;
+      this.animTo = next;
+      this.animStart = performance.now();
+      this.targetIndex = next;
+    };
+    const goStep = (dir) => {
+      if (this.cooldown) return;
+      const next = Math.max(0, Math.min(3, this.targetIndex + dir));
+      if (next === this.targetIndex) return;
+      startAnim(next);
+      this.cooldown = true;
+      clearTimeout(this._cooldownT);
+      this._cooldownT = setTimeout(() => { this.cooldown = false; }, 900);
+    };
+
+    const WHEEL_THRESHOLD = 55;
+    this.onWheel = (e) => {
+      e.preventDefault();
+      console.log('WHEEL', e.deltaY, this.cooldown, this.targetIndex);
+      if (this.cooldown) return;
+      this.wheelAccum += e.deltaY;
+      if (this.wheelAccum > WHEEL_THRESHOLD) { goStep(1); this.wheelAccum = 0; }
+      else if (this.wheelAccum < -WHEEL_THRESHOLD) { goStep(-1); this.wheelAccum = 0; }
+    };
+    window.addEventListener('wheel', this.onWheel, { passive: false });
+
+    this.onKey = (e) => {
+      if (['ArrowDown', 'PageDown', ' '].includes(e.key)) { e.preventDefault(); goStep(1); }
+      else if (['ArrowUp', 'PageUp'].includes(e.key)) { e.preventDefault(); goStep(-1); }
+    };
+    window.addEventListener('keydown', this.onKey);
+
+    let touchStartY = null;
+    this.onTouchStart = (e) => { touchStartY = e.touches[0].clientY; };
+    this.onTouchEnd = (e) => {
+      if (touchStartY === null) return;
+      const dy = touchStartY - e.changedTouches[0].clientY;
+      if (Math.abs(dy) > 40) goStep(dy > 0 ? 1 : -1);
+      touchStartY = null;
+    };
+    window.addEventListener('touchstart', this.onTouchStart, { passive: true });
+    window.addEventListener('touchend', this.onTouchEnd, { passive: true });
+
+    this.goToIndex = (i) => { startAnim(Math.max(0, Math.min(3, i))); };
+
+    const secRefs = [this.s0Ref, this.s1Ref, this.s2Ref, this.s3Ref];
+    const lerp = (a, b, f) => a + (b - a) * f;
+    const smooth = (x) => x * x * (3 - 2 * x);
+
+    const loop = (now) => {
+      const elapsed = now - this.animStart;
+      const tNorm = Math.max(0, Math.min(1, elapsed / this.animDuration));
+      this.camP = tNorm >= 1 ? this.animTo : lerp(this.animFrom, this.animTo, smooth(tNorm));
+      const p = this.camP;
+      const i0 = Math.max(0, Math.min(3, Math.floor(p)));
+      const i1 = Math.min(3, i0 + 1);
+      const f = smooth(Math.max(0, Math.min(1, p - i0)));
+      const k0 = this.keyframes[i0], k1 = this.keyframes[i1];
+      const cx = lerp(k0.center[0], k1.center[0], f);
+      const cy = lerp(k0.center[1], k1.center[1], f);
+      const scale = Math.exp(lerp(Math.log(k0.scale), Math.log(k1.scale), f));
+      const iter = lerp(k0.iter, k1.iter, f);
+      const b0 = k0.bias || [0, 0], b1 = k1.bias || [0, 0];
+      const bx = lerp(b0[0], b1[0], f), by = lerp(b0[1], b1[1], f);
+
+      gl.useProgram(prog);
+      gl.uniform2f(this.uRes, canvas.width, canvas.height);
+      gl.uniform2f(this.uCenter, cx, cy);
+      gl.uniform1f(this.uScale, scale);
+      gl.uniform1f(this.uIter, iter);
+      gl.uniform2f(this.uBias, bx, by);
+      gl.drawArrays(gl.TRIANGLES, 0, 6);
+
+      secRefs.forEach((ref, i) => {
+        const el = ref.current;
+        if (!el) return;
+        const dist = Math.abs(p - i);
+        const opacity = Math.max(0, 1 - dist * 1.7);
+        el.style.opacity = opacity.toFixed(3);
+        el.style.transform = 'translateY(' + (dist * 26) + 'px)';
+        el.style.pointerEvents = opacity > 0.6 ? 'auto' : 'none';
+      });
+
+      this.raf = requestAnimationFrame(loop);
+    };
+    this.raf = requestAnimationFrame(loop);
+  }
+
+  componentWillUnmount() {
+    if (this.raf) cancelAnimationFrame(this.raf);
+    if (this.resize) window.removeEventListener('resize', this.resize);
+    if (this.onWheel) window.removeEventListener('wheel', this.onWheel);
+    if (this.onKey) window.removeEventListener('keydown', this.onKey);
+    if (this.onTouchStart) window.removeEventListener('touchstart', this.onTouchStart);
+    if (this.onTouchEnd) window.removeEventListener('touchend', this.onTouchEnd);
+    clearTimeout(this._cooldownT);
+  }
+
+  scrollToIndex(i) {
+    if (this.goToIndex) this.goToIndex(i);
+    else this.targetIndex = i;
+  }
+
+  renderVals() {
+    return {
+      canvasRef: this.canvasRef,
+      s0Ref: this.s0Ref,
+      s1Ref: this.s1Ref,
+      s2Ref: this.s2Ref,
+      s3Ref: this.s3Ref,
+      goTo0: () => this.scrollToIndex(0),
+      goTo1: () => this.scrollToIndex(1),
+      goTo2: () => this.scrollToIndex(2),
+      goTo3: () => this.scrollToIndex(3)
+    };
+  }
+}
+</script>
 </body>
 </html>
