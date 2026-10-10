@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Friends &amp; Associates — Hall of Banners</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,500;1,400&family=Jost:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0b0f0a;
+    --gold: oklch(0.78 0.11 85);
+    --gold-dim: oklch(0.6 0.08 85);
+    --ink: oklch(0.95 0.02 80);
+    --muted: oklch(0.78 0.04 80);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; background: var(--bg); color: var(--ink); font-family: 'EB Garamond', serif; }
+  body {
+    min-height: 100vh; overflow-x: hidden;
+    background:
+      radial-gradient(ellipse at 50% 0%, rgba(255, 190, 90, 0.10) 0%, transparent 55%),
+      radial-gradient(circle at 50% 45%, #16261a 0%, #0b0f0a 70%);
+  }
+  .home { position: fixed; top: 26px; left: 30px; z-index: 20; color: oklch(0.82 0.05 85); opacity: 0.9; }
+  header { text-align: center; padding: 110px 16px 0; }
+  .kicker { font-family: 'Jost', sans-serif; font-size: 12px; letter-spacing: 4px; color: var(--gold); }
+  h1 { font-weight: 500; font-size: clamp(36px, 6vw, 72px); margin: 14px 0 10px; }
+  .sub { font-style: italic; color: var(--muted); font-size: 19px; margin: 0; }
+
+  .hall { position: relative; max-width: 760px; margin: 50px auto 0; padding: 0 16px 80px; }
+  .rod {
+    height: 6px; margin: 0 4%; border-radius: 3px;
+    background: linear-gradient(to bottom, oklch(0.85 0.1 85), oklch(0.5 0.08 70));
+    box-shadow: 0 3px 10px rgba(0,0,0,0.6);
+    position: relative;
+  }
+  .rod::before, .rod::after {
+    content: ""; position: absolute; top: 50%; width: 16px; height: 16px; border-radius: 50%;
+    transform: translateY(-50%); background: radial-gradient(circle at 35% 35%, oklch(0.9 0.1 85), oklch(0.5 0.08 70));
+  }
+  .rod::before { left: -8px; } .rod::after { right: -8px; }
+
+  .banners { display: flex; justify-content: space-around; gap: 16px; }
+  .banner {
+    display: block; width: min(240px, 42vw); text-decoration: none; color: inherit;
+    transform-origin: 50% 0; animation: sway 6s ease-in-out infinite;
+    outline: none;
+  }
+  .banner:nth-child(2) { animation-delay: -2.6s; animation-duration: 7s; }
+  .banner .cloth {
+    display: block; width: 100%; height: auto; transform-origin: 50% 0;
+    transition: transform 0.6s cubic-bezier(.2,.8,.2,1), filter 0.6s;
+    filter: drop-shadow(0 18px 24px rgba(0,0,0,0.55)) brightness(0.88);
+  }
+  .banner:hover .cloth, .banner:focus-visible .cloth {
+    transform: translateY(-10px) scaleY(1.04);
+    filter: drop-shadow(0 26px 34px rgba(0,0,0,0.6)) drop-shadow(0 0 22px rgba(255,200,110,0.25)) brightness(1.08);
+  }
+  .banner:hover, .banner:focus-visible { animation-play-state: paused; }
+  .plate { text-align: center; margin-top: 18px; transition: transform 0.6s, color 0.6s; }
+  .plate .name { font-size: clamp(20px, 3.2vw, 28px); font-weight: 500; }
+  .plate .url { font-family: 'Jost', sans-serif; font-size: 11px; letter-spacing: 2px; color: var(--gold-dim); margin-top: 6px; transition: color 0.4s; }
+  .banner:hover .url, .banner:focus-visible .url { color: var(--gold); }
+
+  @keyframes sway { 0%,100% { transform: rotate(-1.6deg); } 50% { transform: rotate(1.6deg); } }
+
+  /* click-through: banner rises, hall fades to gold light */
+  .veil { position: fixed; inset: 0; pointer-events: none; opacity: 0; z-index: 50;
+    background: radial-gradient(circle at var(--x, 50%) var(--y, 50%), oklch(0.92 0.08 85) 0%, oklch(0.7 0.11 80) 30%, #0b0f0a 75%);
+    transition: opacity 0.9s ease-in; }
+  body.leaving .veil { opacity: 1; }
+  .banner.chosen .cloth { transform: translateY(-60px) scale(1.08); transition-duration: 0.9s; }
+
+  footer { text-align: center; font-family: 'Jost', sans-serif; font-size: 11px; letter-spacing: 2px; color: var(--gold-dim); padding-bottom: 40px; }
+  footer a { color: inherit; }
+
+  @media (prefers-reduced-motion: reduce) { .banner { animation: none; } }
+</style>
+</head>
+<body>
+<a class="home" href="/" aria-label="Home">
+  <svg viewBox="0 0 120 120" width="62" height="62">
+    <circle cx="60" cy="60" r="54" fill="none" stroke="currentColor" stroke-width="2.5"></circle>
+    <circle cx="60" cy="60" r="45" fill="none" stroke="currentColor" stroke-width="1"></circle>
+    <path id="motto-path" d="M 20 66 A 40 40 0 1 1 100 66" fill="none"></path>
+    <text font-family="Jost, sans-serif" font-size="8.5" letter-spacing="2.5" fill="currentColor"><textPath href="#motto-path" startOffset="50%" text-anchor="middle">SPERO MELIORA</textPath></text>
+    <g transform="translate(60,66)" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round">
+      <line x1="-11" y1="-11" x2="11" y2="11"></line><line x1="11" y1="-11" x2="-11" y2="11"></line>
+      <line x1="0" y1="-24" x2="0" y2="-2"></line><line x1="-6" y1="-18" x2="6" y2="-18"></line>
+    </g>
+    <path d="M 34 78 Q 44 66 60 66 Q 76 66 86 78 L 82 88 Q 71 78 60 78 Q 49 78 38 88 Z" fill="currentColor"></path>
+  </svg>
+</a>
+
+<header>
+  <div class="kicker">FRIENDS &amp; ASSOCIATES</div>
+  <h1>The Hall of Banners</h1>
+  <p class="sub">Choose a house. They'll tell you the rest themselves.</p>
+</header>
+
+<main class="hall">
+  <div class="rod"></div>
+  <div class="banners">
+    <!-- Josh Hammer: crimson field, gold -->
+    <a class="banner" href="https://joshammer.com" data-go>
+      <svg class="cloth" viewBox="0 0 200 340" aria-hidden="true">
+        <defs>
+          <linearGradient id="fold-a" x1="0" x2="1">
+            <stop offset="0" stop-color="#000" stop-opacity="0.35"/><stop offset="0.25" stop-color="#fff" stop-opacity="0.06"/>
+            <stop offset="0.5" stop-color="#000" stop-opacity="0.18"/><stop offset="0.75" stop-color="#fff" stop-opacity="0.07"/>
+            <stop offset="1" stop-color="#000" stop-opacity="0.35"/>
+          </linearGradient>
+        </defs>
+        <rect x="88" y="0" width="24" height="14" fill="oklch(0.55 0.08 75)"/>
+        <path d="M10 10 H190 V300 L100 260 L10 300 Z" fill="oklch(0.38 0.13 25)"/>
+        <path d="M10 10 H190 V300 L100 260 L10 300 Z" fill="url(#fold-a)"/>
+        <path d="M22 22 H178 V282 L100 247 L22 282 Z" fill="none" stroke="oklch(0.78 0.11 85)" stroke-width="2"/>
+        <!-- chevron + shield -->
+        <path d="M60 70 H140 V130 Q140 170 100 186 Q60 170 60 130 Z" fill="oklch(0.3 0.1 25)" stroke="oklch(0.78 0.11 85)" stroke-width="2.5"/>
+        <path d="M66 150 L100 118 L134 150" fill="none" stroke="oklch(0.78 0.11 85)" stroke-width="7" stroke-linejoin="miter"/>
+        <text x="100" y="108" text-anchor="middle" font-family="EB Garamond, serif" font-size="30" font-weight="500" fill="oklch(0.88 0.08 85)">JH</text>
+        <g fill="oklch(0.78 0.11 85)"><circle cx="100" cy="214" r="3"/><circle cx="84" cy="214" r="2"/><circle cx="116" cy="214" r="2"/></g>
+      </svg>
+      <div class="plate"><div class="name">Josh Hammer</div><div class="url">JOSHAMMER.COM ↗</div></div>
+    </a>
+
+    <!-- Rhys Fuller: deep blue field, silver-gold -->
+    <a class="banner" href="https://rhysfuller.com" data-go>
+      <svg class="cloth" viewBox="0 0 200 340" aria-hidden="true">
+        <rect x="88" y="0" width="24" height="14" fill="oklch(0.55 0.08 75)"/>
+        <path d="M10 10 H190 V300 L100 260 L10 300 Z" fill="oklch(0.33 0.09 255)"/>
+        <path d="M10 10 H190 V300 L100 260 L10 300 Z" fill="url(#fold-a)"/>
+        <path d="M22 22 H178 V282 L100 247 L22 282 Z" fill="none" stroke="oklch(0.85 0.03 250)" stroke-width="2"/>
+        <!-- shield + star -->
+        <path d="M60 70 H140 V130 Q140 170 100 186 Q60 170 60 130 Z" fill="oklch(0.26 0.07 255)" stroke="oklch(0.85 0.03 250)" stroke-width="2.5"/>
+        <path d="M100 124 L105 138 L120 138 L108 147 L112 161 L100 152 L88 161 L92 147 L80 138 L95 138 Z" fill="oklch(0.85 0.03 250)"/>
+        <text x="100" y="108" text-anchor="middle" font-family="EB Garamond, serif" font-size="30" font-weight="500" fill="oklch(0.92 0.02 250)">RF</text>
+        <g fill="oklch(0.85 0.03 250)"><circle cx="100" cy="214" r="3"/><circle cx="84" cy="214" r="2"/><circle cx="116" cy="214" r="2"/></g>
+      </svg>
+      <div class="plate"><div class="name">Rhys Fuller</div><div class="url">RHYSFULLER.COM ↗</div></div>
+    </a>
+  </div>
+</main>
+
+<footer>CONCEPT A · <a href="./">ALL CONCEPTS</a></footer>
+<div class="veil"></div>
+
+<script>
+  // Plain left-clicks get the ceremony; modified clicks (new tab etc.) behave normally.
+  document.querySelectorAll('[data-go]').forEach(function (a) {
+    a.addEventListener('click', function (e) {
+      if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+      if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+      e.preventDefault();
+      var r = a.getBoundingClientRect();
+      document.body.style.setProperty('--x', (r.left + r.width / 2) + 'px');
+      document.body.style.setProperty('--y', (r.top + r.height / 3) + 'px');
+      a.classList.add('chosen');
+      document.body.classList.add('leaving');
+      setTimeout(function () { location.href = a.href; }, 950);
+    });
+  });
+  // Restore the page if the user comes back via the back button.
+  addEventListener('pageshow', function () {
+    document.body.classList.remove('leaving');
+    document.querySelectorAll('.chosen').forEach(function (el) { el.classList.remove('chosen'); });
+  });
+</script>
+</body>
+</html>
