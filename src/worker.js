@@ -13,8 +13,13 @@ const ID = /^t_[0-9a-z]{1,32}$/;
 
 export default {
   async fetch(request, env) {
-    const { pathname } = new URL(request.url);
-    if (pathname === "/todo" || pathname.startsWith("/todo/")) {
+    const url = new URL(request.url), { pathname } = url;
+    // "/todo" → "/todo/" before anything else; the redirect itself reveals nothing.
+    if (pathname === "/todo") {
+      url.pathname = "/todo/";
+      return Response.redirect(url.toString(), 308);
+    }
+    if (pathname.startsWith("/todo/")) {
       return protect(request, env, "ACCESS_AUD_TODO", user => todo(request, env, user, pathname));
     }
     return env.ASSETS.fetch(request);
