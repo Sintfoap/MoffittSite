@@ -29,8 +29,8 @@ const STYLE = `
   a { color: var(--gold); }
   .top { display: flex; align-items: center; gap: 14px; max-width: 960px; margin: 0 auto 36px; }
   .top a.crest { color: oklch(0.82 0.05 85); display: block; }
-  .top .who { margin-left: auto; font-family: 'Jost', sans-serif; font-size: 12px; letter-spacing: 1.5px; color: var(--muted); }
-  .top .who a { margin-left: 14px; }
+  .top .who { margin-left: auto; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px 14px;
+          font-family: 'Jost', sans-serif; font-size: 12px; letter-spacing: 1.5px; color: var(--muted); }
   main { max-width: 440px; margin: 0 auto; }
   main.wide { max-width: 960px; }
   .kicker { font-family: 'Jost', sans-serif; font-size: 12px; letter-spacing: 4px; color: var(--gold); text-transform: uppercase; }
@@ -66,11 +66,17 @@ const STYLE = `
   .row > * { flex: 1; min-width: 140px; }
   .row button { flex: 0; }
   .scroll { overflow-x: auto; }
+  .apps { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 16px; margin-bottom: 28px; }
+  a.app { display: block; text-decoration: none; color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 22px; }
+  a.app:hover, a.app:focus-visible { border-color: var(--gold); outline: none; }
+  a.app h2 { margin-bottom: 6px; }
+  a.app p { margin: 0; font-size: 17px; }
+  a.app .go { display: block; margin-top: 14px; font: 500 12px 'Jost', sans-serif; letter-spacing: 2px; text-transform: uppercase; color: var(--gold); }
 `;
 
 export function page(title, body, { user, wide = false } = {}) {
   const who = user
-    ? `<div class="who">${esc(user.display_name)}<a href="/account">Account</a>${user.areas?.has("admin") ? `<a href="/admin">Admin</a>` : ""}<a href="/logout">Sign out</a></div>`
+    ? `<div class="who">${esc(user.display_name)}<a href="/dashboard">Dashboard</a><a href="/account">Settings</a>${user.areas?.has("admin") ? `<a href="/admin">Admin</a>` : ""}<a href="/logout">Sign out</a></div>`
     : "";
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${esc(title)} · sintfoap.xyz</title><meta name="robots" content="noindex">
@@ -152,6 +158,18 @@ export const changePasswordRequiredPage = ({ user, error }) => page("Choose a ne
     <button type="submit">Save password</button>
   </form>`, { user });
 
+export function dashboardPage({ user, apps, sessionCount }) {
+  const cards = apps.length
+    ? `<div class="apps">${apps.map(a => `<a class="app" href="${esc(a.href)}"><h2>${esc(a.name)}</h2><p>${esc(a.blurb)}</p><span class="go">Open →</span></a>`).join("")}</div>`
+    : `<section class="card"><p>Your account doesn't have any apps yet. Ask the site's admin for access.</p></section>`;
+  return page("Dashboard", `
+    <div class="kicker">Dashboard</div><h1>Welcome, ${esc(user.display_name)}</h1>
+    ${cards}
+    <section class="card"><h2>Your account</h2>
+      <p>Signed in as <span class="mono">${esc(user.username)}</span>. Two-factor is ${user.totp_secret ? "on" : "off"}. Signed in on ${sessionCount} device${sessionCount === 1 ? "" : "s"}.</p>
+      <a class="btn" href="/account">Account settings</a></section>`, { user, wide: true });
+}
+
 export function accountPage({ user, error, notice, recoveryLeft, sessionCount, setup, recoveryCodes, adminNeeds2fa }) {
   const isAdmin = user.areas.has("admin");
   let twofa;
@@ -195,8 +213,8 @@ export function accountPage({ user, error, notice, recoveryLeft, sessionCount, s
         <button class="${recoveryLeft ? "quiet" : ""}" type="submit">${recoveryLeft ? "Make new recovery codes" : "Make recovery codes"}</button>
         ${recoveryLeft ? `<p class="hint">This replaces the ones you have.</p>` : ""}
       </form>`;
-  return page("Account", `
-    <div class="kicker">Account</div><h1>${esc(user.display_name)}</h1>
+  return page("Account settings", `
+    <div class="kicker">Account settings</div><h1>${esc(user.display_name)}</h1>
     ${msg(error)}${msg(notice, "good")}
     ${recoveryCodes ? `<section class="card">${recovery}</section>` : ""}
     <section class="card">${twofa}</section>
@@ -218,7 +236,7 @@ export function accountPage({ user, error, notice, recoveryLeft, sessionCount, s
     <section class="card"><h2>Sessions</h2>
       <p>Signed in on ${sessionCount} device${sessionCount === 1 ? "" : "s"}, including this one.</p>
       <form method="post" action="/account/sessions"><button class="quiet" type="submit">Sign out everywhere else</button></form></section>
-    ${isAdmin ? `<p class="alt"><a href="/admin">Admin</a></p>` : ""}`, { user });
+    <p class="alt"><a href="/dashboard">Back to your dashboard</a></p>`, { user });
 }
 
 const date = t => new Date(t * 1000).toISOString().slice(0, 10);

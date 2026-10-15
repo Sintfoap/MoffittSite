@@ -21,8 +21,14 @@ const TOUCH_EVERY = 5 * 60;              // how often last_seen is written
 export const DEFAULT_AREAS = ["todo"];   // what a new account can use
 export const AREAS = ["todo", "admin"];  // every area the site knows about
 
+// What the dashboard shows for each area, in this order.
+export const APPS = [
+  { area: "todo", name: "Drift", href: "/todo/", blurb: "Your tasks, projects and due dates." },
+  { area: "admin", name: "Admin", href: "/admin", blurb: "Accounts, access and resets." },
+];
+
 const RESERVED = new Set(["admin", "administrator", "root", "system", "support", "help", "login", "logout",
-  "signup", "account", "api", "www", "mail", "moderator", "owner", "security", "null", "undefined"]);
+  "signup", "account", "dashboard", "api", "www", "mail", "moderator", "owner", "security", "null", "undefined"]);
 
 export class AuthError extends Error {
   constructor(message, { status = 400, retryAfter } = {}) { super(message); this.status = status; this.retryAfter = retryAfter; }
