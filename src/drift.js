@@ -16,6 +16,8 @@ const LIMITS = { title: 500, notes: 20000, name: 100, tag: 50, tags: 50, items: 
 export const ID = /^[a-z]_[0-9a-z]{1,32}$/;
 const STAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/;
 const nowStamp = () => new Date().toISOString().slice(0, 19);
+// The `updated` column keeps milliseconds; `rev` counts edits for the sync check.
+const updatedNow = () => new Date().toISOString();
 
 // What a brand-new collection has switched on.
 const STARTER = ["checklist", "event", "list"];
@@ -122,10 +124,21 @@ export async function state(env, user) {
   const items = (await rows(d, "drift_items", user.id)).map(toItem).filter(it => !it.deleted && live.has(it.collection));
   collections.sort((a, b) => a.order - b.order || a.created.localeCompare(b.created));
   return {
+    version: await version(env, user.id),
     user: { name: user.display_name || user.username },
     plugins: PLUGINS.map(({ id, name, description }) => ({ id, name, description })),
     collections, items,
   };
+}
+
+// A short fingerprint of everything a user has. The page checks it every few
+// seconds and reloads only when it changes, so edits from other devices show
+// up quickly without sending the whole list each time.
+export async function version(env, owner) {
+  const d = await db(env);
+  const part = table => `SELECT COUNT(*) || ':' || IFNULL(SUM(rev), 0) || ':' || IFNULL(MAX(updated), '') FROM ${table} WHERE owner = ?1`;
+  const row = await d.prepare(`SELECT (${part("drift_items")}) || '/' || (${part("drift_collections")}) AS v`).bind(owner).first();
+  return row.v;
 }
 
 async function getRow(d, table, owner, id, to) {
@@ -149,7 +162,7 @@ export async function createItem(env, owner, fields) {
   if (!data.collection || !(await ownsCollection(d, owner, data.collection))) fail("collection not found");
   data.meta = Object.fromEntries(Object.entries(data.meta || {}).filter(([, v]) => v !== null));
   const item = { ...ITEM, ...data, created: nowStamp(), deleted: false };
-  const id = newId("i"), updated = nowStamp();
+  const id = newId("i"), updated = updatedNow();
   await d.prepare("INSERT INTO drift_items (owner, id, data, updated) VALUES (?, ?, ?, ?)")
     .bind(owner, id, JSON.stringify(item), updated).run();
   return { ...item, id, updated };
@@ -168,8 +181,8 @@ export async function updateItem(env, owner, id, changes) {
     if (v === null) expr = `json_remove(${expr}, '$.meta.${pid}')`;
     else { expr = `json_set(${expr}, '$.meta.${pid}', json(?))`; args.push(JSON.stringify(v)); }
   }
-  const res = await d.prepare(`UPDATE drift_items SET data = ${expr}, updated = ? WHERE owner = ? AND id = ?`)
-    .bind(...args, nowStamp(), owner, id).run();
+  const res = await d.prepare(`UPDATE drift_items SET data = ${expr}, updated = ?, rev = rev + 1 WHERE owner = ? AND id = ?`)
+    .bind(...args, updatedNow(), owner, id).run();
   if (!res.meta.changes) return null;
   return getRow(d, "drift_items", owner, id, toItem);
 }
@@ -183,7 +196,7 @@ export async function createCollection(env, owner, fields) {
   const data = cleanCollection({ plugins: STARTER, ...fields });
   if (!data.name) fail("name is required");
   const c = { ...COLLECTION, order: Date.now() / 1000, ...data, created: nowStamp(), deleted: false };
-  const id = newId("c"), updated = nowStamp();
+  const id = newId("c"), updated = updatedNow();
   await d.prepare("INSERT INTO drift_collections (owner, id, data, updated) VALUES (?, ?, ?, ?)")
     .bind(owner, id, JSON.stringify(c), updated).run();
   return { ...c, id, updated };
@@ -197,8 +210,8 @@ export async function updateCollection(env, owner, id, changes) {
       .bind(owner, id).first();
     if (!n) fail("you need at least one collection");
   }
-  const res = await d.prepare("UPDATE drift_collections SET data = json_patch(data, ?), updated = ? WHERE owner = ? AND id = ?")
-    .bind(JSON.stringify(patch), nowStamp(), owner, id).run();
+  const res = await d.prepare("UPDATE drift_collections SET data = json_patch(data, ?), updated = ?, rev = rev + 1 WHERE owner = ? AND id = ?")
+    .bind(JSON.stringify(patch), updatedNow(), owner, id).run();
   if (!res.meta.changes) return null;
   return getRow(d, "drift_collections", owner, id, toCollection);
 }

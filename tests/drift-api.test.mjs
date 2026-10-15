@@ -103,6 +103,24 @@ test("deletes are undoable, and a deleted collection hides its items", async () 
   assert.equal(s.items.length, 1);
 });
 
+test("the version fingerprint changes with every edit, and only the owner's", async () => {
+  const env = makeEnv();
+  const b = await signedIn(env, "ryan"), other = await signedIn(env, "josh");
+  const v = async who => (await api(who, "GET", "version")).json.version;
+  const s = (await api(b, "GET", "state")).json;
+  assert.equal(await v(b), s.version, "state carries the same version");
+  const v0 = await v(b), joshV = await v(other);
+  const { json: it } = await api(b, "POST", "items", { title: "a", collection: s.collections[0].id });
+  const v1 = await v(b);
+  assert.notEqual(v1, v0);
+  await api(b, "PATCH", `items/${it.id}`, { meta: { checklist: { done: false, priority: 1 } } });
+  const v2 = await v(b);
+  await api(b, "PATCH", `items/${it.id}`, { meta: { checklist: { done: false, priority: 2 } } });
+  assert.notEqual(await v(b), v2, "two quick same-size edits still count");
+  assert.notEqual(v2, v1);
+  assert.equal(await v(other), joshV, "someone else's edits don't touch your version");
+});
+
 test("rejects bad input", async () => {
   const b = await signedIn(makeEnv(), "ryan");
   const col = await inbox(b);

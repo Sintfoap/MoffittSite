@@ -17,7 +17,10 @@
 //                           those inputs back into meta (null removes it)
 //   actions                 optional: { name(item, ctx, el) } for data-act="<id>:<name>"
 //   keys                    optional: { key(item, ctx) } for the selected item
-//   view                    optional: { label, render(ctx) } a whole view of the items
+//   view                    optional: a whole view of the items, either
+//                             { label, render(ctx) }  HTML, redrawn on every change, or
+//                             { label, mount(el, ctx), update(ctx), unmount() }  for views
+//                             that keep their own DOM between changes (graphs, canvases)
 //
 // To add a plugin, write a file like the ones below and add it to PLUGINS.
 // New plugins start switched off in existing collections.

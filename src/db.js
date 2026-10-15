@@ -8,6 +8,7 @@ const SCHEMA = [
      id      TEXT NOT NULL,          -- "c_" + random hex
      data    TEXT NOT NULL,
      updated TEXT NOT NULL,
+     rev     INTEGER NOT NULL DEFAULT 0,   -- counts edits, for the sync check
      PRIMARY KEY (owner, id)
    )`,
   `CREATE TABLE IF NOT EXISTS drift_items (
@@ -15,6 +16,7 @@ const SCHEMA = [
      id      TEXT NOT NULL,          -- "i_" + random hex ("t_" for tasks brought over from todo_tasks)
      data    TEXT NOT NULL,
      updated TEXT NOT NULL,
+     rev     INTEGER NOT NULL DEFAULT 0,   -- counts edits, for the sync check
      PRIMARY KEY (owner, id)
    )`,
   // The old todo list. Rows move into drift_items the next time their owner

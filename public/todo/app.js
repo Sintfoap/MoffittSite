@@ -36,7 +36,7 @@ function refresh() {
   return loading ||= (async () => {
     try {
       const s = await req("GET", "state");
-      Object.assign(state, { user: s.user, collections: s.collections, items: s.items });
+      Object.assign(state, { user: s.user, collections: s.collections, items: s.items, version: s.version });
     } catch (e) { if (e.message !== "signed out") toast("Couldn’t reach the server"); }
     loading = null;
     if (!$("#itemDlg").open && !$("#colDlg").open) render();
@@ -139,7 +139,7 @@ function ctx() {
 function render() {
   renderNav();
   const cur = current(), c = ctx(), el = $("#list");
-  let sub = "", tabs = "", body;
+  let sub = "", tabs = "", body, view = null;
   if (cur.kind === "today") {
     const now = new Date();
     $("#h1").textContent = now.toLocaleDateString(undefined, { weekday: "long" });
@@ -156,7 +156,7 @@ function render() {
   } else if (cur.kind === "calendar") {
     $("#h1").textContent = "Calendar";
     sub = `<span>Events from every collection</span>`;
-    body = BY_ID.event.view.render(c);
+    view = BY_ID.event;
     document.title = "Calendar · Drift";
   } else {
     const col = cur.col, n = c.scopeItems.length;
@@ -164,15 +164,37 @@ function render() {
     sub = `<span>${n} item${n === 1 ? "" : "s"}</span>`;
     tabs = viewPlugins(col).map(p => `<button data-tab="${p.id}" aria-pressed="${p.id === cur.tab}">${icon(p.icon, 15)}${esc(p.view.label)}</button>`).join("")
       + `<button class="gear" data-settings>Plugins and settings</button>`;
-    body = cur.tab ? BY_ID[cur.tab].view.render(c)
-      : c.items.length ? group("Items", c.items) + `<p class="hint">Turn on a plugin in settings to get more views.</p>`
+    if (cur.tab) view = BY_ID[cur.tab];
+    else body = c.items.length ? group("Items", c.items) + `<p class="hint">Turn on a plugin in settings to get more views.</p>`
       : empty("Nothing here yet", "Add an item above. Turn on plugins in settings for checklists, calendars and lists.");
     document.title = `${col.name} · Drift`;
   }
   $("#sub").innerHTML = sub;
   $("#tabs").innerHTML = tabs;
-  el.innerHTML = body;
+  if (view) showView(view, c);
+  else { unmountView(); el.innerHTML = body; }
   $("#who").textContent = state.user?.name || "";
+}
+
+// A plugin view either returns HTML from render(), redrawn on every change, or
+// has mount(el, ctx) to build its own DOM once (a zoomable graph, a canvas),
+// then update(ctx) on each change and unmount() when you leave it.
+let mounted = null;
+function showView(p, c) {
+  if (!p.view.mount) { unmountView(); $("#list").innerHTML = p.view.render(c); return; }
+  const key = `${state.view}:${p.id}`;
+  if (mounted?.key === key) return p.view.update?.(c);
+  unmountView();
+  const host = document.createElement("div");
+  host.className = "view-host";
+  $("#list").replaceChildren(host);
+  mounted = { key, p };
+  p.view.mount(host, c);
+}
+function unmountView() {
+  if (!mounted) return;
+  const { p } = mounted; mounted = null;
+  try { p.view.unmount?.(); } catch (e) { console.error(e); }
 }
 
 function renderNav() {
@@ -410,9 +432,13 @@ $("#themeBtn").onclick = () => {
 { const th = store.get("theme", null); if (th) document.documentElement.dataset.theme = th; }
 
 /* ── boot ──────────────────────────────────────── */
-// No push channel: re-sync every 20s while visible, and on return to the tab.
+// No push channel: every 5s while the tab is visible, ask whether anything
+// changed and reload only if it did. Also re-sync on return to the tab.
 const poll = () => { if (!document.hidden) refresh(); };
-setInterval(poll, 20_000);
+setInterval(async () => {
+  if (document.hidden || loading || document.querySelector("dialog[open]")) return;
+  try { const { version } = await req("GET", "version"); if (version !== state.version) refresh(); } catch {}
+}, 5_000);
 document.addEventListener("visibilitychange", poll);
 window.addEventListener("focus", poll);
 setInterval(() => { if (!document.querySelector("dialog[open]")) render(); }, 60_000);   // midnight rollover

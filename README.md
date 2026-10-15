@@ -111,7 +111,7 @@ Quick-add: `Dentist #health +Home !2 ^fri @3pm` (tag, collection, priority, date
 
 ### Adding a plugin
 
-Write `public/todo/plugins/<name>.js` (the comment in `plugins/index.js` lists what a plugin can define) and add it to `PLUGINS` there. Its `clean()` runs in the Worker too, so the API checks its metadata with no other server change. New plugins start switched off in existing collections.
+Write `public/todo/plugins/<name>.js` (the comment in `plugins/index.js` lists what a plugin can define) and add it to `PLUGINS` there. A simple view returns HTML from `render(ctx)` and is redrawn on every change. An interactive one (a zoomable graph, a canvas) defines `mount(el, ctx)` to build itself once, `update(ctx)` for changes, and `unmount()`, so it keeps its own state. Its `clean()` runs in the Worker too, so the API checks its metadata with no other server change. New plugins start switched off in existing collections.
 
 ### API
 
@@ -119,7 +119,8 @@ All endpoints act only on the signed-in user's own data.
 
 | Method | Path | Body |
 |---|---|---|
-| GET | `/todo/api/state` | → `{user, plugins, collections, items}` |
+| GET | `/todo/api/state` | → `{version, user, plugins, collections, items}` |
+| GET | `/todo/api/version` | → `{version}`, which changes whenever any of your data does. The page checks it every 5 seconds and reloads only when it changes, so edits from other devices appear within a few seconds |
 | POST | `/todo/api/items` | `{title, collection, notes, tags, meta}` |
 | PATCH | `/todo/api/items/<id>` | any of those, or `deleted`. Each `meta.<plugin>` is replaced whole; `null` removes it |
 | DELETE | `/todo/api/items/<id>` | |

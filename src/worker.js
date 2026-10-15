@@ -7,10 +7,10 @@
 // "todo" area before the page or API is served.
 import { protect, handleAuth, AUTH_PATHS, sameOrigin } from "./account.js";
 import { currentSession } from "./auth.js";
-import { state, createItem, updateItem, createCollection, updateCollection, readJson, BadRequest, ID } from "./drift.js";
+import { state, version, createItem, updateItem, createCollection, updateCollection, readJson, BadRequest, ID } from "./drift.js";
 
-// /todo/api/state, /todo/api/items[/<id>], /todo/api/collections[/<id>]
-const API = /^\/todo\/api\/(state|items|collections)(?:\/([^/]+))?\/?$/;
+// /todo/api/state, /todo/api/version, /todo/api/items[/<id>], /todo/api/collections[/<id>]
+const API = /^\/todo\/api\/(state|version|items|collections)(?:\/([^/]+))?\/?$/;
 
 export default {
   async fetch(request, env) {
@@ -52,6 +52,8 @@ async function todo(request, env, user, pathname) {
 
     // GET → the user's collections, items and the plugins there are
     if (kind === "state") return method === "GET" && !id ? json(await state(env, user)) : json({ error: "not found" }, 404);
+    // GET → a fingerprint that changes whenever any of the user's data does
+    if (kind === "version") return method === "GET" && !id ? json({ version: await version(env, user.id) }) : json({ error: "not found" }, 404);
 
     const [create, update] = kind === "items" ? [createItem, updateItem] : [createCollection, updateCollection];
     if (!id) {
