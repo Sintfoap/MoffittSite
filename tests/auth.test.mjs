@@ -4,6 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Browser, makeEnv, sql, sqlOne, run, enable2fa, codeAt, stepNow } from "./helpers.mjs";
 import { totpCode, verifyPassword, hashPassword } from "../src/crypto.js";
+import { MailError } from "../src/mail.js";
 
 const PW = "correct horse battery";
 
@@ -612,4 +613,21 @@ test("older databases get the email columns added", async () => {
     totp_last_step INTEGER NOT NULL DEFAULT 0, disabled INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL)`);
   assert.equal((await new Browser(env).signup("ryan")).status, 303);
   assert.deepEqual({ ...sqlOne(env, "SELECT email, email_verified FROM users") }, { email: null, email_verified: 0 });
+});
+
+test("a refused confirmation email says why and changes nothing", async () => {
+  let refuse = false;
+  const outbox = [];
+  const env = makeEnv({ MAILER: async m => { if (refuse) throw new MailError(403, "The sintfoap.xyz domain is not verified."); outbox.push(m); } });
+  const b = new Browser(env);
+  await b.signup("ryan");
+  await b.post("/account/email", { email: "ryan@example.com", password: PW });
+  await new Browser(env).get(outbox[0].text.match(/https:\/\/sintfoap\.test(\/login\/verify-email\?token=[\w-]+)/)[1]);
+
+  refuse = true;
+  const r = await b.post("/account/email", { email: "new@example.com", password: PW });
+  assert.equal(r.status, 502);
+  assert.match(r.text, /domain is not verified/);
+  assert.deepEqual({ ...sqlOne(env, "SELECT email, email_verified FROM users") }, { email: "ryan@example.com", email_verified: 1 });
+  assert.equal(sqlOne(env, "SELECT COUNT(*) AS n FROM email_tokens").n, 0);
 });

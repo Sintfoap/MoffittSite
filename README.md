@@ -83,7 +83,9 @@ Email goes out through [Resend](https://resend.com) (free for up to 3,000 emails
 1. **Create a Resend account** and add the domain `sintfoap.xyz` under **Domains**. Resend shows a few DNS records; add them in Cloudflare under **sintfoap.xyz → DNS → Records** and wait for Resend to say the domain is verified.
 2. **Create an API key** in Resend under **API Keys**, with "Sending access" for that domain.
 3. **Add it to the Worker** in the Cloudflare dashboard: **Workers & Pages → moffittsite → Settings → Variables and Secrets → Add**, type **Secret**, name `RESEND_API_KEY`, value the key.
-4. The sender address is `MAIL_FROM` in `wrangler.jsonc` (`no-reply@sintfoap.xyz`). Change it there if you want a different one; it must be on the verified domain.
+4. The sender address is `MAIL_FROM` in `wrangler.jsonc` (`Sintfoap <no-reply@sintfoap.xyz>`). Change it there if you want a different one; it must be on the verified domain.
+
+If adding an email fails, the account page shows Resend's reason, and the Worker's logs (**moffittsite → Observability**) have the full error. The usual one is that the domain isn't verified yet: until it is, Resend refuses every send from `sintfoap.xyz`.
 
 ## Adding another protected area
 

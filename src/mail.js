@@ -11,5 +11,15 @@ export async function sendMail(env, { to, subject, text }) {
     headers: { Authorization: `Bearer ${env.RESEND_API_KEY}`, "Content-Type": "application/json" },
     body: JSON.stringify({ from: env.MAIL_FROM, to: [to], subject, text }),
   });
-  if (!r.ok) throw new Error(`email send failed: ${r.status} ${(await r.text()).slice(0, 200)}`);
+  if (!r.ok) {
+    const body = (await r.text()).slice(0, 500);
+    let reason; try { reason = JSON.parse(body).message; } catch {}
+    throw new MailError(r.status, String(reason || body || "no details"));
+  }
+}
+
+// A send Resend refused. `reason` is Resend's own explanation, such as
+// "The sintfoap.xyz domain is not verified".
+export class MailError extends Error {
+  constructor(status, reason) { super(`email send failed: ${status} ${reason}`); this.status = status; this.reason = reason; }
 }
