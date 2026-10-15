@@ -10,29 +10,38 @@
     "binding": "ASSETS",
     // Only these paths run src/worker.js (sign-in check + todo API);
     // everything else is served straight from public/.
-    "run_worker_first": ["/todo", "/todo/*"]
+    "run_worker_first": [
+      "/todo", "/todo/*",
+      "/login", "/login/*", "/signup", "/logout",
+      "/account", "/account/*", "/admin", "/admin/*"
+    ]
   },
 
   "vars": {
-    // Zero Trust team domain (Zero Trust → Settings → Team name and domain).
-    "ACCESS_TEAM_DOMAIN": "raspy-mountain-56ea.cloudflareaccess.com",
-    // "Application Audience (AUD) Tag" of the Access application for /todo.
-    "ACCESS_AUD_TODO": "f50d49fdd56f05ff6ad2afe4a48d4330827d5288862c8a808dbfe9e2a7fc9484"
+    // "open" shows "Create an account"; "closed" stops new sign-ups.
+    "SIGNUPS": "open",
+    // Stops accepting new accounts at this many.
+    "MAX_USERS": "100",
+    // Password hashing strength (PBKDF2 rounds, at most 100000). Lower it if
+    // sign-ins fail with "exceeded resource limits" on the Workers free plan.
+    "PASSWORD_ITERATIONS": "100000"
   },
+  // Also needed, set as a secret (not here): ADMIN_CLAIM_CODE, which lets one
+  // account claim admin while there is none. See README.
 
-  // Branch builds run `wrangler preview`, which takes its settings from here
-  // instead of the production ones above. Left empty, /todo refuses everyone
-  // on preview URLs; the rest of the site previews normally.
+  // Branch builds run `wrangler preview`, which takes its settings from here.
+  // Previews have no database, so signing in there fails closed.
   "previews": {
     "vars": {
-      "ACCESS_TEAM_DOMAIN": "",
-      "ACCESS_AUD_TODO": ""
+      "SIGNUPS": "closed",
+      "MAX_USERS": "0",
+      "PASSWORD_ITERATIONS": "100000"
     }
-  }
+  },
 
-  // Todo storage (Storage & Databases → D1 → moffittsite). Previews don't
-  // get this binding, so test branches never touch real todo lists.
-  ,"d1_databases": [
+  // Accounts and todo lists (Storage & Databases → D1 → moffittsite).
+  // Previews don't get this binding, so test branches never touch real data.
+  "d1_databases": [
     { "binding": "TODO_DB", "database_name": "moffittsite", "database_id": "c34cd7d8-cf0d-460d-8b4f-c0e627a0dfb3" }
   ]
 }
