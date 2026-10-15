@@ -1,21 +1,21 @@
 // Routes for signing in and managing accounts:
-//   /login, /login/2fa, /signup, /logout, /account/*, /admin/*
+//   /login, /login/2fa, /signup, /logout, /dashboard, /account/*, /admin/*
 // plus protect(), which guards every signed-in area of the site.
 
 import { db, now } from "./db.js";
 import { randomToken, safeEqual } from "./crypto.js";
 import { renderSVG } from "./vendor/uqr.mjs";
 import {
-  AuthError, AREAS, getUser, createUser, setPassword, checkLogin, checkSignupAllowed, recordSignup,
+  AuthError, AREAS, APPS, getUser, createUser, setPassword, checkLogin, checkSignupAllowed, recordSignup,
   createSession, currentSession, endSession, endUserSessions, sessionCookie, clearCookie,
   startTotp, otpauthUri, confirmTotp, replaceRecoveryCodes, disableTotp, checkSecondFactor, recoveryCodesLeft,
   adminExists, cleanDisplayName, clientIp,
 } from "./auth.js";
 import {
-  html, loginPage, signupPage, mfaPage, accountPage, changePasswordRequiredPage, adminPage, adminClaimPage, messagePage,
+  html, loginPage, signupPage, mfaPage, dashboardPage, accountPage, changePasswordRequiredPage, adminPage, adminClaimPage, messagePage,
 } from "./pages.js";
 
-const DEFAULT_NEXT = "/todo/";
+const DEFAULT_NEXT = "/dashboard";
 
 // Only same-site paths, so a crafted link can't bounce people elsewhere after login.
 export function safeNext(raw) {
@@ -69,7 +69,7 @@ export async function protect(request, env, area, inner) {
 }
 
 // ── router ─────────────────────────────────────────────────────────────────
-export const AUTH_PATHS = /^\/(login|signup|logout|account|admin)(\/|$)/;
+export const AUTH_PATHS = /^\/(login|signup|logout|dashboard|account|admin)(\/|$)/;
 
 export async function handleAuth(request, env) {
   const { pathname, searchParams } = new URL(request.url);
@@ -81,6 +81,7 @@ export async function handleAuth(request, env) {
     if (pathname === "/login/2fa") return await secondFactor(request, env, method, searchParams);
     if (pathname === "/signup") return method === "POST" ? await signupPost(request, env) : await signupGet(request, env, searchParams);
     if (pathname === "/logout") { await endSession(env, request); return redirect("/login", clearCookie()); }
+    if (pathname === "/dashboard" || pathname === "/dashboard/") return await dashboard(request, env);
     if (pathname === "/account" || pathname.startsWith("/account/")) return await account(request, env, pathname, method);
     if (pathname === "/admin/claim") return await adminClaim(request, env, method);
     if (pathname === "/admin" || pathname.startsWith("/admin/")) {
@@ -155,6 +156,18 @@ async function signupPost(request, env) {
   await recordSignup(env, request);
   await endSession(env, request);
   return redirect(next, sessionCookie(await createSession(env, request, user.id)));
+}
+
+// ── dashboard: home for a signed-in account ────────────────────────────────
+async function dashboard(request, env) {
+  const s = await currentSession(env, request);
+  if (!s) return redirect(`/login?next=${encodeURIComponent("/dashboard")}`);
+  const { user } = s;
+  // Same rule as protect(): finish account setup before anything else.
+  if (user.must_change_pw || (user.areas.has("admin") && !user.totp_secret)) return redirect("/account");
+  const d = await db(env);
+  const sessionCount = (await d.prepare("SELECT COUNT(*) AS n FROM sessions WHERE user_id = ? AND stage = 'full'").bind(user.id).first()).n;
+  return html(dashboardPage({ user, apps: APPS.filter(a => user.areas.has(a.area)), sessionCount }));
 }
 
 // ── account page ───────────────────────────────────────────────────────────

@@ -13,7 +13,7 @@
     "run_worker_first": [
       "/todo", "/todo/*",
       "/login", "/login/*", "/signup", "/logout",
-      "/account", "/account/*", "/admin", "/admin/*"
+      "/dashboard", "/dashboard/*", "/account", "/account/*", "/admin", "/admin/*"
     ]
   },
 

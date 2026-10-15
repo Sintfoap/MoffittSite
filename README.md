@@ -9,10 +9,10 @@ public/          the website, served as static files
   todo/            Drift todo app (signed-in users only)
 src/             the Worker: runs only for the paths in run_worker_first
   worker.js        routing: sign-in pages, then /todo behind protect()
-  account.js       /login /signup /logout /account /admin, and protect()
+  account.js       /login /signup /logout /dashboard /account /admin, and protect()
   auth.js          accounts, sessions, login throttling, two-factor
   crypto.js        password hashing (PBKDF2) and authenticator codes (TOTP)
-  pages.js         the sign-in and account pages
+  pages.js         the sign-in, dashboard and account pages
   db.js            D1 tables (created on first use)
   tasks.js         todo storage, one list per account
   vendor/uqr.mjs   QR codes for two-factor setup (MIT)
@@ -31,7 +31,7 @@ The site is a Cloudflare **Worker** with static assets, deployed by Workers Buil
 | Deploy command | `npx wrangler deploy` |
 | Root directory | *(empty)* |
 
-`wrangler.jsonc` holds everything else. The `name` in it must match the Worker's name in the dashboard. Only the paths in `run_worker_first` (sign-in pages, `/account`, `/admin`, `/todo`) run any code; everything else is served straight from `public/`.
+`wrangler.jsonc` holds everything else. The `name` in it must match the Worker's name in the dashboard. Only the paths in `run_worker_first` (sign-in pages, `/dashboard`, `/account`, `/admin`, `/todo`) run any code; everything else is served straight from `public/`.
 
 Settings in `wrangler.jsonc` replace dashboard settings on every deploy. Change variables and bindings there, not in the dashboard.
 
@@ -46,6 +46,7 @@ The site has its own login. There's no Cloudflare Access.
 - **Sessions** use a `__Host-sid` cookie: HttpOnly, Secure and SameSite=Lax. The database stores only its SHA-256. Sessions end after 30 days, or after 7 days unused. Changing your password signs out your other devices.
 - **Throttling:** 5 wrong passwords lock that username for 1, then 2, 4 and 8, then 15 minutes. 30 failures from one address lock that address for 15 minutes. Each address can create 5 accounts per hour. Wrong usernames and wrong passwords give the same answer.
 - **Two-factor** uses authenticator-app codes (TOTP) plus 10 single-use recovery codes, stored hashed. It's optional for normal accounts and required for admins: an admin without it is sent to `/account` until it's set up.
+- **Dashboard:** `/dashboard` is where people land after signing in. It shows a card for each app their areas give them (from `APPS` in `src/auth.js`) and links to `/account` for password, two-factor and session settings.
 - **Areas** (`user_areas` table) decide who can use which part of the site. `protect(request, env, "<area>", inner)` in `src/account.js` lets only signed-in accounts with that area through. Pages redirect to `/login`; API calls get 401 or 403.
 - **Forms and API writes** sent from another website are refused, based on the `Origin` and `Sec-Fetch-Site` headers.
 
@@ -72,7 +73,7 @@ It also lists todo tasks whose owner isn't an account, such as lists from the ol
 ## Adding another protected area
 
 1. Add `"/<area>"` and `"/<area>/*"` to `run_worker_first` in `wrangler.jsonc`.
-2. Add the area's name to `AREAS` in `src/auth.js`. Add it to `DEFAULT_AREAS` too if new accounts should get it.
+2. Add the area's name to `AREAS` in `src/auth.js`. Add it to `DEFAULT_AREAS` too if new accounts should get it, and add an entry to `APPS` so it shows on the dashboard.
 3. In `src/worker.js`, route those paths through `protect(request, env, "<area>", user => ...)`, the same way `/todo` is.
 4. Give people the area from `/admin`.
 
