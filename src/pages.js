@@ -194,7 +194,7 @@ export function adminPage({ user, users, orphans, areas, error, notice, tempPass
       <td>${areas.map(a => u.areas.includes(a)
         ? (self && a === "admin" ? `<span class="tag">${a}</span>` : post("area", `${a} ✕`, { user_id: u.id, area: a, op: "revoke" }, "quiet small"))
         : post("area", `+ ${a}`, { user_id: u.id, area: a, op: "grant" }, "quiet small")).join("")}</td>
-      <td>${u.disabled ? `<span class="tag off">disabled</span>` : ""}${u.totp ? `<span class="tag">2FA</span>` : ""}${u.must_change_pw ? `<span class="tag">must change pw</span>` : ""}<br><span class="hint">${u.sessions} session${u.sessions === 1 ? "" : "s"} · ${u.tasks} task${u.tasks === 1 ? "" : "s"}</span></td>
+      <td>${u.disabled ? `<span class="tag off">disabled</span>` : ""}${u.totp ? `<span class="tag">2FA</span>` : ""}${u.must_change_pw ? `<span class="tag">must change pw</span>` : ""}<br><span class="hint">${u.sessions} session${u.sessions === 1 ? "" : "s"} · ${u.tasks} Drift item${u.tasks === 1 ? "" : "s"}</span></td>
       <td>${self ? `<span class="hint">you</span>` : [
         post(u.disabled ? "enable" : "disable", u.disabled ? "Enable" : "Disable", { user_id: u.id }, u.disabled ? "quiet small" : "danger small"),
         post("reset-password", "Reset password", { user_id: u.id }),

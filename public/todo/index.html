@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Drift Tasks</title>
+<title>Drift</title>
 <meta name="theme-color" content="#1f2030">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -43,8 +43,10 @@ body {
 }
 button, input, textarea, select { font: inherit; color: inherit; }
 button { cursor: pointer; }
+a { color: var(--accent); }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
 .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+.hint { color: var(--faint); font-size: 13px; margin: 6px 2px; }
 
 /* ── shell ───────────────────────────────────────── */
 .app { display: grid; grid-template-columns: 248px minmax(0, 1fr); min-height: 100vh; }
@@ -66,34 +68,36 @@ aside {
 .nav button:hover { background: var(--raise); color: var(--ink); }
 .nav button[aria-current="true"] { background: var(--accent-soft); color: var(--ink); font-weight: 500; }
 .nav button[aria-current="true"] .ico { color: var(--accent); }
+.nav button span:nth-child(2) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .nav .ico { display: grid; place-items: center; color: var(--faint); }
 .nav .n { font-size: 12.5px; color: var(--faint); font-variant-numeric: tabular-nums; }
 .nav .n.hot { color: var(--red); font-weight: 600; }
-.sync {
+.nav .add { color: var(--faint); }
+.me {
   margin-top: auto; padding: 10px; border-radius: var(--radius-m); border: 1px solid var(--line);
-  font-size: 12.5px; color: var(--muted); display: grid; gap: 2px; background: var(--bg);
+  font-size: 12.5px; color: var(--muted); display: grid; gap: 6px; background: var(--bg);
 }
-.sync .row { display: flex; align-items: center; gap: 8px; color: var(--ink); font-weight: 500; }
-.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); flex: none; }
-.dot.live { background: var(--green); box-shadow: 0 0 0 3px color-mix(in srgb, var(--green) 22%, transparent); }
-.dot.off { background: var(--red); }
-.dot.demo { background: var(--amber); }
-.sync button { justify-self: start; margin-top: 6px; padding: 0; border: 0; background: none; color: var(--accent); font-size: 12.5px; font-weight: 500; }
+.me b { color: var(--ink); font-weight: 500; font-size: 13.5px; }
+.me .links { display: flex; gap: 12px; flex-wrap: wrap; }
+.me a, .me button { padding: 0; border: 0; background: none; color: var(--accent); font-size: 12.5px; font-weight: 500; text-decoration: none; }
 
-main { padding: 44px clamp(16px, 5vw, 64px) 120px; max-width: 860px; width: 100%; }
+main { padding: 44px clamp(16px, 5vw, 64px) 120px; max-width: 900px; width: 100%; }
 
-/* ── heading: the one loud thing ────────────────── */
-.head { margin-bottom: 26px; }
+/* ── heading ────────────────────────────────────── */
+.head { margin-bottom: 20px; }
 .head h1 {
   margin: 0; font: 380 clamp(38px, 6vw, 58px)/1.02 var(--serif); letter-spacing: -.02em;
-  font-variation-settings: "opsz" 144;
+  font-variation-settings: "opsz" 144; overflow-wrap: anywhere;
 }
 .head .sub { margin-top: 8px; color: var(--muted); display: flex; gap: 14px; flex-wrap: wrap; align-items: baseline; }
-.tide { position: relative; height: 3px; background: var(--line); border-radius: 3px; margin-top: 18px; overflow: hidden; }
-.tide i {
-  position: absolute; inset: 0 auto 0 0; width: 0; background: var(--accent); border-radius: 3px;
-  transition: width .9s cubic-bezier(.2,.8,.2,1);
+.tabs { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-top: 16px; }
+.tabs button {
+  display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); background: none;
+  border-radius: 99px; padding: 5px 12px; font-size: 13.5px; color: var(--muted);
 }
+.tabs button:hover { color: var(--ink); border-color: var(--line-2); }
+.tabs button[aria-pressed="true"] { background: var(--raise); color: var(--ink); border-color: var(--accent); font-weight: 500; }
+.tabs .gear { border-style: dashed; }
 
 /* ── composer ───────────────────────────────────── */
 .composer {
@@ -110,7 +114,7 @@ main { padding: 44px clamp(16px, 5vw, 64px) 120px; max-width: 860px; width: 100%
   padding: 8px 14px; font-weight: 600; font-size: 14px;
 }
 .composer .go:disabled { opacity: .35; cursor: default; }
-.preview { min-height: 26px; padding: 7px 4px 0; display: flex; gap: 6px; flex-wrap: wrap; font-size: 12.5px; color: var(--faint); }
+.preview { min-height: 26px; padding: 7px 4px 0; display: flex; gap: 10px; flex-wrap: wrap; font-size: 12.5px; color: var(--faint); }
 .toolbar { display: flex; gap: 10px; align-items: center; margin: 12px 0 6px; }
 .search {
   flex: 1; display: flex; align-items: center; gap: 8px; color: var(--faint);
@@ -120,16 +124,17 @@ main { padding: 44px clamp(16px, 5vw, 64px) 120px; max-width: 860px; width: 100%
 .search input { flex: 1; border: 0; outline: 0; background: none; padding: 7px 0; font-size: 14px; }
 .ghost { border: 0; background: none; color: var(--muted); font-size: 13px; padding: 6px 8px; border-radius: var(--radius-s); }
 .ghost:hover { background: var(--surface); color: var(--ink); }
+.ghost.tiny { padding: 2px 6px; font-size: 12px; display: inline-grid; place-items: center; }
 
 /* ── chips ──────────────────────────────────────── */
 .chip { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; font-size: 12.5px; color: var(--muted); }
 .chip.due svg { opacity: .8; }
 .chip.over { color: var(--red); font-weight: 500; }
 .chip.today { color: var(--accent); font-weight: 500; }
-.chip.proj { color: var(--violet); }
+.chip.col { color: var(--violet); }
 .chip.tag { color: var(--blue); }
 
-/* ── list ───────────────────────────────────────── */
+/* ── item rows ──────────────────────────────────── */
 .group { margin-top: 22px; }
 .group h2 {
   margin: 0 0 4px; padding: 0 2px; font-size: 13px; font-weight: 600; color: var(--muted);
@@ -137,21 +142,19 @@ main { padding: 44px clamp(16px, 5vw, 64px) 120px; max-width: 860px; width: 100%
 }
 .group h2 small { font-weight: 400; color: var(--faint); font-size: 12.5px; }
 .group.overdue h2 { color: var(--red); }
-ul.tasks { list-style: none; margin: 0; padding: 0; }
-.task {
-  position: relative; border-radius: var(--radius-m);
-  transition: background .15s, opacity .4s, transform .4s;
-}
-.task + .task::before { content: ""; position: absolute; top: 0; left: 44px; right: 8px; height: 1px; background: var(--line); }
-.task.open + .task::before, .task.open::before, .task.sel + .task::before, .task.sel::before { opacity: 0; }
-.task .line { display: grid; grid-template-columns: 34px 1fr; gap: 4px; padding: 9px 8px 9px 6px; align-items: start; }
-.task:hover { background: var(--surface); }
-.task.sel { background: var(--surface); box-shadow: inset 2px 0 0 var(--accent); }
-.task.open { background: var(--raise); box-shadow: var(--shadow); margin: 6px 0; }
-.task .pbar { position: absolute; left: 0; top: 12px; bottom: 12px; width: 3px; border-radius: 3px; }
+ul.items { list-style: none; margin: 0; padding: 0; }
+.item { position: relative; border-radius: var(--radius-m); transition: background .15s, opacity .4s, transform .4s; }
+.item + .item::before { content: ""; position: absolute; top: 0; left: calc(44px + var(--depth, 0) * 26px); right: 8px; height: 1px; background: var(--line); }
+.item.sel + .item::before, .item.sel::before { opacity: 0; }
+.item .line { display: grid; grid-template-columns: 34px 1fr auto; gap: 4px; padding: 9px 8px 9px calc(6px + var(--depth, 0) * 26px); align-items: start; }
+.item:hover { background: var(--surface); }
+.item.sel { background: var(--surface); box-shadow: inset 2px 0 0 var(--accent); }
+.item .pbar { position: absolute; left: 0; top: 12px; bottom: 12px; width: 3px; border-radius: 3px; }
 .p3 .pbar { background: var(--red); } .p2 .pbar { background: var(--amber); } .p1 .pbar { background: var(--blue); }
+.lead { display: grid; justify-items: start; padding-left: 6px; }
+.bullet { width: 6px; height: 6px; margin: 9px 0 0 8px; border-radius: 50%; background: var(--line-2); }
 .check {
-  width: 22px; height: 22px; margin: 1px 0 0 6px; border-radius: 50%; padding: 0;
+  width: 22px; height: 22px; margin-top: 1px; border-radius: 50%; padding: 0;
   border: 1.6px solid var(--line-2); background: none; display: grid; place-items: center;
   transition: border-color .15s, background .2s;
 }
@@ -159,45 +162,41 @@ ul.tasks { list-style: none; margin: 0; padding: 0; }
 .check svg { opacity: 0; transform: scale(.4); transition: opacity .2s, transform .25s cubic-bezier(.3,1.6,.5,1); }
 .done .check, .completing .check { background: var(--green); border-color: var(--green); }
 .done .check svg, .completing .check svg { opacity: 1; transform: scale(1); }
-.completing { opacity: .0; transform: translateX(12px); transition-delay: .45s; }
+.completing { opacity: 0; transform: translateX(12px); transition-delay: .45s; }
 .body { min-width: 0; cursor: pointer; }
 .title { overflow-wrap: anywhere; }
 .done .title { color: var(--faint); text-decoration: line-through; text-decoration-color: var(--line-2); }
 .meta { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 1px; }
 .meta:empty { display: none; }
 .done .meta .chip { color: var(--faint); }
-
-/* ── inline editor ──────────────────────────────── */
-.editor { display: grid; gap: 14px; padding: 4px 16px 16px 46px; animation: open .2s ease-out; }
-.task.open .body { visibility: hidden; height: 24px; overflow: hidden; }
-.task.open .editor { margin-top: -38px; }
-@keyframes open { from { opacity: 0; transform: translateY(-4px); } }
-.editor input[type=text], .editor textarea, .editor input[type=date] {
-  width: 100%; padding: 8px 10px; background: var(--bg); border: 1px solid var(--line);
-  border-radius: var(--radius-s); outline: 0;
-}
-.editor input:focus, .editor textarea:focus { border-color: var(--accent); }
-.editor .t { font-size: 17px; font-weight: 500; }
-.editor textarea { min-height: 76px; resize: vertical; line-height: 1.5; }
-.editor label { display: grid; gap: 5px; font-size: 12.5px; color: var(--muted); }
-.editor .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
-.seg { justify-self: start; align-self: start; display: inline-flex; border: 1px solid var(--line); border-radius: var(--radius-s); overflow: hidden; background: var(--bg); }
-.seg button { border: 0; background: none; padding: 7px 11px; font-size: 13px; color: var(--muted); }
-.seg button + button { border-left: 1px solid var(--line); }
-.seg button[aria-pressed="true"] { background: var(--raise); color: var(--ink); font-weight: 600; }
-.seg button[data-p="3"][aria-pressed="true"] { color: var(--red); }
-.seg button[data-p="2"][aria-pressed="true"] { color: var(--amber); }
-.seg button[data-p="1"][aria-pressed="true"] { color: var(--blue); }
-.quickdates { display: flex; gap: 6px; flex-wrap: wrap; }
-.quickdates button { border: 1px solid var(--line); background: var(--bg); border-radius: 99px; padding: 3px 10px; font-size: 12.5px; color: var(--muted); }
-.quickdates button:hover { border-color: var(--accent); color: var(--ink); }
-.editor .foot { display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: var(--faint); }
-.danger { border: 0; background: none; color: var(--red); font-size: 13px; padding: 6px 0; }
+.trail { display: flex; gap: 2px; opacity: 0; transition: opacity .15s; }
+.item:hover .trail, .item.sel .trail, .trail:focus-within { opacity: 1; }
 
 .empty { margin-top: 48px; color: var(--muted); max-width: 40ch; }
 .empty b { display: block; color: var(--ink); font-weight: 500; margin-bottom: 4px; }
 
-/* ── toast / dialog ─────────────────────────────── */
+/* ── calendar (Events plugin) ───────────────────── */
+.cal { margin-top: 18px; }
+.cal-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.cal-head h2 { margin: 0; font: 560 20px/1.2 var(--serif); }
+.cal-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; }
+.cal .wd { font-size: 12px; color: var(--faint); text-align: center; padding-bottom: 2px; }
+.cal .day {
+  min-height: 78px; display: flex; flex-direction: column; gap: 2px; align-items: stretch; text-align: left;
+  padding: 5px 6px; border: 1px solid var(--line); border-radius: var(--radius-s); background: var(--surface); overflow: hidden;
+}
+.cal .day:hover { border-color: var(--line-2); }
+.cal .day.out { opacity: .45; }
+.cal .day.now .dn { background: var(--accent); color: var(--accent-ink); border-radius: 99px; padding: 0 6px; }
+.cal .day.sel { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.cal .dn { font-size: 12.5px; font-weight: 600; align-self: flex-start; }
+.cal .ev { font-size: 11.5px; line-height: 1.3; padding: 1px 4px; border-radius: 4px; background: var(--accent-soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cal .ev.past { opacity: .55; text-decoration: line-through; }
+.cal .more { font-size: 11px; color: var(--faint); }
+.cal .dots { display: none; gap: 3px; }
+.cal .dots i { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); }
+
+/* ── toast / dialogs ────────────────────────────── */
 .toast {
   position: fixed; left: 50%; bottom: 26px; transform: translate(-50%, 20px); opacity: 0; pointer-events: none;
   background: var(--ink); color: var(--bg); padding: 10px 14px; border-radius: var(--radius-m);
@@ -207,17 +206,38 @@ ul.tasks { list-style: none; margin: 0; padding: 0; }
 .toast button { border: 0; background: none; color: var(--accent); font-weight: 600; padding: 0; }
 dialog {
   border: 1px solid var(--line); border-radius: var(--radius-l); background: var(--raise); color: var(--ink);
-  padding: 22px; width: min(440px, calc(100vw - 32px)); box-shadow: var(--shadow);
+  padding: 22px; width: min(520px, calc(100vw - 32px)); max-height: calc(100vh - 48px); box-shadow: var(--shadow);
 }
 dialog::backdrop { background: rgba(20,20,32,.45); }
 dialog h2 { margin: 0 0 6px; font: 560 22px/1.2 var(--serif); }
 dialog p { margin: 0 0 16px; color: var(--muted); font-size: 14px; }
-dialog label { display: grid; gap: 5px; font-size: 12.5px; color: var(--muted); margin-bottom: 12px; }
-dialog input { padding: 9px 10px; border: 1px solid var(--line); border-radius: var(--radius-s); background: var(--bg); outline: 0; }
-dialog input:focus { border-color: var(--accent); }
-dialog .acts { display: flex; justify-content: flex-end; gap: 8px; margin-top: 6px; }
+dialog form { display: grid; gap: 14px; }
+dialog label { display: grid; gap: 5px; font-size: 12.5px; color: var(--muted); }
+dialog label.inline { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--ink); }
+dialog input:not([type=checkbox]), dialog textarea, dialog select {
+  width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--radius-s); background: var(--bg); outline: 0;
+}
+dialog input:focus, dialog textarea:focus, dialog select:focus { border-color: var(--accent); }
+dialog textarea { min-height: 76px; resize: vertical; line-height: 1.5; }
+dialog .t { font-size: 17px; font-weight: 500; }
+dialog .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+dialog fieldset { border: 1px solid var(--line); border-radius: var(--radius-m); padding: 10px 14px 14px; margin: 0; display: grid; gap: 10px; }
+dialog fieldset.off { border-style: dashed; }
+dialog legend { display: flex; gap: 6px; align-items: center; padding: 0 6px; font-size: 13px; font-weight: 600; color: var(--ink); }
+dialog fieldset .hint { margin: 0; }
+dialog .row { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+dialog .acts { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-top: 4px; }
+.plug { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; align-items: start; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--radius-m); cursor: pointer; }
+.plug input { margin-top: 4px; }
+.plug b { color: var(--ink); font-size: 14px; font-weight: 500; }
+.plug span { grid-column: 2; font-size: 13px; }
+.quickdates { display: flex; gap: 6px; flex-wrap: wrap; }
+.quickdates button { border: 1px solid var(--line); background: var(--bg); border-radius: 99px; padding: 3px 10px; font-size: 12.5px; color: var(--muted); }
+.quickdates button:hover { border-color: var(--accent); color: var(--ink); }
+.danger { border: 0; background: none; color: var(--red); font-size: 13px; padding: 6px 0; }
 .btn { border: 1px solid var(--line); background: var(--bg); padding: 8px 14px; border-radius: 8px; font-weight: 500; font-size: 14px; }
 .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.link { border: 0; background: none; padding: 0; color: var(--accent); font-size: 12.5px; font-weight: 500; }
 kbd { font: 500 11.5px var(--sans); padding: 1px 6px; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 5px; background: var(--bg); color: var(--muted); }
 .keys { display: grid; grid-template-columns: auto 1fr; gap: 8px 14px; font-size: 14px; align-items: center; }
 
@@ -231,27 +251,29 @@ kbd { font: 500 11.5px var(--sans); padding: 1px 6px; border: 1px solid var(--li
     background: color-mix(in srgb, var(--surface) 92%, transparent); backdrop-filter: blur(10px);
   }
   aside::-webkit-scrollbar { display: none; }
-  .brand b, .nav h3, .sync .meta-line, .sync button.cfg-l { display: none; }
+  .brand b, .nav h3, .me .who { display: none; }
   .brand { padding: 0; }
-  .nav { flex-direction: row; gap: 4px; }
+  .nav { flex-direction: row; gap: 4px; flex: none; }
+  .nav button span:nth-child(2) { overflow: visible; }
   .nav button { grid-template-columns: auto auto; white-space: nowrap; padding: 6px 10px; border-radius: 99px; border: 1px solid var(--line); }
   .nav button .ico { display: none; }
   .nav button .n:empty { display: none; }
-  .nav.views button { grid-template-columns: auto auto; }
-  .sync { margin: 0; padding: 6px 10px; border-radius: 99px; flex: none; }
-  .sync .row span.lbl { display: none; }
+  .me { margin: 0; padding: 6px 12px; border-radius: 99px; flex: none; }
   main { padding: 24px 16px 140px; }
   .composer-wrap {
     position: fixed; left: 0; right: 0; bottom: 0; z-index: 20; padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
     background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(12px); border-top: 1px solid var(--line);
   }
   .preview { min-height: 0; }
-  .editor { padding: 4px 12px 14px 44px; }
-  .editor .grid { grid-template-columns: 1fr; }
+  .item .line { padding-left: calc(6px + var(--depth, 0) * 16px); }
+  .trail { opacity: 1; }
+  dialog .grid { grid-template-columns: 1fr; }
+  .cal .day { min-height: 46px; padding: 4px; align-items: center; }
+  .cal .ev, .cal .more { display: none; }
+  .cal .dots { display: flex; }
   .toast { bottom: 96px; }
   .hide-m { display: none; }
 }
-@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
 </style>
 </head>
 <body>
@@ -264,21 +286,19 @@ kbd { font: 500 11.5px var(--sans); padding: 1px 6px; border: 1px solid var(--li
       </svg>
       <b>Drift</b>
     </div>
-    <nav class="nav views" id="views" aria-label="Views"></nav>
-    <nav class="nav" id="projects" aria-label="Projects"></nav>
-    <nav class="nav" id="tags" aria-label="Tags"></nav>
-    <div class="sync" id="sync">
-      <div class="row"><span class="dot" id="dot"></span><span class="lbl" id="syncLabel">Connecting</span></div>
-      <div class="meta-line" id="syncMeta"></div>
-      <button class="cfg-l" id="cfgBtn">Sync settings</button>
+    <nav class="nav" id="views" aria-label="Views"></nav>
+    <nav class="nav" id="cols" aria-label="Collections"></nav>
+    <div class="me">
+      <span class="who">Signed in as <b id="who"></b></span>
+      <span class="links"><a href="/account">Account</a><a href="/logout">Sign out</a></span>
     </div>
   </aside>
 
   <main>
     <header class="head">
-      <h1 id="h1">Today</h1>
+      <h1 id="h1">Drift</h1>
       <div class="sub" id="sub"></div>
-      <div class="tide" id="tide" aria-hidden="true"><i></i></div>
+      <div class="tabs" id="tabs"></div>
     </header>
 
     <div class="composer-wrap">
@@ -286,8 +306,8 @@ kbd { font: 500 11.5px var(--sans); padding: 1px 6px; border: 1px solid var(--li
         <span class="plus" aria-hidden="true">
           <svg width="18" height="18" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
         </span>
-        <label class="sr" for="add">Add a task</label>
-        <input id="add" placeholder="Add a task — try “Call Sam #family +home !2 ^fri”" enterkeyhint="done">
+        <label class="sr" for="add">Add an item</label>
+        <input id="add" placeholder="Add an item — try “Dentist #health ^fri @3pm”" enterkeyhint="done">
         <button class="go" id="go" disabled>Add</button>
       </form>
       <div class="preview" id="preview"></div>
@@ -296,7 +316,7 @@ kbd { font: 500 11.5px var(--sans); padding: 1px 6px; border: 1px solid var(--li
     <div class="toolbar">
       <label class="search">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="11" cy="11" r="6.5" stroke="currentColor" stroke-width="2"/><path d="m16 16 4 4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-        <span class="sr">Filter tasks</span>
+        <span class="sr">Filter items</span>
         <input id="q" placeholder="Filter">
       </label>
       <button class="ghost hide-m" id="keysBtn" title="Keyboard shortcuts">Shortcuts <kbd>?</kbd></button>
@@ -311,565 +331,30 @@ kbd { font: 500 11.5px var(--sans); padding: 1px 6px; border: 1px solid var(--li
 
 <div class="toast" id="toast" role="status"><span id="toastMsg"></span><button id="toastBtn" hidden>Undo</button></div>
 
-<dialog id="cfg">
-  <form method="dialog" id="cfgForm">
-    <h2>Sync settings</h2>
-    <p>Point this page at any machine running <code>drift web</code>. Leave the address empty to use the server this page came from, or this browser’s own storage if there isn’t one.</p>
-    <label>Server address<input id="cfgUrl" placeholder="http://laptop.local:7878" inputmode="url"></label>
-    <label>Access token<input id="cfgTok" placeholder="Only needed if the server uses --token"></label>
-    <div class="acts"><button class="btn" value="cancel">Cancel</button><button class="btn primary" value="save" id="cfgSave">Connect</button></div>
-  </form>
-</dialog>
+<dialog id="itemDlg"><form method="dialog" id="itemForm"></form></dialog>
+<dialog id="colDlg"><form method="dialog" id="colForm"></form></dialog>
 
 <dialog id="keys">
   <form method="dialog">
     <h2>Keyboard</h2>
     <div class="keys">
-      <kbd>n</kbd><span>Add a task</span>
-      <kbd>j</kbd><span>Next task</span>
-      <kbd>k</kbd><span>Previous task</span>
-      <kbd>x</kbd><span>Mark done or not done</span>
-      <kbd>e</kbd><span>Open the selected task</span>
-      <kbd>1</kbd><span>Set priority 1 to 3, or 0 to clear</span>
-      <kbd>t</kbd><span>Move to today</span>
-      <kbd>⌫</kbd><span>Delete the selected task</span>
+      <kbd>n</kbd><span>Add an item</span>
+      <kbd>j</kbd><span>Next item</span>
+      <kbd>k</kbd><span>Previous item</span>
+      <kbd>e</kbd><span>Open the selected item</span>
+      <kbd>x</kbd><span>Check off (Checklist)</span>
+      <kbd>1</kbd><span>Set priority 1 to 3, or 0 to clear (Checklist)</span>
+      <kbd>t</kbd><span>Move to today (Events)</span>
+      <kbd>tab</kbd><span>Nest under the item above; shift+tab to un-nest (List)</span>
+      <kbd>alt ↑</kbd><span>Move up or down (List)</span>
+      <kbd>⌫</kbd><span>Delete the selected item</span>
       <kbd>/</kbd><span>Filter</span>
-      <kbd>g</kbd><span>Then t, u, i, a or d to switch view</span>
       <kbd>esc</kbd><span>Close or clear</span>
     </div>
-    <div class="acts"><button class="btn primary">Done</button></div>
+    <div class="acts"><span></span><button class="btn primary">Done</button></div>
   </form>
 </dialog>
 
-<script>
-"use strict";
-/* ════════════════════════════════════════════════════════════════════════
-   Drift web. Two backends behind one interface:
-     • Remote  — talks to `drift web` (REST + Server-Sent Events)
-     • Local   — the same op-log/LWW model, kept in this browser (demo/offline)
-   ════════════════════════════════════════════════════════════════════════ */
-
-const $ = (s, el = document) => el.querySelector(s);
-const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-const store = {
-  get(k, d) { try { const v = localStorage.getItem("drift:" + k); return v == null ? d : JSON.parse(v); } catch { return d; } },
-  set(k, v) { try { localStorage.setItem("drift:" + k, JSON.stringify(v)); } catch {} }
-};
-
-/* ── dates ─────────────────────────────────────── */
-const iso = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-const today = () => iso(new Date());
-const addDays = n => { const d = new Date(); d.setDate(d.getDate() + n); return iso(d); };
-const WD = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
-function parseDate(s) {
-  s = String(s || "").trim().toLowerCase(); if (!s) return null;
-  if (["tod", "today", "now"].includes(s)) return today();
-  if (["tom", "tmr", "tomorrow"].includes(s)) return addDays(1);
-  if (["week", "nextweek", "next-week"].includes(s)) { const d = new Date().getDay(); return addDays(((8 - d) % 7) || 7); }
-  let m = s.match(/^\+?(\d+)([dw])$/); if (m) return addDays(+m[1] * (m[2] === "w" ? 7 : 1));
-  const wi = WD.findIndex(w => s.length >= 3 && w.startsWith(s.slice(0, 3)));
-  if (wi >= 0) { const d = new Date().getDay(); return addDays(((wi - d + 7) % 7) || 7); }
-  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
-  m = s.match(/^(\d{1,2})[\/-](\d{1,2})$/);
-  if (m) { const y = new Date().getFullYear(); let d = new Date(y, m[1] - 1, m[2]); if (iso(d) < today()) d = new Date(y + 1, m[1] - 1, m[2]); return iso(d); }
-  return null;
-}
-function parseQuick(text) {
-  const f = {}, tags = [], words = [];
-  for (const w of text.split(/\s+/).filter(Boolean)) {
-    if (w.length > 1 && w[0] === "#") tags.push(w.slice(1).toLowerCase());
-    else if (w.length > 1 && w[0] === "+") f.project = w.slice(1);
-    else if (/^(!{1,3}|![0-3])$/.test(w)) f.priority = /\d/.test(w[1]) ? +w[1] : w.length;
-    else if (w.length > 1 && w[0] === "^" && parseDate(w.slice(1))) f.due = parseDate(w.slice(1));
-    else words.push(w);
-  }
-  if (tags.length) f.tags = tags;
-  return [words.join(" "), f];
-}
-function bucket(t) {
-  if (t.done) return "done"; if (!t.due) return "someday";
-  const td = today(); return t.due < td ? "overdue" : t.due === td ? "today" : "upcoming";
-}
-function niceDue(d) {
-  if (!d) return "";
-  const a = new Date(d + "T00:00"), b = new Date(today() + "T00:00");
-  const n = Math.round((a - b) / 864e5);
-  if (n === 0) return "Today"; if (n === 1) return "Tomorrow"; if (n === -1) return "Yesterday";
-  if (n < 0) return `${-n} days late`;
-  if (n < 7) return a.toLocaleDateString(undefined, { weekday: "long" });
-  return a.toLocaleDateString(undefined, { month: "short", day: "numeric", year: a.getFullYear() !== b.getFullYear() ? "numeric" : undefined });
-}
-
-/* ── backend: local op-log (mirrors drift/core.py) ─ */
-class LocalBackend {
-  constructor() {
-    this.kind = "demo";
-    this.node = store.get("node") || ("browser-" + Math.random().toString(16).slice(2, 8));
-    store.set("node", this.node);
-    this.ops = store.get("ops", null);
-    this.wall = 0; this.count = 0;
-    if (!this.ops) { this.ops = []; this.seed(); }
-    window.addEventListener("storage", e => { if (e.key === "drift:ops") { this.ops = store.get("ops", []); this.onchange?.(); } });
-  }
-  stamp() {
-    const pt = Date.now();
-    if (pt > this.wall) { this.wall = pt; this.count = 0; } else this.count++;
-    return `${String(this.wall).padStart(16, "0")}-${String(this.count).padStart(4, "0")}-${this.node}`;
-  }
-  write(id, fields) {
-    for (const [f, v] of Object.entries(fields)) this.ops.push({ id, f, v, t: this.stamp() });
-    store.set("ops", this.ops);
-  }
-  fold() {
-    const cells = {};
-    for (const o of this.ops) { const c = (cells[o.id] ||= {}); if (!c[o.f] || o.t > c[o.f].t) c[o.f] = o; }
-    return Object.entries(cells).map(([id, c]) => {
-      const t = { id, title: "", notes: "", done: false, priority: 0, due: null, project: "", tags: [], order: 0, deleted: false };
-      for (const k in c) t[k] = c[k].v;
-      return t;
-    }).filter(t => !t.deleted);
-  }
-  async load() {
-    const tasks = this.fold().map(t => ({ ...t, bucket: bucket(t) }));
-    const nodes = [...new Set(this.ops.map(o => o.t.split("-").slice(2).join("-")))];
-    return {
-      tasks, projects: [...new Set(tasks.map(t => t.project).filter(Boolean))].sort(),
-      tags: [...new Set(tasks.flatMap(t => t.tags))].sort(),
-      stats: { node: this.node, nodes, vault: "this browser" }
-    };
-  }
-  norm(f) {
-    const o = { ...f };
-    if ("tags" in o) o.tags = [...new Set((Array.isArray(o.tags) ? o.tags : String(o.tags).split(/[,\s]+/)).map(x => x.replace(/^#/, "").toLowerCase()).filter(Boolean))].sort();
-    if ("priority" in o) o.priority = Math.max(0, Math.min(3, +o.priority || 0));
-    if ("done" in o) o.completed_at = o.done ? new Date().toISOString().slice(0, 19) : null;
-    return o;
-  }
-  async add(text, extra = {}) {
-    const [title, f] = parseQuick(text);
-    const id = "t_" + Math.random().toString(16).slice(2, 12);
-    this.write(id, this.norm({ title, created: new Date().toISOString().slice(0, 19), order: Date.now() / 1000, ...f, ...extra }));
-  }
-  async update(id, f) { this.write(id, this.norm(f)); }
-  async remove(id) { this.write(id, { deleted: true }); }
-  connect(onchange) { this.onchange = onchange; }
-  seed() {
-    const s = [
-      ["Renew passport", { due: addDays(-2), priority: 3, tags: ["admin"] }],
-      ["Review Mira’s pull request on the sync engine", { due: today(), priority: 2, project: "work", tags: ["code"] }],
-      ["Water the fiddle-leaf fig", { due: today(), project: "home" }],
-      ["Book dentist cleaning", { due: today(), priority: 1, tags: ["health"] }],
-      ["Draft Q4 planning doc", { due: addDays(2), priority: 2, project: "work", notes: "Pull the numbers from the October dashboard first." }],
-      ["Pick up film from the lab", { due: addDays(3), project: "errands" }],
-      ["Call mom about Thanksgiving flights", { due: addDays(5), tags: ["family"] }],
-      ["Try the new ramen place on 4th", { tags: ["fun"] }],
-      ["Replace bike chain", { project: "home", priority: 1 }],
-      ["Pay October rent", { project: "home", due: addDays(-1), done: true }],
-    ];
-    s.forEach(([title, f], i) => this.write("t_seed" + i, this.norm({ title, order: i, created: "", ...f })));
-  }
-}
-
-/* ── backend: remote drift server ──────────────── */
-class RemoteBackend {
-  constructor(base, token) { this.kind = "remote"; this.base = base.replace(/\/$/, ""); this.token = token; }
-  url(p) { return this.base + p + (this.token ? (p.includes("?") ? "&" : "?") + "token=" + encodeURIComponent(this.token) : ""); }
-  async req(method, p, body) {
-    const r = await fetch(this.url(p), { method, headers: body ? { "Content-Type": "application/json" } : {}, body: body ? JSON.stringify(body) : undefined });
-    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.statusText);
-    return r.json();
-  }
-  load() { return this.req("GET", "/api/tasks"); }
-  add(text, extra = {}) {
-    return this.req("POST", "/api/tasks", { text }).then(t => Object.keys(extra).length ? this.update(t.id, extra) : t);
-  }
-  update(id, f) { return this.req("PATCH", "/api/tasks/" + id, f); }
-  remove(id) { return this.req("DELETE", "/api/tasks/" + id); }
-  connect(onchange, onstatus) {
-    const open = () => {
-      this.es?.close();
-      this.es = new EventSource(this.url("/api/events"));
-      this.es.addEventListener("hello", () => { onstatus("live"); onchange(); });
-      this.es.addEventListener("change", () => onchange());
-      this.es.onerror = () => onstatus("off");
-    };
-    open();
-    document.addEventListener("visibilitychange", () => { if (!document.hidden && this.es.readyState === 2) open(); });
-  }
-}
-
-/* ── backend: this website (Cloudflare Worker + D1, one list per signed-in user) ── */
-class SiteBackend {
-  constructor(base) { this.kind = "site"; this.base = base; }
-  async req(method, p, body) {
-    const r = await fetch(this.base + p, {
-      method, credentials: "same-origin", cache: "no-store", redirect: "manual",
-      headers: body ? { "Content-Type": "application/json" } : {}, body: body ? JSON.stringify(body) : undefined
-    });
-    // The session ran out: reload, and the site sends you to sign in.
-    if (r.type === "opaqueredirect" || r.status === 401 || r.status === 403) { location.reload(); throw new Error("signed out"); }
-    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.statusText);
-    return r.json();
-  }
-  load() { return this.req("GET", "/api/tasks"); }
-  // Quick-add is parsed here so "^today" means today where you are, not on the server.
-  add(text, extra = {}) {
-    const [title, f] = parseQuick(text);
-    return this.req("POST", "/api/tasks", { title, ...f, ...extra }).then(t => { this.onchange?.(); return t; });
-  }
-  update(id, f) { return this.req("PATCH", "/api/tasks/" + id, f).then(t => { this.onchange?.(); return t; }); }
-  remove(id) { return this.req("DELETE", "/api/tasks/" + id).then(t => { this.onchange?.(); return t; }); }
-  // No push channel: re-sync every 20s while visible, and on return to the tab.
-  connect(onchange, onstatus) {
-    this.onchange = onchange;
-    const poll = () => { if (!document.hidden) onchange(); };
-    setInterval(poll, 20_000);
-    document.addEventListener("visibilitychange", poll);
-    window.addEventListener("focus", poll);
-    onstatus("live");
-  }
-}
-const SITE_BASE = location.protocol.startsWith("http") && /^\/todo(\/|$)/.test(location.pathname) ? "/todo" : null;
-
-async function pickBackend() {
-  if (SITE_BASE) return new SiteBackend(SITE_BASE);
-  const cfg = store.get("server", { url: "", token: "" });
-  const qs = new URLSearchParams(location.search);
-  const token = qs.get("token") || cfg.token;
-  const candidates = cfg.url ? [cfg.url] : (location.protocol.startsWith("http") ? [location.origin] : []);
-  for (const base of candidates) {
-    const b = new RemoteBackend(base, token);
-    try {
-      const ctl = new AbortController(); setTimeout(() => ctl.abort(), 2500);
-      const r = await fetch(b.url("/api/tasks"), { signal: ctl.signal });
-      if (r.ok && (r.headers.get("content-type") || "").includes("json")) return b;
-    } catch {}
-  }
-  if (cfg.url) state.connectError = `Couldn’t reach ${cfg.url}. Showing this browser’s own list instead.`;
-  return new LocalBackend();
-}
-
-/* ── state + render ────────────────────────────── */
-const VIEWS = [
-  ["today", "Today", '<circle cx="12" cy="12" r="4.5" fill="currentColor"/><circle cx="12" cy="12" r="8.5" stroke="currentColor" stroke-width="1.8"/>'],
-  ["upcoming", "Upcoming", '<rect x="4" y="5.5" width="16" height="14" rx="3" stroke="currentColor" stroke-width="1.8"/><path d="M4 10h16M9 3.5v4M15 3.5v4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>'],
-  ["inbox", "Inbox", '<path d="M4 13.5 6.5 6h11l2.5 7.5V18a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 18v-4.5Z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M4 13.5h4.5a3.5 3.5 0 0 0 7 0H20" stroke="currentColor" stroke-width="1.8"/>'],
-  ["all", "Everything", '<path d="M5 7h14M5 12h14M5 17h9" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>'],
-  ["done", "Done", '<path d="m5 12.5 4.5 4.5L19 7.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>'],
-];
-const GROUPS = { overdue: "Overdue", today: "Today", upcoming: "Coming up", someday: "No date", done: "Done" };
-const state = {
-  data: { tasks: [], projects: [], tags: [], stats: {} },
-  view: store.get("view", "today"), q: "", open: null, sel: null, status: "connecting",
-  pending: new Set(), connectError: null,
-};
-let api;
-
-const icon = (p, s = 16) => `<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" aria-hidden="true">${p}</svg>`;
-const calIco = icon('<rect x="4" y="5.5" width="16" height="14" rx="3" stroke="currentColor" stroke-width="2"/><path d="M4 10h16" stroke="currentColor" stroke-width="2"/>', 13);
-
-function visible() {
-  let ts = state.data.tasks; const v = state.view;
-  if (v === "today") ts = ts.filter(t => ["overdue", "today"].includes(bucket(t)) || state.pending.has(t.id));
-  else if (v === "upcoming") ts = ts.filter(t => bucket(t) === "upcoming" || state.pending.has(t.id));
-  else if (v === "inbox") ts = ts.filter(t => (!t.done && !t.project) || state.pending.has(t.id));
-  else if (v === "all") ts = ts.filter(t => !t.done || state.pending.has(t.id));
-  else if (v === "done") ts = ts.filter(t => t.done).sort((a, b) => (b.completed_at || "").localeCompare(a.completed_at || ""));
-  else if (v.startsWith("p:")) ts = ts.filter(t => t.project === v.slice(2));
-  else if (v.startsWith("#:")) ts = ts.filter(t => t.tags.includes(v.slice(2)));
-  if (state.q) {
-    const q = state.q.toLowerCase();
-    ts = ts.filter(t => [t.title, t.notes, t.project, ...t.tags].some(s => (s || "").toLowerCase().includes(q)));
-  }
-  if (v !== "done") {
-    const rank = { overdue: 0, today: 1, upcoming: 2, someday: 3, done: 4 };
-    ts = [...ts].sort((a, b) => {
-      const ba = state.pending.has(a.id) ? bucket({ ...a, done: false }) : bucket(a);
-      const bb = state.pending.has(b.id) ? bucket({ ...b, done: false }) : bucket(b);
-      return rank[ba] - rank[bb] || (a.due || "9999").localeCompare(b.due || "9999") || b.priority - a.priority || a.order - b.order;
-    });
-  }
-  return ts;
-}
-
-function renderNav() {
-  const ts = state.data.tasks;
-  const c = {
-    today: ts.filter(t => ["overdue", "today"].includes(bucket(t))).length,
-    upcoming: ts.filter(t => bucket(t) === "upcoming").length,
-    inbox: ts.filter(t => !t.done && !t.project).length,
-    all: ts.filter(t => !t.done).length, done: ts.filter(t => t.done).length,
-  };
-  const overdue = ts.some(t => bucket(t) === "overdue");
-  const btn = (id, label, ico, n, hot) =>
-    `<button data-view="${esc(id)}" aria-current="${state.view === id}"><span class="ico">${ico}</span><span>${esc(label)}</span><span class="n ${hot ? "hot" : ""}">${n || ""}</span></button>`;
-  $("#views").innerHTML = VIEWS.map(([id, l, p]) => btn(id, l, icon(p), c[id], id === "today" && overdue)).join("");
-  const projs = state.data.projects;
-  $("#projects").innerHTML = projs.length ? `<h3>Projects</h3>` + projs.map(p =>
-    btn("p:" + p, p, `<span style="color:var(--violet);font-weight:600">+</span>`, ts.filter(t => t.project === p && !t.done).length)).join("") : "";
-  const tags = state.data.tags;
-  $("#tags").innerHTML = tags.length ? `<h3>Tags</h3>` + tags.map(g =>
-    btn("#:" + g, g, `<span style="color:var(--blue);font-weight:600">#</span>`, ts.filter(t => t.tags.includes(g) && !t.done).length)).join("") : "";
-}
-
-function renderHead(list) {
-  const v = state.view;
-  const name = (VIEWS.find(x => x[0] === v) || [])[1] || (v[0] === "p" ? "+" : "#") + v.slice(2);
-  const ts = state.data.tasks;
-  let sub = "", ratio = null;
-  if (v === "today") {
-    const now = new Date();
-    $("#h1").textContent = now.toLocaleDateString(undefined, { weekday: "long" });
-    const dueToday = ts.filter(t => t.due && t.due <= today() && (!t.done || (t.completed_at || "").startsWith(today())));
-    const doneToday = dueToday.filter(t => t.done).length;
-    ratio = dueToday.length ? doneToday / dueToday.length : 0;
-    const left = dueToday.length - doneToday;
-    sub = `<span>${esc(now.toLocaleDateString(undefined, { month: "long", day: "numeric" }))}</span><span>${left ? `${left} left${doneToday ? `, ${doneToday} done` : ""}` : dueToday.length ? "All clear for today" : "Nothing due"}</span>`;
-  } else {
-    $("#h1").textContent = name;
-    const open = list.filter(t => !t.done).length;
-    sub = `<span>${v === "done" ? `${list.length} finished` : `${open} open`}</span>`;
-    if (v.startsWith("p:")) { const all = ts.filter(t => t.project === v.slice(2)); ratio = all.length ? all.filter(t => t.done).length / all.length : 0; }
-  }
-  $("#sub").innerHTML = sub;
-  $("#tide").style.display = ratio == null ? "none" : "";
-  requestAnimationFrame(() => $("#tide i").style.width = ((ratio || 0) * 100).toFixed(1) + "%");
-  document.title = `${name} · Drift`;
-}
-
-function taskMeta(t) {
-  const b = bucket(t), out = [];
-  if (t.due) out.push(`<span class="chip due ${b === "overdue" ? "over" : b === "today" ? "today" : ""}">${calIco}${esc(niceDue(t.due))}</span>`);
-  if (t.project && !state.view.startsWith("p:")) out.push(`<span class="chip proj">+${esc(t.project)}</span>`);
-  for (const g of t.tags) out.push(`<span class="chip tag">#${esc(g)}</span>`);
-  if (t.notes) out.push(`<span class="chip" title="Has notes">${icon('<path d="M6 4h9l3 3v13H6z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M9 11h6M9 15h4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>', 13)}Notes</span>`);
-  return out.join("");
-}
-
-function editorHTML(t) {
-  const pri = [[0, "None"], [1, "Low"], [2, "Medium"], [3, "High"]];
-  return `<div class="editor" data-editor>
-    <input type="text" class="t" data-f="title" value="${esc(t.title)}" aria-label="Title">
-    <label>Notes<textarea data-f="notes" placeholder="Add details, links, a checklist…">${esc(t.notes)}</textarea></label>
-    <div class="grid">
-      <label>Due date
-        <input type="date" data-f="due" value="${esc(t.due || "")}">
-        <span class="quickdates">
-          <button type="button" data-due="${today()}">Today</button><button type="button" data-due="${addDays(1)}">Tomorrow</button>
-          <button type="button" data-due="${parseDate("week")}">Next week</button><button type="button" data-due="">No date</button>
-        </span>
-      </label>
-      <label>Priority
-        <span class="seg" role="group">${pri.map(([p, l]) => `<button type="button" data-p="${p}" aria-pressed="${t.priority === p}">${l}</button>`).join("")}</span>
-      </label>
-      <label>Project<input type="text" data-f="project" value="${esc(t.project)}" list="projlist" placeholder="None"></label>
-      <label>Tags<input type="text" data-f="tags" value="${esc(t.tags.join(" "))}" placeholder="Separate with spaces"></label>
-    </div>
-    <div class="foot"><span>Changes save as you go</span><button type="button" class="danger" data-del>Delete task</button></div>
-  </div>`;
-}
-
-function render() {
-  renderNav();
-  const list = visible();
-  renderHead(list);
-  const el = $("#list");
-  if (!list.length) {
-    const msg = state.q ? ["No matches", "Nothing here contains that text."] :
-      state.view === "today" ? ["Nothing due today", "Add a task above, or pull something in from Upcoming."] :
-      state.view === "done" ? ["Nothing finished yet", "Completed tasks collect here."] :
-      ["This list is empty", "Add a task above to fill it."];
-    el.innerHTML = `<div class="empty"><b>${msg[0]}</b>${msg[1]}</div>`;
-    return;
-  }
-  const grouped = !["upcoming", "done"].includes(state.view);
-  let html = "", g = null;
-  for (const t of list) {
-    const b = state.pending.has(t.id) ? bucket({ ...t, done: false }) : bucket(t);
-    if (grouped && b !== g) {
-      if (g !== null) html += "</ul></div>";
-      const n = list.filter(x => (state.pending.has(x.id) ? bucket({ ...x, done: false }) : bucket(x)) === b).length;
-      html += `<div class="group ${b}"><h2>${GROUPS[b]}<small>${n}</small></h2><ul class="tasks">`; g = b;
-    } else if (!grouped && g === null) { html += `<div class="group"><ul class="tasks">`; g = "x"; }
-    const cls = ["task", "p" + t.priority, t.done && !state.pending.has(t.id) ? "done" : "", state.pending.has(t.id) ? "completing" : "", state.open === t.id ? "open" : "", state.sel === t.id ? "sel" : ""].join(" ");
-    html += `<li class="${cls}" data-id="${esc(t.id)}"><span class="pbar"></span>
-      <div class="line">
-        <button class="check" data-check aria-label="${t.done ? "Mark not done" : "Mark done"}">${icon('<path d="m6 12.5 4 4 8-9" stroke="var(--accent-ink)" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>', 14)}</button>
-        <div class="body" data-open tabindex="0"><div class="title">${esc(t.title)}</div><div class="meta">${taskMeta(t)}</div></div>
-      </div>${state.open === t.id ? editorHTML(t) : ""}</li>`;
-  }
-  html += "</ul></div>";
-  html += `<datalist id="projlist">${state.data.projects.map(p => `<option value="${esc(p)}">`).join("")}</datalist>`;
-  // keep focus inside an open editor across live re-renders
-  const ae = document.activeElement, f = ae?.dataset?.f, caret = ae?.selectionStart;
-  el.innerHTML = html;
-  if (f && state.open) { const n = el.querySelector(`[data-id="${state.open}"] [data-f="${f}"]`); if (n) { n.focus(); try { n.setSelectionRange(caret, caret); } catch {} } }
-}
-
-function renderSync() {
-  const s = state.data.stats || {}, k = api?.kind;
-  const dot = $("#dot");
-  dot.className = "dot " + (k === "demo" ? "demo" : state.status === "live" ? "live" : state.status === "off" ? "off" : "");
-  if (k === "site") {
-    $("#syncLabel").textContent = state.status === "off" ? "Can’t reach the server" : "Synced";
-    $("#syncMeta").textContent = s.user ? `Signed in as ${s.user}` : "";
-    return;
-  }
-  $("#syncLabel").textContent = k === "demo" ? "Saved in this browser" : state.status === "live" ? "Live" : state.status === "off" ? "Reconnecting" : "Connecting";
-  const n = (s.nodes || []).length;
-  $("#syncMeta").textContent = k === "demo" ? "Run drift web to sync with your other devices." : `${s.node || ""}, ${n} device${n === 1 ? "" : "s"} in this vault`;
-}
-
-/* ── data flow ─────────────────────────────────── */
-let loading = null;
-async function refresh() {
-  if (loading) return loading;
-  loading = (async () => {
-    try { state.data = await api.load(); if (api.kind !== "demo") state.status = "live"; }
-    catch (e) { state.status = "off"; }
-    loading = null; render(); renderSync();
-  })();
-  return loading;
-}
-function patchLocal(id, f) {
-  const t = state.data.tasks.find(x => x.id === id); if (!t) return;
-  Object.assign(t, f);
-  if ("tags" in f && typeof f.tags === "string") t.tags = f.tags.split(/[,\s]+/).map(x => x.replace(/^#/, "").toLowerCase()).filter(Boolean);
-}
-async function update(id, f, { rerender = true } = {}) {
-  patchLocal(id, f); if (rerender) render();
-  try { await api.update(id, f); } catch (e) { toast("Couldn’t save: " + e.message); }
-  if (api.kind === "demo") refresh();
-}
-async function toggle(id) {
-  const t = state.data.tasks.find(x => x.id === id); if (!t) return;
-  if (!t.done) {
-    state.pending.add(id); render();
-    setTimeout(() => { state.pending.delete(id); update(id, { done: true }); }, 650);
-  } else update(id, { done: false });
-}
-let lastDeleted = null;
-async function remove(id) {
-  const t = state.data.tasks.find(x => x.id === id);
-  state.data.tasks = state.data.tasks.filter(x => x.id !== id);
-  if (state.open === id) state.open = null;
-  render(); await api.remove(id); lastDeleted = id;
-  toast(`Deleted “${t?.title ?? "task"}”`, async () => { await api.update(lastDeleted, { deleted: false }); refresh(); });
-  if (api.kind === "demo") refresh();
-}
-let toastT;
-function toast(msg, undo) {
-  $("#toastMsg").textContent = msg; const b = $("#toastBtn");
-  b.hidden = !undo; b.onclick = () => { undo?.(); $("#toast").classList.remove("on"); };
-  $("#toast").classList.add("on"); clearTimeout(toastT);
-  toastT = setTimeout(() => $("#toast").classList.remove("on"), undo ? 5000 : 2600);
-}
-function setView(v) { state.view = v; state.open = null; store.set("view", v); render(); window.scrollTo({ top: 0 }); }
-
-/* ── events ────────────────────────────────────── */
-$("aside").addEventListener("click", e => { const b = e.target.closest("[data-view]"); if (b) setView(b.dataset.view); });
-if (SITE_BASE) { $("#cfgBtn").textContent = "Sign out"; }
-$("#cfgBtn").onclick = () => {
-  if (SITE_BASE) { location.href = "/logout"; return; }
-  const c = store.get("server", { url: "", token: "" }); $("#cfgUrl").value = c.url; $("#cfgTok").value = c.token; $("#cfg").showModal(); };
-$("#sync").addEventListener("click", e => {
-  if (!matchMedia("(max-width:760px)").matches || e.target.closest("#cfgBtn")) return;
-  // Phones hide the Sign out button, so tapping the sync status offers it instead.
-  if (SITE_BASE) { const u = state.data.stats?.user; if (confirm(u ? `Sign out ${u}?` : "Sign out?")) $("#cfgBtn").onclick(); return; }
-  $("#cfgBtn").onclick();
-});
-$("#cfg").addEventListener("close", () => {
-  if ($("#cfg").returnValue !== "save") return;
-  store.set("server", { url: $("#cfgUrl").value.trim(), token: $("#cfgTok").value.trim() }); location.reload();
-});
-$("#keysBtn").onclick = () => $("#keys").showModal();
-$("#themeBtn").onclick = () => {
-  const dark = document.documentElement.dataset.theme ? document.documentElement.dataset.theme === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
-  document.documentElement.dataset.theme = dark ? "light" : "dark"; store.set("theme", document.documentElement.dataset.theme);
-};
-{ const th = store.get("theme", null); if (th) document.documentElement.dataset.theme = th; }
-
-const add = $("#add");
-if (matchMedia("(max-width:760px)").matches) add.placeholder = "Add a task";
-add.addEventListener("input", () => {
-  const v = add.value.trim(); $("#go").disabled = !v;
-  if (!v) { $("#preview").innerHTML = ""; return; }
-  const [, f] = parseQuick(v), ch = [];
-  if (f.due) ch.push(`<span class="chip due ${f.due === today() ? "today" : ""}">${calIco}${esc(niceDue(f.due))}</span>`);
-  if (f.priority) ch.push(`<span class="chip" style="color:var(--${["", "blue", "amber", "red"][f.priority]})">${["", "Low", "Medium", "High"][f.priority]} priority</span>`);
-  if (f.project) ch.push(`<span class="chip proj">+${esc(f.project)}</span>`);
-  (f.tags || []).forEach(g => ch.push(`<span class="chip tag">#${esc(g)}</span>`));
-  $("#preview").innerHTML = ch.join("");
-});
-$("#composer").addEventListener("submit", async e => {
-  e.preventDefault(); const text = add.value.trim(); if (!text) return;
-  const [title, f] = parseQuick(text); if (!title) return toast("Give the task a name before the tags.");
-  const extra = {}, v = state.view;
-  if (v.startsWith("p:") && !f.project) extra.project = v.slice(2);
-  if (v.startsWith("#:")) extra.tags = [...(f.tags || []), v.slice(2)];
-  if (v === "today" && !f.due) extra.due = today();
-  add.value = ""; add.dispatchEvent(new Event("input"));
-  try { await api.add(text, extra); toast(`Added “${title}”`); } catch (err) { toast("Couldn’t add: " + err.message); add.value = text; }
-  refresh();
-});
-$("#q").addEventListener("input", e => { state.q = e.target.value; render(); });
-
-const list = $("#list");
-list.addEventListener("click", e => {
-  const li = e.target.closest(".task"); if (!li) return; const id = li.dataset.id;
-  if (e.target.closest("[data-check]")) return toggle(id);
-  if (e.target.closest("[data-del]")) return remove(id);
-  const p = e.target.closest("[data-p]"); if (p) return update(id, { priority: +p.dataset.p });
-  const d = e.target.closest("[data-due]"); if (d) return update(id, { due: d.dataset.due || null });
-  if (e.target.closest("[data-open]")) { state.open = state.open === id ? null : id; state.sel = id; render(); if (state.open) li.parentElement && $(`[data-id="${id}"] .t`)?.focus(); }
-});
-list.addEventListener("change", e => {
-  const f = e.target.dataset.f; if (!f) return;
-  const id = e.target.closest(".task").dataset.id; let v = e.target.value;
-  if (f === "due") v = v || null;
-  if (f === "title" && !v.trim()) return;
-  update(id, { [f]: v }, { rerender: f !== "notes" });
-});
-list.addEventListener("keydown", e => {
-  if (e.key === "Enter" && e.target.matches("[data-open]")) { e.preventDefault(); e.target.click(); }
-  if (e.key === "Enter" && e.target.matches('input[data-f]')) e.target.blur();
-});
-
-let gPending = false;
-document.addEventListener("keydown", e => {
-  const typing = e.target.matches("input, textarea") || e.target.isContentEditable;
-  if (e.key === "Escape") {
-    if (typing) { e.target.blur(); if (e.target.id === "q") { state.q = ""; e.target.value = ""; render(); } return; }
-    if (state.open) { state.open = null; render(); return; }
-  }
-  if (typing || e.metaKey || e.ctrlKey || e.altKey || document.querySelector("dialog[open]")) return;
-  const ids = visible().map(t => t.id), i = ids.indexOf(state.sel);
-  const sel = id => { state.sel = id; render(); document.querySelector(`[data-id="${id}"]`)?.scrollIntoView({ block: "nearest" }); };
-  if (gPending) { gPending = false; const m = { t: "today", u: "upcoming", i: "inbox", a: "all", d: "done" }[e.key]; if (m) setView(m); return; }
-  switch (e.key) {
-    case "n": case "a": e.preventDefault(); add.focus(); break;
-    case "/": e.preventDefault(); $("#q").focus(); break;
-    case "?": $("#keys").showModal(); break;
-    case "g": gPending = true; setTimeout(() => gPending = false, 900); break;
-    case "j": case "ArrowDown": if (ids.length) { e.preventDefault(); sel(ids[Math.min(i + 1, ids.length - 1)]); } break;
-    case "k": case "ArrowUp": if (ids.length) { e.preventDefault(); sel(ids[Math.max(i - 1, 0)]); } break;
-    case "x": case " ": if (state.sel) { e.preventDefault(); toggle(state.sel); } break;
-    case "e": case "Enter": if (state.sel) { e.preventDefault(); state.open = state.open === state.sel ? null : state.sel; render(); } break;
-    case "t": if (state.sel) update(state.sel, { due: today() }); break;
-    case "Backspace": case "Delete": if (state.sel) { const nx = ids[i + 1] || ids[i - 1]; remove(state.sel); state.sel = nx; } break;
-    case "0": case "1": case "2": case "3": if (state.sel) update(state.sel, { priority: +e.key }); break;
-  }
-});
-
-/* ── boot ──────────────────────────────────────── */
-(async () => {
-  api = await pickBackend();
-  api.connect(() => refresh(), s => { state.status = s; renderSync(); });
-  await refresh();
-  if (state.connectError) toast(state.connectError);
-  // midnight rollover: re-bucket "today" without a reload
-  setInterval(() => render(), 60_000);
-})();
-</script>
+<script type="module" src="app.js"></script>
 </body>
 </html>

@@ -2,6 +2,23 @@
 // so a fresh database needs no manual setup.
 
 const SCHEMA = [
+  // Drift: each user's collections and items (src/drift.js). data is JSON.
+  `CREATE TABLE IF NOT EXISTS drift_collections (
+     owner   TEXT NOT NULL,          -- user id
+     id      TEXT NOT NULL,          -- "c_" + random hex
+     data    TEXT NOT NULL,
+     updated TEXT NOT NULL,
+     PRIMARY KEY (owner, id)
+   )`,
+  `CREATE TABLE IF NOT EXISTS drift_items (
+     owner   TEXT NOT NULL,          -- user id
+     id      TEXT NOT NULL,          -- "i_" + random hex ("t_" for tasks brought over from todo_tasks)
+     data    TEXT NOT NULL,
+     updated TEXT NOT NULL,
+     PRIMARY KEY (owner, id)
+   )`,
+  // The old todo list. Rows move into drift_items the next time their owner
+  // opens Drift; rows whose owner isn't an account wait here for an admin.
   `CREATE TABLE IF NOT EXISTS todo_tasks (
      owner   TEXT NOT NULL,          -- user id (older rows: the Access email)
      id      TEXT NOT NULL,

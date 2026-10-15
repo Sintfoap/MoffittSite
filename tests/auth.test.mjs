@@ -37,7 +37,7 @@ test("creating an account signs you in with a locked-down cookie", async () => {
   assert.notEqual(sqlOne(env, "SELECT id_hash FROM sessions").id_hash, b.cookie);
 
   assert.equal((await b.get("/todo/")).status, 200);
-  assert.equal((await b.get("/todo/api/tasks")).json.stats.user, "Ryan M");
+  assert.equal((await b.get("/todo/api/state")).json.user.name, "Ryan M");
 });
 
 test("account rules: usernames, reserved names, passwords, duplicates", async () => {
@@ -115,7 +115,7 @@ test("signed-out visitors are sent to sign in, and come back afterwards", async 
   const page = await b.get("/todo/?view=today");
   assert.equal(page.status, 303);
   assert.equal(page.location, "/login?next=%2Ftodo%2F%3Fview%3Dtoday");
-  assert.equal((await b.get("/todo/api/tasks")).status, 401);
+  assert.equal((await b.get("/todo/api/state")).status, 401);
   const r = await b.post("/login", { username: "ryan", password: PW, next: "/todo/?view=today" });
   assert.equal(r.location, "/todo/?view=today");
 });
@@ -135,7 +135,7 @@ test("signing out ends the session for good", async () => {
   const old = b.cookie;
   await b.get("/logout");
   assert.equal(b.cookie, null);
-  assert.equal((await b.get("/todo/api/tasks", { cookie: old })).status, 401, "the old cookie no longer works");
+  assert.equal((await b.get("/todo/api/state", { cookie: old })).status, 401, "the old cookie no longer works");
 });
 
 test("sessions expire after a week unused or 30 days in total", async () => {
@@ -143,18 +143,18 @@ test("sessions expire after a week unused or 30 days in total", async () => {
   await b.signup("ryan");
   const t = Math.floor(Date.now() / 1000);
   run(env, "UPDATE sessions SET last_seen = ?", t - 8 * 86400);
-  assert.equal((await b.get("/todo/api/tasks")).status, 401);
+  assert.equal((await b.get("/todo/api/state")).status, 401);
 
   await b.login("ryan");
   run(env, "UPDATE sessions SET expires_at = ?", t - 1);
-  assert.equal((await b.get("/todo/api/tasks")).status, 401);
+  assert.equal((await b.get("/todo/api/state")).status, 401);
 });
 
 test("a disabled account's existing session stops working at once", async () => {
   const env = makeEnv(), b = new Browser(env);
   await b.signup("ryan");
   run(env, "UPDATE users SET disabled = 1");      // even if its sessions weren't cleared
-  assert.equal((await b.get("/todo/api/tasks")).status, 401);
+  assert.equal((await b.get("/todo/api/state")).status, 401);
 });
 
 test("a code is refused for any step at or before the last one used", async () => {
@@ -172,8 +172,8 @@ test("forms and API writes from other websites are refused", async () => {
   assert.equal((await new Browser(env).post("/login", { username: "ryan", password: PW }, { origin: "https://evil.example" })).status, 403);
   assert.equal((await b.post("/account/sessions", {}, { origin: "https://evil.example" })).status, 403);
   assert.equal((await b.post("/account/sessions", {}, { origin: null, headers: { "Sec-Fetch-Site": "cross-site" } })).status, 403);
-  assert.equal((await b.req("POST", "/todo/api/tasks", { json: { title: "x" }, origin: "https://evil.example" })).status, 403);
-  assert.equal((await b.req("POST", "/todo/api/tasks", { json: { title: "x" } })).status, 201);
+  assert.equal((await b.req("POST", "/todo/api/collections", { json: { name: "x" }, origin: "https://evil.example" })).status, 403);
+  assert.equal((await b.req("POST", "/todo/api/collections", { json: { name: "x" } })).status, 201);
 });
 
 // ── account page ───────────────────────────────────────────────────────────
@@ -186,8 +186,8 @@ test("changing your password needs the current one and signs out other devices",
   const ok = await laptop.post("/account/password", { current_password: PW, new_password: NEW, new_password2: NEW });
   assert.equal(ok.status, 200);
   assert.match(ok.text, /Password changed/);
-  assert.equal((await phone.get("/todo/api/tasks")).status, 401, "the other device is signed out");
-  assert.equal((await laptop.get("/todo/api/tasks")).status, 200, "this device stays signed in");
+  assert.equal((await phone.get("/todo/api/state")).status, 401, "the other device is signed out");
+  assert.equal((await laptop.get("/todo/api/state")).status, 200, "this device stays signed in");
   assert.equal((await new Browser(env).login("ryan", NEW)).status, 303);
 });
 
@@ -221,14 +221,14 @@ test("two-factor: setup, sign-in with a code, no replays, recovery codes work on
   const c = new Browser(env);
   const r = await c.login("ryan");
   assert.equal(r.location, "/login/2fa?next=%2Ftodo%2F");
-  assert.equal((await c.get("/todo/api/tasks")).status, 401, "half signed in isn't signed in");
+  assert.equal((await c.get("/todo/api/state")).status, 401, "half signed in isn't signed in");
   assert.equal((await c.post("/login/2fa", { code: "123456" })).status, 401);
   // The code used during setup can't be used again.
   assert.equal((await c.post("/login/2fa", { code: await codeAt(secret, step) })).status, 401);
   const next = await codeAt(secret, step + 1);
   const done = await c.post("/login/2fa", { code: next });
   assert.equal(done.status, 303);
-  assert.equal((await c.get("/todo/api/tasks")).status, 200);
+  assert.equal((await c.get("/todo/api/state")).status, 200);
 
   // That code is now spent too.
   const d = new Browser(env);
@@ -289,7 +289,7 @@ test("claiming admin needs the secret code, works once, and requires two-factor"
   // An admin without two-factor is sent to set it up before anything else.
   assert.equal((await b.get("/admin")).location, "/account");
   assert.equal((await b.get("/todo/")).location, "/account");
-  assert.equal((await b.get("/todo/api/tasks")).status, 403);
+  assert.equal((await b.get("/todo/api/state")).status, 403);
   await enable2fa(b, env);
   assert.equal((await b.get("/admin")).status, 200);
   assert.equal((await b.post("/account/2fa/disable", { password: PW })).status, 403, "admins can't turn two-factor off");
@@ -306,12 +306,12 @@ test("admin can disable, reset, re-permission and delete accounts", async () => 
   const admin = await makeAdmin(env);
   const josh = new Browser(env);
   await josh.signup("josh");
-  await josh.req("POST", "/todo/api/tasks", { json: { title: "josh's task" } });
+  await josh.req("POST", "/todo/api/state", { json: { title: "josh's task" } });
   const id = sqlOne(env, "SELECT id FROM users WHERE username = 'josh'").id;
 
   // Disable: signed out now, can't sign back in.
   assert.equal((await admin.post("/admin/disable", { user_id: id })).status, 200);
-  assert.equal((await josh.get("/todo/api/tasks")).status, 401);
+  assert.equal((await josh.get("/todo/api/state")).status, 401);
   assert.equal((await new Browser(env).login("josh")).status, 401);
   await admin.post("/admin/enable", { user_id: id });
   assert.equal((await josh.login("josh")).status, 303);
@@ -325,14 +325,14 @@ test("admin can disable, reset, re-permission and delete accounts", async () => 
   // Reset password: shown once to the admin, must be changed at next sign-in.
   const reset = await admin.post("/admin/reset-password", { user_id: id });
   const temp = reset.text.match(/Temporary password for <strong>josh<\/strong>: <span class="mono">([^<]+)</)[1];
-  assert.equal((await josh.get("/todo/api/tasks")).status, 401, "signed out by the reset");
+  assert.equal((await josh.get("/todo/api/state")).status, 401, "signed out by the reset");
   assert.equal((await josh.login("josh", temp)).status, 303);
   assert.equal((await josh.get("/todo/")).location, "/account");
   assert.match((await josh.get("/account")).text, /Choose a new password/);
   assert.equal((await josh.post("/account/password", { new_password: "josh likes pizza", new_password2: "josh likes pizza" })).status, 400, "can't contain the username");
   const NEW = "a fresh new passphrase";
   await josh.post("/account/password", { new_password: NEW, new_password2: NEW });
-  assert.equal((await josh.get("/todo/api/tasks")).status, 200);
+  assert.equal((await josh.get("/todo/api/state")).status, 200);
 
   // Admin can't lock themselves out.
   const me = sqlOne(env, "SELECT id FROM users WHERE username = 'ryan'").id;
@@ -344,7 +344,7 @@ test("admin can disable, reset, re-permission and delete accounts", async () => 
   assert.equal((await admin.post("/admin/delete", { user_id: id, confirm: "josh" })).status, 200);
   assert.equal(sqlOne(env, "SELECT COUNT(*) AS n FROM users WHERE id = ?", id).n, 0);
   assert.equal(sqlOne(env, "SELECT COUNT(*) AS n FROM todo_tasks WHERE owner = ?", id).n, 0);
-  assert.equal((await josh.get("/todo/api/tasks")).status, 401);
+  assert.equal((await josh.get("/todo/api/state")).status, 401);
 });
 
 test("admin can hand tasks from before accounts existed to an account", async () => {
@@ -355,7 +355,7 @@ test("admin can hand tasks from before accounts existed to an account", async ()
   assert.match(page.text, /rm@example\.com/);
   const me = sqlOne(env, "SELECT id FROM users WHERE username = 'ryan'").id;
   assert.match((await admin.post("/admin/move-tasks", { from: "rm@example.com", to: me })).text, /Moved 1 task to ryan/);
-  assert.deepEqual((await admin.get("/todo/api/tasks")).json.tasks.map(t => t.title), ["old task"]);
+  assert.deepEqual((await admin.get("/todo/api/state")).json.items.map(t => t.title), ["old task"]);
 });
 
 test("non-admins can't reach any admin action", async () => {
@@ -374,8 +374,8 @@ test("non-admins can't reach any admin action", async () => {
 test("without a database everything signed-in fails closed", async () => {
   const env = makeEnv({ TODO_DB: undefined });
   const b = new Browser(env);
-  assert.equal((await b.get("/todo/api/tasks")).status, 401, "no cookie: refused before the database is needed");
-  assert.equal((await b.get("/todo/api/tasks", { cookie: "a".repeat(43) })).status, 500, "with a cookie: refused because it can't be checked");
+  assert.equal((await b.get("/todo/api/state")).status, 401, "no cookie: refused before the database is needed");
+  assert.equal((await b.get("/todo/api/state", { cookie: "a".repeat(43) })).status, 500, "with a cookie: refused because it can't be checked");
   assert.equal((await b.signup("ryan")).status, 500);
   assert.equal((await b.get("/")).status, 200, "the public site still works");
 });

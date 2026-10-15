@@ -5,11 +5,10 @@
 // through here: the sign-in pages (src/account.js) and /todo, which needs a
 // signed-in account with the "todo" area before the page or API is served.
 import { protect, handleAuth, AUTH_PATHS, sameOrigin } from "./account.js";
-import { list, create, update, readJson, BadRequest } from "./tasks.js";
+import { state, createItem, updateItem, createCollection, updateCollection, readJson, BadRequest, ID } from "./drift.js";
 
-const TASKS = /^\/todo\/api\/tasks\/?$/;
-const TASK = /^\/todo\/api\/tasks\/([^/]+)$/;
-const ID = /^t_[0-9a-z]{1,32}$/;
+// /todo/api/state, /todo/api/items[/<id>], /todo/api/collections[/<id>]
+const API = /^\/todo\/api\/(state|items|collections)(?:\/([^/]+))?\/?$/;
 
 export default {
   async fetch(request, env) {
@@ -33,29 +32,28 @@ async function todo(request, env, user, pathname) {
   const method = request.method;
   return handle(async () => {
     if (method !== "GET" && !sameOrigin(request)) return json({ error: "cross-origin request refused" }, 403);
+    const m = pathname.match(API);
+    if (!m) return json({ error: "not found" }, 404);
+    const [, kind, id] = m;
 
-    if (TASKS.test(pathname)) {
-      // GET  → the user's tasks, projects, tags, stats
-      // POST → create a task from explicit fields ({title, due, ...})
-      if (method === "GET") return json(await list(env, user.id, user.display_name));
+    // GET → the user's collections, items and the plugins there are
+    if (kind === "state") return method === "GET" && !id ? json(await state(env, user)) : json({ error: "not found" }, 404);
+
+    const [create, update] = kind === "items" ? [createItem, updateItem] : [createCollection, updateCollection];
+    if (!id) {
+      // POST → create from explicit fields ({title, collection, meta, ...} or {name, plugins, ...})
       if (method === "POST") return json(await create(env, user.id, await readJson(request)), 201);
       return json({ error: "method not allowed" }, 405);
     }
-
-    const m = pathname.match(TASK);
-    if (m) {
-      // PATCH  → change any of title notes done priority due project tags order deleted
-      // DELETE → soft delete (PATCH {deleted:false} undoes it)
-      if (!ID.test(m[1])) return json({ error: "not found" }, 404);
-      let changes;
-      if (method === "PATCH") changes = await readJson(request);
-      else if (method === "DELETE") changes = { deleted: true };
-      else return json({ error: "method not allowed" }, 405);
-      const t = await update(env, user.id, m[1], changes);
-      return t ? json(t) : json({ error: "not found" }, 404);
-    }
-
-    return json({ error: "not found" }, 404);
+    // PATCH  → change the fields sent; meta: {plugin: value | null}
+    // DELETE → soft delete (PATCH {deleted:false} undoes it)
+    if (!ID.test(id)) return json({ error: "not found" }, 404);
+    let changes;
+    if (method === "PATCH") changes = await readJson(request);
+    else if (method === "DELETE") changes = { deleted: true };
+    else return json({ error: "method not allowed" }, 405);
+    const out = await update(env, user.id, id, changes);
+    return out ? json(out) : json({ error: "not found" }, 404);
   });
 }
 
@@ -67,7 +65,7 @@ async function handle(fn) {
   try { return await fn(); }
   catch (e) {
     if (e instanceof BadRequest) return json({ error: e.message }, 400);
-    console.error("todo api error:", e);
+    console.error("drift api error:", e);
     return json({ error: "server error" }, 500);
   }
 }

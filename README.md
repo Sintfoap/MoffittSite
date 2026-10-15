@@ -6,7 +6,10 @@ Ryan Moffitt's portfolio, hosted on Cloudflare Workers.
 public/          the website, served as static files
   index.html       homepage
   friends/         Friends & Associates page
-  todo/            Drift todo app (signed-in users only)
+  todo/            Drift (signed-in users only)
+    app.js           the page: collections, views, item dialog
+    lib.js           dates and quick-add parsing
+    plugins/         Checklist, Events, List; one file each
 src/             the Worker: runs only for the paths in run_worker_first
   worker.js        routing: sign-in pages, then /todo behind protect()
   account.js       /login /signup /logout /account /admin, and protect()
@@ -14,7 +17,7 @@ src/             the Worker: runs only for the paths in run_worker_first
   crypto.js        password hashing (PBKDF2) and authenticator codes (TOTP)
   pages.js         the sign-in and account pages
   db.js            D1 tables (created on first use)
-  tasks.js         todo storage, one list per account
+  drift.js         Drift storage: collections and items per account
   vendor/uqr.mjs   QR codes for two-factor setup (MIT)
 apps/todo-esque/ the original Drift app (Python engine, terminal UI, CLI)
 tests/           node --no-warnings --test tests/*.test.mjs
@@ -76,15 +79,40 @@ It also lists todo tasks whose owner isn't an account, such as lists from the ol
 3. In `src/worker.js`, route those paths through `protect(request, env, "<area>", user => ...)`, the same way `/todo` is.
 4. Give people the area from `/admin`.
 
-## Todo API
+## Drift
 
-All endpoints act only on the signed-in user's own tasks.
+Drift lives at `/todo/`. Everything in it is an **item**: a title, notes, tags and the collection it's in. **Plugins** add their own metadata to items and their own ways of seeing them:
+
+| Plugin | Adds to an item (`meta.<id>`) | View |
+|---|---|---|
+| Checklist (`checklist`) | `{done, done_at, priority}` | open and done items, tick boxes |
+| Events (`event`) | `{start, end}`, as `YYYY-MM-DD` or `YYYY-MM-DDTHH:MM` | month calendar and agenda |
+| List (`list`) | `{order, parent}` | an outline you reorder and nest |
+
+Each **collection** picks which plugins are on, and shows a tab for each one's view. One item can carry several plugins' metadata at once, so a dated checklist item is also on the calendar. **Today** and **Calendar** in the sidebar show events from every collection.
+
+Quick-add: `Dentist #health +Home !2 ^fri @3pm` (tag, collection, priority, date, time).
+
+### Adding a plugin
+
+Write `public/todo/plugins/<name>.js` (the comment in `plugins/index.js` lists what a plugin can define) and add it to `PLUGINS` there. Its `clean()` runs in the Worker too, so the API checks its metadata with no other server change. New plugins start switched off in existing collections.
+
+### API
+
+All endpoints act only on the signed-in user's own data.
 
 | Method | Path | Body |
 |---|---|---|
-| GET | `/todo/api/tasks` | |
-| POST | `/todo/api/tasks` | `{title, notes, done, priority, due, project, tags, order}` |
-| PATCH | `/todo/api/tasks/<id>` | any of the fields above, or `deleted` |
-| DELETE | `/todo/api/tasks/<id>` | |
+| GET | `/todo/api/state` | → `{user, plugins, collections, items}` |
+| POST | `/todo/api/items` | `{title, collection, notes, tags, meta}` |
+| PATCH | `/todo/api/items/<id>` | any of those, or `deleted`. Each `meta.<plugin>` is replaced whole; `null` removes it |
+| DELETE | `/todo/api/items/<id>` | |
+| POST | `/todo/api/collections` | `{name, plugins, view, order}` |
+| PATCH | `/todo/api/collections/<id>` | any of those, or `deleted` |
+| DELETE | `/todo/api/collections/<id>` | hides its items too; you can't delete your last one |
 
-Quick-add text (`#tag +project !2 ^fri`) is parsed by the client, so dates follow the user's own time zone.
+### Tasks from the old todo list
+
+The first time someone opens Drift, their old tasks (`todo_tasks`) move over: each project becomes a collection (no project goes to Inbox), done and priority become Checklist metadata, and a due date becomes an all-day event. Tasks an admin moves to an account later move over the same way.
+
+`apps/todo-esque/` is the original standalone Drift (Python, terminal UI, sync folder). It isn't deployed and doesn't share data with the site.
