@@ -30,9 +30,9 @@
     }
   }
 
-  // Todo storage. Uncomment and fill in once the D1 database exists
-  // (Storage & Databases → D1 → your database → Database ID).
-  // ,"d1_databases": [
-  //   { "binding": "TODO_DB", "database_name": "moffittsite-todo", "database_id": "PASTE-ID-HERE" }
-  // ]
+  // Todo storage (Storage & Databases → D1 → moffittsite). Previews don't
+  // get this binding, so test branches never touch real todo lists.
+  ,"d1_databases": [
+    { "binding": "TODO_DB", "database_name": "moffittsite", "database_id": "c34cd7d8-cf0d-460d-8b4f-c0e627a0dfb3" }
+  ]
 }

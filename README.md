@@ -45,7 +45,7 @@ Each signed-in email address gets its own todo list. To give someone a list, add
 
 None of these values are secret. They identify things in your account but grant no access on their own, so they live in `wrangler.jsonc`.
 
-1. **Create the database.** In the Cloudflare dashboard, go to **Storage & Databases → D1 → Create** and name it `moffittsite-todo`. Copy its **Database ID**. The table is created automatically on first use.
+1. **Create the database.** In the Cloudflare dashboard, go to **Storage & Databases → D1 → Create** (this site's is named `moffittsite`). Copy its **Database ID**. The table is created automatically on first use.
 2. **Turn on Zero Trust.** Open **Zero Trust** from the dashboard sidebar. The first time, it asks for a team name, which becomes `<team>.cloudflareaccess.com`. The Free plan covers up to 50 users.
 3. **Create the Access application.** Go to **Zero Trust → Access → Applications → Add an application → Self-hosted**:
    - Add a public hostname: your domain, with path `todo`. If you also use `www.`, add that as a second hostname with the same path.
@@ -54,7 +54,7 @@ None of these values are secret. They identify things in your account but grant 
 4. **Fill in `wrangler.jsonc`:**
    - `ACCESS_TEAM_DOMAIN` = `<team>.cloudflareaccess.com`
    - `ACCESS_AUD_TODO` = the AUD tag
-   - Uncomment `d1_databases` and paste the Database ID.
+   - Put the Database ID in `d1_databases` (already done for this site).
 5. **Push.** Workers Builds deploys it. Then visit `/todo/`.
 
 ## Adding another protected area later
