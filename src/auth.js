@@ -22,7 +22,7 @@ export const DEFAULT_AREAS = ["todo"];   // what a new account can use
 export const AREAS = ["todo", "admin"];  // every area the site knows about
 
 const RESERVED = new Set(["admin", "administrator", "root", "system", "support", "help", "login", "logout",
-  "signup", "account", "api", "www", "mail", "sintfoap", "moderator", "owner", "security", "null", "undefined"]);
+  "signup", "account", "api", "www", "mail", "moderator", "owner", "security", "null", "undefined"]);
 
 export class AuthError extends Error {
   constructor(message, { status = 400, retryAfter } = {}) { super(message); this.status = status; this.retryAfter = retryAfter; }

@@ -53,6 +53,7 @@ test("account rules: usernames, reserved names, passwords, duplicates", async ()
   const mismatch = await b.post("/signup", { username: "okname", password: PW, password2: PW + "!" });
   assert.equal(mismatch.status, 400);
   assert.equal((await b.signup("okname")).status, 303);
+  assert.equal((await new Browser(env).signup("sintfoap")).status, 303, "the site owner's name is available");
   assert.equal((await new Browser(env).signup("OKNAME")).status, 400, "names are unique ignoring case");
 });
 
