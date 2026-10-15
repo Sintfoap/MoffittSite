@@ -351,3 +351,107 @@ export async function resetWithRecoveryCode(env, request, { recoveryCode, appCod
   await clear(d, "user:" + user.username);
   return user;
 }
+
+// ── email ──────────────────────────────────────────────────────────────────
+// An address is optional. It only counts for password resets once its owner
+// opens the confirmation link, so nobody can point resets at an address they
+// don't control. Links carry a random token; the database keeps its hash.
+const VERIFY_TTL = DAY, RESET_TTL = 60 * 60;
+const MAIL_POLICIES = {
+  ip: { free: 10, window: 60 * 60, lock: () => 60 * 60 },     // emails asked for per address per hour
+  to: { free: 3, window: 60 * 60, lock: () => 60 * 60 },      // emails sent to one inbox per hour
+};
+
+export function cleanEmail(raw) {
+  const e = String(raw ?? "").trim().toLowerCase();
+  if (e.length > 254 || !/^[a-z0-9._%+'-]+@[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(e)) throw new AuthError("That doesn't look like an email address.");
+  return e;
+}
+
+async function emailToken(d, userId, purpose, email, ttl) {
+  const token = randomToken(32);
+  await d.prepare("INSERT INTO email_tokens (token_hash, user_id, purpose, email, expires_at) VALUES (?, ?, ?, ?, ?)")
+    .bind(await sha256(token), userId, purpose, email, now() + ttl).run();
+  return token;
+}
+
+async function findEmailToken(d, token, purpose) {
+  if (!token || String(token).length > 100) return null;
+  return d.prepare("SELECT * FROM email_tokens WHERE token_hash = ? AND purpose = ? AND expires_at > ?")
+    .bind(await sha256(String(token)), purpose, now()).first();
+}
+
+// Counts an email about to be sent; throws once a sender or inbox has had enough.
+async function mailAllowed(d, request, email) {
+  const keys = [["mailip:" + clientIp(request), MAIL_POLICIES.ip], ["mailto:" + email, MAIL_POLICIES.to]];
+  for (const [key] of keys) { const wait = await lockedFor(d, key); if (wait) throw tooMany(wait); }
+  for (const [key, policy] of keys) await bump(d, key, policy);
+}
+
+// Sets (or, with an empty address, removes) a user's email. Returns a
+// confirmation token to email to the new address, or null when removed.
+export async function setEmail(env, request, userId, raw) {
+  const d = await db(env);
+  const email = String(raw ?? "").trim() ? cleanEmail(raw) : null;
+  if (email) await mailAllowed(d, request, email);
+  await d.batch([
+    d.prepare("UPDATE users SET email = ?, email_verified = 0 WHERE id = ?").bind(email, userId),
+    d.prepare("DELETE FROM email_tokens WHERE user_id = ?").bind(userId),
+  ]);
+  return email ? emailToken(d, userId, "verify", email, VERIFY_TTL) : null;
+}
+
+// Opening the confirmation link. Returns the user, or null if the link is
+// stale (expired, used, or for an address the account no longer has).
+export async function confirmEmail(env, token) {
+  const d = await db(env);
+  const row = await findEmailToken(d, token, "verify");
+  if (!row) return null;
+  await d.prepare("DELETE FROM email_tokens WHERE token_hash = ?").bind(row.token_hash).run();
+  const r = await d.prepare("UPDATE users SET email_verified = 1 WHERE id = ? AND email = ?").bind(row.user_id, row.email).run();
+  return r.meta.changes ? getUser(env, { id: row.user_id }) : null;
+}
+
+// "Forgot username or password" by email. Returns [{ user, token }] for every
+// enabled account with that confirmed address (one inbox can have several),
+// and an empty list otherwise; callers answer the same either way.
+export async function startEmailReset(env, request, raw) {
+  const d = await db(env);
+  let email;
+  try { email = cleanEmail(raw); } catch { return []; }
+  await mailAllowed(d, request, email);
+  const { results } = await d.prepare("SELECT id FROM users WHERE email = ? AND email_verified = 1 AND disabled = 0").bind(email).all();
+  return Promise.all(results.map(async ({ id }) => ({
+    user: await getUser(env, { id }), token: await emailToken(d, id, "reset", email, RESET_TTL),
+  })));
+}
+
+// The user a reset link belongs to, or null if the link no longer works.
+export async function emailResetUser(env, token) {
+  const d = await db(env);
+  const row = await findEmailToken(d, token, "reset");
+  const user = row && await getUser(env, { id: row.user_id });
+  return user && !user.disabled && user.email_verified && user.email === row.email ? user : null;
+}
+
+// Finishes a reset from an emailed link. Accounts with two-factor also need
+// an app code or a recovery code, so an email inbox alone can't take one over.
+export async function resetWithEmailToken(env, request, { token, code, password }) {
+  const d = await db(env);
+  const ipWait = await lockedFor(d, "ip:" + clientIp(request));
+  if (ipWait) throw tooMany(ipWait);
+  const user = await emailResetUser(env, token);
+  if (!user) {
+    await bump(d, "ip:" + clientIp(request), POLICIES.ip);
+    throw new AuthError("This reset link has expired or was already used. Ask for a new one.", { status: 400 });
+  }
+  checkPassword(password, user.username);
+  if (user.totp_secret) await checkSecondFactor(env, request, user, code);
+  const used = await d.prepare("DELETE FROM email_tokens WHERE token_hash = ? AND purpose = 'reset'").bind(await sha256(String(token))).run();
+  if (!used.meta.changes) throw new AuthError("This reset link was already used.", { status: 400 });
+  await d.prepare("DELETE FROM email_tokens WHERE user_id = ? AND purpose = 'reset'").bind(user.id).run();
+  await setPassword(env, user.id, password);
+  await endUserSessions(env, user.id);
+  await clear(d, "user:" + user.username);
+  return user;
+}

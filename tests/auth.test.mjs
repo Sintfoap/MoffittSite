@@ -486,3 +486,130 @@ test("without a database everything signed-in fails closed", async () => {
 test("TOTP codes from the current step are accepted (clock sanity)", async () => {
   assert.equal(String(await codeAt("JBSWY3DPEHPK3PXP", stepNow())).length, 6);
 });
+
+// ── email ──────────────────────────────────────────────────────────────────
+function mailEnv(extra) {
+  const outbox = [];
+  const env = makeEnv({ MAILER: async m => { outbox.push(m); }, ...extra });
+  return { env, outbox, link: (path, i = -1) => outbox.at(i).text.match(new RegExp(`https://sintfoap\\.test(${path}\\?token=[A-Za-z0-9_-]+)`))[1] };
+}
+
+async function addEmail(b, email, password = PW) {
+  return b.post("/account/email", { email, password });
+}
+
+test("email is hidden until sending is set up", async () => {
+  const env = makeEnv(), b = new Browser(env);
+  await b.signup("ryan");
+  assert.doesNotMatch((await b.get("/account")).text, /action="\/account\/email"/);
+  assert.doesNotMatch((await b.get("/login/forgot")).text, /Email me a link/);
+  assert.equal((await addEmail(b, "ryan@example.com")).status, 503);
+});
+
+test("adding an email needs the password and a click on the confirmation link", async () => {
+  const { env, outbox, link } = mailEnv(), b = new Browser(env);
+  await b.signup("ryan");
+  assert.equal((await addEmail(b, "Ryan@Example.com", "not my password")).status, 401);
+  assert.equal((await addEmail(b, "not an email")).status, 400);
+  assert.equal(outbox.length, 0);
+
+  assert.equal((await addEmail(b, "Ryan@Example.com")).status, 200);
+  assert.equal(outbox.length, 1);
+  assert.equal(outbox[0].to, "ryan@example.com");
+  assert.deepEqual({ ...sqlOne(env, "SELECT email, email_verified FROM users") }, { email: "ryan@example.com", email_verified: 0 });
+  assert.match((await b.get("/account")).text, /isn't confirmed yet/);
+
+  // The link works without being signed in, but only once.
+  const confirm = link("/login/verify-email");
+  assert.equal((await new Browser(env).get(confirm)).status, 200);
+  assert.equal(sqlOne(env, "SELECT email_verified FROM users").email_verified, 1);
+  assert.equal((await new Browser(env).get(confirm)).status, 400);
+  assert.match((await b.get("/account")).text, /is confirmed/);
+
+  // An old link can't confirm an address the account no longer has.
+  await addEmail(b, "first@example.com");
+  const stale = link("/login/verify-email");
+  await addEmail(b, "second@example.com");
+  assert.equal((await new Browser(env).get(stale)).status, 400);
+  assert.equal(sqlOne(env, "SELECT email_verified FROM users").email_verified, 0);
+
+  await addEmail(b, "");
+  assert.deepEqual({ ...sqlOne(env, "SELECT email, email_verified FROM users") }, { email: null, email_verified: 0 });
+});
+
+test("a reset email sends the username and a one-time link", async () => {
+  const { env, outbox, link } = mailEnv(), b = new Browser(env);
+  await b.signup("ryan");
+  await addEmail(b, "ryan@example.com");
+  await new Browser(env).get(link("/login/verify-email"));
+  const NEW = "a brand new passphrase", c = new Browser(env);
+
+  // Same answer for an unknown address, and nothing is sent.
+  const sent = outbox.length;
+  const unknown = await c.post("/login/forgot/email", { email: "nobody@example.com" });
+  assert.equal(unknown.status, 200);
+  assert.equal(outbox.length, sent);
+
+  const r = await c.post("/login/forgot/email", { email: "RYAN@example.com" });
+  assert.equal(r.text, unknown.text, "the page doesn't say whether the address matched");
+  assert.equal(outbox.length, sent + 1);
+  assert.match(outbox.at(-1).text, /Your username is: ryan/);
+  const reset = link("/login/reset");
+
+  const form = await c.get(reset);
+  assert.equal(form.status, 200);
+  assert.match(form.text, /<span class="mono">ryan<\/span>/);
+  const token = reset.split("token=")[1];
+  assert.equal((await c.post("/login/reset", { token, new_password: NEW, new_password2: NEW + "x" })).status, 400);
+  const done = await c.post("/login/reset", { token, new_password: NEW, new_password2: NEW });
+  assert.equal(done.status, 200);
+  assert.match(done.text, /Your username is <span class="mono">ryan<\/span>/);
+  assert.equal((await c.get("/todo/api/tasks")).status, 200, "signed in");
+  assert.equal((await b.get("/todo/api/tasks")).status, 401, "other devices signed out");
+  assert.equal((await new Browser(env).login("ryan", NEW)).status, 303);
+
+  assert.equal((await new Browser(env).get(reset)).status, 400, "the link works once");
+  assert.equal((await new Browser(env).post("/login/reset", { token, new_password: PW, new_password2: PW })).status, 400);
+});
+
+test("reset links need a confirmed address, expire, and ask for two-factor", async () => {
+  const { env, outbox, link } = mailEnv(), b = new Browser(env);
+  await b.signup("ryan");
+  await addEmail(b, "ryan@example.com");
+  const sent = outbox.length;
+  await new Browser(env).post("/login/forgot/email", { email: "ryan@example.com" });
+  assert.equal(outbox.length, sent, "unconfirmed addresses get nothing");
+
+  await new Browser(env).get(link("/login/verify-email"));
+  const { secret, step } = await enable2fa(b, env);
+  await new Browser(env).post("/login/forgot/email", { email: "ryan@example.com" });
+  const token = link("/login/reset").split("token=")[1];
+  const NEW = "a brand new passphrase", c = new Browser(env);
+  assert.match((await c.get("/login/reset?token=" + token)).text, /authenticator app/);
+  assert.equal((await c.post("/login/reset", { token, new_password: NEW, new_password2: NEW })).status, 401, "the link alone isn't enough");
+  assert.equal((await c.post("/login/reset", { token, new_password: NEW, new_password2: NEW, code: await codeAt(secret, step + 1) })).status, 200);
+
+  await new Browser(env).post("/login/forgot/email", { email: "ryan@example.com" });
+  const old = link("/login/reset").split("token=")[1];
+  run(env, "UPDATE email_tokens SET expires_at = 1");
+  assert.equal((await c.get("/login/reset?token=" + old)).status, 400);
+});
+
+test("reset emails are limited per inbox", async () => {
+  const { env, outbox, link } = mailEnv(), b = new Browser(env);
+  await b.signup("ryan");
+  await addEmail(b, "ryan@example.com");
+  await new Browser(env).get(link("/login/verify-email"));
+  const sent = outbox.length;
+  for (let i = 0; i < 5; i++) await new Browser(env).post("/login/forgot/email", { email: "ryan@example.com" });
+  assert.equal(outbox.length, sent + 2, "3 emails to one inbox per hour, counting the confirmation");
+});
+
+test("older databases get the email columns added", async () => {
+  const env = makeEnv();
+  env.TODO_DB.raw.exec(`CREATE TABLE users (id TEXT PRIMARY KEY, username TEXT NOT NULL UNIQUE, display_name TEXT NOT NULL,
+    password_hash TEXT NOT NULL, must_change_pw INTEGER NOT NULL DEFAULT 0, totp_secret TEXT, totp_pending TEXT,
+    totp_last_step INTEGER NOT NULL DEFAULT 0, disabled INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL)`);
+  assert.equal((await new Browser(env).signup("ryan")).status, 303);
+  assert.deepEqual({ ...sqlOne(env, "SELECT email, email_verified FROM users") }, { email: null, email_verified: 0 });
+});

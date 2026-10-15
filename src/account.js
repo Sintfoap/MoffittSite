@@ -1,5 +1,5 @@
 // Routes for signing in and managing accounts:
-//   /login, /login/2fa, /login/forgot, /signup, /logout, /dashboard, /account/*, /admin/*
+//   /login, /login/2fa, /login/forgot, /login/reset, /login/verify-email, /signup, /logout, /dashboard, /account/*, /admin/*
 // plus protect(), which guards every signed-in area of the site.
 
 import { db, now } from "./db.js";
@@ -10,9 +10,11 @@ import {
   createSession, currentSession, endSession, endUserSessions, sessionCookie, clearCookie,
   startTotp, otpauthUri, confirmTotp, replaceRecoveryCodes, disableTotp, checkSecondFactor, recoveryCodesLeft, resetWithRecoveryCode,
   adminExists, cleanDisplayName, clientIp,
+  setEmail, confirmEmail, startEmailReset, emailResetUser, resetWithEmailToken,
 } from "./auth.js";
+import { mailReady, sendMail } from "./mail.js";
 import {
-  html, loginPage, signupPage, mfaPage, forgotPage, forgotDonePage, dashboardPage, accountPage, changePasswordRequiredPage, adminPage, adminClaimPage, messagePage,
+  html, loginPage, signupPage, mfaPage, forgotPage, forgotDonePage, forgotEmailSentPage, resetPage, dashboardPage, accountPage, changePasswordRequiredPage, adminPage, adminClaimPage, messagePage,
 } from "./pages.js";
 
 const DEFAULT_NEXT = "/dashboard";
@@ -80,6 +82,9 @@ export async function handleAuth(request, env) {
     if (pathname === "/login") return method === "POST" ? await loginPost(request, env) : await loginGet(request, env, searchParams);
     if (pathname === "/login/2fa") return await secondFactor(request, env, method, searchParams);
     if (pathname === "/login/forgot") return await forgot(request, env, method);
+    if (pathname === "/login/forgot/email") return await forgotEmail(request, env, method);
+    if (pathname === "/login/reset") return await emailReset(request, env, method, searchParams);
+    if (pathname === "/login/verify-email") return await verifyEmail(request, env, searchParams);
     if (pathname === "/signup") return method === "POST" ? await signupPost(request, env) : await signupGet(request, env, searchParams);
     if (pathname === "/logout") { await endSession(env, request); return redirect("/login", clearCookie()); }
     if (pathname === "/dashboard" || pathname === "/dashboard/") return await dashboard(request, env);
@@ -135,7 +140,7 @@ async function secondFactor(request, env, method, q) {
 
 // ── forgot username or password ────────────────────────────────────────────
 async function forgot(request, env, method) {
-  if (method !== "POST") return html(forgotPage({}));
+  if (method !== "POST") return html(forgotPage({ mail: mailReady(env) }));
   const f = await form(request);
   let user;
   try {
@@ -143,12 +148,74 @@ async function forgot(request, env, method) {
     user = await resetWithRecoveryCode(env, request, { recoveryCode: f.recovery_code, appCode: f.app_code, password: f.new_password });
   } catch (e) {
     if (!(e instanceof AuthError)) throw e;
-    return html(forgotPage({ error: e.message }), { status: e.status, headers: e.retryAfter ? { "Retry-After": String(e.retryAfter) } : {} });
+    return html(forgotPage({ error: e.message, mail: mailReady(env) }), { status: e.status, headers: e.retryAfter ? { "Retry-After": String(e.retryAfter) } : {} });
+  }
+  await endSession(env, request);
+  return html(forgotDonePage({ user, usedRecoveryCode: true, recoveryLeft: await recoveryCodesLeft(env, user.id) }),
+    { headers: { "Set-Cookie": sessionCookie(await createSession(env, request, user.id)) } });
+}
+
+// Emails a reset link (with the username) to every account with that
+// confirmed address. The answer is the same whether or not one matched.
+async function forgotEmail(request, env, method) {
+  if (method !== "POST" || !mailReady(env)) return redirect("/login/forgot");
+  const f = await form(request), origin = new URL(request.url).origin;
+  let matches;
+  try { matches = await startEmailReset(env, request, f.email); }
+  catch (e) {
+    if (!(e instanceof AuthError)) throw e;
+    return html(forgotPage({ error: e.message, mail: true }), { status: e.status });
+  }
+  for (const { user, token } of matches) {
+    // A failed send is logged, not shown, so the page never reveals a match.
+    await sendMail(env, {
+      to: user.email,
+      subject: "Reset your sintfoap.xyz password",
+      text: `Someone asked to reset the password for your sintfoap.xyz account.\n\n` +
+        `Your username is: ${user.username}\n\n` +
+        `To choose a new password, open this link. It works once, for the next hour:\n${origin}/login/reset?token=${token}\n\n` +
+        `If this wasn't you, you can ignore this email. Your password hasn't changed.\n`,
+    }).catch(e => console.error("reset email failed:", e));
+  }
+  return html(forgotEmailSentPage());
+}
+
+async function emailReset(request, env, method, q) {
+  if (method !== "POST") {
+    const token = String(q.get("token") ?? "");
+    const user = await emailResetUser(env, token);
+    if (!user) return messagePage("Link expired", "This reset link has expired or was already used. Ask for a new one.", { status: 400, link: ["/login/forgot", "Forgot username or password"] });
+    return html(resetPage({ token, user }));
+  }
+  const f = await form(request), token = String(f.token ?? "");
+  let user;
+  try {
+    if (String(f.new_password ?? "") !== String(f.new_password2 ?? "")) throw new AuthError("The two new passwords don't match.");
+    user = await resetWithEmailToken(env, request, { token, code: f.code, password: f.new_password });
+  } catch (e) {
+    if (!(e instanceof AuthError)) throw e;
+    const u = await emailResetUser(env, token);
+    if (!u) return messagePage("Link expired", e.message, { status: e.status, link: ["/login/forgot", "Forgot username or password"] });
+    return html(resetPage({ token, user: u, error: e.message }), { status: e.status, headers: e.retryAfter ? { "Retry-After": String(e.retryAfter) } : {} });
   }
   await endSession(env, request);
   return html(forgotDonePage({ user, recoveryLeft: await recoveryCodesLeft(env, user.id) }),
     { headers: { "Set-Cookie": sessionCookie(await createSession(env, request, user.id)) } });
 }
+
+async function verifyEmail(request, env, q) {
+  const user = await confirmEmail(env, q.get("token"));
+  if (!user) return messagePage("Link expired", "This confirmation link has expired or was already used. You can send a new one from your account settings.", { status: 400, link: ["/account", "Account settings"] });
+  return messagePage("Email confirmed", `${user.email} can now be used to reset the password for ${user.username}.`, { link: ["/account", "Account settings"] });
+}
+
+const sendConfirmation = (env, request, user, email, token) => sendMail(env, {
+  to: email,
+  subject: "Confirm your email for sintfoap.xyz",
+  text: `Confirm this address for the sintfoap.xyz account ${user.username} by opening this link (it works for 24 hours):\n` +
+    `${new URL(request.url).origin}/login/verify-email?token=${token}\n\n` +
+    `Once confirmed, it can be used to reset that account's password. If you didn't ask for this, ignore this email.\n`,
+});
 
 // ── create an account ──────────────────────────────────────────────────────
 async function signupGet(request, env, q) {
@@ -199,7 +266,7 @@ async function account(request, env, pathname, method) {
     const d = await db(env);
     const sessionCount = (await d.prepare("SELECT COUNT(*) AS n FROM sessions WHERE user_id = ? AND stage = 'full'").bind(user.id).first()).n;
     return html(accountPage({
-      user, sessionCount, recoveryLeft: await recoveryCodesLeft(env, user.id),
+      user, sessionCount, recoveryLeft: await recoveryCodesLeft(env, user.id), mail: mailReady(env),
       adminNeeds2fa: user.areas.has("admin") && !user.totp_secret, ...extra,
     }), { status });
   };
@@ -247,6 +314,17 @@ async function account(request, env, pathname, method) {
     case "/account/2fa/confirm":
       try { return show({ recoveryCodes: await confirmTotp(env, user, f.code), notice: "Two-factor is on." }); }
       catch (e) { return fail(e, user.totp_pending ? { setup: setupView(user, user.totp_pending) } : {}); }
+
+    case "/account/email":
+      try {
+        if (!mailReady(env)) throw new AuthError("Email isn't set up on this site yet.", { status: 503 });
+        await checkLogin(env, request, user.username, f.password);
+        const token = await setEmail(env, request, user.id, f.email);
+        if (!token) return show({ notice: "Email removed." });
+        const fresh = await getUser(env, { id: user.id });
+        await sendConfirmation(env, request, fresh, fresh.email, token);
+        return show({ notice: `We sent a link to ${fresh.email}. Open it to confirm the address.` });
+      } catch (e) { return fail(passwordError(e)); }
 
     case "/account/recovery":
       try { await checkLogin(env, request, user.username, f.password); }
@@ -364,6 +442,7 @@ async function admin(request, env, me, pathname, method) {
         await d.batch([
           d.prepare("DELETE FROM sessions WHERE user_id = ?").bind(target.id),
           d.prepare("DELETE FROM recovery_codes WHERE user_id = ?").bind(target.id),
+          d.prepare("DELETE FROM email_tokens WHERE user_id = ?").bind(target.id),
           d.prepare("DELETE FROM user_areas WHERE user_id = ?").bind(target.id),
           d.prepare("DELETE FROM todo_tasks WHERE owner = ?").bind(target.id),
           d.prepare("DELETE FROM users WHERE id = ?").bind(target.id),
