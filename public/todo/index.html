@@ -498,7 +498,7 @@ class RemoteBackend {
   }
 }
 
-/* ── backend: this website (Cloudflare Pages + D1, one list per signed-in user) ── */
+/* ── backend: this website (Cloudflare Worker + D1, one list per signed-in user) ── */
 class SiteBackend {
   constructor(base) { this.kind = "site"; this.base = base; }
   async req(method, p, body) {
@@ -506,9 +506,8 @@ class SiteBackend {
       method, credentials: "same-origin", cache: "no-store", redirect: "manual",
       headers: body ? { "Content-Type": "application/json" } : {}, body: body ? JSON.stringify(body) : undefined
     });
-    // The Access session ran out (Access redirects to its sign-in page, or our
-    // own check says 401): reload so Cloudflare shows the sign-in page.
-    if (r.type === "opaqueredirect" || r.status === 401) { location.reload(); throw new Error("signed out"); }
+    // The session ran out: reload, and the site sends you to sign in.
+    if (r.type === "opaqueredirect" || r.status === 401 || r.status === 403) { location.reload(); throw new Error("signed out"); }
     if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.statusText);
     return r.json();
   }
@@ -520,7 +519,7 @@ class SiteBackend {
   }
   update(id, f) { return this.req("PATCH", "/api/tasks/" + id, f).then(t => { this.onchange?.(); return t; }); }
   remove(id) { return this.req("DELETE", "/api/tasks/" + id).then(t => { this.onchange?.(); return t; }); }
-  // No push channel on Pages: re-sync every 20s while visible, and on return to the tab.
+  // No push channel: re-sync every 20s while visible, and on return to the tab.
   connect(onchange, onstatus) {
     this.onchange = onchange;
     const poll = () => { if (!document.hidden) onchange(); };
@@ -771,9 +770,14 @@ function setView(v) { state.view = v; state.open = null; store.set("view", v); r
 $("aside").addEventListener("click", e => { const b = e.target.closest("[data-view]"); if (b) setView(b.dataset.view); });
 if (SITE_BASE) { $("#cfgBtn").textContent = "Sign out"; }
 $("#cfgBtn").onclick = () => {
-  if (SITE_BASE) { location.href = "/cdn-cgi/access/logout"; return; }
+  if (SITE_BASE) { location.href = "/logout"; return; }
   const c = store.get("server", { url: "", token: "" }); $("#cfgUrl").value = c.url; $("#cfgTok").value = c.token; $("#cfg").showModal(); };
-$("#sync").addEventListener("click", e => { if (!SITE_BASE && matchMedia("(max-width:760px)").matches && !e.target.closest("#cfgBtn")) $("#cfgBtn").onclick(); });
+$("#sync").addEventListener("click", e => {
+  if (!matchMedia("(max-width:760px)").matches || e.target.closest("#cfgBtn")) return;
+  // Phones hide the Sign out button, so tapping the sync status offers it instead.
+  if (SITE_BASE) { const u = state.data.stats?.user; if (confirm(u ? `Sign out ${u}?` : "Sign out?")) $("#cfgBtn").onclick(); return; }
+  $("#cfgBtn").onclick();
+});
 $("#cfg").addEventListener("close", () => {
   if ($("#cfg").returnValue !== "save") return;
   store.set("server", { url: $("#cfgUrl").value.trim(), token: $("#cfgTok").value.trim() }); location.reload();

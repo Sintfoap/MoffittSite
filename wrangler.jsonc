@@ -1,0 +1,47 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  // Must match the Worker's name in the Cloudflare dashboard.
+  "name": "moffittsite",
+  "main": "src/worker.js",
+  "compatibility_date": "2025-09-01",
+
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    // Only these paths run src/worker.js (sign-in check + todo API);
+    // everything else is served straight from public/.
+    "run_worker_first": [
+      "/todo", "/todo/*",
+      "/login", "/login/*", "/signup", "/logout",
+      "/account", "/account/*", "/admin", "/admin/*"
+    ]
+  },
+
+  "vars": {
+    // "open" shows "Create an account"; "closed" stops new sign-ups.
+    "SIGNUPS": "open",
+    // Stops accepting new accounts at this many.
+    "MAX_USERS": "100",
+    // Password hashing strength (PBKDF2 rounds, at most 100000). Lower it if
+    // sign-ins fail with "exceeded resource limits" on the Workers free plan.
+    "PASSWORD_ITERATIONS": "100000"
+  },
+  // Also needed, set as a secret (not here): ADMIN_CLAIM_CODE, which lets one
+  // account claim admin while there is none. See README.
+
+  // Branch builds run `wrangler preview`, which takes its settings from here.
+  // Previews have no database, so signing in there fails closed.
+  "previews": {
+    "vars": {
+      "SIGNUPS": "closed",
+      "MAX_USERS": "0",
+      "PASSWORD_ITERATIONS": "100000"
+    }
+  },
+
+  // Accounts and todo lists (Storage & Databases → D1 → moffittsite).
+  // Previews don't get this binding, so test branches never touch real data.
+  "d1_databases": [
+    { "binding": "TODO_DB", "database_name": "moffittsite", "database_id": "c34cd7d8-cf0d-460d-8b4f-c0e627a0dfb3" }
+  ]
+}

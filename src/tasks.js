@@ -2,7 +2,9 @@
 // Field names and rules mirror apps/todo-esque/drift/core.py so the web UI
 // (and later a terminal client) can talk to it unchanged.
 //
-// Requires a D1 binding named TODO_DB (Pages → Settings → Bindings).
+// `owner` is the signed-in user's id.
+
+import { db } from "./db.js";
 
 export const DEFAULTS = {
   title: "", notes: "", done: false, priority: 0, due: null,
@@ -73,21 +75,7 @@ function newId() {
 
 const toTask = row => ({ ...DEFAULTS, ...JSON.parse(row.data), id: row.id, updated: row.updated });
 
-let ready = null;
-function db(env) {
-  if (!env.TODO_DB) throw new Error("D1 binding TODO_DB is not configured");
-  ready ||= env.TODO_DB.prepare(
-    `CREATE TABLE IF NOT EXISTS todo_tasks (
-       owner   TEXT NOT NULL,
-       id      TEXT NOT NULL,
-       data    TEXT NOT NULL,
-       updated TEXT NOT NULL,
-       PRIMARY KEY (owner, id)
-     )`).run().catch(e => { ready = null; throw e; });
-  return ready.then(() => env.TODO_DB);
-}
-
-export async function list(env, owner) {
+export async function list(env, owner, label = owner) {
   const d = await db(env);
   const { results } = await d.prepare("SELECT id, data, updated FROM todo_tasks WHERE owner = ?").bind(owner).all();
   const tasks = results.map(toTask).filter(t => !t.deleted);
@@ -95,7 +83,7 @@ export async function list(env, owner) {
     tasks,
     projects: [...new Set(tasks.map(t => t.project).filter(Boolean))].sort(),
     tags: [...new Set(tasks.flatMap(t => t.tags))].sort(),
-    stats: { user: owner, open: tasks.filter(t => !t.done).length, done: tasks.filter(t => t.done).length },
+    stats: { user: label, open: tasks.filter(t => !t.done).length, done: tasks.filter(t => t.done).length },
   };
 }
 
