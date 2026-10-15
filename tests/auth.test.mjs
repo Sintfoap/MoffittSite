@@ -26,7 +26,7 @@ test("creating an account signs you in with a locked-down cookie", async () => {
   const env = makeEnv(), b = new Browser(env);
   const r = await b.signup("Ryan", PW, "Ryan M");
   assert.equal(r.status, 303);
-  assert.equal(r.location, "/todo/");
+  assert.equal(r.location, "/dashboard");
   assert.match(r.setCookie, /^__Host-sid=[A-Za-z0-9_-]{40,}; Path=\/; Secure; HttpOnly; SameSite=Lax; Max-Age=\d+$/);
   const u = sqlOne(env, "SELECT * FROM users");
   assert.equal(u.username, "ryan", "usernames are stored lowercase");
@@ -125,7 +125,7 @@ test("the after-login address can't send people to another site", async () => {
   await new Browser(env).signup("ryan");
   for (const next of ["//evil.example/", "https://evil.example/", "/\\evil.example", "javascript:alert(1)", "/ok\nSet-Cookie:x"]) {
     const r = await new Browser(env).post("/login", { username: "ryan", password: PW, next });
-    assert.equal(r.location, "/todo/", JSON.stringify(next));
+    assert.equal(r.location, "/dashboard", JSON.stringify(next));
   }
 });
 
@@ -220,7 +220,7 @@ test("two-factor: setup, sign-in with a code, no replays, recovery codes work on
   // Password alone now only gets you to the code screen.
   const c = new Browser(env);
   const r = await c.login("ryan");
-  assert.equal(r.location, "/login/2fa?next=%2Ftodo%2F");
+  assert.equal(r.location, "/login/2fa?next=%2Fdashboard");
   assert.equal((await c.get("/todo/api/tasks")).status, 401, "half signed in isn't signed in");
   assert.equal((await c.post("/login/2fa", { code: "123456" })).status, 401);
   // The code used during setup can't be used again.
@@ -264,6 +264,30 @@ test("turning two-factor off needs the password", async () => {
   assert.equal((await b.post("/account/2fa/disable", { password: PW })).status, 200);
   assert.equal(sqlOne(env, "SELECT totp_secret FROM users").totp_secret, null);
   assert.equal(sqlOne(env, "SELECT COUNT(*) AS n FROM recovery_codes").n, 0);
+});
+
+// ── dashboard ──────────────────────────────────────────────────────────────
+test("the dashboard lists only the apps an account can use", async () => {
+  const env = makeEnv({ ADMIN_CLAIM_CODE: "claim-code-1234" }), b = new Browser(env);
+  assert.equal((await b.get("/dashboard")).location, "/login?next=%2Fdashboard");
+  await b.signup("ryan", PW, "<b>Ryan</b>");
+  let page = await b.get("/dashboard");
+  assert.equal(page.status, 200);
+  assert.match(page.text, /href="\/todo\/"/);
+  assert.doesNotMatch(page.text, /href="\/admin"/);
+  assert.match(page.text, /&lt;b&gt;Ryan&lt;\/b&gt;/, "names are escaped");
+  assert.doesNotMatch(page.text, /<b>Ryan/);
+
+  run(env, "DELETE FROM user_areas");
+  assert.match((await b.get("/dashboard")).text, /doesn't have any apps yet/);
+
+  // An admin without two-factor finishes setup first, then sees Admin too.
+  await b.post("/admin/claim", { code: env.ADMIN_CLAIM_CODE });
+  assert.equal((await b.get("/dashboard")).location, "/account");
+  await enable2fa(b, env);
+  page = await b.get("/dashboard");
+  assert.match(page.text, /href="\/admin"/);
+  assert.doesNotMatch(page.text, /href="\/todo\/"/);
 });
 
 // ── admin ──────────────────────────────────────────────────────────────────
