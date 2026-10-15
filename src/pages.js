@@ -39,7 +39,7 @@ const STYLE = `
   p { color: var(--muted); font-size: 18px; line-height: 1.5; }
   .card { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 24px; margin-bottom: 20px; }
   label { display: block; font-family: 'Jost', sans-serif; font-size: 12px; letter-spacing: 1.5px; color: var(--muted); text-transform: uppercase; margin: 14px 0 6px; }
-  input[type=text], input[type=password], select { width: 100%; padding: 11px 12px; font: 18px 'EB Garamond', Georgia, serif; color: var(--ink);
+  input[type=text], input[type=password], input[type=email], select { width: 100%; padding: 11px 12px; font: 18px 'EB Garamond', Georgia, serif; color: var(--ink);
           background: #0b0f0a; border: 1px solid var(--line); border-radius: 4px; }
   input:focus, select:focus { outline: 2px solid var(--gold); outline-offset: 1px; }
   .hint { font-size: 15px; color: var(--gold-dim); margin: 6px 0 0; }
@@ -96,6 +96,7 @@ export const loginPage = ({ error, next, username = "", signupsOpen }) => page("
     <label for="p">Password</label><input id="p" type="password" name="password" autocomplete="current-password" required>
     <button type="submit">Sign in</button>
   </form>
+  <p class="alt"><a href="/login/forgot">Forgot your username or password?</a></p>
   ${signupsOpen ? `<p class="alt">New here? <a href="/signup${next ? `?next=${encodeURIComponent(next)}` : ""}">Create an account</a></p>` : ""}`);
 
 export const signupPage = ({ error, next, values = {}, closed }) => page("Create an account", closed
@@ -123,6 +124,58 @@ export const mfaPage = ({ error, next }) => page("Two-factor code", `
   </form>
   <p class="alt"><a href="/logout">Start over</a></p>`);
 
+export const forgotPage = ({ error, mail }) => page("Forgot username or password", `
+  <div class="kicker">sintfoap.xyz</div><h1>Forgot your username or password?</h1>
+  ${msg(error)}
+  ${mail ? `<form method="post" action="/login/forgot/email" class="card">
+    <h2>By email</h2>
+    <p>If you confirmed an email address in your account settings, we'll send your username and a link to choose a new password.</p>
+    <label for="e">Email</label><input id="e" type="email" name="email" autocomplete="email" autocapitalize="none" spellcheck="false" maxlength="254" required>
+    <button type="submit">Email me a link</button>
+  </form>` : ""}
+  <form method="post" action="/login/forgot" class="card">
+    ${mail ? `<h2>With a recovery code</h2>` : ""}
+    <p>Use one of the recovery codes you saved from your account settings. It tells us which account is yours, so you don't need your username.</p>
+    <label for="r">Recovery code</label>
+    <input id="r" type="text" name="recovery_code" autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="20" placeholder="xxxxx-xxxxx" required autofocus>
+    <label for="a">Code from your authenticator app</label>
+    <input id="a" type="text" name="app_code" inputmode="numeric" autocomplete="one-time-code" maxlength="6">
+    <p class="hint">Only if you use two-factor. Leave it empty otherwise.</p>
+    <label for="n">New password</label><input id="n" type="password" name="new_password" autocomplete="new-password" minlength="12" maxlength="128" required>
+    <label for="n2">New password again</label><input id="n2" type="password" name="new_password2" autocomplete="new-password" required>
+    <button type="submit">Reset password</button>
+  </form>
+  <p class="alt">${mail ? "No email or recovery codes" : "No recovery codes"}, or lost your phone too? Ask the site's admin to reset your password.</p>
+  <p class="alt"><a href="/login">Back to sign in</a></p>`);
+
+export const forgotDonePage = ({ user, recoveryLeft, usedRecoveryCode }) => page("Password reset", `
+  <div class="kicker">sintfoap.xyz</div><h1>You're back in</h1>
+  <div class="card">
+    <p>Your username is <span class="mono">${esc(user.username)}</span>. Your password is changed, and every other device has been signed out.</p>
+    ${usedRecoveryCode ? `<p>That recovery code is used up. You have ${recoveryLeft} left${recoveryLeft < 3 ? ", so make new ones in your account settings" : ""}.</p>` : ""}
+    <a class="btn" href="/account">Go to your account</a>
+  </div>`, { user });
+
+export const forgotEmailSentPage = () => page("Check your email", `
+  <div class="kicker">sintfoap.xyz</div><h1>Check your email</h1>
+  <p>If that address is confirmed on an account here, we've sent it the username and a link to choose a new password. The link works once, for an hour.</p>
+  <p>Nothing arriving? Check your spam folder, or use a recovery code instead.</p>
+  <p class="alt"><a href="/login/forgot">Back</a> · <a href="/login">Sign in</a></p>`);
+
+export const resetPage = ({ token, user, error }) => page("Choose a new password", `
+  <div class="kicker">sintfoap.xyz</div><h1>Choose a new password</h1>
+  <form method="post" action="/login/reset" class="card">${msg(error)}
+    <input type="hidden" name="token" value="${esc(token)}">
+    <p>Username <span class="mono">${esc(user.username)}</span></p>
+    <input type="text" name="username" value="${esc(user.username)}" autocomplete="username" hidden>
+    <label for="n">New password</label><input id="n" type="password" name="new_password" autocomplete="new-password" minlength="12" maxlength="128" required autofocus>
+    <label for="n2">New password again</label><input id="n2" type="password" name="new_password2" autocomplete="new-password" required>
+    ${user.totp_secret ? `<label for="c">Code from your authenticator app</label>
+    <input id="c" type="text" name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="11" required>
+    <p class="hint">Lost your phone? Enter one of your recovery codes instead.</p>` : ""}
+    <button type="submit">Save password</button>
+  </form>`);
+
 export const changePasswordRequiredPage = ({ user, error }) => page("Choose a new password", `
   <div class="kicker">Account</div><h1>Choose a new password</h1>
   <p>Your password was reset. Pick a new one to continue.</p>
@@ -145,15 +198,10 @@ export function dashboardPage({ user, apps, sessionCount }) {
       <a class="btn" href="/account">Account settings</a></section>`, { user, wide: true });
 }
 
-export function accountPage({ user, error, notice, recoveryLeft, sessionCount, setup, recoveryCodes, adminNeeds2fa }) {
+export function accountPage({ user, error, notice, recoveryLeft, sessionCount, setup, recoveryCodes, adminNeeds2fa, mail }) {
   const isAdmin = user.areas.has("admin");
   let twofa;
-  if (recoveryCodes) {
-    twofa = `<h2>Save your recovery codes</h2>
-      <p>Each one gets you in once if you lose your phone. They won't be shown again, so save them somewhere safe now, such as a password manager.</p>
-      <div class="codes">${recoveryCodes.map(c => `<span>${esc(c)}</span>`).join("")}</div>
-      <a class="btn" href="/account">I've saved them</a>`;
-  } else if (setup) {
+  if (setup) {
     twofa = `<h2>Set up two-factor</h2>
       <p>Scan this with an authenticator app (Google Authenticator, 1Password, Authy…), then enter the 6-digit code it shows.</p>
       <div class="qr">${setup.qrSvg}</div>
@@ -165,8 +213,7 @@ export function accountPage({ user, error, notice, recoveryLeft, sessionCount, s
       <form method="get" action="/account"><button class="quiet" type="submit">Cancel</button></form>`;
   } else if (user.totp_secret) {
     twofa = `<h2>Two-factor is on</h2>
-      <p>${recoveryLeft} recovery code${recoveryLeft === 1 ? "" : "s"} left.</p>
-      <form method="post" action="/account/2fa/recovery"><button class="quiet" type="submit">Make new recovery codes</button></form>
+      <p>Signing in asks for a code from your phone after your password.</p>
       ${isAdmin ? `<p class="hint">Two-factor is required for admin accounts, so it can't be turned off here.</p>` : `
       <form method="post" action="/account/2fa/disable">
         <label for="dp">Password, to turn two-factor off</label><input id="dp" type="password" name="password" autocomplete="current-password" required>
@@ -175,12 +222,41 @@ export function accountPage({ user, error, notice, recoveryLeft, sessionCount, s
   } else {
     twofa = `<h2>Two-factor is off</h2>
       <p>${adminNeeds2fa ? "Admin accounts need two-factor before they can use the rest of the site." : "Add a code from your phone on top of your password."}</p>
-      <form method="post" action="/account/2fa/start"><button type="submit">Set up two-factor</button></form>`;
+      <form method="post" action="/account/2fa/start">
+        <label for="sp">Password</label><input id="sp" type="password" name="password" autocomplete="current-password" required>
+        <button type="submit">Set up two-factor</button>
+      </form>`;
   }
+  const recovery = recoveryCodes ? `<h2>Save your recovery codes</h2>
+      <p>Each one works once, to reset a forgotten password${user.totp_secret ? " or to sign in if you lose your phone" : ""}. They won't be shown again, so save them somewhere safe now, such as a password manager.</p>
+      <div class="codes">${recoveryCodes.map(c => `<span>${esc(c)}</span>`).join("")}</div>
+      <a class="btn" href="/account">I've saved them</a>`
+    : `<h2>Recovery codes</h2>
+      <p>${recoveryLeft
+        ? `You have ${recoveryLeft} recovery code${recoveryLeft === 1 ? "" : "s"} left.`
+        : "You have none, so if you forget your password only the admin can reset it."}
+        A recovery code resets a forgotten password from the <a href="/login/forgot">forgot password</a> page${user.totp_secret ? ", along with a code from your phone" : ""}.</p>
+      <form method="post" action="/account/recovery">
+        <label for="rp">Password</label><input id="rp" type="password" name="password" autocomplete="current-password" required>
+        <button class="${recoveryLeft ? "quiet" : ""}" type="submit">${recoveryLeft ? "Make new recovery codes" : "Make recovery codes"}</button>
+        ${recoveryLeft ? `<p class="hint">This replaces the ones you have.</p>` : ""}
+      </form>`;
   return page("Account settings", `
     <div class="kicker">Account settings</div><h1>${esc(user.display_name)}</h1>
     ${msg(error)}${msg(notice, "good")}
+    ${recoveryCodes ? `<section class="card">${recovery}</section>` : ""}
     <section class="card">${twofa}</section>
+    ${recoveryCodes ? "" : `<section class="card">${recovery}</section>`}
+    ${mail ? `<section class="card"><h2>Email</h2>
+      <p>${user.email
+        ? `<span class="mono">${esc(user.email)}</span> ${user.email_verified ? "is confirmed, so it can reset your password." : "isn't confirmed yet. Open the link we sent to it."}`
+        : "Add an email address to get your username and a reset link if you forget your password. It's used for nothing else."}</p>
+      <form method="post" action="/account/email">
+        <label for="em">Email</label><input id="em" type="email" name="email" value="${esc(user.email)}" autocomplete="email" maxlength="254">
+        <p class="hint">Leave it empty to remove your address.</p>
+        <label for="ep">Password</label><input id="ep" type="password" name="password" autocomplete="current-password" required>
+        <button type="submit">${user.email ? "Save email" : "Add email"}</button>
+      </form></section>` : ""}
     <section class="card"><h2>Profile</h2>
       <p>Username <span class="mono">${esc(user.username)}</span></p>
       <form method="post" action="/account/profile">

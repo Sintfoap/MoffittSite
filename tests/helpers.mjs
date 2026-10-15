@@ -76,8 +76,8 @@ export const stepNow = () => Math.floor(Date.now() / 1000 / TOTP_PERIOD);
 export const codeAt = (secret, step) => totpCode(secret, step);
 
 // Turns on two-factor for a signed-in browser; returns { secret, codes, step, page }.
-export async function enable2fa(b, env) {
-  await b.post("/account/2fa/start", {});
+export async function enable2fa(b, env, password = "correct horse battery") {
+  await b.post("/account/2fa/start", { password });
   const secret = sqlOne(env, "SELECT totp_pending FROM users WHERE totp_pending IS NOT NULL").totp_pending;
   const step = stepNow();
   const r = await b.post("/account/2fa/confirm", { code: await codeAt(secret, step) });
