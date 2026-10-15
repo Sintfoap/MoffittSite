@@ -30,6 +30,8 @@ The site is a Cloudflare **Worker** with static assets, deployed by Workers Buil
 
 Settings in `wrangler.jsonc` replace dashboard settings on every deploy. Change variables and bindings there, not in the dashboard.
 
+Branch builds run `npx wrangler preview`, which uses the `previews` section of `wrangler.jsonc` instead of the production settings. It must list every variable. Its Access values are left empty on purpose, so `/todo` refuses everyone on preview URLs while the rest of the site previews normally.
+
 ## How protected areas work
 
 There are two locks, and both must pass:

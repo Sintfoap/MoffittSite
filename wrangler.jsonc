@@ -18,6 +18,16 @@
     "ACCESS_TEAM_DOMAIN": "",
     // "Application Audience (AUD) Tag" of the Access application for /todo.
     "ACCESS_AUD_TODO": ""
+  },
+
+  // Branch builds run `wrangler preview`, which takes its settings from here
+  // instead of the production ones above. Left empty, /todo refuses everyone
+  // on preview URLs; the rest of the site previews normally.
+  "previews": {
+    "vars": {
+      "ACCESS_TEAM_DOMAIN": "",
+      "ACCESS_AUD_TODO": ""
+    }
   }
 
   // Todo storage. Uncomment and fill in once the D1 database exists
