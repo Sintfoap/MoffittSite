@@ -1,0 +1,38 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  // Must match the Worker's name in the Cloudflare dashboard.
+  "name": "moffittsite",
+  "main": "src/worker.js",
+  "compatibility_date": "2025-09-01",
+
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    // Only these paths run src/worker.js (sign-in check + todo API);
+    // everything else is served straight from public/.
+    "run_worker_first": ["/todo", "/todo/*"]
+  },
+
+  "vars": {
+    // Zero Trust team domain (Zero Trust → Settings → Team name and domain).
+    "ACCESS_TEAM_DOMAIN": "raspy-mountain-56ea.cloudflareaccess.com",
+    // "Application Audience (AUD) Tag" of the Access application for /todo.
+    "ACCESS_AUD_TODO": "f50d49fdd56f05ff6ad2afe4a48d4330827d5288862c8a808dbfe9e2a7fc9484"
+  },
+
+  // Branch builds run `wrangler preview`, which takes its settings from here
+  // instead of the production ones above. Left empty, /todo refuses everyone
+  // on preview URLs; the rest of the site previews normally.
+  "previews": {
+    "vars": {
+      "ACCESS_TEAM_DOMAIN": "",
+      "ACCESS_AUD_TODO": ""
+    }
+  }
+
+  // Todo storage (Storage & Databases → D1 → moffittsite). Previews don't
+  // get this binding, so test branches never touch real todo lists.
+  ,"d1_databases": [
+    { "binding": "TODO_DB", "database_name": "moffittsite", "database_id": "c34cd7d8-cf0d-460d-8b4f-c0e627a0dfb3" }
+  ]
+}
