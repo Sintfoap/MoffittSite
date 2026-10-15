@@ -1,0 +1,28 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  // Must match the Worker's name in the Cloudflare dashboard.
+  "name": "moffittsite",
+  "main": "src/worker.js",
+  "compatibility_date": "2025-09-01",
+
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    // Only these paths run src/worker.js (sign-in check + todo API);
+    // everything else is served straight from public/.
+    "run_worker_first": ["/todo", "/todo/*"]
+  },
+
+  "vars": {
+    // Zero Trust team domain, e.g. "yourteam.cloudflareaccess.com".
+    "ACCESS_TEAM_DOMAIN": "",
+    // "Application Audience (AUD) Tag" of the Access application for /todo.
+    "ACCESS_AUD_TODO": ""
+  }
+
+  // Todo storage. Uncomment and fill in once the D1 database exists
+  // (Storage & Databases → D1 → your database → Database ID).
+  // ,"d1_databases": [
+  //   { "binding": "TODO_DB", "database_name": "moffittsite-todo", "database_id": "PASTE-ID-HERE" }
+  // ]
+}

@@ -2,7 +2,7 @@
 // Field names and rules mirror apps/todo-esque/drift/core.py so the web UI
 // (and later a terminal client) can talk to it unchanged.
 //
-// Requires a D1 binding named TODO_DB (Pages → Settings → Bindings).
+// Requires a D1 binding named TODO_DB (d1_databases in wrangler.jsonc).
 
 export const DEFAULTS = {
   title: "", notes: "", done: false, priority: 0, due: null,

@@ -6,10 +6,11 @@
 // expected application, or it is refused. If Access is ever misconfigured or
 // switched off, the protected paths fail closed instead of opening up.
 //
-// Configuration (Pages → Settings → Variables and Secrets):
+// Configuration ("vars" in wrangler.jsonc):
 //   ACCESS_TEAM_DOMAIN  e.g. "yourteam.cloudflareaccess.com"
 //   <audVar>            the Access application's "Application Audience (AUD) Tag".
-//                       Comma-separate several (e.g. production + preview apps).
+//                       Comma-separate several if more than one Access app
+//                       should be accepted.
 
 const CERTS_TTL_MS = 60 * 60 * 1000;
 const CLOCK_SKEW_S = 60;
@@ -80,26 +81,25 @@ export class AccessError extends Error {
   constructor(status, message) { super(message); this.status = status; }
 }
 
-// Pages middleware factory: protects every request under the directory it is
-// mounted in, and exposes the signed-in user as context.data.user.
-export function requireAccess(audVar) {
-  return async context => {
-    try {
-      context.data.user = await verifyAccess(context.request, context.env, audVar);
-    } catch (e) {
-      const status = e instanceof AccessError ? e.status : 500;
-      if (status === 500) console.error("access check failed:", e.message);
-      const api = new URL(context.request.url).pathname.includes("/api/");
-      const body = api ? JSON.stringify({ error: e.message }) : `${status === 500 ? "Server misconfigured" : "Not authorised"}: ${e.message}\n`;
-      return new Response(body, {
-        status,
-        headers: { "Content-Type": api ? "application/json" : "text/plain; charset=utf-8", "Cache-Control": "no-store" },
-      });
-    }
-    const res = await context.next();
-    // Never let a shared cache keep a copy of a protected page.
-    const out = new Response(res.body, res);
-    out.headers.set("Cache-Control", "private, no-store");
-    return out;
-  };
+// Runs `inner(user)` only for a request with a valid Access token for the
+// application named by audVar; otherwise answers with the reason. Responses
+// are marked uncacheable so no shared cache keeps a copy of protected pages.
+export async function protect(request, env, audVar, inner) {
+  let user;
+  try {
+    user = await verifyAccess(request, env, audVar);
+  } catch (e) {
+    const status = e instanceof AccessError ? e.status : 500;
+    if (status === 500) console.error("access check failed:", e.message);
+    const api = new URL(request.url).pathname.includes("/api/");
+    const body = api ? JSON.stringify({ error: e.message }) : `${status === 500 ? "Server misconfigured" : "Not authorised"}: ${e.message}\n`;
+    return new Response(body, {
+      status,
+      headers: { "Content-Type": api ? "application/json" : "text/plain; charset=utf-8", "Cache-Control": "no-store" },
+    });
+  }
+  const res = await inner(user);
+  const out = new Response(res.body, res);
+  out.headers.set("Cache-Control", "private, no-store");
+  return out;
 }

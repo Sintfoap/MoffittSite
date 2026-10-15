@@ -498,7 +498,7 @@ class RemoteBackend {
   }
 }
 
-/* ── backend: this website (Cloudflare Pages + D1, one list per signed-in user) ── */
+/* ── backend: this website (Cloudflare Worker + D1, one list per signed-in user) ── */
 class SiteBackend {
   constructor(base) { this.kind = "site"; this.base = base; }
   async req(method, p, body) {
@@ -520,7 +520,7 @@ class SiteBackend {
   }
   update(id, f) { return this.req("PATCH", "/api/tasks/" + id, f).then(t => { this.onchange?.(); return t; }); }
   remove(id) { return this.req("DELETE", "/api/tasks/" + id).then(t => { this.onchange?.(); return t; }); }
-  // No push channel on Pages: re-sync every 20s while visible, and on return to the tab.
+  // No push channel: re-sync every 20s while visible, and on return to the tab.
   connect(onchange, onstatus) {
     this.onchange = onchange;
     const poll = () => { if (!document.hidden) onchange(); };

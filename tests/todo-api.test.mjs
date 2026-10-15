@@ -6,9 +6,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 
-import { onRequest as middleware } from "../functions/todo/_middleware.js";
-import * as tasksRoute from "../functions/todo/api/tasks/index.js";
-import * as taskRoute from "../functions/todo/api/tasks/[id].js";
+import worker from "../src/worker.js";
 
 const TEAM = "testteam.cloudflareaccess.com";
 const AUD = "aud-todo-123";
@@ -46,26 +44,18 @@ function fakeD1() {
   return { prepare: sql => stmt(sql) };
 }
 
-const env = { ACCESS_TEAM_DOMAIN: TEAM, ACCESS_AUD_TODO: AUD, TODO_DB: fakeD1() };
+// Stands in for Cloudflare's static-asset server (public/).
+const ASSETS = { fetch: async () => new Response("<!doctype html>static page", { headers: { "Content-Type": "text/html" } }) };
+const env = { ACCESS_TEAM_DOMAIN: TEAM, ACCESS_AUD_TODO: AUD, TODO_DB: fakeD1(), ASSETS };
 
-// Runs a request through the middleware and then the matching route, the
-// way Pages would.
+// Sends a request through the Worker the way Cloudflare would.
 async function call(method, path, { jwt, body, origin, envOverride } = {}) {
   const headers = new Headers();
   if (jwt) headers.set("Cf-Access-Jwt-Assertion", jwt);
   if (body !== undefined) headers.set("Content-Type", "application/json");
   if (origin) headers.set("Origin", origin);
   const request = new Request(ORIGIN + path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
-  const context = { request, env: envOverride || env, data: {}, params: {} };
-  context.next = async () => {
-    const m = path.match(/^\/todo\/api\/tasks(?:\/([^/]+))?$/);
-    if (!m) return new Response("<!doctype html>static page", { headers: { "Content-Type": "text/html" } });
-    const route = m[1] ? taskRoute : tasksRoute;
-    context.params = { id: m[1] };
-    const h = route["onRequest" + method[0] + method.slice(1).toLowerCase()];
-    return h ? h(context) : new Response("method not allowed", { status: 405 });
-  };
-  const res = await middleware(context);
+  const res = await worker.fetch(request, envOverride || env);
   const text = await res.text();
   let json; try { json = JSON.parse(text); } catch {}
   return { status: res.status, json, text, headers: res.headers };
@@ -78,7 +68,7 @@ test("refuses requests with no Access token, page and API alike", async () => {
 });
 
 test("fails closed when Access is not configured", async () => {
-  const r = await call("GET", "/todo/", { jwt: await token(), envOverride: { TODO_DB: env.TODO_DB } });
+  const r = await call("GET", "/todo/", { jwt: await token(), envOverride: { TODO_DB: env.TODO_DB, ASSETS } });
   assert.equal(r.status, 500);
 });
 
@@ -162,4 +152,12 @@ test("refuses writes from another website", async () => {
   const r = await call("POST", "/todo/api/tasks", { jwt, body: { title: "x" }, origin: "https://evil.example" });
   assert.equal(r.status, 403);
   assert.equal((await call("POST", "/todo/api/tasks", { jwt, body: { title: "x" }, origin: ORIGIN })).status, 201);
+});
+
+test("only /todo is protected; the rest of the site is served as-is", async () => {
+  assert.equal((await call("GET", "/")).status, 200);
+  assert.equal((await call("GET", "/friends/")).status, 200);
+  assert.equal((await call("GET", "/todo")).status, 401);
+  assert.equal((await call("GET", "/todo/index.html")).status, 401);
+  assert.equal((await call("GET", "/todoish")).status, 200, "a different path that merely starts with 'todo'");
 });
