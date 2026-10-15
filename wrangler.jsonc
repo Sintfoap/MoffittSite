@@ -14,8 +14,8 @@
   },
 
   "vars": {
-    // Zero Trust team domain, e.g. "yourteam.cloudflareaccess.com".
-    "ACCESS_TEAM_DOMAIN": "",
+    // Zero Trust team domain (Zero Trust → Settings → Team name and domain).
+    "ACCESS_TEAM_DOMAIN": "raspy-mountain-56ea.cloudflareaccess.com",
     // "Application Audience (AUD) Tag" of the Access application for /todo.
     "ACCESS_AUD_TODO": ""
   },
