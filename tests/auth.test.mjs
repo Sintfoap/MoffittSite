@@ -206,7 +206,9 @@ test("two-factor: setup, sign-in with a code, no replays, recovery codes work on
   const env = makeEnv(), b = new Browser(env);
   await b.signup("ryan");
 
-  const start = await b.post("/account/2fa/start", {});
+  assert.equal((await b.post("/account/2fa/start", { password: "not my password" })).status, 401, "setup needs the password");
+  assert.equal(sqlOne(env, "SELECT totp_pending FROM users").totp_pending, null);
+  const start = await b.post("/account/2fa/start", { password: PW });
   assert.match(start.text, /<svg[^>]*>/, "shows a QR code");
   const wrong = await b.post("/account/2fa/confirm", { code: "000000" });
   assert.equal(wrong.status, 400);
@@ -263,7 +265,84 @@ test("turning two-factor off needs the password", async () => {
   assert.equal((await b.post("/account/2fa/disable", { password: "not my password" })).status, 401);
   assert.equal((await b.post("/account/2fa/disable", { password: PW })).status, 200);
   assert.equal(sqlOne(env, "SELECT totp_secret FROM users").totp_secret, null);
+  assert.equal(sqlOne(env, "SELECT COUNT(*) AS n FROM recovery_codes").n, 10, "recovery codes are kept for password resets");
+});
+
+// ── forgot username or password ────────────────────────────────────────────
+async function makeCodes(b, password = PW) {
+  const r = await b.post("/account/recovery", { password });
+  return [...r.text.matchAll(/<span>([a-z2-7]{5}-[a-z2-7]{5})<\/span>/g)].map(m => m[1]);
+}
+
+test("anyone can make recovery codes, but only with their password", async () => {
+  const env = makeEnv(), b = new Browser(env);
+  await b.signup("ryan");
+  assert.match((await b.get("/account")).text, /You have none/);
+  assert.equal((await b.post("/account/recovery", { password: "not my password" })).status, 401);
   assert.equal(sqlOne(env, "SELECT COUNT(*) AS n FROM recovery_codes").n, 0);
+  const codes = await makeCodes(b);
+  assert.equal(codes.length, 10);
+  assert.match((await b.get("/account")).text, /You have 10 recovery codes left/);
+  const again = await makeCodes(b);
+  assert.equal(sqlOne(env, "SELECT COUNT(*) AS n FROM recovery_codes").n, 10, "new codes replace the old ones");
+  assert.ok(!again.includes(codes[0]));
+});
+
+test("a recovery code resets a forgotten password and shows the username", async () => {
+  const env = makeEnv(), b = new Browser(env);
+  await b.signup("ryan");
+  const codes = await makeCodes(b);
+  await new Browser(env).signup("josh");
+  const NEW = "a brand new passphrase";
+
+  assert.match((await new Browser(env).get("/login")).text, /href="\/login\/forgot"/);
+  assert.equal((await new Browser(env).get("/login/forgot")).status, 200);
+
+  const c = new Browser(env);
+  assert.equal((await c.post("/login/forgot", { recovery_code: "aaaaa-aaaaa", new_password: NEW, new_password2: NEW })).status, 401);
+  assert.equal((await c.post("/login/forgot", { recovery_code: codes[0], new_password: NEW, new_password2: NEW + "x" })).status, 400);
+  assert.equal((await c.post("/login/forgot", { recovery_code: codes[0], new_password: "short", new_password2: "short" })).status, 400);
+  assert.equal(sqlOne(env, "SELECT COUNT(*) AS n FROM recovery_codes WHERE used_at IS NOT NULL").n, 0, "failed tries don't spend the code");
+
+  const done = await c.post("/login/forgot", { recovery_code: codes[0].toUpperCase().replace("-", " "), new_password: NEW, new_password2: NEW });
+  assert.equal(done.status, 200);
+  assert.match(done.text, /Your username is <span class="mono">ryan<\/span>/);
+  assert.match(done.text, /You have 9 left/);
+  assert.equal((await c.get("/todo/api/tasks")).status, 200, "and you're signed in");
+  assert.equal((await b.get("/todo/api/tasks")).status, 401, "other devices are signed out");
+
+  assert.equal((await new Browser(env).login("ryan")).status, 401, "the old password is gone");
+  assert.equal((await new Browser(env).login("ryan", NEW)).status, 303);
+  assert.equal((await new Browser(env).login("josh")).status, 303, "other accounts are untouched");
+  // Each code works once.
+  assert.equal((await new Browser(env).post("/login/forgot", { recovery_code: codes[0], new_password: PW, new_password2: PW })).status, 401);
+});
+
+test("with two-factor on, a reset also needs a fresh app code", async () => {
+  const env = makeEnv(), b = new Browser(env);
+  await b.signup("ryan");
+  const { secret, codes, step } = await enable2fa(b, env);
+  const NEW = "a brand new passphrase", c = new Browser(env);
+  const form = extra => ({ recovery_code: codes[0], new_password: NEW, new_password2: NEW, ...extra });
+
+  assert.equal((await c.post("/login/forgot", form({}))).status, 401, "recovery code alone isn't enough");
+  assert.equal((await c.post("/login/forgot", form({ app_code: await codeAt(secret, step) }))).status, 401, "no replaying the last code");
+  assert.equal(sqlOne(env, "SELECT COUNT(*) AS n FROM recovery_codes WHERE used_at IS NOT NULL").n, 0);
+  assert.equal((await c.post("/login/forgot", form({ app_code: await codeAt(secret, step + 1) }))).status, 200);
+  assert.equal(sqlOne(env, "SELECT totp_last_step FROM users").totp_last_step, step + 1, "that app code is spent");
+  assert.equal(sqlOne(env, "SELECT COUNT(*) AS n FROM sessions WHERE stage = 'full'").n, 1);
+});
+
+test("forgot password is throttled and refuses disabled accounts", async () => {
+  const env = makeEnv(), b = new Browser(env);
+  await b.signup("ryan");
+  const codes = await makeCodes(b);
+  const NEW = "a brand new passphrase", c = new Browser(env);
+  for (let i = 0; i < 30; i++) await c.post("/login/forgot", { recovery_code: "bbbbb-bbbb" + "abcdefghijklmnopqrstuvwxyz234567"[i], new_password: NEW, new_password2: NEW });
+  assert.equal((await c.post("/login/forgot", { recovery_code: codes[0], new_password: NEW, new_password2: NEW })).status, 429);
+
+  run(env, "UPDATE users SET disabled = 1");
+  assert.equal((await new Browser(env).post("/login/forgot", { recovery_code: codes[0], new_password: NEW, new_password2: NEW })).status, 401);
 });
 
 // ── admin ──────────────────────────────────────────────────────────────────

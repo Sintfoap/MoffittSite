@@ -258,12 +258,20 @@ export async function replaceRecoveryCodes(env, userId) {
   return codes;
 }
 
-export async function disableTotp(env, userId) {
+// Recovery codes outlive two-factor (they also reset a forgotten password),
+// so turning it off yourself keeps them. An admin reset removes both.
+export async function disableTotp(env, userId, { keepRecoveryCodes = false } = {}) {
   const d = await db(env);
   await d.batch([
     d.prepare("UPDATE users SET totp_secret = NULL, totp_pending = NULL, totp_last_step = 0 WHERE id = ?").bind(userId),
-    d.prepare("DELETE FROM recovery_codes WHERE user_id = ?").bind(userId),
+    ...keepRecoveryCodes ? [] : [d.prepare("DELETE FROM recovery_codes WHERE user_id = ?").bind(userId)],
   ]);
+}
+
+// "abcde-fghij", "ABCDEFGHIJ" or " abcde fghij " → "abcde-fghij"; anything else → null.
+function recoveryForm(raw) {
+  const c = String(raw ?? "").trim().toLowerCase().replace(/[\s-]/g, "");
+  return /^[a-z2-7]{10}$/.test(c) ? `${c.slice(0, 5)}-${c.slice(5)}` : null;
 }
 
 // Checks a 6-digit code or a recovery code (each recovery code works once).
@@ -279,8 +287,8 @@ export async function checkSecondFactor(env, request, user, raw) {
     // Only one request can claim a given step, even if two arrive at once.
     const r = await d.prepare("UPDATE users SET totp_last_step = ? WHERE id = ? AND totp_last_step < ?").bind(step, user.id, step).run();
     if (r.meta.changes) { await clear(d, key); return "totp"; }
-  } else if (/^[a-z2-7]{5}-?[a-z2-7]{5}$/.test(code)) {
-    const norm = code.includes("-") ? code : `${code.slice(0, 5)}-${code.slice(5)}`;
+  } else if (recoveryForm(code)) {
+    const norm = recoveryForm(code);
     const r = await d.prepare("UPDATE recovery_codes SET used_at = ? WHERE user_id = ? AND code_hash = ? AND used_at IS NULL")
       .bind(now(), user.id, await sha256(norm)).run();
     if (r.meta.changes) { await clear(d, key); return "recovery"; }
@@ -292,4 +300,48 @@ export async function checkSecondFactor(env, request, user, raw) {
 
 export async function recoveryCodesLeft(env, userId) {
   return (await (await db(env)).prepare("SELECT COUNT(*) AS n FROM recovery_codes WHERE user_id = ? AND used_at IS NULL").bind(userId).first()).n;
+}
+
+// ── forgotten username or password ─────────────────────────────────────────
+// Accounts have no email address, so a recovery code is what proves who you
+// are. Each code belongs to one account, so it also tells you your username.
+// Accounts with two-factor need a code from the app as well, so a recovery
+// code on its own (say, from a leaked notes file) can't take over the account.
+// Returns the user, now with the new password and signed out everywhere.
+export async function resetWithRecoveryCode(env, request, { recoveryCode, appCode, password }) {
+  const d = await db(env), ipKey = "ip:" + clientIp(request);
+  const ipWait = await lockedFor(d, ipKey);
+  if (ipWait) throw tooMany(ipWait);
+
+  const norm = recoveryForm(recoveryCode), hash = norm && await sha256(norm);
+  const row = hash && await d.prepare("SELECT user_id FROM recovery_codes WHERE code_hash = ? AND used_at IS NULL").bind(hash).first();
+  const user = row ? await getUser(env, { id: row.user_id }) : null;
+  const userKey = user && "mfa:" + user.id;
+  const failed = async () => {
+    await bump(d, ipKey, POLICIES.ip);
+    if (userKey) await bump(d, userKey, POLICIES.user);
+    return new AuthError(user?.totp_secret ? "That recovery code or app code didn't work." : "That recovery code didn't work.", { status: 401 });
+  };
+  if (!user || user.disabled) throw await failed();
+  const userWait = await lockedFor(d, userKey);
+  if (userWait) throw tooMany(userWait);
+
+  let step = null;
+  if (user.totp_secret) {
+    step = await verifyTotp(user.totp_secret, appCode, user.totp_last_step);
+    if (step === null) throw await failed();
+  }
+  checkPassword(password, user.username);
+
+  // Spend the recovery code (and app code) first, so two requests racing with
+  // the same codes can't both reset the password.
+  const used = await d.prepare("UPDATE recovery_codes SET used_at = ? WHERE user_id = ? AND code_hash = ? AND used_at IS NULL").bind(now(), user.id, hash).run();
+  if (!used.meta.changes) throw await failed();
+  if (step !== null) await d.prepare("UPDATE users SET totp_last_step = ? WHERE id = ? AND totp_last_step < ?").bind(step, user.id, step).run();
+
+  await setPassword(env, user.id, password);
+  await endUserSessions(env, user.id);
+  await clear(d, userKey);
+  await clear(d, "user:" + user.username);
+  return user;
 }

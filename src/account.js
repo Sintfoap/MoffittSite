@@ -1,5 +1,5 @@
 // Routes for signing in and managing accounts:
-//   /login, /login/2fa, /signup, /logout, /account/*, /admin/*
+//   /login, /login/2fa, /login/forgot, /signup, /logout, /account/*, /admin/*
 // plus protect(), which guards every signed-in area of the site.
 
 import { db, now } from "./db.js";
@@ -8,11 +8,11 @@ import { renderSVG } from "./vendor/uqr.mjs";
 import {
   AuthError, AREAS, getUser, createUser, setPassword, checkLogin, checkSignupAllowed, recordSignup,
   createSession, currentSession, endSession, endUserSessions, sessionCookie, clearCookie,
-  startTotp, otpauthUri, confirmTotp, replaceRecoveryCodes, disableTotp, checkSecondFactor, recoveryCodesLeft,
+  startTotp, otpauthUri, confirmTotp, replaceRecoveryCodes, disableTotp, checkSecondFactor, recoveryCodesLeft, resetWithRecoveryCode,
   adminExists, cleanDisplayName, clientIp,
 } from "./auth.js";
 import {
-  html, loginPage, signupPage, mfaPage, accountPage, changePasswordRequiredPage, adminPage, adminClaimPage, messagePage,
+  html, loginPage, signupPage, mfaPage, forgotPage, forgotDonePage, accountPage, changePasswordRequiredPage, adminPage, adminClaimPage, messagePage,
 } from "./pages.js";
 
 const DEFAULT_NEXT = "/todo/";
@@ -79,6 +79,7 @@ export async function handleAuth(request, env) {
   try {
     if (pathname === "/login") return method === "POST" ? await loginPost(request, env) : await loginGet(request, env, searchParams);
     if (pathname === "/login/2fa") return await secondFactor(request, env, method, searchParams);
+    if (pathname === "/login/forgot") return await forgot(request, env, method);
     if (pathname === "/signup") return method === "POST" ? await signupPost(request, env) : await signupGet(request, env, searchParams);
     if (pathname === "/logout") { await endSession(env, request); return redirect("/login", clearCookie()); }
     if (pathname === "/account" || pathname.startsWith("/account/")) return await account(request, env, pathname, method);
@@ -131,6 +132,23 @@ async function secondFactor(request, env, method, q) {
   return redirect(next, sessionCookie(await createSession(env, request, s.user.id)));
 }
 
+// ── forgot username or password ────────────────────────────────────────────
+async function forgot(request, env, method) {
+  if (method !== "POST") return html(forgotPage({}));
+  const f = await form(request);
+  let user;
+  try {
+    if (String(f.new_password ?? "") !== String(f.new_password2 ?? "")) throw new AuthError("The two new passwords don't match.");
+    user = await resetWithRecoveryCode(env, request, { recoveryCode: f.recovery_code, appCode: f.app_code, password: f.new_password });
+  } catch (e) {
+    if (!(e instanceof AuthError)) throw e;
+    return html(forgotPage({ error: e.message }), { status: e.status, headers: e.retryAfter ? { "Retry-After": String(e.retryAfter) } : {} });
+  }
+  await endSession(env, request);
+  return html(forgotDonePage({ user, recoveryLeft: await recoveryCodesLeft(env, user.id) }),
+    { headers: { "Set-Cookie": sessionCookie(await createSession(env, request, user.id)) } });
+}
+
 // ── create an account ──────────────────────────────────────────────────────
 async function signupGet(request, env, q) {
   const next = safeNext(q.get("next"));
@@ -168,7 +186,7 @@ async function account(request, env, pathname, method) {
     const d = await db(env);
     const sessionCount = (await d.prepare("SELECT COUNT(*) AS n FROM sessions WHERE user_id = ? AND stage = 'full'").bind(user.id).first()).n;
     return html(accountPage({
-      user, sessionCount, recoveryLeft: user.totp_secret ? await recoveryCodesLeft(env, user.id) : 0,
+      user, sessionCount, recoveryLeft: await recoveryCodesLeft(env, user.id),
       adminNeeds2fa: user.areas.has("admin") && !user.totp_secret, ...extra,
     }), { status });
   };
@@ -203,8 +221,12 @@ async function account(request, env, pathname, method) {
       await endUserSessions(env, user.id, { exceptHash: s.session.id_hash });
       return show({ notice: "Signed out everywhere else." });
 
+    // Setting up two-factor or recovery codes needs the password, because
+    // together they can reset it: a borrowed session mustn't be enough.
     case "/account/2fa/start": {
       if (user.totp_secret) return show();
+      try { await checkLogin(env, request, user.username, f.password); }
+      catch (e) { return fail(passwordError(e)); }
       const secret = await startTotp(env, user.id);
       return show({ setup: setupView(user, secret) });
     }
@@ -213,23 +235,26 @@ async function account(request, env, pathname, method) {
       try { return show({ recoveryCodes: await confirmTotp(env, user, f.code), notice: "Two-factor is on." }); }
       catch (e) { return fail(e, user.totp_pending ? { setup: setupView(user, user.totp_pending) } : {}); }
 
-    case "/account/2fa/recovery":
-      if (!user.totp_secret) return show();
-      return show({ recoveryCodes: await replaceRecoveryCodes(env, user.id), notice: "New recovery codes made. The old ones no longer work." });
+    case "/account/recovery":
+      try { await checkLogin(env, request, user.username, f.password); }
+      catch (e) { return fail(passwordError(e)); }
+      return show({ recoveryCodes: await replaceRecoveryCodes(env, user.id), notice: "New recovery codes made. Any old ones no longer work." });
 
     case "/account/2fa/disable":
       try {
         if (user.areas.has("admin")) throw new AuthError("Admin accounts must keep two-factor on.", { status: 403 });
         await checkLogin(env, request, user.username, f.password);
-        await disableTotp(env, user.id);
-        return show({ notice: "Two-factor is off." });
-      } catch (e) {
-        if (e instanceof AuthError && e.status === 401) e.message = "That password isn't right.";
-        return fail(e);
-      }
+        await disableTotp(env, user.id, { keepRecoveryCodes: true });
+        return show({ notice: "Two-factor is off. Your recovery codes still work for resetting your password." });
+      } catch (e) { return fail(passwordError(e)); }
   }
   return redirect("/account");
 }
+
+const passwordError = e => {
+  if (e instanceof AuthError && e.status === 401) e.message = "That password isn't right.";
+  return e;
+};
 
 const setupView = (user, secret) => ({
   secret, qrSvg: renderSVG(otpauthUri(user.username, secret), { pixelSize: 6, border: 2 }),
