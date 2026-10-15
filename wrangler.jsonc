@@ -17,7 +17,7 @@
     // Zero Trust team domain (Zero Trust → Settings → Team name and domain).
     "ACCESS_TEAM_DOMAIN": "raspy-mountain-56ea.cloudflareaccess.com",
     // "Application Audience (AUD) Tag" of the Access application for /todo.
-    "ACCESS_AUD_TODO": ""
+    "ACCESS_AUD_TODO": "f50d49fdd56f05ff6ad2afe4a48d4330827d5288862c8a808dbfe9e2a7fc9484"
   },
 
   // Branch builds run `wrangler preview`, which takes its settings from here
