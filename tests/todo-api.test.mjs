@@ -157,7 +157,9 @@ test("refuses writes from another website", async () => {
 test("only /todo is protected; the rest of the site is served as-is", async () => {
   assert.equal((await call("GET", "/")).status, 200);
   assert.equal((await call("GET", "/friends/")).status, 200);
-  assert.equal((await call("GET", "/todo")).status, 401);
+  const bare = await call("GET", "/todo?x=1");
+  assert.equal(bare.status, 308, "/todo redirects to /todo/");
+  assert.equal(bare.headers.get("Location"), ORIGIN + "/todo/?x=1");
   assert.equal((await call("GET", "/todo/index.html")).status, 401);
   assert.equal((await call("GET", "/todoish")).status, 200, "a different path that merely starts with 'todo'");
 });
