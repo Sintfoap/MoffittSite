@@ -773,7 +773,12 @@ if (SITE_BASE) { $("#cfgBtn").textContent = "Sign out"; }
 $("#cfgBtn").onclick = () => {
   if (SITE_BASE) { location.href = "/cdn-cgi/access/logout"; return; }
   const c = store.get("server", { url: "", token: "" }); $("#cfgUrl").value = c.url; $("#cfgTok").value = c.token; $("#cfg").showModal(); };
-$("#sync").addEventListener("click", e => { if (!SITE_BASE && matchMedia("(max-width:760px)").matches && !e.target.closest("#cfgBtn")) $("#cfgBtn").onclick(); });
+$("#sync").addEventListener("click", e => {
+  if (!matchMedia("(max-width:760px)").matches || e.target.closest("#cfgBtn")) return;
+  // Phones hide the Sign out button, so tapping the sync status offers it instead.
+  if (SITE_BASE) { const u = state.data.stats?.user; if (confirm(u ? `Sign out ${u}?` : "Sign out?")) $("#cfgBtn").onclick(); return; }
+  $("#cfgBtn").onclick();
+});
 $("#cfg").addEventListener("close", () => {
   if ($("#cfg").returnValue !== "save") return;
   store.set("server", { url: $("#cfgUrl").value.trim(), token: $("#cfgTok").value.trim() }); location.reload();
