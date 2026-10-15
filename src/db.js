@@ -36,7 +36,9 @@ const SCHEMA = [
      totp_pending      TEXT,                       -- secret being set up, not yet confirmed
      totp_last_step    INTEGER NOT NULL DEFAULT 0, -- last accepted code, to refuse replays
      disabled          INTEGER NOT NULL DEFAULT 0,
-     created_at        INTEGER NOT NULL
+     created_at        INTEGER NOT NULL,
+     email             TEXT,                       -- optional, lowercase; for password resets
+     email_verified    INTEGER NOT NULL DEFAULT 0  -- 1 once the link sent to it was opened
    )`,
   `CREATE TABLE IF NOT EXISTS user_areas (
      user_id TEXT NOT NULL,
@@ -59,6 +61,13 @@ const SCHEMA = [
      used_at   INTEGER,
      PRIMARY KEY (user_id, code_hash)
    )`,
+  `CREATE TABLE IF NOT EXISTS email_tokens (
+     token_hash TEXT PRIMARY KEY,                  -- SHA-256 of the token in the emailed link
+     user_id    TEXT NOT NULL,
+     purpose    TEXT NOT NULL,                     -- "verify" or "reset"
+     email      TEXT NOT NULL,                     -- the address it was sent to
+     expires_at INTEGER NOT NULL
+   )`,
   `CREATE TABLE IF NOT EXISTS auth_limits (
      key          TEXT PRIMARY KEY,                -- "user:<name>", "ip:<addr>", "signup:<addr>"
      failures     INTEGER NOT NULL,
@@ -67,12 +76,33 @@ const SCHEMA = [
    )`,
 ];
 
+// Columns added after a table first shipped. CREATE TABLE IF NOT EXISTS
+// leaves an existing table alone, so older databases get them here.
+const ADDED_COLUMNS = {
+  users: ["email TEXT", "email_verified INTEGER NOT NULL DEFAULT 0"],
+};
+
+async function addMissingColumns(d) {
+  for (const [table, columns] of Object.entries(ADDED_COLUMNS)) {
+    const { results } = await d.prepare(`PRAGMA table_info(${table})`).all();
+    const have = new Set(results.map(c => c.name));
+    for (const col of columns) {
+      if (have.has(col.split(" ")[0])) continue;
+      // Another Worker instance may add it at the same moment; that's fine.
+      try { await d.prepare(`ALTER TABLE ${table} ADD COLUMN ${col}`).run(); }
+      catch (e) { if (!/duplicate column/i.test(String(e?.message))) throw e; }
+    }
+  }
+}
+
 const ready = new WeakMap();   // per database binding, once per Worker instance
 
 export function db(env) {
   const d = env.TODO_DB;
   if (!d) throw new Error("D1 binding TODO_DB is not configured");
-  if (!ready.has(d)) ready.set(d, d.batch(SCHEMA.map(s => d.prepare(s))).catch(e => { ready.delete(d); throw e; }));
+  if (!ready.has(d)) {
+    ready.set(d, d.batch(SCHEMA.map(s => d.prepare(s))).then(() => addMissingColumns(d)).catch(e => { ready.delete(d); throw e; }));
+  }
   return ready.get(d).then(() => d);
 }
 

@@ -26,7 +26,7 @@ test("creating an account signs you in with a locked-down cookie", async () => {
   const env = makeEnv(), b = new Browser(env);
   const r = await b.signup("Ryan", PW, "Ryan M");
   assert.equal(r.status, 303);
-  assert.equal(r.location, "/todo/");
+  assert.equal(r.location, "/dashboard");
   assert.match(r.setCookie, /^__Host-sid=[A-Za-z0-9_-]{40,}; Path=\/; Secure; HttpOnly; SameSite=Lax; Max-Age=\d+$/);
   const u = sqlOne(env, "SELECT * FROM users");
   assert.equal(u.username, "ryan", "usernames are stored lowercase");
@@ -125,7 +125,7 @@ test("the after-login address can't send people to another site", async () => {
   await new Browser(env).signup("ryan");
   for (const next of ["//evil.example/", "https://evil.example/", "/\\evil.example", "javascript:alert(1)", "/ok\nSet-Cookie:x"]) {
     const r = await new Browser(env).post("/login", { username: "ryan", password: PW, next });
-    assert.equal(r.location, "/todo/", JSON.stringify(next));
+    assert.equal(r.location, "/dashboard", JSON.stringify(next));
   }
 });
 
@@ -206,7 +206,9 @@ test("two-factor: setup, sign-in with a code, no replays, recovery codes work on
   const env = makeEnv(), b = new Browser(env);
   await b.signup("ryan");
 
-  const start = await b.post("/account/2fa/start", {});
+  assert.equal((await b.post("/account/2fa/start", { password: "not my password" })).status, 401, "setup needs the password");
+  assert.equal(sqlOne(env, "SELECT totp_pending FROM users").totp_pending, null);
+  const start = await b.post("/account/2fa/start", { password: PW });
   assert.match(start.text, /<svg[^>]*>/, "shows a QR code");
   const wrong = await b.post("/account/2fa/confirm", { code: "000000" });
   assert.equal(wrong.status, 400);
@@ -220,7 +222,7 @@ test("two-factor: setup, sign-in with a code, no replays, recovery codes work on
   // Password alone now only gets you to the code screen.
   const c = new Browser(env);
   const r = await c.login("ryan");
-  assert.equal(r.location, "/login/2fa?next=%2Ftodo%2F");
+  assert.equal(r.location, "/login/2fa?next=%2Fdashboard");
   assert.equal((await c.get("/todo/api/state")).status, 401, "half signed in isn't signed in");
   assert.equal((await c.post("/login/2fa", { code: "123456" })).status, 401);
   // The code used during setup can't be used again.
@@ -263,7 +265,108 @@ test("turning two-factor off needs the password", async () => {
   assert.equal((await b.post("/account/2fa/disable", { password: "not my password" })).status, 401);
   assert.equal((await b.post("/account/2fa/disable", { password: PW })).status, 200);
   assert.equal(sqlOne(env, "SELECT totp_secret FROM users").totp_secret, null);
+  assert.equal(sqlOne(env, "SELECT COUNT(*) AS n FROM recovery_codes").n, 10, "recovery codes are kept for password resets");
+});
+
+// ── forgot username or password ────────────────────────────────────────────
+async function makeCodes(b, password = PW) {
+  const r = await b.post("/account/recovery", { password });
+  return [...r.text.matchAll(/<span>([a-z2-7]{5}-[a-z2-7]{5})<\/span>/g)].map(m => m[1]);
+}
+
+test("anyone can make recovery codes, but only with their password", async () => {
+  const env = makeEnv(), b = new Browser(env);
+  await b.signup("ryan");
+  assert.match((await b.get("/account")).text, /You have none/);
+  assert.equal((await b.post("/account/recovery", { password: "not my password" })).status, 401);
   assert.equal(sqlOne(env, "SELECT COUNT(*) AS n FROM recovery_codes").n, 0);
+  const codes = await makeCodes(b);
+  assert.equal(codes.length, 10);
+  assert.match((await b.get("/account")).text, /You have 10 recovery codes left/);
+  const again = await makeCodes(b);
+  assert.equal(sqlOne(env, "SELECT COUNT(*) AS n FROM recovery_codes").n, 10, "new codes replace the old ones");
+  assert.ok(!again.includes(codes[0]));
+});
+
+test("a recovery code resets a forgotten password and shows the username", async () => {
+  const env = makeEnv(), b = new Browser(env);
+  await b.signup("ryan");
+  const codes = await makeCodes(b);
+  await new Browser(env).signup("josh");
+  const NEW = "a brand new passphrase";
+
+  assert.match((await new Browser(env).get("/login")).text, /href="\/login\/forgot"/);
+  assert.equal((await new Browser(env).get("/login/forgot")).status, 200);
+
+  const c = new Browser(env);
+  assert.equal((await c.post("/login/forgot", { recovery_code: "aaaaa-aaaaa", new_password: NEW, new_password2: NEW })).status, 401);
+  assert.equal((await c.post("/login/forgot", { recovery_code: codes[0], new_password: NEW, new_password2: NEW + "x" })).status, 400);
+  assert.equal((await c.post("/login/forgot", { recovery_code: codes[0], new_password: "short", new_password2: "short" })).status, 400);
+  assert.equal(sqlOne(env, "SELECT COUNT(*) AS n FROM recovery_codes WHERE used_at IS NOT NULL").n, 0, "failed tries don't spend the code");
+
+  const done = await c.post("/login/forgot", { recovery_code: codes[0].toUpperCase().replace("-", " "), new_password: NEW, new_password2: NEW });
+  assert.equal(done.status, 200);
+  assert.match(done.text, /Your username is <span class="mono">ryan<\/span>/);
+  assert.match(done.text, /You have 9 left/);
+  assert.equal((await c.get("/todo/api/state")).status, 200, "and you're signed in");
+  assert.equal((await b.get("/todo/api/state")).status, 401, "other devices are signed out");
+
+  assert.equal((await new Browser(env).login("ryan")).status, 401, "the old password is gone");
+  assert.equal((await new Browser(env).login("ryan", NEW)).status, 303);
+  assert.equal((await new Browser(env).login("josh")).status, 303, "other accounts are untouched");
+  // Each code works once.
+  assert.equal((await new Browser(env).post("/login/forgot", { recovery_code: codes[0], new_password: PW, new_password2: PW })).status, 401);
+});
+
+test("with two-factor on, a reset also needs a fresh app code", async () => {
+  const env = makeEnv(), b = new Browser(env);
+  await b.signup("ryan");
+  const { secret, codes, step } = await enable2fa(b, env);
+  const NEW = "a brand new passphrase", c = new Browser(env);
+  const form = extra => ({ recovery_code: codes[0], new_password: NEW, new_password2: NEW, ...extra });
+
+  assert.equal((await c.post("/login/forgot", form({}))).status, 401, "recovery code alone isn't enough");
+  assert.equal((await c.post("/login/forgot", form({ app_code: await codeAt(secret, step) }))).status, 401, "no replaying the last code");
+  assert.equal(sqlOne(env, "SELECT COUNT(*) AS n FROM recovery_codes WHERE used_at IS NOT NULL").n, 0);
+  assert.equal((await c.post("/login/forgot", form({ app_code: await codeAt(secret, step + 1) }))).status, 200);
+  assert.equal(sqlOne(env, "SELECT totp_last_step FROM users").totp_last_step, step + 1, "that app code is spent");
+  assert.equal(sqlOne(env, "SELECT COUNT(*) AS n FROM sessions WHERE stage = 'full'").n, 1);
+});
+
+test("forgot password is throttled and refuses disabled accounts", async () => {
+  const env = makeEnv(), b = new Browser(env);
+  await b.signup("ryan");
+  const codes = await makeCodes(b);
+  const NEW = "a brand new passphrase", c = new Browser(env);
+  for (let i = 0; i < 30; i++) await c.post("/login/forgot", { recovery_code: "bbbbb-bbbb" + "abcdefghijklmnopqrstuvwxyz234567"[i], new_password: NEW, new_password2: NEW });
+  assert.equal((await c.post("/login/forgot", { recovery_code: codes[0], new_password: NEW, new_password2: NEW })).status, 429);
+
+  run(env, "UPDATE users SET disabled = 1");
+  assert.equal((await new Browser(env).post("/login/forgot", { recovery_code: codes[0], new_password: NEW, new_password2: NEW })).status, 401);
+});
+
+// ── dashboard ──────────────────────────────────────────────────────────────
+test("the dashboard lists only the apps an account can use", async () => {
+  const env = makeEnv({ ADMIN_CLAIM_CODE: "claim-code-1234" }), b = new Browser(env);
+  assert.equal((await b.get("/dashboard")).location, "/login?next=%2Fdashboard");
+  await b.signup("ryan", PW, "<b>Ryan</b>");
+  let page = await b.get("/dashboard");
+  assert.equal(page.status, 200);
+  assert.match(page.text, /href="\/todo\/"/);
+  assert.doesNotMatch(page.text, /href="\/admin"/);
+  assert.match(page.text, /&lt;b&gt;Ryan&lt;\/b&gt;/, "names are escaped");
+  assert.doesNotMatch(page.text, /<b>Ryan/);
+
+  run(env, "DELETE FROM user_areas");
+  assert.match((await b.get("/dashboard")).text, /doesn't have any apps yet/);
+
+  // An admin without two-factor finishes setup first, then sees Admin too.
+  await b.post("/admin/claim", { code: env.ADMIN_CLAIM_CODE });
+  assert.equal((await b.get("/dashboard")).location, "/account");
+  await enable2fa(b, env);
+  page = await b.get("/dashboard");
+  assert.match(page.text, /href="\/admin"/);
+  assert.doesNotMatch(page.text, /href="\/todo\/"/);
 });
 
 // ── admin ──────────────────────────────────────────────────────────────────
@@ -382,4 +485,131 @@ test("without a database everything signed-in fails closed", async () => {
 
 test("TOTP codes from the current step are accepted (clock sanity)", async () => {
   assert.equal(String(await codeAt("JBSWY3DPEHPK3PXP", stepNow())).length, 6);
+});
+
+// ── email ──────────────────────────────────────────────────────────────────
+function mailEnv(extra) {
+  const outbox = [];
+  const env = makeEnv({ MAILER: async m => { outbox.push(m); }, ...extra });
+  return { env, outbox, link: (path, i = -1) => outbox.at(i).text.match(new RegExp(`https://sintfoap\\.test(${path}\\?token=[A-Za-z0-9_-]+)`))[1] };
+}
+
+async function addEmail(b, email, password = PW) {
+  return b.post("/account/email", { email, password });
+}
+
+test("email is hidden until sending is set up", async () => {
+  const env = makeEnv(), b = new Browser(env);
+  await b.signup("ryan");
+  assert.doesNotMatch((await b.get("/account")).text, /action="\/account\/email"/);
+  assert.doesNotMatch((await b.get("/login/forgot")).text, /Email me a link/);
+  assert.equal((await addEmail(b, "ryan@example.com")).status, 503);
+});
+
+test("adding an email needs the password and a click on the confirmation link", async () => {
+  const { env, outbox, link } = mailEnv(), b = new Browser(env);
+  await b.signup("ryan");
+  assert.equal((await addEmail(b, "Ryan@Example.com", "not my password")).status, 401);
+  assert.equal((await addEmail(b, "not an email")).status, 400);
+  assert.equal(outbox.length, 0);
+
+  assert.equal((await addEmail(b, "Ryan@Example.com")).status, 200);
+  assert.equal(outbox.length, 1);
+  assert.equal(outbox[0].to, "ryan@example.com");
+  assert.deepEqual({ ...sqlOne(env, "SELECT email, email_verified FROM users") }, { email: "ryan@example.com", email_verified: 0 });
+  assert.match((await b.get("/account")).text, /isn't confirmed yet/);
+
+  // The link works without being signed in, but only once.
+  const confirm = link("/login/verify-email");
+  assert.equal((await new Browser(env).get(confirm)).status, 200);
+  assert.equal(sqlOne(env, "SELECT email_verified FROM users").email_verified, 1);
+  assert.equal((await new Browser(env).get(confirm)).status, 400);
+  assert.match((await b.get("/account")).text, /is confirmed/);
+
+  // An old link can't confirm an address the account no longer has.
+  await addEmail(b, "first@example.com");
+  const stale = link("/login/verify-email");
+  await addEmail(b, "second@example.com");
+  assert.equal((await new Browser(env).get(stale)).status, 400);
+  assert.equal(sqlOne(env, "SELECT email_verified FROM users").email_verified, 0);
+
+  await addEmail(b, "");
+  assert.deepEqual({ ...sqlOne(env, "SELECT email, email_verified FROM users") }, { email: null, email_verified: 0 });
+});
+
+test("a reset email sends the username and a one-time link", async () => {
+  const { env, outbox, link } = mailEnv(), b = new Browser(env);
+  await b.signup("ryan");
+  await addEmail(b, "ryan@example.com");
+  await new Browser(env).get(link("/login/verify-email"));
+  const NEW = "a brand new passphrase", c = new Browser(env);
+
+  // Same answer for an unknown address, and nothing is sent.
+  const sent = outbox.length;
+  const unknown = await c.post("/login/forgot/email", { email: "nobody@example.com" });
+  assert.equal(unknown.status, 200);
+  assert.equal(outbox.length, sent);
+
+  const r = await c.post("/login/forgot/email", { email: "RYAN@example.com" });
+  assert.equal(r.text, unknown.text, "the page doesn't say whether the address matched");
+  assert.equal(outbox.length, sent + 1);
+  assert.match(outbox.at(-1).text, /Your username is: ryan/);
+  const reset = link("/login/reset");
+
+  const form = await c.get(reset);
+  assert.equal(form.status, 200);
+  assert.match(form.text, /<span class="mono">ryan<\/span>/);
+  const token = reset.split("token=")[1];
+  assert.equal((await c.post("/login/reset", { token, new_password: NEW, new_password2: NEW + "x" })).status, 400);
+  const done = await c.post("/login/reset", { token, new_password: NEW, new_password2: NEW });
+  assert.equal(done.status, 200);
+  assert.match(done.text, /Your username is <span class="mono">ryan<\/span>/);
+  assert.equal((await c.get("/todo/api/state")).status, 200, "signed in");
+  assert.equal((await b.get("/todo/api/state")).status, 401, "other devices signed out");
+  assert.equal((await new Browser(env).login("ryan", NEW)).status, 303);
+
+  assert.equal((await new Browser(env).get(reset)).status, 400, "the link works once");
+  assert.equal((await new Browser(env).post("/login/reset", { token, new_password: PW, new_password2: PW })).status, 400);
+});
+
+test("reset links need a confirmed address, expire, and ask for two-factor", async () => {
+  const { env, outbox, link } = mailEnv(), b = new Browser(env);
+  await b.signup("ryan");
+  await addEmail(b, "ryan@example.com");
+  const sent = outbox.length;
+  await new Browser(env).post("/login/forgot/email", { email: "ryan@example.com" });
+  assert.equal(outbox.length, sent, "unconfirmed addresses get nothing");
+
+  await new Browser(env).get(link("/login/verify-email"));
+  const { secret, step } = await enable2fa(b, env);
+  await new Browser(env).post("/login/forgot/email", { email: "ryan@example.com" });
+  const token = link("/login/reset").split("token=")[1];
+  const NEW = "a brand new passphrase", c = new Browser(env);
+  assert.match((await c.get("/login/reset?token=" + token)).text, /authenticator app/);
+  assert.equal((await c.post("/login/reset", { token, new_password: NEW, new_password2: NEW })).status, 401, "the link alone isn't enough");
+  assert.equal((await c.post("/login/reset", { token, new_password: NEW, new_password2: NEW, code: await codeAt(secret, step + 1) })).status, 200);
+
+  await new Browser(env).post("/login/forgot/email", { email: "ryan@example.com" });
+  const old = link("/login/reset").split("token=")[1];
+  run(env, "UPDATE email_tokens SET expires_at = 1");
+  assert.equal((await c.get("/login/reset?token=" + old)).status, 400);
+});
+
+test("reset emails are limited per inbox", async () => {
+  const { env, outbox, link } = mailEnv(), b = new Browser(env);
+  await b.signup("ryan");
+  await addEmail(b, "ryan@example.com");
+  await new Browser(env).get(link("/login/verify-email"));
+  const sent = outbox.length;
+  for (let i = 0; i < 5; i++) await new Browser(env).post("/login/forgot/email", { email: "ryan@example.com" });
+  assert.equal(outbox.length, sent + 2, "3 emails to one inbox per hour, counting the confirmation");
+});
+
+test("older databases get the email columns added", async () => {
+  const env = makeEnv();
+  env.TODO_DB.raw.exec(`CREATE TABLE users (id TEXT PRIMARY KEY, username TEXT NOT NULL UNIQUE, display_name TEXT NOT NULL,
+    password_hash TEXT NOT NULL, must_change_pw INTEGER NOT NULL DEFAULT 0, totp_secret TEXT, totp_pending TEXT,
+    totp_last_step INTEGER NOT NULL DEFAULT 0, disabled INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL)`);
+  assert.equal((await new Browser(env).signup("ryan")).status, 303);
+  assert.deepEqual({ ...sqlOne(env, "SELECT email, email_verified FROM users") }, { email: null, email_verified: 0 });
 });

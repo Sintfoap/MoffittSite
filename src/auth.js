@@ -21,8 +21,14 @@ const TOUCH_EVERY = 5 * 60;              // how often last_seen is written
 export const DEFAULT_AREAS = ["todo"];   // what a new account can use
 export const AREAS = ["todo", "admin"];  // every area the site knows about
 
+// What the dashboard shows for each area, in this order.
+export const APPS = [
+  { area: "todo", name: "Drift", href: "/todo/", blurb: "Your tasks, projects and due dates." },
+  { area: "admin", name: "Admin", href: "/admin", blurb: "Accounts, access and resets." },
+];
+
 const RESERVED = new Set(["admin", "administrator", "root", "system", "support", "help", "login", "logout",
-  "signup", "account", "api", "www", "mail", "moderator", "owner", "security", "null", "undefined"]);
+  "signup", "account", "dashboard", "api", "www", "mail", "moderator", "owner", "security", "null", "undefined"]);
 
 export class AuthError extends Error {
   constructor(message, { status = 400, retryAfter } = {}) { super(message); this.status = status; this.retryAfter = retryAfter; }
@@ -258,12 +264,20 @@ export async function replaceRecoveryCodes(env, userId) {
   return codes;
 }
 
-export async function disableTotp(env, userId) {
+// Recovery codes outlive two-factor (they also reset a forgotten password),
+// so turning it off yourself keeps them. An admin reset removes both.
+export async function disableTotp(env, userId, { keepRecoveryCodes = false } = {}) {
   const d = await db(env);
   await d.batch([
     d.prepare("UPDATE users SET totp_secret = NULL, totp_pending = NULL, totp_last_step = 0 WHERE id = ?").bind(userId),
-    d.prepare("DELETE FROM recovery_codes WHERE user_id = ?").bind(userId),
+    ...keepRecoveryCodes ? [] : [d.prepare("DELETE FROM recovery_codes WHERE user_id = ?").bind(userId)],
   ]);
+}
+
+// "abcde-fghij", "ABCDEFGHIJ" or " abcde fghij " → "abcde-fghij"; anything else → null.
+function recoveryForm(raw) {
+  const c = String(raw ?? "").trim().toLowerCase().replace(/[\s-]/g, "");
+  return /^[a-z2-7]{10}$/.test(c) ? `${c.slice(0, 5)}-${c.slice(5)}` : null;
 }
 
 // Checks a 6-digit code or a recovery code (each recovery code works once).
@@ -279,8 +293,8 @@ export async function checkSecondFactor(env, request, user, raw) {
     // Only one request can claim a given step, even if two arrive at once.
     const r = await d.prepare("UPDATE users SET totp_last_step = ? WHERE id = ? AND totp_last_step < ?").bind(step, user.id, step).run();
     if (r.meta.changes) { await clear(d, key); return "totp"; }
-  } else if (/^[a-z2-7]{5}-?[a-z2-7]{5}$/.test(code)) {
-    const norm = code.includes("-") ? code : `${code.slice(0, 5)}-${code.slice(5)}`;
+  } else if (recoveryForm(code)) {
+    const norm = recoveryForm(code);
     const r = await d.prepare("UPDATE recovery_codes SET used_at = ? WHERE user_id = ? AND code_hash = ? AND used_at IS NULL")
       .bind(now(), user.id, await sha256(norm)).run();
     if (r.meta.changes) { await clear(d, key); return "recovery"; }
@@ -292,4 +306,152 @@ export async function checkSecondFactor(env, request, user, raw) {
 
 export async function recoveryCodesLeft(env, userId) {
   return (await (await db(env)).prepare("SELECT COUNT(*) AS n FROM recovery_codes WHERE user_id = ? AND used_at IS NULL").bind(userId).first()).n;
+}
+
+// ── forgotten username or password ─────────────────────────────────────────
+// Accounts have no email address, so a recovery code is what proves who you
+// are. Each code belongs to one account, so it also tells you your username.
+// Accounts with two-factor need a code from the app as well, so a recovery
+// code on its own (say, from a leaked notes file) can't take over the account.
+// Returns the user, now with the new password and signed out everywhere.
+export async function resetWithRecoveryCode(env, request, { recoveryCode, appCode, password }) {
+  const d = await db(env), ipKey = "ip:" + clientIp(request);
+  const ipWait = await lockedFor(d, ipKey);
+  if (ipWait) throw tooMany(ipWait);
+
+  const norm = recoveryForm(recoveryCode), hash = norm && await sha256(norm);
+  const row = hash && await d.prepare("SELECT user_id FROM recovery_codes WHERE code_hash = ? AND used_at IS NULL").bind(hash).first();
+  const user = row ? await getUser(env, { id: row.user_id }) : null;
+  const userKey = user && "mfa:" + user.id;
+  const failed = async () => {
+    await bump(d, ipKey, POLICIES.ip);
+    if (userKey) await bump(d, userKey, POLICIES.user);
+    return new AuthError(user?.totp_secret ? "That recovery code or app code didn't work." : "That recovery code didn't work.", { status: 401 });
+  };
+  if (!user || user.disabled) throw await failed();
+  const userWait = await lockedFor(d, userKey);
+  if (userWait) throw tooMany(userWait);
+
+  let step = null;
+  if (user.totp_secret) {
+    step = await verifyTotp(user.totp_secret, appCode, user.totp_last_step);
+    if (step === null) throw await failed();
+  }
+  checkPassword(password, user.username);
+
+  // Spend the recovery code (and app code) first, so two requests racing with
+  // the same codes can't both reset the password.
+  const used = await d.prepare("UPDATE recovery_codes SET used_at = ? WHERE user_id = ? AND code_hash = ? AND used_at IS NULL").bind(now(), user.id, hash).run();
+  if (!used.meta.changes) throw await failed();
+  if (step !== null) await d.prepare("UPDATE users SET totp_last_step = ? WHERE id = ? AND totp_last_step < ?").bind(step, user.id, step).run();
+
+  await setPassword(env, user.id, password);
+  await endUserSessions(env, user.id);
+  await clear(d, userKey);
+  await clear(d, "user:" + user.username);
+  return user;
+}
+
+// ── email ──────────────────────────────────────────────────────────────────
+// An address is optional. It only counts for password resets once its owner
+// opens the confirmation link, so nobody can point resets at an address they
+// don't control. Links carry a random token; the database keeps its hash.
+const VERIFY_TTL = DAY, RESET_TTL = 60 * 60;
+const MAIL_POLICIES = {
+  ip: { free: 10, window: 60 * 60, lock: () => 60 * 60 },     // emails asked for per address per hour
+  to: { free: 3, window: 60 * 60, lock: () => 60 * 60 },      // emails sent to one inbox per hour
+};
+
+export function cleanEmail(raw) {
+  const e = String(raw ?? "").trim().toLowerCase();
+  if (e.length > 254 || !/^[a-z0-9._%+'-]+@[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(e)) throw new AuthError("That doesn't look like an email address.");
+  return e;
+}
+
+async function emailToken(d, userId, purpose, email, ttl) {
+  const token = randomToken(32);
+  await d.prepare("INSERT INTO email_tokens (token_hash, user_id, purpose, email, expires_at) VALUES (?, ?, ?, ?, ?)")
+    .bind(await sha256(token), userId, purpose, email, now() + ttl).run();
+  return token;
+}
+
+async function findEmailToken(d, token, purpose) {
+  if (!token || String(token).length > 100) return null;
+  return d.prepare("SELECT * FROM email_tokens WHERE token_hash = ? AND purpose = ? AND expires_at > ?")
+    .bind(await sha256(String(token)), purpose, now()).first();
+}
+
+// Counts an email about to be sent; throws once a sender or inbox has had enough.
+async function mailAllowed(d, request, email) {
+  const keys = [["mailip:" + clientIp(request), MAIL_POLICIES.ip], ["mailto:" + email, MAIL_POLICIES.to]];
+  for (const [key] of keys) { const wait = await lockedFor(d, key); if (wait) throw tooMany(wait); }
+  for (const [key, policy] of keys) await bump(d, key, policy);
+}
+
+// Sets (or, with an empty address, removes) a user's email. Returns a
+// confirmation token to email to the new address, or null when removed.
+export async function setEmail(env, request, userId, raw) {
+  const d = await db(env);
+  const email = String(raw ?? "").trim() ? cleanEmail(raw) : null;
+  if (email) await mailAllowed(d, request, email);
+  await d.batch([
+    d.prepare("UPDATE users SET email = ?, email_verified = 0 WHERE id = ?").bind(email, userId),
+    d.prepare("DELETE FROM email_tokens WHERE user_id = ?").bind(userId),
+  ]);
+  return email ? emailToken(d, userId, "verify", email, VERIFY_TTL) : null;
+}
+
+// Opening the confirmation link. Returns the user, or null if the link is
+// stale (expired, used, or for an address the account no longer has).
+export async function confirmEmail(env, token) {
+  const d = await db(env);
+  const row = await findEmailToken(d, token, "verify");
+  if (!row) return null;
+  await d.prepare("DELETE FROM email_tokens WHERE token_hash = ?").bind(row.token_hash).run();
+  const r = await d.prepare("UPDATE users SET email_verified = 1 WHERE id = ? AND email = ?").bind(row.user_id, row.email).run();
+  return r.meta.changes ? getUser(env, { id: row.user_id }) : null;
+}
+
+// "Forgot username or password" by email. Returns [{ user, token }] for every
+// enabled account with that confirmed address (one inbox can have several),
+// and an empty list otherwise; callers answer the same either way.
+export async function startEmailReset(env, request, raw) {
+  const d = await db(env);
+  let email;
+  try { email = cleanEmail(raw); } catch { return []; }
+  await mailAllowed(d, request, email);
+  const { results } = await d.prepare("SELECT id FROM users WHERE email = ? AND email_verified = 1 AND disabled = 0").bind(email).all();
+  return Promise.all(results.map(async ({ id }) => ({
+    user: await getUser(env, { id }), token: await emailToken(d, id, "reset", email, RESET_TTL),
+  })));
+}
+
+// The user a reset link belongs to, or null if the link no longer works.
+export async function emailResetUser(env, token) {
+  const d = await db(env);
+  const row = await findEmailToken(d, token, "reset");
+  const user = row && await getUser(env, { id: row.user_id });
+  return user && !user.disabled && user.email_verified && user.email === row.email ? user : null;
+}
+
+// Finishes a reset from an emailed link. Accounts with two-factor also need
+// an app code or a recovery code, so an email inbox alone can't take one over.
+export async function resetWithEmailToken(env, request, { token, code, password }) {
+  const d = await db(env);
+  const ipWait = await lockedFor(d, "ip:" + clientIp(request));
+  if (ipWait) throw tooMany(ipWait);
+  const user = await emailResetUser(env, token);
+  if (!user) {
+    await bump(d, "ip:" + clientIp(request), POLICIES.ip);
+    throw new AuthError("This reset link has expired or was already used. Ask for a new one.", { status: 400 });
+  }
+  checkPassword(password, user.username);
+  if (user.totp_secret) await checkSecondFactor(env, request, user, code);
+  const used = await d.prepare("DELETE FROM email_tokens WHERE token_hash = ? AND purpose = 'reset'").bind(await sha256(String(token))).run();
+  if (!used.meta.changes) throw new AuthError("This reset link was already used.", { status: 400 });
+  await d.prepare("DELETE FROM email_tokens WHERE user_id = ? AND purpose = 'reset'").bind(user.id).run();
+  await setPassword(env, user.id, password);
+  await endUserSessions(env, user.id);
+  await clear(d, "user:" + user.username);
+  return user;
 }

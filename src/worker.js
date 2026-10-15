@@ -2,9 +2,11 @@
 //
 // Static files in public/ are served by Cloudflare directly and never reach
 // this code. Paths listed in "run_worker_first" in wrangler.jsonc come
-// through here: the sign-in pages (src/account.js) and /todo, which needs a
-// signed-in account with the "todo" area before the page or API is served.
+// through here: the sign-in pages (src/account.js), /login/status for the
+// homepage's sign-in link, and /todo, which needs a signed-in account with the
+// "todo" area before the page or API is served.
 import { protect, handleAuth, AUTH_PATHS, sameOrigin } from "./account.js";
+import { currentSession } from "./auth.js";
 import { state, createItem, updateItem, createCollection, updateCollection, readJson, BadRequest, ID } from "./drift.js";
 
 // /todo/api/state, /todo/api/items[/<id>], /todo/api/collections[/<id>]
@@ -21,10 +23,22 @@ export default {
     if (pathname.startsWith("/todo/")) {
       return protect(request, env, "todo", user => todo(request, env, user, pathname));
     }
+    if (pathname === "/login/status") return loginStatus(request, env);
     if (AUTH_PATHS.test(pathname)) return handleAuth(request, env);
     return env.ASSETS.fetch(request);
   },
 };
+
+// For the homepage's sign-in link: whether this browser is signed in, nothing more.
+// Never fails: if the session can't be checked, the visitor just sees "Sign in".
+async function loginStatus(request, env) {
+  let s = null;
+  try { s = await currentSession(env, request); }
+  catch (e) { console.error("session check failed:", e); }
+  return new Response(JSON.stringify({ signedIn: !!s }), {
+    headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
+  });
+}
 
 // Everything under /todo/ for a signed-in user: the API, or the page itself.
 async function todo(request, env, user, pathname) {

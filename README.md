@@ -12,10 +12,11 @@ public/          the website, served as static files
     plugins/         Checklist, Events, List; one file each
 src/             the Worker: runs only for the paths in run_worker_first
   worker.js        routing: sign-in pages, then /todo behind protect()
-  account.js       /login /signup /logout /account /admin, and protect()
+  account.js       /login /signup /logout /dashboard /account /admin, and protect()
   auth.js          accounts, sessions, login throttling, two-factor
   crypto.js        password hashing (PBKDF2) and authenticator codes (TOTP)
-  pages.js         the sign-in and account pages
+  mail.js          sending email through Resend (address checks, reset links)
+  pages.js         the sign-in, dashboard and account pages
   db.js            D1 tables (created on first use)
   drift.js         Drift storage: collections and items per account
   vendor/uqr.mjs   QR codes for two-factor setup (MIT)
@@ -34,7 +35,7 @@ The site is a Cloudflare **Worker** with static assets, deployed by Workers Buil
 | Deploy command | `npx wrangler deploy` |
 | Root directory | *(empty)* |
 
-`wrangler.jsonc` holds everything else. The `name` in it must match the Worker's name in the dashboard. Only the paths in `run_worker_first` (sign-in pages, `/account`, `/admin`, `/todo`) run any code; everything else is served straight from `public/`.
+`wrangler.jsonc` holds everything else. The `name` in it must match the Worker's name in the dashboard. Only the paths in `run_worker_first` (sign-in pages, `/dashboard`, `/account`, `/admin`, `/todo`) run any code; everything else is served straight from `public/`.
 
 Settings in `wrangler.jsonc` replace dashboard settings on every deploy. Change variables and bindings there, not in the dashboard.
 
@@ -48,7 +49,13 @@ The site has its own login. There's no Cloudflare Access.
 - **Passwords** are stored as salted PBKDF2-SHA256 hashes. `PASSWORD_ITERATIONS` sets the strength, at most 100,000, which is the Workers limit. On the Workers free plan (10 ms of CPU per request) a sign-in at 100,000 takes about 18 ms. If sign-ins fail with "exceeded resource limits", lower it, e.g. to `50000`. Existing hashes are upgraded or downgraded at each person's next sign-in.
 - **Sessions** use a `__Host-sid` cookie: HttpOnly, Secure and SameSite=Lax. The database stores only its SHA-256. Sessions end after 30 days, or after 7 days unused. Changing your password signs out your other devices.
 - **Throttling:** 5 wrong passwords lock that username for 1, then 2, 4 and 8, then 15 minutes. 30 failures from one address lock that address for 15 minutes. Each address can create 5 accounts per hour. Wrong usernames and wrong passwords give the same answer.
-- **Two-factor** uses authenticator-app codes (TOTP) plus 10 single-use recovery codes, stored hashed. It's optional for normal accounts and required for admins: an admin without it is sent to `/account` until it's set up.
+- **Two-factor** uses authenticator-app codes (TOTP). It's optional for normal accounts and required for admins: an admin without it is sent to `/account` until it's set up. Setting it up asks for the password.
+- **Recovery codes:** anyone can make 10 single-use codes on `/account` (password required); turning on two-factor makes a set too. They're stored hashed. A code stands in for the app code when signing in, and resets a forgotten password.
+- **Email (optional):** people can add an address in account settings (password required). It only counts once they open the confirmation link sent to it, which works for 24 hours. It's used for nothing but password resets.
+- **Forgot username or password** (`/login/forgot`), two ways. Either way the page tells you your username, signs out every other device and signs you in. People with neither ask an admin, who can still reset passwords from `/admin`.
+  - *By email:* enter a confirmed address and every account using it gets an email with its username and a reset link that works once, for an hour. The page answers the same whether or not the address matched. One inbox gets at most 3 emails an hour, and one network address can ask for 10. Accounts with two-factor also need an app code or recovery code to finish.
+  - *With a recovery code:* the code identifies its account, so no username is needed. Accounts with two-factor need a fresh app code as well.
+- **Dashboard:** `/dashboard` is where people land after signing in. It shows a card for each app their areas give them (from `APPS` in `src/auth.js`) and links to `/account` for password, two-factor and session settings.
 - **Areas** (`user_areas` table) decide who can use which part of the site. `protect(request, env, "<area>", inner)` in `src/account.js` lets only signed-in accounts with that area through. Pages redirect to `/login`; API calls get 401 or 403.
 - **Forms and API writes** sent from another website are refused, based on the `Origin` and `Sec-Fetch-Site` headers.
 
@@ -72,10 +79,19 @@ It also lists todo tasks whose owner isn't an account, such as lists from the ol
 4. **Set up two-factor** on `/account`, which you'll be sent to. Save the recovery codes.
 5. **Delete the secret.** It does nothing once an admin exists, so you can delete it.
 
+### Turning on email
+
+Email goes out through [Resend](https://resend.com) (free for up to 3,000 emails a month). Until it's set up, everything about email is hidden and recovery codes still work.
+
+1. **Create a Resend account** and add the domain `sintfoap.xyz` under **Domains**. Resend shows a few DNS records; add them in Cloudflare under **sintfoap.xyz → DNS → Records** and wait for Resend to say the domain is verified.
+2. **Create an API key** in Resend under **API Keys**, with "Sending access" for that domain.
+3. **Add it to the Worker** in the Cloudflare dashboard: **Workers & Pages → moffittsite → Settings → Variables and Secrets → Add**, type **Secret**, name `RESEND_API_KEY`, value the key.
+4. The sender address is `MAIL_FROM` in `wrangler.jsonc` (`no-reply@sintfoap.xyz`). Change it there if you want a different one; it must be on the verified domain.
+
 ## Adding another protected area
 
 1. Add `"/<area>"` and `"/<area>/*"` to `run_worker_first` in `wrangler.jsonc`.
-2. Add the area's name to `AREAS` in `src/auth.js`. Add it to `DEFAULT_AREAS` too if new accounts should get it.
+2. Add the area's name to `AREAS` in `src/auth.js`. Add it to `DEFAULT_AREAS` too if new accounts should get it, and add an entry to `APPS` so it shows on the dashboard.
 3. In `src/worker.js`, route those paths through `protect(request, env, "<area>", user => ...)`, the same way `/todo` is.
 4. Give people the area from `/admin`.
 
