@@ -1,10 +1,10 @@
 // Entry point for the site's Worker.
 //
 // Static files in public/ are served by Cloudflare directly and never reach
-// this code. Only paths listed in "run_worker_first" in wrangler.jsonc
-// (everything under /todo) come through here, where they must pass the
-// Cloudflare Access check before the page or API is served.
-import { protect } from "./access.js";
+// this code. Paths listed in "run_worker_first" in wrangler.jsonc come
+// through here: the sign-in pages (src/account.js) and /todo, which needs a
+// signed-in account with the "todo" area before the page or API is served.
+import { protect, handleAuth, AUTH_PATHS, sameOrigin } from "./account.js";
 import { list, create, update, readJson, BadRequest } from "./tasks.js";
 
 const TASKS = /^\/todo\/api\/tasks\/?$/;
@@ -20,8 +20,9 @@ export default {
       return Response.redirect(url.toString(), 308);
     }
     if (pathname.startsWith("/todo/")) {
-      return protect(request, env, "ACCESS_AUD_TODO", user => todo(request, env, user, pathname));
+      return protect(request, env, "todo", user => todo(request, env, user, pathname));
     }
+    if (AUTH_PATHS.test(pathname)) return handleAuth(request, env);
     return env.ASSETS.fetch(request);
   },
 };
@@ -36,8 +37,8 @@ async function todo(request, env, user, pathname) {
     if (TASKS.test(pathname)) {
       // GET  → the user's tasks, projects, tags, stats
       // POST → create a task from explicit fields ({title, due, ...})
-      if (method === "GET") return json(await list(env, user.email));
-      if (method === "POST") return json(await create(env, user.email, await readJson(request)), 201);
+      if (method === "GET") return json(await list(env, user.id, user.display_name));
+      if (method === "POST") return json(await create(env, user.id, await readJson(request)), 201);
       return json({ error: "method not allowed" }, 405);
     }
 
@@ -50,7 +51,7 @@ async function todo(request, env, user, pathname) {
       if (method === "PATCH") changes = await readJson(request);
       else if (method === "DELETE") changes = { deleted: true };
       else return json({ error: "method not allowed" }, 405);
-      const t = await update(env, user.email, m[1], changes);
+      const t = await update(env, user.id, m[1], changes);
       return t ? json(t) : json({ error: "not found" }, 404);
     }
 
@@ -69,10 +70,4 @@ async function handle(fn) {
     console.error("todo api error:", e);
     return json({ error: "server error" }, 500);
   }
-}
-
-// Mutations must come from this site's own pages, not from another origin.
-function sameOrigin(request) {
-  const origin = request.headers.get("Origin");
-  return !origin || origin === new URL(request.url).origin;
 }
