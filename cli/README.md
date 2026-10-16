@@ -28,7 +28,7 @@ Without installing: `cd cli && python -m sintfoap`.
 
 ## The dashboard
 
-The same cards as `/dashboard`, in the site's colours: one per app your account can use, and your account summary (two-factor, devices, recovery codes, email). It refreshes every 30 seconds. Drift, the plugin store and account settings open here in the terminal; anything else (like Admin) opens in your browser.
+The same panels as `/dashboard`, in the site's colours: Today (overdue Drift items in red, then what's due today), your account with its checks (two-factor, recovery codes, email), and a card per app your account can use. It refreshes every 30 seconds. Drift, the plugin store and account settings open here in the terminal; anything else (like Admin) opens in your browser.
 
 | Key | |
 |---|---|
@@ -40,7 +40,7 @@ The same cards as `/dashboard`, in the site's colours: one per app your account 
 | `o` | sign out this terminal |
 | `q` | quit |
 
-On every page `esc` goes back, `w` opens the same page in your browser and `q` quits.
+On every page `esc` goes back, `w` opens the same page in your browser and `q` quits. `g` then a letter jumps around, as on the website: `g h` home, `g d` Drift, `g p` plugin store, `g s` settings, `g a` admin (in the browser), `g o` sign out.
 
 ## Drift
 
@@ -59,7 +59,7 @@ The composer takes the same quick-add as the web page: `Call Sam #family +home !
 | `v` | next view |
 | `h` | show or hide done items |
 | `>` `<` `K` `J` | List: nest, unnest, move up, move down |
-| `[` `]` `{` `}` `g` | Calendar: day, month, today |
+| `[` `]` `{` `}` `.` | Calendar: day, month, today |
 | `/` | search |
 | `c` | the collection's plugins and sharing (or leave one shared with you) |
 | `N` | new collection |

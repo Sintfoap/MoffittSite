@@ -4,6 +4,8 @@ plugin store and account settings, in the same colours as the website.
 """
 from __future__ import annotations
 
+from datetime import datetime
+
 from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -11,7 +13,12 @@ from textual.containers import Grid, VerticalScroll
 from textual.widgets import Footer, Static
 
 from . import site
-from .look import BAD, CSS, GOLD, GOLD_DIM, INK, MUTED, GOOD, Failed, Page, fetch, open_in_browser, plural
+from .look import BAD, BG, CSS, FAINT, GOLD, GOLD_DIM, GOOD, INK, LINE, MUTED, PANEL, Failed, Page, fetch, open_in_browser, plural
+
+# The palette lives in look.py; these names stay importable from here too.
+__all__ = ["SiteApp", "Dashboard", "run", "BG", "PANEL", "GOLD", "GOLD_DIM", "INK", "MUTED", "LINE", "BAD", "GOOD", "FAINT"]
+WARN = "#e0b25a"
+
 
 REFRESH_EVERY = 30   # seconds
 
@@ -20,18 +27,42 @@ IN_TERMINAL = {"/todo/": "drift", "/plugins/": "store"}
 
 
 def account_lines(data: dict) -> Text:
+    """Counts, then the same checks as the web dashboard's account panel."""
     u, a = data["user"], data["account"]
-    t = Text.assemble(("Signed in as ", MUTED), (u["username"], f"bold {INK}"), (". ", MUTED),
-                      ("Two-factor is ", MUTED), ("on" if a["two_factor"] else "off", GOOD if a["two_factor"] else BAD),
-                      (". ", MUTED), (f"Signed in on {plural(a['sessions'], 'device')}.", MUTED))
-    left = a["recovery_codes_left"]
+    n, left, plugins = a["sessions"], a["recovery_codes_left"], a.get("plugins_installed")
+    t = Text.assemble(("Signed in as ", MUTED), (u["username"], f"bold {INK}"), ("   ", MUTED),
+                      (plural(n, "device"), INK), ("  ·  ", FAINT), (plural(left, "recovery code"), INK))
+    if plugins is not None:
+        t.append_text(Text.assemble(("  ·  ", FAINT), (plural(plugins, "plugin"), INK)))
     t.append("\n")
-    t.append(f"{plural(left, 'recovery code')} left." if left else
-             "No recovery codes, so only the admin can reset a forgotten password.",
-             MUTED if left else BAD)
+    check = lambda ok, warn, text: t.append_text(Text.assemble(  # noqa: E731
+        ("\n✓ " if ok else "\n! " if warn else "\n✕ ", GOOD if ok else WARN if warn else BAD), (text, MUTED if ok else INK)))
+    check(a["two_factor"], False, "Two-factor is on." if a["two_factor"] else "Two-factor is off.")
+    if not left:
+        check(False, False, "No recovery codes, so only the admin can reset a forgotten password.")
+    else:
+        check(left >= 3, True, f"{plural(left, 'recovery code')} left." + ("" if left >= 3 else " Make new ones soon."))
     if a.get("email"):
-        t.append(f"  Email {a['email']} " + ("is confirmed." if a["email_confirmed"] else "isn't confirmed yet."), MUTED)
+        check(a["email_confirmed"], True, f"Email {a['email']} " + ("is confirmed." if a["email_confirmed"] else "isn't confirmed yet."))
     return t
+
+
+def today_lines(today: dict) -> Text:
+    """The web dashboard's Today card: overdue Drift items in red, then what's due today."""
+    t = Text()
+    for kind, colour in (("late", BAD), ("due", INK)):
+        for it in today.get(kind, []):
+            if t:
+                t.append("\n")
+            t.append("● " if kind == "late" else "○ ", style=colour)
+            t.append(it["title"], style=colour)
+            t.append(f"   +{it['collection']}" if it.get("collection") else "", style=GOLD_DIM)
+            t.append(f"   {it['when']}" if it.get("when") else "", style=BAD if kind == "late" else MUTED)
+    return t or Text("Nothing due today.", style=MUTED)
+
+
+def greeting(hour: int) -> str:
+    return "Good morning" if 4 <= hour < 12 else "Good afternoon" if hour < 18 else "Good evening"
 
 
 def page_for(url: str) -> str | None:
@@ -82,7 +113,8 @@ class DashboardPage(Page):
     Card {{ background: #121a12; border: round #4a4430; padding: 1 2; height: auto; }}
     Card:focus {{ border: round {GOLD}; }}
     Card:hover {{ border: round {GOLD_DIM}; }}
-    DashboardPage #account {{ margin-bottom: 1; }}
+    DashboardPage #panels {{ grid-size: 2; grid-columns: 2fr 3fr; grid-gutter: 1 2; height: auto; margin-bottom: 1; }}
+    DashboardPage #panels.single {{ grid-size: 1; grid-columns: 1fr; }}
     DashboardPage #status {{ color: {GOLD_DIM}; height: 1; }}
     """
     BINDINGS = [
@@ -99,11 +131,13 @@ class DashboardPage(Page):
     def compose(self) -> ComposeResult:
         yield from self.top()
         with VerticalScroll(id="body", can_focus=False):
-            yield Static("D A S H B O A R D", classes="kicker")
+            yield Static("D A S H B O A R D", classes="kicker", id="kicker")
             yield Static(id="welcome")
             yield Static(id="notice")
+            with Grid(id="panels"):
+                yield Card("Today", "", "", "Open Drift →", page="drift", id="today")
+                yield Card("Your account", "", "", "Account settings →", page="settings", id="account")
             yield Grid(id="apps")
-            yield Card("Your account", "", "", "Account settings →", page="settings", id="account")
             yield Static(id="status")
         yield Footer()
 
@@ -125,7 +159,19 @@ class DashboardPage(Page):
                 screen.set_who()
         u, a = data["user"], data["account"]
         self.app.sub_title = data["site"].split("://", 1)[-1]
-        self.query_one("#welcome", Static).update(Text(f"Welcome, {u['display_name']}", style=f"bold {INK}"))
+        # Newer sites send the date and Today; older ones get the first dashboard's heading.
+        if data.get("date"):
+            first = u["display_name"].split()[0] if u["display_name"].split() else u["display_name"]
+            self.query_one("#kicker", Static).update(data["date"].upper())
+            self.query_one("#welcome", Static).update(Text(f"{greeting(datetime.now().hour)}, {first}", style=f"bold {INK}"))
+        else:
+            self.query_one("#welcome", Static).update(Text(f"Welcome, {u['display_name']}", style=f"bold {INK}"))
+        today = self.query_one("#today", Card)
+        today.display = bool(data.get("today"))
+        self.query_one("#panels").set_class(not data.get("today"), "single")
+        if data.get("today"):
+            today._body, today.url = today_lines(data["today"]), data["today"]["url"]
+            today.refresh(layout=True)
 
         notice = self.query_one("#notice", Static)
         notice.set_class(bool(a.get("setup_needed")), "on")
@@ -150,7 +196,7 @@ class DashboardPage(Page):
         self.call_after_refresh((target or (cards[0] if cards else acct)).focus)
 
     def cards(self) -> list[Card]:
-        return list(self.query(Card))
+        return [c for c in self.query(Card) if c.display]
 
     def action_move(self, delta: int) -> None:
         cards = self.cards()
@@ -204,6 +250,24 @@ class SiteApp(App):
         u = self.data["user"]
         host = self.data["site"].split("://", 1)[-1]
         return Text.assemble((u["display_name"], INK), ("   ADMIN" if u["admin"] else "", GOLD_DIM), (f"   {host}", MUTED))
+
+    def go(self, where: str | None) -> None:
+        """The g chord, as on the website: g h home, g d Drift, g p plugin store, g s settings, g a admin, g o sign out."""
+        if not where:
+            return
+        if where == "o":
+            where_ = site.logout()
+            self.signed_out = True
+            self.exit(message=f"Signed out of {where_}." if where_ else "Signed out.")
+            return
+        if where == "a":
+            open_in_browser(self, site.site_url("/admin"))
+            return
+        while len(self.screen_stack) > 1:
+            self.pop_screen()
+        page = {"d": "drift", "p": "store", "s": "settings"}.get(where)
+        if page:
+            self.open_page(page)
 
     def open_page(self, name: str) -> None:
         if name == "settings":

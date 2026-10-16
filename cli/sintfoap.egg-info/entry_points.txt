@@ -1,0 +1,2 @@
+[console_scripts]
+sintfoap = sintfoap.__main__:main

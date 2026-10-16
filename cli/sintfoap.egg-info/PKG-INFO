@@ -1,0 +1,6 @@
+Metadata-Version: 2.4
+Name: sintfoap
+Version: 0.1.0
+Summary: Sign in to sintfoap.xyz from the terminal and see your dashboard
+Requires-Python: >=3.10
+Requires-Dist: textual>=0.80

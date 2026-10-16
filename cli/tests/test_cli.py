@@ -202,3 +202,26 @@ def test_terminal_dashboard_closes_when_the_site_signed_it_out(fake):
         await pilot.press("r")
         await pilot.pause()
     assert run_tui(t).signed_out
+
+
+def test_terminal_dashboard_shows_today_and_the_account_checks(fake):
+    data = dashboard_data(fake, recovery_codes_left=2, plugins_installed=1, email="r@x.test", email_confirmed=False)
+    data["date"] = "Friday, October 16"
+    data["today"] = {"late": [{"title": "Pay rent", "collection": "Home", "when": "2 days late", "start": "2026-10-14"}],
+                     "due": [{"title": "Dentist", "collection": "Inbox", "when": "3 pm", "start": "2026-10-16T15:00"}],
+                     "url": fake + "/todo/"}
+    FakeSite.state["dashboard"] = data
+    sign_in(fake)
+
+    async def t(app, pilot):
+        assert "FRIDAY, OCTOBER 16" in str(app.query_one("#kicker").render())
+        assert ", Ryan" in str(app.query_one("#welcome").render())
+        today = str(app.query_one("#today").render())
+        assert today.index("Pay rent") < today.index("Dentist") and "2 days late" in today
+        acct = str(app.query_one("#account").render())
+        assert "1 plugin" in acct and "2 recovery codes left. Make new ones soon." in acct and "isn't confirmed" in acct
+        await pilot.press("g")
+        await pilot.press("s")
+        await pilot.pause()
+        assert type(app.screen).__name__ == "SettingsPage"
+    run_tui(t)

@@ -94,7 +94,7 @@ def month_grid(month: str, sel: str, events: list[dict]) -> Text:
             t.append(f"{d.day:>3}", style=style)
             t.append("•" if iso in busy and d.month == first.month else " ", style=GOLD)
         t.append("\n")
-    t.append("[ ] day   { } month   g today", style=FAINT)
+    t.append("[ ] day   { } month   . today", style=FAINT)
     return t
 
 
@@ -406,7 +406,7 @@ class ItemList(OptionList):
         Binding("right_square_bracket", "screen.day(1)", "Next day", show=False),
         Binding("left_curly_bracket", "screen.month(-1)", "Previous month", show=False),
         Binding("right_curly_bracket", "screen.month(1)", "Next month", show=False),
-        Binding("g", "screen.go_today", "Go to today", show=False),
+        Binding("full_stop", "screen.go_today", "Go to today", show=False),
         Binding("j", "cursor_down", "Down", show=False),
         Binding("k", "cursor_up", "Up", show=False),
     ]

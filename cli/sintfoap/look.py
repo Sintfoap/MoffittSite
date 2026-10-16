@@ -112,6 +112,7 @@ class Page(Screen):
     WEB_PATH = "/dashboard"
     BINDINGS = [
         Binding("escape", "back", "Back"),
+        Binding("g", "goto", "Go to"),
         Binding("w", "web", "In browser"),
         Binding("q", "app.quit", "Quit"),
     ]
@@ -136,6 +137,9 @@ class Page(Screen):
     def leave_field(self) -> bool:
         """Esc in a text box: where focus goes instead of leaving the page. False to leave."""
         return False
+
+    def action_goto(self) -> None:
+        self.app.push_screen(GoTo(admin=bool((self.app.data or {}).get("user", {}).get("admin"))), self.app.go)
 
     def action_web(self) -> None:
         open_in_browser(self.app, site.site_url(self.WEB_PATH))
@@ -201,3 +205,28 @@ class Confirm(ModalScreen[bool]):
 
     def action_no(self) -> None:
         self.dismiss(False)
+
+
+class GoTo(ModalScreen[str | None]):
+    """The second key of the g chord."""
+    DEFAULT_CSS = f"""
+    GoTo {{ background: rgba(0,0,0,0.3); }}
+    GoTo > Static {{ width: auto; background: {PANEL}; border: round {GOLD_DIM}; padding: 0 2; margin-bottom: 2; }}
+    """
+    KEYS = {"h": "home", "d": "Drift", "p": "plugin store", "s": "settings", "a": "admin", "o": "sign out"}
+
+    def __init__(self, admin: bool = False):
+        super().__init__()
+        self.keys = {k: v for k, v in self.KEYS.items() if k != "a" or admin}
+
+    def compose(self) -> ComposeResult:
+        t = Text("go to   ", style=GOLD_DIM)
+        for k, v in self.keys.items():
+            t.append(k, style=f"bold {GOLD}")
+            t.append(f" {v}   ", style=MUTED)
+        yield Static(t)
+
+    def on_key(self, event) -> None:
+        event.stop()
+        event.prevent_default()
+        self.dismiss(event.key if event.key in self.keys else None)
