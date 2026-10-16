@@ -131,6 +131,56 @@ test("the version fingerprint changes with every edit, and only the owner's", as
   assert.equal(await v(other), joshV, "someone else's edits don't touch your version");
 });
 
+test("sharing: editors add and change items, viewers only read, and either side can end it", async () => {
+  const env = makeEnv();
+  const ryan = await signedIn(env, "ryan"), josh = await signedIn(env, "josh"), mia = await signedIn(env, "mia"), eve = await signedIn(env, "eve");
+  const { json: col } = await api(ryan, "POST", "collections", { name: "Trip", plugins: ["checklist", "graph"] });
+  const { json: mine } = await api(ryan, "POST", "items", { title: "Book flights", collection: col.id });
+  const share = (who, body) => api(ryan, "POST", `collections/${col.id}/shares`, body);
+
+  assert.equal((await share(ryan, { username: "nobody" })).status, 400);
+  assert.equal((await share(ryan, { username: "ryan" })).status, 400, "not with yourself");
+  assert.equal((await share(ryan, { username: "josh", role: "admin" })).status, 400);
+  assert.equal((await share(ryan, { username: "Josh", role: "edit" })).status, 201);
+  assert.equal((await share(ryan, { username: "mia", role: "view" })).status, 201);
+  assert.equal((await api(josh, "POST", `collections/${col.id}/shares`, { username: "eve" })).status, 404, "only the owner shares");
+
+  // Josh sees it, labelled, with Ryan's items; Eve sees nothing.
+  const js = (await api(josh, "GET", "state")).json;
+  const seen = js.collections.find(c => c.id === col.id);
+  assert.equal(seen.role, "edit"); assert.equal(seen.owner_name, "ryan");
+  assert.deepEqual(js.items.filter(i => i.collection === col.id).map(i => i.title), ["Book flights"]);
+  assert.equal((await api(eve, "GET", "state")).json.items.length, 0);
+  assert.deepEqual((await api(ryan, "GET", "state")).json.collections.find(c => c.id === col.id).shares.map(s => [s.username, s.role]), [["josh", "edit"], ["mia", "view"]]);
+
+  // Josh can add and edit; the item belongs to the collection, so Ryan sees it.
+  const v0 = (await api(ryan, "GET", "version")).json.version;
+  const { json: his } = await api(josh, "POST", "items", { title: "Pack", collection: col.id, meta: { checklist: { done: false } } });
+  assert.ok(his.id);
+  assert.notEqual((await api(ryan, "GET", "version")).json.version, v0, "the owner's version changes when an editor adds");
+  assert.equal((await api(josh, "PATCH", `items/${mine.id}`, { title: "Book flights (done)" })).status, 200);
+  assert.ok((await api(ryan, "GET", "state")).json.items.some(i => i.title === "Pack"));
+  assert.equal((await api(josh, "PATCH", `collections/${col.id}`, { name: "Mine now" })).status, 404, "only the owner changes the collection");
+  const joshInbox = (await api(josh, "GET", "state")).json.collections.find(c => c.role === "owner");
+  assert.equal((await api(josh, "PATCH", `items/${mine.id}`, { collection: joshInbox.id })).status, 400, "can't take items out of a shared collection");
+
+  // Mia can read but not write.
+  assert.equal((await api(mia, "GET", "state")).json.items.filter(i => i.collection === col.id).length, 2);
+  assert.equal((await api(mia, "POST", "items", { title: "x", collection: col.id })).status, 400);
+  assert.equal((await api(mia, "PATCH", `items/${mine.id}`, { title: "x" })).status, 400);
+  assert.equal((await api(mia, "DELETE", `items/${mine.id}`)).status, 400);
+  // Eve can't touch it at all.
+  assert.equal((await api(eve, "PATCH", `items/${mine.id}`, { title: "x" })).status, 404);
+  assert.equal((await api(eve, "POST", "items", { title: "x", collection: col.id })).status, 400);
+
+  // Mia leaves; Ryan removes Josh.
+  assert.equal((await api(mia, "DELETE", `collections/${col.id}/shares/mia`)).status, 200);
+  assert.equal((await api(mia, "GET", "state")).json.collections.some(c => c.id === col.id), false);
+  assert.equal((await api(josh, "DELETE", `collections/${col.id}/shares/mia`)).status, 404, "editors can't remove others");
+  assert.equal((await api(ryan, "DELETE", `collections/${col.id}/shares/josh`)).status, 200);
+  assert.equal((await api(josh, "PATCH", `items/${mine.id}`, { title: "x" })).status, 404, "access ends with the share");
+});
+
 test("rejects bad input", async () => {
   const b = await signedIn(makeEnv(), "ryan");
   const col = await inbox(b);

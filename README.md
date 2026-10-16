@@ -110,6 +110,10 @@ Each **collection** picks which plugins are on, and shows a tab for each one's v
 
 Quick-add: `Dentist #health +Home !2 ^fri @3pm` (tag, collection, priority, date, time).
 
+### Sharing
+
+The owner of a collection can share it from its settings with anyone who has a Drift account, as **Can edit** (add, change and delete items) or **Can view** (read only). It shows up under "Shared with you" in their sidebar, and its dated items appear in their Today and Calendar. Items stay stored under the owner, whoever added them, so they count toward the owner's limit and go away if the owner deletes the collection. Only the owner can rename it, change its plugins, share it or delete it; people it's shared with can leave it. Items can't be moved between a shared collection and one with a different owner.
+
 ### Adding a plugin
 
 Write `public/todo/plugins/<name>.js` (the comment in `plugins/index.js` lists what a plugin can define) and add it to `PLUGINS` there. A simple view returns HTML from `render(ctx)` and is redrawn on every change. An interactive one (a zoomable graph, a canvas) defines `mount(el, ctx)` to build itself once, `update(ctx)` for changes, and `unmount()`, so it keeps its own state. Its `clean()` runs in the Worker too, so the API checks its metadata with no other server change. New plugins start switched off in existing collections.
@@ -128,6 +132,8 @@ All endpoints act only on the signed-in user's own data.
 | POST | `/todo/api/collections` | `{name, plugins, view, order}` |
 | PATCH | `/todo/api/collections/<id>` | any of those, or `deleted` |
 | DELETE | `/todo/api/collections/<id>` | hides its items too; you can't delete your last one |
+| POST | `/todo/api/collections/<id>/shares` | `{username, role}`, role `edit` or `view`. Owner only; sending it again changes the role |
+| DELETE | `/todo/api/collections/<id>/shares/<username>` | the owner removes someone, or you leave a collection shared with you |
 
 ### Tasks from the old todo list
 

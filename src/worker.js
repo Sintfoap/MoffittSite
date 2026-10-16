@@ -7,10 +7,12 @@
 // "todo" area before the page or API is served.
 import { protect, handleAuth, AUTH_PATHS, sameOrigin } from "./account.js";
 import { currentSession } from "./auth.js";
-import { state, version, createItem, updateItem, createCollection, updateCollection, readJson, BadRequest, ID } from "./drift.js";
+import { state, version, createItem, updateItem, createCollection, updateCollection, shareCollection, unshareCollection, readJson, BadRequest, ID } from "./drift.js";
 
-// /todo/api/state, /todo/api/version, /todo/api/items[/<id>], /todo/api/collections[/<id>]
-const API = /^\/todo\/api\/(state|version|items|collections)(?:\/([^/]+))?\/?$/;
+// /todo/api/state, /todo/api/version, /todo/api/items[/<id>],
+// /todo/api/collections[/<id>[/shares[/<username>]]]
+const API = /^\/todo\/api\/(state|version|items|collections)(?:\/([^/]+)(?:\/(shares)(?:\/([^/]+))?)?)?\/?$/;
+const USERNAME = /^[a-z0-9_.-]{1,64}$/;
 
 export default {
   async fetch(request, env) {
@@ -48,17 +50,30 @@ async function todo(request, env, user, pathname) {
     if (method !== "GET" && !sameOrigin(request)) return json({ error: "cross-origin request refused" }, 403);
     const m = pathname.match(API);
     if (!m) return json({ error: "not found" }, 404);
-    const [, kind, id] = m;
+    const [, kind, id, sub, who] = m;
 
     // GET → the user's collections, items and the plugins there are
     if (kind === "state") return method === "GET" && !id ? json(await state(env, user)) : json({ error: "not found" }, 404);
     // GET → a fingerprint that changes whenever any of the user's data does
     if (kind === "version") return method === "GET" && !id ? json({ version: await version(env, user.id) }) : json({ error: "not found" }, 404);
 
-    const [create, update] = kind === "items" ? [createItem, updateItem] : [createCollection, updateCollection];
+    if (sub) {
+      // POST   collections/<id>/shares             {username, role} → share it, or change their role
+      // DELETE collections/<id>/shares/<username>  → stop sharing (or leave, if it's you)
+      if (kind !== "collections" || !ID.test(id)) return json({ error: "not found" }, 404);
+      let out;
+      if (!who && method === "POST") out = await shareCollection(env, user, id, await readJson(request));
+      else if (who && method === "DELETE") out = USERNAME.test(decodeURIComponent(who)) ? await unshareCollection(env, user, id, decodeURIComponent(who)) : null;
+      else return json({ error: "method not allowed" }, 405);
+      return out ? json(out, method === "POST" ? 201 : 200) : json({ error: "not found" }, 404);
+    }
+
+    // Items act as `user` (they may be in someone else's shared collection);
+    // collections can only be created and changed by their owner.
+    const [create, update, as] = kind === "items" ? [createItem, updateItem, user] : [createCollection, updateCollection, user.id];
     if (!id) {
       // POST → create from explicit fields ({title, collection, meta, ...} or {name, plugins, ...})
-      if (method === "POST") return json(await create(env, user.id, await readJson(request)), 201);
+      if (method === "POST") return json(await create(env, as, await readJson(request)), 201);
       return json({ error: "method not allowed" }, 405);
     }
     // PATCH  → change the fields sent; meta: {plugin: value | null}
@@ -68,7 +83,7 @@ async function todo(request, env, user, pathname) {
     if (method === "PATCH") changes = await readJson(request);
     else if (method === "DELETE") changes = { deleted: true };
     else return json({ error: "method not allowed" }, 405);
-    const out = await update(env, user.id, id, changes);
+    const out = await update(env, as, id, changes);
     return out ? json(out) : json({ error: "not found" }, 404);
   });
 }

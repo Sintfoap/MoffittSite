@@ -19,6 +19,18 @@ const SCHEMA = [
      rev     INTEGER NOT NULL DEFAULT 0,   -- counts edits, for the sync check
      PRIMARY KEY (owner, id)
    )`,
+  // Drift collections shared with other accounts. Items stay stored under the
+  // collection's owner; role "edit" can add and change items, "view" only reads.
+  `CREATE TABLE IF NOT EXISTS drift_shares (
+     owner      TEXT NOT NULL,       -- the collection's owner (user id)
+     collection TEXT NOT NULL,       -- collection id
+     user_id    TEXT NOT NULL,       -- who it's shared with
+     role       TEXT NOT NULL,       -- "edit" or "view"
+     created_at INTEGER NOT NULL,
+     rev        INTEGER NOT NULL DEFAULT 0,
+     PRIMARY KEY (owner, collection, user_id)
+   )`,
+  `CREATE INDEX IF NOT EXISTS drift_shares_user ON drift_shares (user_id)`,
   // The old todo list. Rows move into drift_items the next time their owner
   // opens Drift; rows whose owner isn't an account wait here for an admin.
   `CREATE TABLE IF NOT EXISTS todo_tasks (

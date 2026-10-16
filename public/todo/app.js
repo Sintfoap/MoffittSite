@@ -45,7 +45,7 @@ function refresh() {
 const replaceItem = it => { const i = state.items.findIndex(x => x.id === it.id); if (i >= 0) state.items[i] = it; else state.items.push(it); };
 
 async function update(id, changes) {
-  const it = state.items.find(x => x.id === id); if (!it) return;
+  const it = state.items.find(x => x.id === id); if (!it || !canEdit(it)) return;
   Object.assign(it, changes); render();
   try { replaceItem(await req("PATCH", "items/" + id, changes)); }
   catch (e) { toast("Couldn’t save: " + e.message); refresh(); }
@@ -54,7 +54,7 @@ async function update(id, changes) {
 
 // Sets (or with null, removes) one plugin's metadata on an item.
 async function setMeta(id, pid, value, { celebrate = false } = {}) {
-  const it = state.items.find(x => x.id === id); if (!it) return;
+  const it = state.items.find(x => x.id === id); if (!it || !canEdit(it)) return;
   const apply = async () => {
     try { if (value === null) delete it.meta[pid]; else it.meta[pid] = BY_ID[pid].clean(value, fail); }
     catch (e) { return toast(e.message); }
@@ -70,13 +70,21 @@ async function setMeta(id, pid, value, { celebrate = false } = {}) {
 }
 
 async function removeItem(id) {
-  const it = state.items.find(x => x.id === id); if (!it) return;
+  const it = state.items.find(x => x.id === id); if (!it || !canEdit(it)) return;
   state.items = state.items.filter(x => x.id !== id);
   if (state.sel === id) state.sel = null;
   render();
   try { await req("DELETE", "items/" + id); }
   catch (e) { toast("Couldn’t delete: " + e.message); return refresh(); }
   toast(`Deleted “${it.title}”`, async () => { replaceItem(await req("PATCH", "items/" + id, { deleted: false })); render(); });
+}
+
+// View-only shared collections can be read but not changed.
+const writable = col => Boolean(col) && col.role !== "view";
+function canEdit(it) {
+  if (writable(colById(it?.collection))) return true;
+  toast("You can view this collection but not change it.");
+  return false;
 }
 
 /* ── what's on screen ──────────────────────────── */
@@ -162,14 +170,18 @@ function render() {
   } else {
     const col = cur.col, n = c.scopeItems.length;
     $("#h1").textContent = col.name;
-    sub = `<span>${n} item${n === 1 ? "" : "s"}</span>`;
+    sub = `<span>${n} item${n === 1 ? "" : "s"}</span>` + (col.role !== "owner"
+      ? `<span>Shared by ${esc(col.owner_name)}${col.role === "view" ? ", view only" : ""}</span>`
+      : col.shares?.length ? `<span>Shared with ${esc(col.shares.map(x => x.name).join(", "))}</span>` : "");
     tabs = viewPlugins(col).map(p => `<button data-tab="${p.id}" aria-pressed="${p.id === cur.tab}">${icon(p.icon, 15)}${esc(p.view.label)}</button>`).join("")
-      + `<button class="gear" data-settings>Plugins and settings</button>`;
+      + `<button class="gear" data-settings>${col.role === "owner" ? "Plugins, sharing and settings" : "About this collection"}</button>`;
     if (cur.tab) view = BY_ID[cur.tab];
     else body = c.items.length ? group("Items", c.items) + `<p class="hint">Turn on a plugin in settings to get more views.</p>`
       : empty("Nothing here yet", "Add an item above. Turn on plugins in settings for checklists, calendars and lists.");
     document.title = `${col.name} · Drift`;
   }
+  const ro = cur.kind === "col" && !writable(cur.col);
+  add.disabled = ro; add.placeholder = ro ? "This collection is view-only for you" : addHint;
   $("#sub").innerHTML = sub;
   $("#tabs").innerHTML = tabs;
   if (view) showView(view, c);
@@ -205,10 +217,12 @@ function renderNav() {
   const btn = (view, label, ico, n, hot) =>
     `<button data-view="${esc(view)}" aria-current="${state.view === view}"><span class="ico">${ico}</span><span>${esc(label)}</span><span class="n ${hot ? "hot" : ""}">${n || ""}</span></button>`;
   $("#views").innerHTML = btn("today", "Today", sun, nToday, late) + btn("calendar", "Calendar", cal, 0);
-  $("#cols").innerHTML = `<h3>Collections</h3>` + state.collections.map(col =>
-    btn("c:" + col.id, col.name, icon(BY_ID[col.plugins[0]]?.icon || '<circle cx="12" cy="12" r="3" fill="currentColor"/>'),
-      state.items.filter(it => it.collection === col.id && isOpen(it)).length)).join("")
-    + `<button class="add" data-newcol><span class="ico">${icon('<path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>')}</span><span>New collection</span><span></span></button>`;
+  const colBtn = col => btn("c:" + col.id, col.name, icon(BY_ID[col.plugins[0]]?.icon || '<circle cx="12" cy="12" r="3" fill="currentColor"/>'),
+    state.items.filter(it => it.collection === col.id && isOpen(it)).length);
+  const shared = state.collections.filter(c => c.role !== "owner");
+  $("#cols").innerHTML = `<h3>Collections</h3>` + state.collections.filter(c => c.role === "owner").map(colBtn).join("")
+    + `<button class="add" data-newcol><span class="ico">${icon('<path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>')}</span><span>New collection</span><span></span></button>`
+    + (shared.length ? `<h3 class="sh">Shared with you</h3>` + shared.map(colBtn).join("") : "");
 }
 
 function setView(v) { state.view = v; state.sel = null; store.set("view", v); render(); window.scrollTo({ top: 0 }); }
@@ -218,21 +232,24 @@ function openItem(id) { state.editing = id; state.sel = id; renderItemDialog(); 
 function renderItemDialog() {
   const it = state.items.find(x => x.id === state.editing);
   if (!it) { $("#itemDlg").close(); return; }
-  const col = colById(it.collection);
+  const col = colById(it.collection), ro = !writable(col);
   const shown = PLUGINS.filter(p => col?.plugins.includes(p.id) || it.meta[p.id] !== undefined);
-  $("#itemForm").innerHTML = `
+  const moveTo = state.collections.filter(c => c.id === it.collection || (writable(c) && c.owner === col?.owner));
+  $("#itemForm").innerHTML = `<fieldset class="bare" ${ro ? "disabled" : ""}>
+    ${ro ? `<p class="hint">Shared by ${esc(col.owner_name)}. You can view it but not change it.</p>` : ""}
     <input type="text" class="t" name="title" value="${esc(it.title)}" aria-label="Title" required>
     <label>Notes<textarea name="notes" placeholder="Details, links, anything">${esc(it.notes)}</textarea></label>
     <div class="grid">
       <label>Tags<input type="text" name="tags" value="${esc(it.tags.join(" "))}" placeholder="Separate with spaces"></label>
-      <label>Collection<select name="collection">${state.collections.map(c => `<option value="${esc(c.id)}" ${c.id === it.collection ? "selected" : ""}>${esc(c.name)}</option>`).join("")}</select></label>
+      <label>Collection<select name="collection">${moveTo.map(c => `<option value="${esc(c.id)}" ${c.id === it.collection ? "selected" : ""}>${esc(c.name)}</option>`).join("")}</select></label>
     </div>
     ${shown.map(p => it.meta[p.id] !== undefined
       ? `<fieldset data-plugin="${p.id}"><legend>${icon(p.icon, 15)}${esc(p.name)}</legend>${p.editor(it, ctx())}
           <div class="row"><span></span><button type="button" class="link" data-detach="${p.id}">Remove from ${esc(p.name)}</button></div></fieldset>`
       : `<fieldset class="off"><legend>${icon(p.icon, 15)}${esc(p.name)}</legend>
           <div class="row"><span class="hint">${esc(p.description)}</span><button type="button" class="link" data-attach="${p.id}">Add</button></div></fieldset>`).join("")}
-    <div class="acts"><button type="button" class="danger" data-del>Delete item</button><button class="btn primary" value="close">Done</button></div>`;
+    </fieldset>
+    <div class="acts">${ro ? "<span></span>" : `<button type="button" class="danger" data-del>Delete item</button>`}<button class="btn primary" value="close">Done</button></div>`;
 }
 function readFieldset(fs) {
   const out = {};
@@ -277,36 +294,96 @@ $("#itemDlg").addEventListener("close", () => {
 let editingCol = null;
 function openCollection(col) {
   editingCol = col;
+  if (col && col.role !== "owner") {
+    $("#colForm").innerHTML = `
+      <h2>${esc(col.name)}</h2>
+      <p>Shared with you by <b>${esc(col.owner_name)}</b>. You can ${col.role === "edit" ? "add and change items" : "view items but not change them"}.
+        Only ${esc(col.owner_name)} can rename it, change its plugins or share it.</p>
+      <p>Plugins: ${col.plugins.map(id => esc(BY_ID[id]?.name || id)).join(", ") || "none"}.</p>
+      <div class="acts"><button type="button" class="danger" data-leave>Leave collection</button>
+        <button class="btn primary" value="cancel" formnovalidate>Done</button></div>`;
+    return $("#colDlg").showModal();
+  }
   $("#colForm").innerHTML = `
     <h2>${col ? "Collection settings" : "New collection"}</h2>
     <label>Name<input type="text" name="name" value="${esc(col?.name || "")}" required maxlength="100" placeholder="e.g. Home, Work, Reading"></label>
     <div><p>Plugins decide what you can add to items here and how you can see them.</p>
       <div style="display:grid;gap:8px">${PLUGINS.map(p => `<label class="plug"><input type="checkbox" name="plugin" value="${p.id}" ${(col ? col.plugins.includes(p.id) : true) ? "checked" : ""}>
         <b>${esc(p.name)}</b><span>${esc(p.description)}</span></label>`).join("")}</div></div>
+    ${col ? `<div class="sharing"><p>Sharing. People you add see this collection in their Drift. Editors can add and change items; viewers can only look.</p>
+      <ul class="people">${(col.shares || []).map(x => `<li><span>${esc(x.name)} <small>@${esc(x.username)}</small></span>
+        <select data-role="${esc(x.username)}" aria-label="Role for ${esc(x.username)}"><option value="edit" ${x.role === "edit" ? "selected" : ""}>Can edit</option><option value="view" ${x.role === "view" ? "selected" : ""}>Can view</option></select>
+        <button type="button" class="link" data-unshare="${esc(x.username)}">Remove</button></li>`).join("") || `<li class="hint">Only you.</li>`}</ul>
+      <div class="row"><input type="text" name="shareWith" placeholder="Their username" autocomplete="off" autocapitalize="none">
+        <select name="shareRole"><option value="edit">Can edit</option><option value="view">Can view</option></select>
+        <button type="button" class="btn" data-share>Share</button></div></div>` : ""}
     <div class="acts">${col ? `<button type="button" class="danger" data-delcol>Delete collection</button>` : "<span></span>"}
       <span><button class="btn" value="cancel" formnovalidate>Cancel</button> <button class="btn primary" value="save">${col ? "Save" : "Create"}</button></span></div>`;
   $("#colDlg").showModal();
   $("#colForm [name=name]").focus();
+}
+// Merges a collection from the server into what the page knows (the server's
+// copy of your own collection doesn't carry role or sharing).
+function putCollection(c) {
+  const old = colById(c.id);
+  const merged = { owner: state.user?.id, role: "owner", shares: [], ...old, ...c };
+  state.collections = old ? state.collections.map(x => x.id === c.id ? merged : x) : [...state.collections, merged];
+  return merged;
 }
 $("#colForm").addEventListener("submit", async e => {
   if (e.submitter?.value !== "save") return;
   const name = $("#colForm [name=name]").value.trim();
   const plugins = [...$("#colForm").querySelectorAll("[name=plugin]:checked")].map(x => x.value);
   try {
-    if (editingCol) {
-      const c = await req("PATCH", "collections/" + editingCol.id, { name, plugins });
-      state.collections = state.collections.map(x => x.id === c.id ? c : x);
-      render();
-    } else {
-      const c = await req("POST", "collections", { name, plugins, view: plugins.find(id => BY_ID[id].view) || "" });
-      state.collections.push(c); setView("c:" + c.id);
+    if (editingCol) { putCollection(await req("PATCH", "collections/" + editingCol.id, { name, plugins })); render(); }
+    else {
+      const c = putCollection(await req("POST", "collections", { name, plugins, view: plugins.find(id => BY_ID[id].view) || "" }));
+      setView("c:" + c.id);
     }
   } catch (err) { toast(err.message); }
 });
-$("#colForm").addEventListener("click", async e => {
-  if (!e.target.closest("[data-delcol]")) return;
+async function share(username, role) {
   const col = editingCol;
-  if (!confirm(`Delete “${col.name}” and the items in it?`)) return;
+  try {
+    const x = await req("POST", `collections/${col.id}/shares`, { username, role });
+    col.shares = [...(col.shares || []).filter(s => s.username !== x.username), x].sort((a, b) => a.username.localeCompare(b.username));
+    openCollection(col); render();
+    toast(`${x.name} can now ${role === "edit" ? "edit" : "view"} “${col.name}”`);
+  } catch (err) { toast(err.message); }
+}
+$("#colForm").addEventListener("change", e => {
+  const r = e.target.closest("[data-role]"); if (r) share(r.dataset.role, r.value);
+});
+$("#colForm").addEventListener("keydown", e => {
+  if (e.key === "Enter" && e.target.name === "shareWith") { e.preventDefault(); $("#colForm [data-share]").click(); }
+});
+$("#colForm").addEventListener("click", async e => {
+  const col = editingCol;
+  if (e.target.closest("[data-share]")) {
+    const u = $("#colForm [name=shareWith]").value.trim().replace(/^@/, "");
+    if (u) share(u, $("#colForm [name=shareRole]").value);
+    return;
+  }
+  const un = e.target.closest("[data-unshare]");
+  if (un) {
+    try { await req("DELETE", `collections/${col.id}/shares/${encodeURIComponent(un.dataset.unshare)}`); }
+    catch (err) { return toast(err.message); }
+    col.shares = col.shares.filter(s => s.username !== un.dataset.unshare);
+    openCollection(col); render();
+    return;
+  }
+  if (e.target.closest("[data-leave]")) {
+    if (!confirm(`Leave “${col.name}”? ${col.owner_name} can share it with you again.`)) return;
+    $("#colDlg").close();
+    try { await req("DELETE", `collections/${col.id}/shares/${encodeURIComponent(state.user.username)}`); }
+    catch (err) { return toast(err.message); }
+    state.collections = state.collections.filter(c => c.id !== col.id);
+    state.items = state.items.filter(it => it.collection !== col.id);
+    setView("today");
+    return toast(`You left “${col.name}”`);
+  }
+  if (!e.target.closest("[data-delcol]")) return;
+  if (!confirm(`Delete “${col.name}” and the items in it?${col.shares?.length ? " The people you shared it with lose it too." : ""}`)) return;
   $("#colDlg").close();
   try { await req("DELETE", "collections/" + col.id); }
   catch (err) { return toast(err.message); }
@@ -326,7 +403,7 @@ function toast(msg, undo) {
 
 /* ── composer ──────────────────────────────────── */
 const add = $("#add");
-if (matchMedia("(max-width:760px)").matches) add.placeholder = "Add an item";
+const addHint = matchMedia("(max-width:760px)").matches ? "Add an item" : add.placeholder;
 add.addEventListener("input", () => {
   const v = add.value.trim(); $("#go").disabled = !v;
   if (!v) { $("#preview").innerHTML = ""; return; }
@@ -344,9 +421,10 @@ $("#composer").addEventListener("submit", async e => {
   const cur = current();
   let col = cur.col || state.collections[0];
   if (quick.collection) {
-    col = state.collections.find(c => c.name.toLowerCase() === quick.collection.toLowerCase());
-    if (!col) return toast(`There’s no collection called “${quick.collection}”.`);
+    col = state.collections.find(c => writable(c) && c.name.toLowerCase() === quick.collection.toLowerCase());
+    if (!col) return toast(`There’s no collection called “${quick.collection}” you can add to.`);
   }
+  if (!writable(col)) return toast("You can view this collection but not add to it.");
   // Each plugin that's on decides what a new item starts with. On Today and
   // Calendar, items always get a date so they show up where you added them.
   const c = { ...ctx(), tab: col === cur.col ? cur.tab : cur.kind === "col" ? null : "event" };
@@ -375,7 +453,7 @@ $("#tabs").addEventListener("click", e => {
   const t = e.target.closest("[data-tab]");
   if (t) {
     state.viewState["tab:" + cur.col.id] = t.dataset.tab; render();
-    req("PATCH", "collections/" + cur.col.id, { view: t.dataset.tab }).then(c => { cur.col.view = c.view; }).catch(() => {});
+    if (cur.col.role === "owner") req("PATCH", "collections/" + cur.col.id, { view: t.dataset.tab }).then(c => { cur.col.view = c.view; }).catch(() => {});
     return;
   }
   if (e.target.closest("[data-settings]")) openCollection(cur.col);

@@ -447,6 +447,7 @@ async function admin(request, env, me, pathname, method) {
           d.prepare("DELETE FROM todo_tasks WHERE owner = ?").bind(target.id),
           d.prepare("DELETE FROM drift_items WHERE owner = ?").bind(target.id),
           d.prepare("DELETE FROM drift_collections WHERE owner = ?").bind(target.id),
+          d.prepare("DELETE FROM drift_shares WHERE owner = ? OR user_id = ?").bind(target.id, target.id),
           d.prepare("DELETE FROM users WHERE id = ?").bind(target.id),
         ]);
         return show({ notice: `${target.username} and their tasks are deleted.` });
