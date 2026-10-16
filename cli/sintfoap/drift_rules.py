@@ -183,6 +183,38 @@ def by_start(it: dict):
     return (len(s), s)
 
 
+def day_plan(events: list[dict], d: str, now_hour: int | None = None) -> dict:
+    """One day for the hour-by-hour view, as the web's Calendar draws it: items with
+    no time slot that day (all-day ones, and timed ones carried over from an earlier
+    day), timed items by the hour they start, the hours a timed item runs through,
+    and the range of hours to show (8am–8pm, stretched to fit)."""
+    untimed: list[dict] = []
+    hours: dict[int, list[dict]] = {}
+    busy: set[int] = set()
+    lo, hi = 8, 20
+    for it in events:
+        ev = it["meta"]["event"]
+        if not on_day(ev, d):
+            continue
+        if not time_of(ev["start"]) or day_of(ev["start"]) != d:
+            untimed.append(it)
+            continue
+        h = int(time_of(ev["start"])[:2])
+        hours.setdefault(h, []).append(it)
+        end = ev.get("end")
+        last = h
+        if end and time_of(end):
+            last = max(h, int(time_of(end)[:2]) - (1 if end.endswith(":00") else 0)) if day_of(end) == d else 23
+        busy.update(range(h, last + 1))
+        lo, hi = min(lo, h), max(hi, last)
+    if now_hour is not None:
+        lo, hi = min(lo, now_hour), max(hi, now_hour)
+    for lst in hours.values():
+        lst.sort(key=by_start)
+    untimed.sort(key=by_start)
+    return {"untimed": untimed, "hours": hours, "busy": busy, "lo": lo, "hi": hi}
+
+
 def checklist_rank(it: dict):
     m = it["meta"]
     return (-(m["checklist"].get("priority") or 0), (m.get("event") or {}).get("start") or "9999",

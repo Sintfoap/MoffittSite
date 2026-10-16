@@ -117,7 +117,7 @@ Drift lives at `/todo/`. Everything in it is an **item**: a title, notes, tags a
 | Plugin | Adds to an item (`meta.<id>`) | View |
 |---|---|---|
 | Checklist (`checklist`) | `{done, done_at, priority}` | open and done items, tick boxes |
-| Events (`event`) | `{start, end}`, as `YYYY-MM-DD` or `YYYY-MM-DDTHH:MM` | month calendar and agenda |
+| Events (`event`) | `{start, end}`, as `YYYY-MM-DD` or `YYYY-MM-DDTHH:MM` | month calendar; the picked day shown by the hour, with a "No set time" list for undated-time items; an agenda |
 | List (`list`) | `{order, parent}` | an outline you reorder and nest |
 | Graph (`graph`) | `{links, x, y}`: linked item ids, and where you pinned it | a network you drag, pan and zoom; "Link items" links or unlinks two items |
 
