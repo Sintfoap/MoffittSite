@@ -454,6 +454,7 @@ async function admin(request, env, me, pathname, method) {
           d.prepare("DELETE FROM sessions WHERE user_id = ?").bind(target.id),
           d.prepare("DELETE FROM store_versions WHERE plugin_id IN (SELECT id FROM store_plugins WHERE owner = ?)").bind(target.id),
           d.prepare("DELETE FROM store_plugins WHERE owner = ?").bind(target.id),
+          d.prepare("DELETE FROM drift_installs WHERE owner = ?").bind(target.id),
           d.prepare("DELETE FROM recovery_codes WHERE user_id = ?").bind(target.id),
           d.prepare("DELETE FROM email_tokens WHERE user_id = ?").bind(target.id),
           d.prepare("DELETE FROM user_areas WHERE user_id = ?").bind(target.id),

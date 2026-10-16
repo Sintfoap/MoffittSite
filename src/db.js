@@ -119,6 +119,13 @@ const SCHEMA = [
      reviewed_at INTEGER,
      PRIMARY KEY (plugin_id, version)
    )`,
+  // Store plugins each account has added to Drift.
+  `CREATE TABLE IF NOT EXISTS drift_installs (
+     owner        TEXT NOT NULL,                   -- user id
+     plugin_id    TEXT NOT NULL,
+     installed_at INTEGER NOT NULL,
+     PRIMARY KEY (owner, plugin_id)
+   )`,
 ];
 
 // Columns added after a table first shipped. CREATE TABLE IF NOT EXISTS

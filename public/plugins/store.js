@@ -1,6 +1,8 @@
-// The plugin store page: browse approved plugins, write your own, and (for
-// admins) review what's been submitted. Plugin code is only ever shown as
-// text here; nothing on this page runs it.
+// The plugin store page: browse approved plugins and add them to Drift, write
+// your own, and (for admins) review what's been submitted. Plugin code never
+// runs on this page: "Try it" runs it in the same sandbox Drift uses.
+
+import { Sandbox, sanitize, sanitizeIcon } from "/todo/plugin-host.js";
 
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -44,6 +46,7 @@ export default {
 `;
 
 let state = { user: {}, store: [], mine: [], waiting: 0 };
+let installed = new Set();
 let queue = [];
 let tab = "store";
 let current = null;   // id of the plugin open in the editor
@@ -60,6 +63,14 @@ async function api(method, path, body) {
   return data;
 }
 
+// Adding to and removing from Drift goes through Drift's own API.
+async function drift(method, id) {
+  const res = await fetch("/todo/api/installs" + (id ? "/" + id : ""), { method });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `Something went wrong (${res.status})`);
+  return data;
+}
+
 let toastTimer;
 function toast(msg) {
   const t = $("#toast");
@@ -70,6 +81,7 @@ const attempt = fn => async (...a) => { try { await fn(...a); } catch (e) { toas
 
 async function load() {
   state = await api("GET", "/state");
+  try { installed = new Set((await drift("GET", "")).installed); } catch {}
   if (state.user.reviewer) queue = await api("GET", "/review");
   render();
 }
@@ -107,7 +119,7 @@ function renderStore() {
     <button class="card" data-open="${esc(p.id)}">
       <b>${esc(p.name)}</b>
       <p>${esc(p.description) || "No description."}</p>
-      <span class="meta"><span>by ${esc(p.author || "a removed account")}</span><span>v${p.version}</span><span>${ago(p.updated)}</span></span>
+      <span class="meta"><span>by ${esc(p.author || "a removed account")}</span><span>v${p.version}</span><span>${ago(p.updated)}</span>${installed.has(p.id) ? `<span class="badge approved">In your Drift</span>` : ""}</span>
     </button>`).join("")
     : `<div class="empty" style="grid-column: 1 / -1"><b>${q ? "No plugins match" : "No plugins yet"}</b>${q ? "Try a different search." : "Write the first one under My plugins."}</div>`;
 }
@@ -120,15 +132,27 @@ $("#store").addEventListener("click", attempt(async e => {
     <h2>${esc(p.name)}</h2>
     <span class="meta"><span>by ${esc(p.author || "a removed account")}</span><span>v${p.version}</span><span>approved ${ago(p.updated)}</span><span>id <code>${esc(p.id)}</code></span></span>
     <p>${esc(p.description) || "No description."}</p>
-    <div class="notice">Installing plugins into Drift from here is coming soon.</div>
     <div class="code"><div class="nums"></div><textarea readonly spellcheck="false" aria-label="Code" rows="18"></textarea></div>
-    <div class="actions"><span class="spacer"></span><button class="btn" data-close autofocus>Close</button></div>`;
+    <p class="status">After you add it, turn it on for a collection in that collection's settings in Drift. It runs in a sandbox there, with no access to the rest of the site.</p>
+    <div class="actions">${installed.has(p.id)
+      ? `<button class="btn danger" data-uninstall="${esc(p.id)}">Remove from Drift</button><a class="btn" href="/todo/">Open Drift</a>`
+      : `<button class="btn primary" data-install="${esc(p.id)}">Add to Drift</button>`}
+      <span class="spacer"></span><button class="btn" data-close autofocus>Close</button></div>`;
   const ta = $("#detail-body textarea");
   ta.value = p.code;
   numbers(ta);
   $("#detail").showModal();
 }));
-$("#detail").addEventListener("click", e => { if (e.target.closest("[data-close]") || e.target === $("#detail")) $("#detail").close(); });
+$("#detail").addEventListener("click", attempt(async e => {
+  if (e.target.closest("[data-close]") || e.target === $("#detail")) return $("#detail").close();
+  const inst = e.target.closest("[data-install]"), un = e.target.closest("[data-uninstall]");
+  if (!inst && !un) return;
+  const id = (inst || un).dataset[inst ? "install" : "uninstall"];
+  installed = new Set((await drift(inst ? "POST" : "DELETE", id)).installed);
+  $("#detail").close();
+  renderStore();
+  toast(inst ? "Added to Drift. Turn it on in a collection's settings." : "Removed from Drift.");
+}));
 
 // ── my plugins ─────────────────────────────────────────────────────────────
 
@@ -163,12 +187,14 @@ function renderEditor() {
     <div class="code"><div class="nums"></div><textarea id="f-code" spellcheck="false" autocapitalize="off" autocomplete="off" aria-label="Code"></textarea></div>
     <div class="actions">
       <button class="btn primary" id="save">Save draft</button>
+      <button class="btn" id="try">Try it</button>
       <button class="btn" id="submit" ${w.status === "draft" ? "" : "disabled"}>Submit for review</button>
       ${p.pending ? `<button class="btn" id="withdraw">Withdraw</button>` : ""}
       <span class="status" id="saved">v${w.version} · ${STATUS[w.status]} · id <code>${esc(p.id)}</code></span>
       <span class="spacer"></span>
       <button class="btn danger" id="delete">Delete</button>
-    </div>`;
+    </div>
+    <section class="try" id="tryOut" hidden></section>`;
   $("#f-name").value = w.name;
   $("#f-desc").value = w.description;
   $("#f-code").value = w.code;
@@ -182,6 +208,7 @@ function renderEditor() {
   $("#f-desc").addEventListener("input", touched);
   $("#save").addEventListener("click", attempt(save));
   $("#submit").addEventListener("click", attempt(submitIt));
+  $("#try").addEventListener("click", attempt(() => tryIt(p.id, $("#f-code").value)));
   $("#withdraw")?.addEventListener("click", attempt(async () => { replace(await api("POST", `/mine/${current}/withdraw`)); toast("Taken out of review."); }));
   $("#delete").addEventListener("click", attempt(async () => {
     if (!confirm(`Delete ${w.name}? ${p.published ? "It comes out of the store too. " : ""}This can't be undone.`)) return;
@@ -257,6 +284,57 @@ $("#create-form").addEventListener("submit", attempt(async e => {
     $("#create-error").hidden = false;
   }
 }));
+
+// ── try it: run the code in the sandbox against a few sample items ─────────
+
+let sandbox = null;
+const SAMPLE = [
+  ["Water the plants", ["home"]], ["Send the invoice", ["work"]], ["Book a dentist appointment", []],
+].map(([title, tags], i) => ({ id: `i_try${i}`, collection: "c_try", title, notes: "", tags, created: "2026-01-01T09:00:00", deleted: false, meta: {} }));
+
+async function tryIt(id, code) {
+  const out = $("#tryOut");
+  out.hidden = false;
+  out.innerHTML = `<p class="status">Running ${esc(id)} in the sandbox…</p>`;
+  // A fresh sandbox each run, so a plugin stopped for looping gets another go.
+  sandbox?.frame.remove();
+  sandbox = new Sandbox();
+  const info = (await sandbox.load([{ id, code }]))[id];
+  if (info.error) { out.innerHTML = `<div class="notice bad"><b>It didn't load.</b> ${esc(info.error)}</div>`; return; }
+
+  const items = structuredClone(SAMPLE), problems = [];
+  const collection = { id: "c_try", name: "Try it", plugins: [id], view: info.view ? id : "", role: "owner" };
+  const snap = extra => ({ collection, tab: info.view ? id : null, items, scopeItems: items, filtered: false, pending: [],
+    viewState: {}, all: items, selected: null, editing: items[0].id, ...extra });
+  for (const it of items) {
+    try {
+      const r = await sandbox.call(id, "fresh", { quick: {}, item: it }, snap());
+      it.meta[id] = r.value === undefined ? {} : r.value;
+    } catch (e) { problems.push(`fresh/read: ${e.message}`); it.meta[id] = {}; }
+  }
+  try { await sandbox.call(id, "clean", { value: items[0].meta[id] }, snap()); }
+  catch (e) { problems.push(`clean() refused the data fresh() made: ${e.message}`); }
+  const r = (await sandbox.compute(snap()))[id] || {};
+  if (r.error) problems.push(r.error);
+
+  const row = it => {
+    const x = r.rows?.[it.id] || {};
+    return `<li><span class="lead">${sanitize(x.lead, id)}</span><span><b>${esc(it.title)}</b>
+      <span class="chips">${(x.chips || []).map(h => sanitize(h, id)).join("")}</span></span></li>`;
+  };
+  const view = r.view == null ? "" : sanitize(r.view, id).replace(/<drift-row data-id="([^"]*)" data-depth="\d+"><\/drift-row>/g,
+    (_, rid) => { const it = items.find(x => x.id === rid); return it ? `<ul class="rows">${row(it)}</ul>` : ""; });
+  out.innerHTML = `
+    <h3><svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">${sanitizeIcon(info.icon)}</svg> ${esc(info.name)} <span class="status">ran in the sandbox</span></h3>
+    ${problems.length ? `<div class="notice bad"><b>Problems.</b> ${problems.map(esc).join("<br>")}</div>` : `<div class="notice good"><b>No errors.</b> Here's how it draws three sample items. Drift adds its own styling.</div>`}
+    <div class="try-grid">
+      <div><h4>Rows</h4><ul class="rows">${items.map(row).join("")}</ul></div>
+      <div><h4>Item editor</h4>${r.editor == null ? `<p class="status">No editor.</p>` : `<div class="preview">${sanitize(r.editor, id)}</div>`}</div>
+    </div>
+    ${info.view ? `<h4>View: ${esc(info.view.label)}</h4><div class="preview">${view || `<p class="status">The view drew nothing.</p>`}</div>` : ""}
+    <details><summary>Data each sample item started with</summary><pre>${esc(JSON.stringify(Object.fromEntries(items.map(it => [it.title, it.meta[id]])), null, 2))}</pre></details>
+    <p class="status">Actions: ${info.actions.map(esc).join(", ") || "none"} · Keys: ${info.keys.map(k => `<kbd>${esc(k === " " ? "Space" : k)}</kbd>`).join(" ") || "none"}</p>`;
+}
 
 // ── the code box ───────────────────────────────────────────────────────────
 
