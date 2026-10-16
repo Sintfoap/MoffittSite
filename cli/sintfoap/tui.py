@@ -252,7 +252,8 @@ class SiteApp(App):
         return Text.assemble((u["display_name"], INK), ("   ADMIN" if u["admin"] else "", GOLD_DIM), (f"   {host}", MUTED))
 
     def go(self, where: str | None) -> None:
-        """The g chord, as on the website: g h home, g d Drift, g p plugin store, g s settings, g a admin, g o sign out."""
+        """The g chord, as on the website. The letters and where they lead come
+        from the site's menu (`nav` in the dashboard data); g o signs out."""
         if not where:
             return
         if where == "o":
@@ -260,13 +261,23 @@ class SiteApp(App):
             self.signed_out = True
             self.exit(message=f"Signed out of {where_}." if where_ else "Signed out.")
             return
-        if where == "a":
-            open_in_browser(self, site.site_url("/admin"))
-            return
+        nav = (self.data or {}).get("nav")
+        if nav:
+            item = next((n for n in nav if n.get("key") == where), None)
+            if not item:
+                return
+            page = "home" if item["id"] == "home" else "settings" if item["id"] == "account" else page_for(item["url"])
+            if not page:
+                open_in_browser(self, item["url"])
+                return
+        else:  # a site too old to send its menu
+            if where == "a":
+                open_in_browser(self, site.site_url("/admin"))
+                return
+            page = {"h": "home", "d": "drift", "p": "store", "s": "settings", "c": "chat"}.get(where)
         while len(self.screen_stack) > 1:
             self.pop_screen()
-        page = {"d": "drift", "p": "store", "s": "settings", "c": "chat"}.get(where)
-        if page:
+        if page and page != "home":
             self.open_page(page)
 
     def open_page(self, name: str) -> None:

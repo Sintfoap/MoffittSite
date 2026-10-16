@@ -193,7 +193,6 @@ function render() {
   $("#tabs").innerHTML = tabs;
   if (view) showView(view, c);
   else { unmountView(); el.innerHTML = body; }
-  $("#who").textContent = state.user?.name || "";
   storePlugins.sync();
 }
 

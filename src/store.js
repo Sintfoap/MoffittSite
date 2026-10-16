@@ -13,6 +13,7 @@
 // Code is stored and sent only as text. Nothing here or on the store page
 // runs it.
 
+import { withRail } from "./pages.js";
 import { db, now } from "./db.js";
 import { sameOrigin } from "./account.js";
 import { BY_ID } from "../public/todo/plugins/index.js";
@@ -307,7 +308,7 @@ const PAGE_CSP = [
 
 export async function plugins(request, env, user, pathname) {
   if (!pathname.startsWith("/plugins/api/")) {
-    const asset = await env.ASSETS.fetch(request);
+    const asset = await withRail(await env.ASSETS.fetch(request), user, "plugins");
     const res = new Response(asset.body, asset);
     if ((res.headers.get("Content-Type") || "").startsWith("text/html")) {
       res.headers.set("Content-Security-Policy", PAGE_CSP);

@@ -100,7 +100,6 @@ function show(name) {
 for (const b of document.querySelectorAll("[data-tab]")) b.addEventListener("click", () => show(b.dataset.tab));
 
 function render() {
-  $("#who").textContent = state.user.name || "";
   const rev = document.querySelector('[data-tab="review"]');
   rev.hidden = !state.user.reviewer;
   $("#waiting").hidden = !queue.length;

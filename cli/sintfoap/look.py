@@ -139,7 +139,8 @@ class Page(Screen):
         return False
 
     def action_goto(self) -> None:
-        self.app.push_screen(GoTo(admin=bool((self.app.data or {}).get("user", {}).get("admin"))), self.app.go)
+        data = self.app.data or {}
+        self.app.push_screen(GoTo(data.get("nav"), admin=bool(data.get("user", {}).get("admin"))), self.app.go)
 
     def action_web(self) -> None:
         open_in_browser(self.app, site.site_url(self.WEB_PATH))
@@ -208,16 +209,22 @@ class Confirm(ModalScreen[bool]):
 
 
 class GoTo(ModalScreen[str | None]):
-    """The second key of the g chord."""
+    """The second key of the g chord. The letters come from the site's menu
+    (the dashboard's `nav`), so the terminal offers what the web rail does."""
     DEFAULT_CSS = f"""
     GoTo {{ background: rgba(0,0,0,0.3); }}
     GoTo > Static {{ width: auto; background: {PANEL}; border: round {GOLD_DIM}; padding: 0 2; margin-bottom: 2; }}
     """
-    KEYS = {"h": "home", "d": "Drift", "p": "plugin store", "c": "chat", "s": "settings", "a": "admin", "o": "sign out"}
+    # For a site too old to send its menu.
+    KEYS = {"h": "home", "d": "Drift", "p": "plugin store", "c": "chat", "s": "settings", "a": "admin"}
 
-    def __init__(self, admin: bool = False):
+    def __init__(self, nav: list | None = None, admin: bool = False):
         super().__init__()
-        self.keys = {k: v for k, v in self.KEYS.items() if k != "a" or admin}
+        if nav:
+            self.keys = {n["key"]: n["label"] for n in nav if n.get("key")}
+        else:
+            self.keys = {k: v for k, v in self.KEYS.items() if k != "a" or admin}
+        self.keys["o"] = "sign out"
 
     def compose(self) -> ComposeResult:
         t = Text("go to   ", style=GOLD_DIM)

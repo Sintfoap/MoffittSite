@@ -11,6 +11,7 @@ import { plugins, installed, install, uninstall, PLUGIN_ID, SANDBOX_CSP } from "
 import { protect, handleAuth, AUTH_PATHS, sameOrigin } from "./account.js";
 import { currentSession } from "./auth.js";
 import { handleCli, CLI_PATHS } from "./cli.js";
+import { withRail } from "./pages.js";
 import { chat } from "./chat.js";
 import { state, version, createItem, updateItem, createCollection, updateCollection, shareCollection, unshareCollection, readJson, BadRequest, ID } from "./drift.js";
 
@@ -66,7 +67,7 @@ async function loginStatus(request, env) {
 
 // Everything under /todo/ for a signed-in user: the API, or the page itself.
 async function todo(request, env, user, pathname) {
-  if (!pathname.startsWith("/todo/api/")) return env.ASSETS.fetch(request);
+  if (!pathname.startsWith("/todo/api/")) return withRail(await env.ASSETS.fetch(request), user, "drift");
   const method = request.method;
   return handle(async () => {
     if (method !== "GET" && !sameOrigin(request)) return json({ error: "cross-origin request refused" }, 403);

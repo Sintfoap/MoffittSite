@@ -168,6 +168,11 @@ test("the terminal dashboard shows what /dashboard does", async () => {
   assert.equal(d.account.setup_needed, null);
   assert.equal(d.account.url, "https://sintfoap.test/account");
   assert.equal(d.account.plugins_installed, 0);
+  // The same menu as the web rail.
+  assert.deepEqual(d.nav.map(n => [n.id, n.key, n.url]), [
+    ["home", "h", "https://sintfoap.test/dashboard"], ["drift", "d", "https://sintfoap.test/todo/"],
+    ["plugins", "p", "https://sintfoap.test/plugins/"], ["chat", "c", "https://sintfoap.test/chat/"],
+    ["account", "s", "https://sintfoap.test/account"]]);
   assert.match(d.date, /^[A-Z][a-z]+day, [A-Z][a-z]+ \d{1,2}$/);
   assert.deepEqual(d.today, { late: [], due: [], url: "https://sintfoap.test/todo/" });
 
@@ -187,6 +192,7 @@ test("the terminal dashboard shows what /dashboard does", async () => {
   assert.deepEqual(admin.apps, []);
   assert.equal(admin.account.setup_needed, "set up two-factor");
   assert.equal(admin.today, null, "nothing but setup until it's done");
+  assert.deepEqual(admin.nav.map(n => n.id), ["account"], "the menu only offers settings until then");
 });
 
 test("the terminal's settings page reads and changes what doesn't need the password", async () => {

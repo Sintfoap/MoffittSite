@@ -36,3 +36,22 @@ test("accounts without Drift get no Today card", async () => {
   assert.doesNotMatch(page, /Open Drift/);
   assert.doesNotMatch(page, /href="\/todo\/"/);
 });
+
+// One menu for the whole site: the dashboard's nav goes into every page.
+test("Drift, the plugin store and chat get the dashboard's rail, Chat included", async () => {
+  const marked = { fetch: async () => new Response("<!doctype html><body><!--site-rail--><main></main></body>", { headers: { "Content-Type": "text/html", ETag: '"x"' } }) };
+  const env = makeEnv({ ASSETS: marked }), b = new Browser(env);
+  await b.signup("ryan", "correct horse battery", "Ryan Moffitt");
+  for (const [path, here] of [["/todo/", "Drift"], ["/plugins/", "Plugin store"], ["/chat/", "Chat"]]) {
+    const r = await b.get(path);
+    assert.equal(r.status, 200, path);
+    assert.doesNotMatch(r.text, /<!--site-rail-->/, `${path} has its rail`);
+    for (const href of ["/dashboard", "/todo/", "/plugins/", "/chat/", "/account"]) assert.match(r.text, new RegExp(`href="${href}"`), `${path} links ${href}`);
+    assert.doesNotMatch(r.text, /href="\/admin"/, "no Admin for a normal account");
+    assert.match(r.text, new RegExp(`aria-current="page"[^>]*>[\\s\\S]{0,600}<span>${here}</span>`), `${path} marks itself`);
+    assert.match(r.text, /Ryan Moffitt/);
+    assert.equal(r.headers.get("ETag"), null, "the page differs per person, so no shared validator");
+  }
+  // The dashboard shows the same menu.
+  assert.match((await b.get("/dashboard")).text, /href="\/chat\/" data-key="c"/);
+});
