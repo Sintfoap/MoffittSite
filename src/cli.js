@@ -15,11 +15,19 @@
 //
 //   GET /login/cli/me          → {username, display_name, areas} for whoever the token belongs to.
 //   GET /login/cli/dashboard   → what /dashboard shows, for the terminal dashboard (cli/).
+//   GET  /login/cli/account            → what /account shows, for the terminal's settings page
+//   POST /login/cli/account            {display_name} → saved, answers like GET
+//   POST /login/cli/account/sessions   → signs out every other device, answers like GET
+// Anything that needs the password (two-factor, recovery codes, email, the
+// password itself) stays on /account, so the terminal never handles it.
 
 import { db, now } from "./db.js";
 import { randomBytes, randomToken, sha256 } from "./crypto.js";
-import { createSession, currentSession, clientIp, getUser, recoveryCodesLeft, APPS } from "./auth.js";
+import { createSession, currentSession, clientIp, getUser, recoveryCodesLeft, endUserSessions, cleanDisplayName, AuthError, APPS } from "./auth.js";
+import { mailReady } from "./mail.js";
 import { sameOrigin } from "./account.js";
+import { agenda, visitorNow } from "./drift.js";
+import { installed } from "./store.js";
 import { html, page, esc, messagePage } from "./pages.js";
 
 export const CLI_PATHS = /^\/login\/cli(\/|$)/;
@@ -68,6 +76,7 @@ export async function handleCli(request, env) {
     if (pathname === "/login/cli/token") return method === "POST" ? await token(request, env) : json({ error: "method not allowed" }, 405);
     if (pathname === "/login/cli/me") return method === "GET" ? await me(request, env) : json({ error: "method not allowed" }, 405);
     if (pathname === "/login/cli/dashboard") return method === "GET" ? await dashboard(request, env) : json({ error: "method not allowed" }, 405);
+    if (pathname === "/login/cli/account" || pathname === "/login/cli/account/sessions") return await account(request, env, pathname, method);
     if (pathname === "/login/cli" || pathname === "/login/cli/") return await approvePage(request, env, method);
     return json({ error: "not found" }, 404);
   } catch (e) {
@@ -133,6 +142,15 @@ async function dashboard(request, env) {
   const sessions = (await d.prepare("SELECT COUNT(*) AS n FROM sessions WHERE user_id = ? AND stage = 'full'").bind(user.id).first()).n;
   // Same rule as protect(): until setup is finished, the site only offers /account.
   const setup = user.must_change_pw ? "choose a new password" : user.areas.has("admin") && !user.totp_secret ? "set up two-factor" : null;
+  const drift = !setup && user.areas.has("todo"), clock = visitorNow(request);
+  let today = null;
+  if (drift) {
+    try {
+      const a = await agenda(env, user, clock.day);
+      const out = it => ({ title: it.title, collection: it.collection, when: it.when, start: it.start });
+      today = { late: a.late.map(out), due: a.due.map(out), url: origin + "/todo/" };
+    } catch (e) { console.error("dashboard agenda failed:", e); }
+  }
   return json({
     site: origin,
     user: { username: user.username, display_name: user.display_name, admin: user.areas.has("admin") },
@@ -140,7 +158,46 @@ async function dashboard(request, env) {
     account: {
       two_factor: !!user.totp_secret, sessions, recovery_codes_left: await recoveryCodesLeft(env, user.id),
       email: user.email || null, email_confirmed: !!user.email_verified, setup_needed: setup, url: origin + "/account",
+      plugins_installed: drift ? (await installed(env, user.id)).length : null,
     },
+    // The web dashboard's Today card: open Drift items due today and overdue.
+    // null for accounts without Drift (or while setup is needed).
+    date: clock.label,
+    today,
+  });
+}
+
+// The account page's settings, minus everything that needs the password.
+async function account(request, env, pathname, method) {
+  const s = await currentSession(env, request);
+  if (!s) return json({ error: "not signed in" }, 401);
+  let { user } = s;
+  if (method !== "GET" && method !== "POST") return json({ error: "method not allowed" }, 405);
+  if (method === "GET" && pathname !== "/login/cli/account") return json({ error: "method not allowed" }, 405);
+  if (method === "POST") {
+    if (!sameOrigin(request)) return json({ error: "cross-origin request refused" }, 403);
+    // Same rule as /account: someone whose password was reset can only choose a new one.
+    if (user.must_change_pw) return json({ error: "choose a new password on the website first" }, 403);
+    const d = await db(env);
+    if (pathname === "/login/cli/account/sessions") {
+      await endUserSessions(env, user.id, { exceptHash: s.session.id_hash });
+    } else {
+      const b = await body(request);
+      if (!b || typeof b !== "object") return json({ error: "invalid request" }, 400);
+      let name;
+      try { name = cleanDisplayName(b.display_name); }
+      catch (e) { if (e instanceof AuthError) return json({ error: e.message }, 400); throw e; }
+      await d.prepare("UPDATE users SET display_name = ? WHERE id = ?").bind(name, user.id).run();
+    }
+    user = await getUser(env, { id: user.id });
+  }
+  const d = await db(env), origin = new URL(request.url).origin;
+  const sessions = (await d.prepare("SELECT COUNT(*) AS n FROM sessions WHERE user_id = ? AND stage = 'full'").bind(user.id).first()).n;
+  return json({
+    username: user.username, display_name: user.display_name, admin: user.areas.has("admin"),
+    two_factor: !!user.totp_secret, sessions, recovery_codes_left: await recoveryCodesLeft(env, user.id),
+    email: user.email || null, email_confirmed: !!user.email_verified, mail: mailReady(env),
+    must_change_pw: !!user.must_change_pw, url: origin + "/account",
   });
 }
 

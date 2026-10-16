@@ -1,5 +1,6 @@
 """
-Talking to sintfoap.xyz: signing in, signing out, and reading the dashboard.
+Talking to sintfoap.xyz: signing in and out, and the JSON the terminal pages use
+(dashboard, settings, Drift, the plugin store).
 
 Signing in never asks for a password here. The site shows a code, you approve
 it in a browser where you're signed in (two-factor included), and the site
@@ -14,6 +15,7 @@ import socket
 import stat
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import webbrowser
 from pathlib import Path
@@ -167,14 +169,27 @@ def logout() -> str | None:
     return info["site"]
 
 
-def _get(path: str) -> dict:
+def api(method: str, path: str, body: Any = None) -> Any:
+    """A signed-in request to the site's JSON API. Raises SignedOut or SiteError."""
     info = load_login()
     if not info:
         raise SignedOut()
-    status, data = call(info["site"], "GET", path, token=info["token"])
-    if status != 200 or not isinstance(data, dict):
+    status, data = call(info["site"], method, path, body, token=info["token"])
+    if not 200 <= status < 300 or data is None:
         raise _error(status, data)
     return data
+
+
+def _get(path: str) -> dict:
+    data = api("GET", path)
+    if not isinstance(data, dict):
+        raise SiteError("the site sent something unexpected")
+    return data
+
+
+def site_url(path: str = "") -> str:
+    info = load_login()
+    return (info["site"] if info else clean_site(None)) + path
 
 
 def whoami() -> dict:
@@ -186,50 +201,152 @@ def dashboard() -> dict:
     return _get("/login/cli/dashboard")
 
 
+# ─────────────────────────────── settings ───────────────────────────────────
+# What /account shows, minus everything that needs the password (src/cli.js).
+
+def account() -> dict:
+    return _get("/login/cli/account")
+
+
+def save_display_name(name: str) -> dict:
+    return api("POST", "/login/cli/account", {"display_name": name})
+
+
+def sign_out_others() -> dict:
+    return api("POST", "/login/cli/account/sessions")
+
+
+# ──────────────────────────────── Drift ─────────────────────────────────────
+# /todo/api/ (src/worker.js, src/drift.js)
+
+def _q(s: str) -> str:
+    return urllib.parse.quote(s, safe="")
+
+
+def drift_state() -> dict:
+    return _get("/todo/api/state")
+
+
+def drift_version() -> str:
+    return _get("/todo/api/version")["version"]
+
+
+def add_item(fields: dict) -> dict:
+    return api("POST", "/todo/api/items", fields)
+
+
+def update_item(item_id: str, changes: dict) -> dict:
+    return api("PATCH", f"/todo/api/items/{_q(item_id)}", changes)
+
+
+def delete_item(item_id: str) -> dict:
+    return api("DELETE", f"/todo/api/items/{_q(item_id)}")
+
+
+def add_collection(fields: dict) -> dict:
+    return api("POST", "/todo/api/collections", fields)
+
+
+def update_collection(col_id: str, changes: dict) -> dict:
+    return api("PATCH", f"/todo/api/collections/{_q(col_id)}", changes)
+
+
+def delete_collection(col_id: str) -> dict:
+    return api("DELETE", f"/todo/api/collections/{_q(col_id)}")
+
+
+def share(col_id: str, username: str, role: str) -> dict:
+    return api("POST", f"/todo/api/collections/{_q(col_id)}/shares", {"username": username, "role": role})
+
+
+def unshare(col_id: str, username: str) -> dict:
+    return api("DELETE", f"/todo/api/collections/{_q(col_id)}/shares/{_q(username)}")
+
+
+def install(plugin_id: str) -> list[str]:
+    return api("POST", f"/todo/api/installs/{_q(plugin_id)}")["installed"]
+
+
+def uninstall(plugin_id: str) -> list[str]:
+    return api("DELETE", f"/todo/api/installs/{_q(plugin_id)}")["installed"]
+
+
+def installed() -> list[str]:
+    return _get("/todo/api/installs")["installed"]
+
+
+# ───────────────────────────── plugin store ─────────────────────────────────
+# /plugins/api/ (src/store.js)
+
+def store_state() -> dict:
+    return _get("/plugins/api/state")
+
+
+def store_plugin(plugin_id: str) -> dict:
+    return _get(f"/plugins/api/store/{_q(plugin_id)}")
+
+
+def new_plugin(fields: dict) -> dict:
+    return api("POST", "/plugins/api/mine", fields)
+
+
+def save_plugin(plugin_id: str, fields: dict) -> dict:
+    return api("PATCH", f"/plugins/api/mine/{_q(plugin_id)}", fields)
+
+
+def delete_plugin(plugin_id: str) -> dict:
+    return api("DELETE", f"/plugins/api/mine/{_q(plugin_id)}")
+
+
+def submit_plugin(plugin_id: str, note: str = "") -> dict:
+    return api("POST", f"/plugins/api/mine/{_q(plugin_id)}/submit", {"note": note})
+
+
+def withdraw_plugin(plugin_id: str) -> dict:
+    return api("POST", f"/plugins/api/mine/{_q(plugin_id)}/withdraw")
+
+
+def review_queue() -> list[dict]:
+    return api("GET", "/plugins/api/review")
+
+
+def review(plugin_id: str, version: int, decision: str, note: str = "") -> dict:
+    return api("POST", f"/plugins/api/review/{_q(plugin_id)}/{int(version)}", {"decision": decision, "note": note})
+
+
 # ──────────────────────────────── chat ──────────────────────────────────────
-# The same API the /chat/ page uses (src/chat.js). The terminal sends no Origin
-# header, which the site counts as same-site, like a form post from the page.
-
-def _chat(method: str, path: str, body: Any = None) -> Any:
-    info = load_login()
-    if not info:
-        raise SignedOut()
-    status, data = call(info["site"], method, "/chat/api" + path, body, token=info["token"])
-    if status not in (200, 201):
-        raise _error(status, data)
-    return data
-
+# /chat/api/ (src/chat.js)
 
 def chat_state() -> dict:
     """{user, rooms}: every room, with joined, unread and manage for this account."""
-    return _chat("GET", "/state")
+    return _get("/chat/api/state")
 
 
 def chat_messages(room: str, since: int | None = None, before: int | None = None) -> dict:
     """{seq, more, joined, messages}: the newest page, older ones (before), or changes (since)."""
-    q = f"?since={since}" if since is not None else f"?before={before}" if before is not None else ""
-    return _chat("GET", f"/rooms/{room}/messages{q}")
+    q = f"?since={int(since)}" if since is not None else f"?before={int(before)}" if before is not None else ""
+    return _get(f"/chat/api/rooms/{_q(room)}/messages{q}")
 
 
 def chat_post(room: str, text: str) -> dict:
-    return _chat("POST", f"/rooms/{room}/messages", {"body": text})
+    return api("POST", f"/chat/api/rooms/{_q(room)}/messages", {"body": text})
 
 
 def chat_delete(room: str, message_id: int) -> dict:
-    return _chat("DELETE", f"/rooms/{room}/messages/{message_id}")
+    return api("DELETE", f"/chat/api/rooms/{_q(room)}/messages/{int(message_id)}")
 
 
 def chat_create(name: str, topic: str = "") -> dict:
-    return _chat("POST", "/rooms", {"name": name, "topic": topic})
+    return api("POST", "/chat/api/rooms", {"name": name, "topic": topic})
 
 
 def chat_update(room: str, **fields: str) -> dict:
-    return _chat("PATCH", f"/rooms/{room}", fields)
+    return api("PATCH", f"/chat/api/rooms/{_q(room)}", fields)
 
 
 def chat_join(room: str) -> dict:
-    return _chat("POST", f"/rooms/{room}/join")
+    return api("POST", f"/chat/api/rooms/{_q(room)}/join")
 
 
 def chat_leave(room: str) -> dict:
-    return _chat("POST", f"/rooms/{room}/leave")
+    return api("POST", f"/chat/api/rooms/{_q(room)}/leave")

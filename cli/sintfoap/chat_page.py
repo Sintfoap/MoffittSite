@@ -1,23 +1,21 @@
-"""Chat in the terminal (Textual): the rooms from /chat/, in the site's colours.
-
-Rooms on the left, the open room on the right, a line to type in at the bottom.
-Like the web page it asks the site for changes every few seconds. Anything
-that isn't a message starts with a slash: /join, /leave, /new, /help…
+"""Chat in the terminal, like /chat/: rooms on the left, the open room on the
+right, a line to type in at the bottom. Like the web page it asks the site for
+changes every few seconds. Anything that isn't a message starts with a slash:
+/join, /leave, /new, /help…
 """
 from __future__ import annotations
 
-import asyncio
 import time
 from datetime import datetime
 
 from rich.text import Text
-from textual.app import App, ComposeResult
+from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import Footer, Input, Label, ListItem, ListView, Static
 
 from . import site
-from .tui import BG, PANEL, GOLD, GOLD_DIM, INK, MUTED, LINE, BAD
+from .look import BAD, BG, GOLD, GOLD_DIM, INK, LINE, MUTED, PANEL, Failed, Page, plural
 
 ROOM_EVERY, LIST_EVERY = 2.5, 15     # seconds, the same as the web page
 GROUP_SECONDS = 5 * 60               # messages this close from one person share a heading
@@ -28,8 +26,8 @@ HELP = """Type a message and press enter to send it (members only).
   /rename NAME  /topic TEXT  change the open room (its owner, or an admin)
   /delete                    delete your last message in this room
   /older                     load older messages
-  /quit                      leave chat
-tab moves between the room list and the message line; enter on a room opens it."""
+tab or esc moves to the room list; enter on a room opens it. Start a message
+with // to send one that begins with /."""
 
 
 def clock(t: int) -> str:
@@ -88,35 +86,27 @@ class RoomItem(ListItem):
         return name
 
 
-class Chat(App):
-    TITLE = "sintfoap.xyz chat"
-    CSS = f"""
-    Screen {{ background: {BG}; color: {INK}; }}
-    #top {{ height: 1; padding: 0 2; margin-top: 1; }}
-    #crest {{ width: auto; color: {GOLD}; text-style: bold; }}
-    #who {{ width: 1fr; content-align: right middle; color: {MUTED}; }}
-    #main {{ padding: 1 2 0 2; }}
-    #side {{ width: 30; margin-right: 1; }}
-    #side-title {{ color: {GOLD}; text-style: bold; height: 1; margin-bottom: 1; }}
-    #rooms {{ background: {BG}; border: round {LINE}; height: 1fr; scrollbar-size-vertical: 1; scrollbar-background: {BG}; scrollbar-color: {LINE}; }}
-    #rooms:focus {{ border: round {GOLD}; }}
-    #rooms > ListItem {{ background: {BG}; padding: 0 1; }}
-    #rooms > ListItem.-highlight {{ background: {PANEL}; }}
-    #rooms:focus > ListItem.-highlight {{ background: {LINE}; }}
-    #room {{ background: {PANEL}; border: round {LINE}; }}
-    #head {{ height: auto; padding: 0 1; border-bottom: solid {LINE}; }}
-    #log {{ height: 1fr; padding: 0 1; scrollbar-size-vertical: 1; scrollbar-background: {PANEL}; scrollbar-color: {LINE}; scrollbar-color-hover: {GOLD_DIM}; }}
-    #input {{ background: {BG}; border: round {LINE}; margin: 0 1; }}
-    #input:focus {{ border: round {GOLD}; }}
-    #status {{ height: 1; padding: 0 2; color: {GOLD_DIM}; }}
-    Footer {{ background: {PANEL}; }}
+class ChatPage(Page):
+    WEB_PATH = "/chat/"
+    DEFAULT_CSS = f"""
+    ChatPage #main {{ padding: 1 2 0 2; }}
+    ChatPage #side {{ width: 30; margin-right: 1; }}
+    ChatPage #side-title {{ height: 1; margin-bottom: 1; }}
+    ChatPage #rooms {{ background: {BG}; border: round {LINE}; height: 1fr; }}
+    ChatPage #rooms:focus {{ border: round {GOLD}; background-tint: {BG} 0%; }}
+    ChatPage #rooms > ListItem {{ background: {BG}; padding: 0 1; }}
+    ChatPage #rooms > ListItem.-highlight {{ background: {PANEL}; }}
+    ChatPage #rooms:focus > ListItem.-highlight {{ background: #1d2a1b; }}
+    ChatPage #room {{ background: {PANEL}; border: round {LINE}; }}
+    ChatPage #head {{ height: auto; padding: 0 1; border-bottom: solid {LINE}; }}
+    ChatPage #log {{ height: 1fr; padding: 0 1; scrollbar-background: {PANEL}; }}
+    ChatPage #input {{ margin: 0 1; }}
+    ChatPage #status {{ height: 1; padding: 0 2; color: {GOLD_DIM}; }}
     """
     BINDINGS = [
         Binding("ctrl+n", "new_room", "New room"),
         Binding("ctrl+u", "older", "Older"),
         Binding("f5", "reload", "Refresh"),
-        Binding("escape", "focus_rooms", "Rooms", show=False),
-        Binding("ctrl+q", "quit", "Quit"),
     ]
 
     def __init__(self, api=site, room: str | None = None):
@@ -126,16 +116,13 @@ class Chat(App):
         self.me: dict = {}
         self.rooms: list[dict] = []
         self.open: dict | None = None    # {id, seq, more, joined, messages: {id: message}}
-        self.signed_out = False
         self._busy = False
 
     def compose(self) -> ComposeResult:
-        with Horizontal(id="top"):
-            yield Static("✕ SINTFOAP.XYZ · CHAT", id="crest")
-            yield Static(id="who")
+        yield from self.top()
         with Horizontal(id="main"):
             with Vertical(id="side"):
-                yield Static("R O O M S", id="side-title")
+                yield Static("C H A T", id="side-title", classes="kicker")
                 yield ListView(id="rooms")
             with Vertical(id="room"):
                 yield Static(Text("Pick a room on the left, or /new NAME to make one. /help lists commands.", style=MUTED), id="head")
@@ -162,25 +149,20 @@ class Chat(App):
 
     # ── talking to the site ────────────────────────────────────────────
     async def call(self, fn, *args, **kw):
-        """Runs an API call off the UI thread. Returns None (and says why) if it fails."""
+        """A site call off the UI thread; None if it failed (the person has been told why)."""
         try:
-            return await asyncio.to_thread(fn, *args, **kw)
-        except site.SignedOut:
-            self.signed_out = True
-            self.exit(message="Signed out on the site. Run  sintfoap login  to sign in again.")
-        except site.SiteError as e:
-            self.status(str(e).removeprefix("the site said: "), bad=True)
-        return None
+            return await self.fetch(lambda: fn(*args, **kw))
+        except Failed:
+            return None
 
     def status(self, text: str, bad: bool = False) -> None:
-        self.query_one("#status", Static).update(Text(f"● {text}", style=BAD if bad else GOLD_DIM))
+        self.query_one("#status", Static).update(Text(f"● {text}" if text else "", style=BAD if bad else GOLD_DIM))
 
     async def load_rooms(self) -> None:
         s = await self.call(self.api.chat_state)
         if s is None:
             return
         self.me, self.rooms = s["user"], sorted(s["rooms"], key=lambda r: not r["joined"])
-        self.query_one("#who", Static).update(Text(self.me["name"], style=INK))
         if self.open and not any(r["id"] == self.open["id"] for r in self.rooms):
             self.open = None
             self.query_one("#head", Static).update(Text("That room was deleted.", style=MUTED))
@@ -190,7 +172,7 @@ class Chat(App):
     async def render_rooms(self) -> None:
         lv = self.query_one("#rooms", ListView)
         items = list(lv.query(RoomItem))
-        is_open = lambda r: bool(self.open and self.open["id"] == r["id"])
+        is_open = lambda r: bool(self.open and self.open["id"] == r["id"])  # noqa: E731
         if [i.room["id"] for i in items] == [r["id"] for r in self.rooms]:
             # Same rooms in the same order: just redraw them, so the highlight stays put.
             for item, r in zip(items, self.rooms):
@@ -216,7 +198,7 @@ class Chat(App):
         r = self.room()
         if r:
             r["unread"] = 0
-        self.query_one("#status", Static).update("")
+        self.status("")
         self.render_head()
         self.render_messages(to_bottom=True)
         await self.render_rooms()
@@ -228,7 +210,7 @@ class Chat(App):
             return
         t = Text("# ", style=MUTED)
         t.append(r["name"], style=f"bold {INK}")
-        t.append(f"   {r['members']} member{'s' * (r['members'] != 1)}", style=MUTED)
+        t.append(f"   {plural(r['members'], 'member')}", style=MUTED)
         if not o["joined"]:
             t.append("   not joined: /join to post", style=GOLD)
         if r["topic"]:
@@ -246,7 +228,8 @@ class Chat(App):
             self.call_after_refresh(log.scroll_end, animate=False)
 
     async def poll(self) -> None:
-        if not self.open or self._busy:
+        # Not while another page is on top, or while a poll is still out.
+        if not self.open or self._busy or not self.is_current:
             return
         self._busy = True
         room_id = self.open["id"]
@@ -291,9 +274,8 @@ class Chat(App):
             self.open["messages"].pop(temp["id"], None)
             if m:
                 self.open["messages"][m["id"]] = m
-                self.status("sent")
             else:
-                self.query_one("#input", Input).value = text
+                self.query_one("#input", Input).value = text    # not sent: put it back to try again
             self.render_messages(to_bottom=True)
 
     async def command(self, text: str) -> None:
@@ -302,9 +284,6 @@ class Chat(App):
         o = self.open
         if word in ("help", "h", "?"):
             self.query_one("#messages", Static).update(Text(HELP, style=MUTED))
-            return
-        if word in ("quit", "q", "exit"):
-            self.exit()
             return
         if word == "new":
             name, _, topic = rest.partition("|")
@@ -345,6 +324,11 @@ class Chat(App):
             self.status(f"No command /{word}. /help lists them.", bad=True)
 
     # ── keys ───────────────────────────────────────────────────────────
+    def leave_field(self) -> bool:
+        # Esc in the message line goes to the room list; Esc there leaves the page.
+        self.query_one("#rooms", ListView).focus()
+        return True
+
     def action_new_room(self) -> None:
         box = self.query_one("#input", Input)
         box.value = "/new "
@@ -367,10 +351,3 @@ class Chat(App):
     async def action_reload(self) -> None:
         await self.load_rooms()
         await self.poll()
-
-    def action_focus_rooms(self) -> None:
-        self.query_one("#rooms", ListView).focus()
-
-
-def run(room: str | None = None) -> None:
-    Chat(room=room).run()

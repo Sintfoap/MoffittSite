@@ -1,52 +1,83 @@
-"""The dashboard in the terminal (Textual): the same cards and colours as /dashboard."""
+"""
+The site in the terminal (Textual): the dashboard, and from it Drift, the
+plugin store and account settings, in the same colours as the website.
+"""
 from __future__ import annotations
 
-import asyncio
-import webbrowser
+from datetime import datetime
 
 from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Grid, Horizontal, VerticalScroll
+from textual.containers import Grid, VerticalScroll
 from textual.widgets import Footer, Static
 
 from . import site
+from .look import BAD, BG, CSS, FAINT, GOLD, GOLD_DIM, GOOD, INK, LINE, MUTED, PANEL, Failed, Page, fetch, open_in_browser, plural
 
-# The site's palette (src/pages.js), converted from oklch.
-BG, PANEL = "#0b0f0a", "#121a12"
-GOLD, GOLD_DIM = "#d6ae5e", "#a08850"
-INK, MUTED = "#f4efe6", "#c6bcab"
-LINE = "#4a4430"
-BAD, GOOD = "#e47a62", "#7fcf98"
+# The palette lives in look.py; these names stay importable from here too.
+__all__ = ["SiteApp", "Dashboard", "run", "BG", "PANEL", "GOLD", "GOLD_DIM", "INK", "MUTED", "LINE", "BAD", "GOOD", "FAINT"]
+WARN = "#e0b25a"
+
 
 REFRESH_EVERY = 30   # seconds
 
-
-def plural(n: int, word: str) -> str:
-    return f"{n} {word}{'' if n == 1 else 's'}"
+# Which site pages have a terminal version, by the path the dashboard links to.
+IN_TERMINAL = {"/todo/": "drift", "/plugins/": "store", "/chat/": "chat"}
 
 
 def account_lines(data: dict) -> Text:
+    """Counts, then the same checks as the web dashboard's account panel."""
     u, a = data["user"], data["account"]
-    t = Text.assemble(("Signed in as ", MUTED), (u["username"], f"bold {INK}"), (". ", MUTED),
-                      ("Two-factor is ", MUTED), ("on" if a["two_factor"] else "off", GOOD if a["two_factor"] else BAD),
-                      (". ", MUTED), (f"Signed in on {plural(a['sessions'], 'device')}.", MUTED))
-    left = a["recovery_codes_left"]
+    n, left, plugins = a["sessions"], a["recovery_codes_left"], a.get("plugins_installed")
+    t = Text.assemble(("Signed in as ", MUTED), (u["username"], f"bold {INK}"), ("   ", MUTED),
+                      (plural(n, "device"), INK), ("  ·  ", FAINT), (plural(left, "recovery code"), INK))
+    if plugins is not None:
+        t.append_text(Text.assemble(("  ·  ", FAINT), (plural(plugins, "plugin"), INK)))
     t.append("\n")
-    t.append(f"{plural(left, 'recovery code')} left." if left else
-             "No recovery codes, so only the admin can reset a forgotten password.",
-             MUTED if left else BAD)
+    check = lambda ok, warn, text: t.append_text(Text.assemble(  # noqa: E731
+        ("\n✓ " if ok else "\n! " if warn else "\n✕ ", GOOD if ok else WARN if warn else BAD), (text, MUTED if ok else INK)))
+    check(a["two_factor"], False, "Two-factor is on." if a["two_factor"] else "Two-factor is off.")
+    if not left:
+        check(False, False, "No recovery codes, so only the admin can reset a forgotten password.")
+    else:
+        check(left >= 3, True, f"{plural(left, 'recovery code')} left." + ("" if left >= 3 else " Make new ones soon."))
     if a.get("email"):
-        t.append(f"  Email {a['email']} " + ("is confirmed." if a["email_confirmed"] else "isn't confirmed yet."), MUTED)
+        check(a["email_confirmed"], True, f"Email {a['email']} " + ("is confirmed." if a["email_confirmed"] else "isn't confirmed yet."))
     return t
 
 
-class Card(Static, can_focus=True):
-    """A dashboard card. Enter or a click opens its page in the browser."""
+def today_lines(today: dict) -> Text:
+    """The web dashboard's Today card: overdue Drift items in red, then what's due today."""
+    t = Text()
+    for kind, colour in (("late", BAD), ("due", INK)):
+        for it in today.get(kind, []):
+            if t:
+                t.append("\n")
+            t.append("● " if kind == "late" else "○ ", style=colour)
+            t.append(it["title"], style=colour)
+            t.append(f"   +{it['collection']}" if it.get("collection") else "", style=GOLD_DIM)
+            t.append(f"   {it['when']}" if it.get("when") else "", style=BAD if kind == "late" else MUTED)
+    return t or Text("Nothing due today.", style=MUTED)
 
-    def __init__(self, title: str, body: Text | str, url: str, action: str = "Open →", **kw):
+
+def greeting(hour: int) -> str:
+    return "Good morning" if 4 <= hour < 12 else "Good afternoon" if hour < 18 else "Good evening"
+
+
+def page_for(url: str) -> str | None:
+    for path, page in IN_TERMINAL.items():
+        if url.endswith(path):
+            return page
+    return None
+
+
+class Card(Static, can_focus=True):
+    """A dashboard card. Enter or a click opens its page: here if the terminal has it, else in the browser."""
+
+    def __init__(self, title: str, body: Text | str, url: str, action: str = "Open →", page: str | None = None, **kw):
         super().__init__(**kw)
-        self.url, self._title, self._body, self._action = url, title, body, action
+        self.url, self.page, self._title, self._body, self._action = url, page, title, body, action
 
     def render(self) -> Text:
         t = Text(self._title, style=f"bold {INK}")
@@ -54,98 +85,103 @@ class Card(Static, can_focus=True):
         t.append(self._body if isinstance(self._body, Text) else Text(self._body, style=MUTED))
         t.append("\n\n")
         t.append(self._action.upper(), style=f"bold {GOLD}")
+        if self.page:
+            t.append("   W IN BROWSER", style=GOLD_DIM)
         return t
 
     def open(self) -> None:
-        webbrowser.open(self.url)
-        self.app.notify(f"Opened {self.url}", timeout=3)
+        if self.page:
+            self.app.open_page(self.page)
+        else:
+            self.open_web()
+
+    def open_web(self) -> None:
+        open_in_browser(self.app, self.url)
 
     def on_click(self) -> None:
         self.open()
 
 
-class Dashboard(App):
-    TITLE = "sintfoap.xyz"
-    AUTO_FOCUS = None    # action_refresh focuses the first card once the cards exist
-    CSS = f"""
-    Screen {{ background: {BG}; color: {INK}; }}
-    #top {{ height: 3; padding: 1 2 0 2; }}
-    #crest {{ width: auto; color: {GOLD}; text-style: bold; }}
-    #who {{ width: 1fr; content-align: right middle; color: {MUTED}; }}
-    #body {{ padding: 1 4; scrollbar-size-vertical: 1; scrollbar-background: {BG}; scrollbar-color: {LINE}; scrollbar-color-hover: {GOLD_DIM}; scrollbar-color-active: {GOLD}; }}
-    #kicker {{ color: {GOLD}; text-style: bold; }}
-    #welcome {{ color: {INK}; text-style: bold; padding: 1 0 1 0; }}
-    #notice {{ display: none; border: round {BAD}; color: {BAD}; padding: 0 1; margin-bottom: 1; }}
-    #notice.on {{ display: block; }}
-    #apps {{ grid-size: 2; grid-gutter: 1 2; height: auto; margin-bottom: 1; }}
-    Card {{ background: {PANEL}; border: round {LINE}; padding: 1 2; height: auto; }}
+class DashboardPage(Page):
+    AUTO_FOCUS = ""    # refresh() focuses the first card once the cards exist
+    DEFAULT_CSS = f"""
+    DashboardPage #body {{ padding: 1 4; }}
+    DashboardPage #welcome {{ color: {INK}; text-style: bold; padding: 1 0 1 0; }}
+    DashboardPage #notice {{ display: none; border: round {BAD}; color: {BAD}; padding: 0 1; margin-bottom: 1; }}
+    DashboardPage #notice.on {{ display: block; }}
+    DashboardPage #apps {{ grid-size: 2; grid-gutter: 1 2; height: auto; margin-bottom: 1; }}
+    Card {{ background: #121a12; border: round #4a4430; padding: 1 2; height: auto; }}
     Card:focus {{ border: round {GOLD}; }}
     Card:hover {{ border: round {GOLD_DIM}; }}
-    #account {{ margin-bottom: 1; }}
-    #status {{ color: {GOLD_DIM}; height: 1; }}
-    Footer {{ background: {PANEL}; }}
+    DashboardPage #panels {{ grid-size: 2; grid-columns: 2fr 3fr; grid-gutter: 1 2; height: auto; margin-bottom: 1; }}
+    DashboardPage #panels.single {{ grid-size: 1; grid-columns: 1fr; }}
+    DashboardPage #status {{ color: {GOLD_DIM}; height: 1; }}
     """
     BINDINGS = [
         Binding("enter", "open", "Open", show=True),
         Binding("tab,right,l,down,j", "move(1)", "Next", show=False),
         Binding("shift+tab,left,h,up,k", "move(-1)", "Previous", show=False),
+        Binding("w", "web", "In browser"),
         Binding("s", "settings", "Settings"),
         Binding("r", "refresh", "Refresh"),
         Binding("o", "sign_out", "Sign out"),
-        Binding("q,escape", "quit", "Quit"),
+        Binding("q,escape", "app.quit", "Quit"),
     ]
 
-    def __init__(self, load=site.dashboard):
-        super().__init__()
-        self._load = load
-        self.data: dict | None = None
-        self.signed_out = False
-
     def compose(self) -> ComposeResult:
-        with Horizontal(id="top"):
-            yield Static("✕ SINTFOAP.XYZ", id="crest")
-            yield Static(id="who")
+        yield from self.top()
         with VerticalScroll(id="body", can_focus=False):
-            yield Static("D A S H B O A R D", id="kicker")
+            yield Static("D A S H B O A R D", classes="kicker", id="kicker")
             yield Static(id="welcome")
             yield Static(id="notice")
+            with Grid(id="panels"):
+                yield Card("Today", "", "", "Open Drift →", page="drift", id="today")
+                yield Card("Your account", "", "", "Account settings →", page="settings", id="account")
             yield Grid(id="apps")
-            yield Card("Your account", "", "", "Account settings →", id="account")
             yield Static(id="status")
         yield Footer()
 
     async def on_mount(self) -> None:
         await self.action_refresh()
         self.set_interval(REFRESH_EVERY, self.action_refresh)
+        self.mounted = True
 
-    # ── data → widgets ─────────────────────────────────────────────────
     async def action_refresh(self) -> None:
         try:
-            data = await asyncio.to_thread(self._load)   # keep the UI responsive while it fetches
-        except site.SignedOut:
-            self.signed_out = True
-            self.exit(message="Signed out on the site. Run  sintfoap login  to sign in again.")
-            return
-        except site.SiteError as e:
-            self.query_one("#status", Static).update(Text(f"● {e}", style=BAD))
+            data = await fetch(self.app, self.app.load)
+        except Failed:
+            self.query_one("#status", Static).update(Text("● couldn't reach the site", style=BAD))
             return
         focused = self.focused.id if self.focused else None
-        self.data = data
+        self.app.data = data
+        for screen in self.app.screen_stack:
+            if isinstance(screen, Page):
+                screen.set_who()
         u, a = data["user"], data["account"]
-        host = data["site"].split("://", 1)[-1]
-        self.sub_title = host
-        self.query_one("#who", Static).update(Text.assemble(
-            (u["display_name"], INK), ("   ADMIN" if u["admin"] else "", GOLD_DIM), (f"   {host}", MUTED)))
-        self.query_one("#welcome", Static).update(Text(f"Welcome, {u['display_name']}", style=f"bold {INK}"))
+        self.app.sub_title = data["site"].split("://", 1)[-1]
+        # Newer sites send the date and Today; older ones get the first dashboard's heading.
+        if data.get("date"):
+            first = u["display_name"].split()[0] if u["display_name"].split() else u["display_name"]
+            self.query_one("#kicker", Static).update(data["date"].upper())
+            self.query_one("#welcome", Static).update(Text(f"{greeting(datetime.now().hour)}, {first}", style=f"bold {INK}"))
+        else:
+            self.query_one("#welcome", Static).update(Text(f"Welcome, {u['display_name']}", style=f"bold {INK}"))
+        today = self.query_one("#today", Card)
+        today.display = bool(data.get("today"))
+        self.query_one("#panels").set_class(not data.get("today"), "single")
+        if data.get("today"):
+            today._body, today.url = today_lines(data["today"]), data["today"]["url"]
+            today.refresh(layout=True)
 
         notice = self.query_one("#notice", Static)
         notice.set_class(bool(a.get("setup_needed")), "on")
         if a.get("setup_needed"):
-            notice.update(f"Finish setting up your account first: {a['setup_needed']}. Press s to open account settings.")
+            notice.update(f"Finish setting up your account first: {a['setup_needed']}. Press s for account settings.")
 
         grid = self.query_one("#apps", Grid)
         await grid.remove_children()
-        cards = [Card(app["name"], app["blurb"], app["url"], id=f"app-{i}") for i, app in enumerate(data["apps"])]
+        cards = [Card(app["name"], app["blurb"], app["url"], page=page_for(app["url"]), id=f"app-{i}")
+                 for i, app in enumerate(data["apps"])]
         if cards:
             await grid.mount_all(cards)
         elif not a.get("setup_needed"):
@@ -159,9 +195,8 @@ class Dashboard(App):
         target = self.query(f"#{focused}").first() if focused and self.query(f"#{focused}") else None
         self.call_after_refresh((target or (cards[0] if cards else acct)).focus)
 
-    # ── actions ────────────────────────────────────────────────────────
     def cards(self) -> list[Card]:
-        return list(self.query(Card))
+        return [c for c in self.query(Card) if c.display]
 
     def action_move(self, delta: int) -> None:
         cards = self.cards()
@@ -171,18 +206,89 @@ class Dashboard(App):
         cards[(i + delta) % len(cards)].focus()
 
     def action_open(self) -> None:
-        if isinstance(self.focused, Card) and self.focused.url:
+        if isinstance(self.focused, Card) and (self.focused.url or self.focused.page):
             self.focused.open()
 
+    def action_web(self) -> None:
+        if isinstance(self.focused, Card) and self.focused.url:
+            self.focused.open_web()
+
     def action_settings(self) -> None:
-        if self.data:
-            self.query_one("#account", Card).open()
+        self.app.open_page("settings")
 
     def action_sign_out(self) -> None:
         where = site.logout()
-        self.signed_out = True
-        self.exit(message=f"Signed out of {where}." if where else "Signed out.")
+        self.app.signed_out = True
+        self.app.exit(message=f"Signed out of {where}." if where else "Signed out.")
+
+    async def on_screen_resume(self) -> None:
+        # Back from another page: a changed name or a new sign-out shows straight away.
+        if getattr(self, "mounted", False):
+            await self.action_refresh()
 
 
-def run() -> None:
-    Dashboard().run()
+class SiteApp(App):
+    TITLE = "sintfoap.xyz"
+    CSS = CSS
+
+    def __init__(self, start: str = "dashboard", load=site.dashboard, room: str | None = None):
+        super().__init__()
+        self.start, self.load, self.room = start, load, room
+        self.data: dict | None = None
+        self.signed_out = False
+
+    def get_default_screen(self) -> DashboardPage:
+        return DashboardPage()
+
+    def on_mount(self) -> None:
+        if self.start != "dashboard":
+            self.open_page(self.start)
+
+    def who_line(self) -> Text:
+        if not self.data:
+            return Text("")
+        u = self.data["user"]
+        host = self.data["site"].split("://", 1)[-1]
+        return Text.assemble((u["display_name"], INK), ("   ADMIN" if u["admin"] else "", GOLD_DIM), (f"   {host}", MUTED))
+
+    def go(self, where: str | None) -> None:
+        """The g chord, as on the website: g h home, g d Drift, g p plugin store, g s settings, g a admin, g o sign out."""
+        if not where:
+            return
+        if where == "o":
+            where_ = site.logout()
+            self.signed_out = True
+            self.exit(message=f"Signed out of {where_}." if where_ else "Signed out.")
+            return
+        if where == "a":
+            open_in_browser(self, site.site_url("/admin"))
+            return
+        while len(self.screen_stack) > 1:
+            self.pop_screen()
+        page = {"d": "drift", "p": "store", "s": "settings", "c": "chat"}.get(where)
+        if page:
+            self.open_page(page)
+
+    def open_page(self, name: str) -> None:
+        if name == "settings":
+            from .settings_page import SettingsPage
+            self.push_screen(SettingsPage())
+        elif name == "drift":
+            from .drift_page import DriftPage
+            self.push_screen(DriftPage())
+        elif name == "store":
+            from .store_page import StorePage
+            self.push_screen(StorePage())
+        elif name == "chat":
+            from .chat_page import ChatPage
+            # The room named on the command line, the first time only.
+            self.push_screen(ChatPage(room=self.room))
+            self.room = None
+
+
+# The name the first version had.
+Dashboard = SiteApp
+
+
+def run(start: str = "dashboard", room: str | None = None) -> None:
+    SiteApp(start, room=room).run()

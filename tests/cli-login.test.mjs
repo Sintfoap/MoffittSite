@@ -167,6 +167,18 @@ test("the terminal dashboard shows what /dashboard does", async () => {
   assert.equal(d.account.recovery_codes_left, 0);
   assert.equal(d.account.setup_needed, null);
   assert.equal(d.account.url, "https://sintfoap.test/account");
+  assert.equal(d.account.plugins_installed, 0);
+  assert.match(d.date, /^[A-Z][a-z]+day, [A-Z][a-z]+ \d{1,2}$/);
+  assert.deepEqual(d.today, { late: [], due: [], url: "https://sintfoap.test/todo/" });
+
+  // The same Today items as the web dashboard's card.
+  const col = (await b.get("/todo/api/state")).json.collections[0].id;
+  const day = n => new Date(Date.now() + n * 864e5).toISOString().slice(0, 10);
+  await b.req("POST", "/todo/api/items", { json: { collection: col, title: "Renew domain", meta: { event: { start: day(-1), end: null }, checklist: { done: false, priority: 0 } } } });
+  await b.req("POST", "/todo/api/items", { json: { collection: col, title: "Dentist", meta: { event: { start: day(0) + "T15:00", end: null }, checklist: { done: false, priority: 0 } } } });
+  const t = (await term.get("/login/cli/dashboard")).json.today;
+  assert.deepEqual(t.late.map(i => [i.title, i.when, i.collection]), [["Renew domain", "yesterday", "Inbox"]]);
+  assert.deepEqual(t.due.map(i => [i.title, i.when]), [["Dentist", "3 pm"]]);
 
   // Same rule as the web dashboard: an admin without two-factor only gets account settings.
   run(env, "INSERT INTO user_areas (user_id, area) SELECT id, 'admin' FROM users");
@@ -174,4 +186,40 @@ test("the terminal dashboard shows what /dashboard does", async () => {
   assert.equal(admin.user.admin, true);
   assert.deepEqual(admin.apps, []);
   assert.equal(admin.account.setup_needed, "set up two-factor");
+  assert.equal(admin.today, null, "nothing but setup until it's done");
+});
+
+test("the terminal's settings page reads and changes what doesn't need the password", async () => {
+  const env = makeEnv(), b = new Browser(env), term = new Terminal(env), other = new Browser(env);
+  await b.signup("ryan", undefined, "Ryan M");
+  await other.login("ryan");
+  assert.equal((await term.get("/login/cli/account")).status, 401);
+  const s = await term.start();
+  await approve(b, s.json.user_code);
+  term.cookie = (await term.poll(s.json.device_code)).json.token;
+
+  const a = (await term.get("/login/cli/account")).json;
+  assert.equal(a.username, "ryan");
+  assert.equal(a.display_name, "Ryan M");
+  assert.equal(a.sessions, 3, "two browsers and the terminal");
+  assert.equal(a.two_factor, false);
+  assert.equal(a.mail, false);
+  assert.equal(a.url, "https://sintfoap.test/account");
+
+  const named = await term.req("POST", "/login/cli/account", { json: { display_name: "  Ryan Moffitt " }, origin: null });
+  assert.equal(named.status, 200);
+  assert.equal(named.json.display_name, "Ryan Moffitt");
+  assert.equal(sqlOne(env, "SELECT display_name FROM users").display_name, "Ryan Moffitt");
+  const bad = await term.req("POST", "/login/cli/account", { json: { display_name: "" }, origin: null });
+  assert.equal(bad.status, 400);
+  assert.match(bad.json.error, /1–50 characters/);
+
+  // Another website can't use a browser's session to change it.
+  const csrf = await b.req("POST", "/login/cli/account", { json: { display_name: "pwned" }, origin: "https://evil.example" });
+  assert.equal(csrf.status, 403);
+
+  const out = await term.req("POST", "/login/cli/account/sessions", { origin: null });
+  assert.equal(out.json.sessions, 1, "only the terminal is left");
+  assert.equal((await b.get("/dashboard")).status, 303, "the browser was signed out");
+  assert.equal((await term.get("/login/cli/dashboard")).status, 200);
 });

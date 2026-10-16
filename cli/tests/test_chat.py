@@ -1,4 +1,4 @@
-"""sintfoap chat: the terminal chat against a stand-in for /chat/api (see src/chat.js)."""
+"""sintfoap chat: the chat page against a stand-in for /chat/api (see src/chat.js)."""
 import asyncio
 import json
 import tempfile
@@ -83,13 +83,28 @@ class FakeChatApi:
 
 def run_chat(api, test, room=None):
     pytest.importorskip("textual")
-    from sintfoap.chat import Chat
+    from rich.text import Text
+    from textual.app import App
+    from sintfoap.chat_page import ChatPage
+    from sintfoap.look import CSS as SITE_CSS
+
+    class Host(App):
+        """Just enough of SiteApp to hold the page."""
+        CSS = SITE_CSS
+        data, signed_out = None, False
+
+        def who_line(self):
+            return Text("Ryan M")
+
+        def on_mount(self):
+            self.push_screen(ChatPage(api=api, room=room))
 
     async def go():
-        app = Chat(api=api, room=room)
+        app = Host()
         async with app.run_test(size=(110, 34)) as pilot:
             await pilot.pause()
-            await test(app, pilot)
+            await pilot.pause()
+            await test(app.screen, pilot)
         return app
     return asyncio.run(go())
 
@@ -247,3 +262,36 @@ def test_site_chat_calls(fake):
     ]
     # No Origin header: the site treats that like its own page.
     assert all(origin is None for *_, origin in FakeSite.seen)
+
+
+def test_the_dashboard_chat_card_opens_the_chat_page(monkeypatch):
+    pytest.importorskip("textual")
+    from sintfoap.chat_page import ChatPage
+    from sintfoap.tui import SiteApp
+
+    api = FakeChatApi()
+    api.add_room("r_a", "general")
+    api.add_message("r_a", "hello ryan")
+    for name in ("chat_state", "chat_messages", "chat_post"):
+        monkeypatch.setattr(site, name, getattr(api, name))
+    origin = "https://sintfoap.test"
+    dash = {"site": origin, "user": {"username": "ryan", "display_name": "Ryan M", "admin": False},
+            "apps": [{"name": "Chat", "blurb": "Rooms.", "url": origin + "/chat/"}],
+            "account": {"two_factor": True, "sessions": 1, "recovery_codes_left": 5, "email": None,
+                        "email_confirmed": False, "setup_needed": None, "url": origin + "/account"}}
+
+    async def go():
+        app = SiteApp(load=lambda: dash)
+        async with app.run_test(size=(110, 34)) as pilot:
+            for _ in range(3):
+                await pilot.pause()
+            app.screen.query_one("#app-0").focus()
+            await pilot.press("enter")
+            for _ in range(3):
+                await pilot.pause()
+            assert isinstance(app.screen, ChatPage)
+            assert "hello ryan" in shown(app.screen)
+            await pilot.press("escape", "escape")     # message line → room list → back to the dashboard
+            await pilot.pause()
+            assert not isinstance(app.screen, ChatPage)
+    asyncio.run(go())
