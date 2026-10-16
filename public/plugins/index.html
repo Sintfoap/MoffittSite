@@ -4,39 +4,39 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Plugin Store</title>
-<meta name="theme-color" content="#1f2030">
+<meta name="theme-color" content="#0b0f0a">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,380;9..144,560&family=Onest:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=EB+Garamond:wght@400;500&family=Jost:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
 :root {
-  --bg: #eceef3; --surface: #f7f8fb; --raise: #ffffff; --line: #d9dce6; --line-2: #c7cbd8;
-  --ink: #23243a; --muted: #686b82; --faint: #9a9db0;
-  --accent: #c46a17; --accent-ink: #ffffff; --accent-soft: #f6e3cf;
-  --red: #c8423f; --amber: #b8860b; --blue: #3d64c9; --green: #3c8a4f; --violet: #7a53c2;
-  --add: #e3f1e5; --del: #f8e1e0;
+  --bg: #eef0e7; --surface: #e6e9de; --raise: #f8f9f3; --line: #d6d9c8; --line-2: #c1c6af;
+  --ink: #1c2419; --muted: #4f5a4a; --faint: #7d8676;
+  --accent: #8a6714; --accent-ink: #fbf7ea; --accent-soft: #e9e2c4;
+  --red: #b8433a; --amber: #9a7210; --blue: #3f6aa8; --green: #3c7a4a; --violet: #7656a8;
+  --add: #dfeedb; --del: #f3ddd6;
   --shadow: 0 1px 0 rgba(35,36,58,.04), 0 8px 24px -12px rgba(35,36,58,.18);
   --radius-s: 6px; --radius-m: 10px; --radius-l: 16px;
-  --serif: "Fraunces", Georgia, serif;
-  --sans: "Onest", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --serif: "EB Garamond", Georgia, serif;
+  --sans: "Jost", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --bg: #1f2030; --surface: #262839; --raise: #2d2f43; --line: #34364b; --line-2: #45475f;
-    --ink: #ece6da; --muted: #a29fb3; --faint: #6c6a82;
-    --accent: #f2a65a; --accent-ink: #1f2030; --accent-soft: #3d3330;
-    --red: #ef7b78; --amber: #f2c14e; --blue: #86a8f7; --green: #9ece6a; --violet: #c3a6f7;
-    --add: #26372b; --del: #3d2a2c;
+    --bg: #0b0f0a; --surface: #0e140d; --raise: #151d14; --line: #242d1e; --line-2: #36412c;
+    --ink: #f1ecdf; --muted: #c2bca9; --faint: #7f7d69;
+    --accent: #d9b45a; --accent-ink: #1a1206; --accent-soft: #2b2a16;
+    --red: #ef7b6c; --amber: #f2c14e; --blue: #8fb0e8; --green: #8fcf8a; --violet: #c3a6f7;
+    --add: #1d3320; --del: #3a2420;
     --shadow: 0 1px 0 rgba(0,0,0,.2), 0 12px 32px -14px rgba(0,0,0,.6);
   }
 }
 :root[data-theme="dark"] {
-  --bg: #1f2030; --surface: #262839; --raise: #2d2f43; --line: #34364b; --line-2: #45475f;
-  --ink: #ece6da; --muted: #a29fb3; --faint: #6c6a82;
-  --accent: #f2a65a; --accent-ink: #1f2030; --accent-soft: #3d3330;
-  --red: #ef7b78; --amber: #f2c14e; --blue: #86a8f7; --green: #9ece6a; --violet: #c3a6f7;
-  --add: #26372b; --del: #3d2a2c;
+  --bg: #0b0f0a; --surface: #0e140d; --raise: #151d14; --line: #242d1e; --line-2: #36412c;
+    --ink: #f1ecdf; --muted: #c2bca9; --faint: #7f7d69;
+    --accent: #d9b45a; --accent-ink: #1a1206; --accent-soft: #2b2a16;
+    --red: #ef7b6c; --amber: #f2c14e; --blue: #8fb0e8; --green: #8fcf8a; --violet: #c3a6f7;
+  --add: #1d3320; --del: #3a2420;
   --shadow: 0 1px 0 rgba(0,0,0,.2), 0 12px 32px -14px rgba(0,0,0,.6);
 }
 * { box-sizing: border-box; }
@@ -48,11 +48,34 @@ button { cursor: pointer; }
 [hidden] { display: none !important; }
 a { color: var(--accent); }
 
-main { padding: 36px clamp(16px, 5vw, 64px) 120px; max-width: 1180px; margin: 0 auto; }
-.top { display: flex; justify-content: space-between; align-items: center; gap: 12px; font-size: 13.5px; color: var(--muted); }
-.top a { color: var(--muted); text-decoration: none; }
-.top a:hover { color: var(--ink); }
-h1 { margin: 22px 0 6px; font: 380 clamp(36px, 6vw, 54px)/1.04 var(--serif); letter-spacing: -.02em; font-variation-settings: "opsz" 144; }
+/* the site's rail, the same on every signed-in page */
+.shell { display: grid; grid-template-columns: 232px minmax(0, 1fr); min-height: 100vh; }
+.rail { position: sticky; top: 0; height: 100vh; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; padding: 22px 14px 18px; background: var(--surface); border-right: 1px solid var(--line); }
+.rail .brand { display: flex; align-items: center; gap: 10px; padding: 0 10px 20px; color: var(--ink); text-decoration: none; font: 500 20px var(--serif); }
+.rail .brand svg { color: var(--accent); flex: none; }
+.rail h3 { margin: 16px 10px 4px; font: 500 11px var(--sans); letter-spacing: 2.5px; text-transform: uppercase; color: var(--faint); }
+.rail a.go { display: flex; align-items: center; gap: 11px; padding: 8px 10px; border-radius: 5px; color: var(--muted); text-decoration: none; }
+.rail a.go svg { color: var(--faint); flex: none; }
+.rail a.go:hover, .rail a.go[aria-current="page"] { background: var(--accent-soft); color: var(--ink); }
+.rail a.go[aria-current="page"] { font-weight: 500; }
+.rail a.go[aria-current="page"] svg { color: var(--accent); }
+.rail .me { margin-top: auto; padding: 14px 10px 0; border-top: 1px solid var(--line); font-size: 13px; color: var(--muted); display: grid; gap: 6px; }
+.rail .me b { color: var(--ink); font-weight: 500; font-size: 14px; overflow-wrap: anywhere; }
+.rail .me b:empty { display: none; }
+.rail .me a { color: var(--accent); text-decoration: none; justify-self: start; }
+main { padding: 40px clamp(16px, 4vw, 56px) 120px; max-width: 1180px; min-width: 0; }
+.kicker { font: 500 12px var(--sans); letter-spacing: 4px; text-transform: uppercase; color: var(--accent); }
+@media (max-width: 820px) {
+  .shell { grid-template-columns: 1fr; }
+  .rail { position: static; height: auto; flex-direction: row; align-items: center; gap: 4px; padding: 10px 12px; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--line); }
+  .rail .brand { padding: 0 8px 0 4px; font-size: 0; }
+  .rail h3, .rail .me b, .rail a.go span { display: none; }
+  .rail a.go[aria-current="page"] span { display: inline; }
+  .rail .me { margin: 0 0 0 auto; padding: 0; border: 0; }
+  .rail .me a { white-space: nowrap; }
+  main { padding-top: 28px; }
+}
+h1 { margin: 8px 0 6px; font: 500 clamp(38px, 6vw, 56px)/1.04 var(--serif); letter-spacing: -.01em; }
 .sub { margin: 0 0 22px; color: var(--muted); max-width: 640px; }
 
 .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin-bottom: 22px; overflow-x: auto; }
@@ -170,8 +193,18 @@ dialog h2 { margin: 0; font: 500 24px/1.2 var(--serif); }
 </style>
 </head>
 <body>
+<div class="shell">
+<nav class="rail" aria-label="Site">
+  <a class="brand" href="/" aria-label="sintfoap.xyz home"><svg viewBox="0 0 120 120" width="30" height="30" aria-hidden="true"><circle cx="60" cy="60" r="54" fill="none" stroke="currentColor" stroke-width="3"/><circle cx="60" cy="60" r="45" fill="none" stroke="currentColor" stroke-width="1.2"/><g transform="translate(60,66)" stroke="currentColor" stroke-width="3" fill="none" stroke-linecap="round"><line x1="-11" y1="-11" x2="11" y2="11"/><line x1="11" y1="-11" x2="-11" y2="11"/><line x1="0" y1="-24" x2="0" y2="-2"/><line x1="-6" y1="-18" x2="6" y2="-18"/></g><path d="M 34 78 Q 44 66 60 66 Q 76 66 86 78 L 82 88 Q 71 78 60 78 Q 49 78 38 88 Z" fill="currentColor"/></svg><span>sintfoap</span></a>
+  <a class="go" href="/dashboard" aria-label="Home"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 10.5 12 3l9 7.5V21h-6v-6H9v6H3z"/></svg><span>Home</span></a>
+  <a class="go" href="/todo/" aria-label="Drift"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8c3-3 6 3 9 0s6-3 9 0M3 14c3-3 6 3 9 0s6-3 9 0"/></svg><span>Drift</span></a>
+  <a class="go" href="/plugins/" aria-current="page" aria-label="Plugin store"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M17.5 14v7M14 17.5h7"/></svg><span>Plugin store</span></a>
+  <h3>Account</h3>
+  <a class="go" href="/account" aria-label="Settings"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/></svg><span>Settings</span></a>
+  <div class="me"><b id="who"></b><a href="/logout">Sign out</a></div>
+</nav>
 <main>
-  <div class="top"><a href="/dashboard">← Dashboard</a><span id="who"></span></div>
+  <div class="kicker">Drift</div>
   <h1>Plugin store</h1>
   <p class="sub">Plugins add new kinds of data and new views to Drift. Add one to your Drift from the store, or write your own, try it, and send it for review. Once it's approved anyone can use it.</p>
 
@@ -200,6 +233,7 @@ dialog h2 { margin: 0; font: 500 24px/1.2 var(--serif); }
     <div class="review" id="queue"></div>
   </section>
 </main>
+</div>
 
 <dialog id="create">
   <form method="dialog" id="create-form">
