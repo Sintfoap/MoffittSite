@@ -256,6 +256,13 @@ dialog .acts { display: flex; justify-content: space-between; align-items: cente
 .plug input { margin-top: 4px; }
 .plug b { color: var(--ink); font-size: 14px; font-weight: 500; }
 .plug span { grid-column: 2; font-size: 13px; }
+.templates { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; }
+.templates label { position: relative; display: grid; gap: 2px; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--radius-m); cursor: pointer; }
+.templates label:has(input:checked) { border-color: var(--accent); }
+.templates input { position: absolute; opacity: 0; pointer-events: none; }
+.templates label:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 1px; }
+.templates b { color: var(--ink); font-size: 14px; font-weight: 500; }
+.templates span { font-size: 12.5px; }
 .quickdates { display: flex; gap: 6px; flex-wrap: wrap; }
 .quickdates button { border: 1px solid var(--line); background: var(--bg); border-radius: 99px; padding: 3px 10px; font-size: 12.5px; color: var(--muted); }
 .quickdates button:hover { border-color: var(--accent); color: var(--ink); }
@@ -364,6 +371,7 @@ kbd { font: 500 11.5px var(--sans); padding: 1px 6px; border: 1px solid var(--li
     <h2>Keyboard</h2>
     <div class="keys">
       <kbd>n</kbd><span>Add an item</span>
+      <kbd>c</kbd><span>New collection</span>
       <kbd>j</kbd><span>Next item</span>
       <kbd>k</kbd><span>Previous item</span>
       <kbd>e</kbd><span>Open the selected item</span>

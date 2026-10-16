@@ -306,9 +306,10 @@ $("#itemDlg").addEventListener("close", () => {
 });
 
 /* ── collection dialog ─────────────────────────── */
-let editingCol = null;
-function openCollection(col) {
-  editingCol = col;
+let editingCol = null, afterCreate = null;
+// col: the collection to edit, or null for a new one (name prefills it).
+function openCollection(col, name = "") {
+  editingCol = col; $("#colDlg").returnValue = "";
   if (col && col.role !== "owner") {
     $("#colForm").innerHTML = `
       <h2>${esc(col.name)}</h2>
@@ -319,13 +320,18 @@ function openCollection(col) {
         <button class="btn primary" value="cancel" formnovalidate>Done</button></div>`;
     return $("#colDlg").showModal();
   }
+  const plugins = PLUGINS.filter(p => !p.store || p.installed || col?.plugins.includes(p.id));
+  const tpl = col ? null : TEMPLATES[0];
   $("#colForm").innerHTML = `
     <h2>${col ? "Collection settings" : "New collection"}</h2>
-    <label>Name<input type="text" name="name" value="${esc(col?.name || "")}" required maxlength="100" placeholder="e.g. Home, Work, Reading"></label>
+    <label>Name<input type="text" name="name" value="${esc(col?.name || name)}" required maxlength="100" placeholder="e.g. Home, Work, Reading"></label>
+    ${col ? "" : `<div><p>Start from</p><div class="templates">${TEMPLATES.map(t => `<label><input type="radio" name="template" value="${t.id}" ${t === tpl ? "checked" : ""}>
+      <b>${esc(t.name)}</b><span>${esc(t.hint)}</span></label>`).join("")}</div></div>`}
     <div><p>Plugins decide what you can add to items here and how you can see them.</p>
-      <div style="display:grid;gap:8px">${PLUGINS.filter(p => !p.store || p.installed || col?.plugins.includes(p.id)).map(p => `<label class="plug"><input type="checkbox" name="plugin" value="${p.id}" ${(col ? col.plugins.includes(p.id) : !p.store) ? "checked" : ""}>
+      <div style="display:grid;gap:8px">${plugins.map(p => `<label class="plug"><input type="checkbox" name="plugin" value="${p.id}" ${(col ? col.plugins : tpl.plugins).includes(p.id) ? "checked" : ""}>
         <b>${esc(p.name)}</b><span>${esc(p.description)}${p.store ? ` <small>From the plugin store, by ${esc(p.author || "a removed account")}</small>` : ""}</span></label>`).join("")}</div>
       <p class="hint"><a href="/plugins/">Find more plugins in the plugin store</a></p></div>
+    <label>Opens in<select name="view"></select></label>
     ${col ? `<div class="sharing"><p>Sharing. People you add see this collection in their Drift. Editors can add and change items; viewers can only look.</p>
       <ul class="people">${(col.shares || []).map(x => `<li><span>${esc(x.name)} <small>@${esc(x.username)}</small></span>
         <select data-role="${esc(x.username)}" aria-label="Role for ${esc(x.username)}"><option value="edit" ${x.role === "edit" ? "selected" : ""}>Can edit</option><option value="view" ${x.role === "view" ? "selected" : ""}>Can view</option></select>
@@ -335,8 +341,33 @@ function openCollection(col) {
         <button type="button" class="btn" data-share>Share</button></div></div>` : ""}
     <div class="acts">${col ? `<button type="button" class="danger" data-delcol>Delete collection</button>` : "<span></span>"}
       <span><button class="btn" value="cancel" formnovalidate>Cancel</button> <button class="btn primary" value="save">${col ? "Save" : "Create"}</button></span></div>`;
+  viewChoices(col ? tabFor(col) : tpl.view);
+  checkName();
   $("#colDlg").showModal();
   $("#colForm [name=name]").focus();
+}
+// Starting points for a new collection: which plugins are on and which view it opens in.
+const TEMPLATES = [
+  { id: "everything", name: "Everything", hint: "Every built-in plugin", plugins: ["checklist", "event", "list", "graph"], view: "checklist" },
+  { id: "tasks", name: "Tasks", hint: "Things to tick off", plugins: ["checklist", "event"], view: "checklist" },
+  { id: "calendar", name: "Calendar", hint: "Plans with dates", plugins: ["event", "checklist"], view: "event" },
+  { id: "notes", name: "Notes", hint: "An outline in your order", plugins: ["list"], view: "list" },
+  { id: "map", name: "Mind map", hint: "Ideas linked together", plugins: ["list", "graph"], view: "graph" },
+];
+// Fills "Opens in" with the views of the plugins that are ticked, keeping the choice when it's still there.
+function viewChoices(want) {
+  const sel = $("#colForm [name=view]");
+  const on = [...$("#colForm").querySelectorAll("[name=plugin]:checked")].map(x => BY_ID[x.value]).filter(p => p?.view);
+  const keep = on.some(p => p.id === want) ? want : on[0]?.id || "";
+  sel.innerHTML = on.length ? on.map(p => `<option value="${p.id}" ${p.id === keep ? "selected" : ""}>${esc(p.view.label)}</option>`).join("")
+    : `<option value="">A plain list of items</option>`;
+  sel.disabled = on.length < 2;
+}
+// Two of your own collections with one name would make "+name" in quick-add ambiguous.
+function checkName() {
+  const input = $("#colForm [name=name]"), name = input.value.trim().toLowerCase();
+  const dup = state.collections.find(c => c.role === "owner" && c !== editingCol && c.name.toLowerCase() === name);
+  input.setCustomValidity(dup ? `You already have a collection called “${dup.name}”.` : "");
 }
 // Merges a collection from the server into what the page knows (the server's
 // copy of your own collection doesn't carry role or sharing).
@@ -350,23 +381,33 @@ $("#colForm").addEventListener("submit", async e => {
   if (e.submitter?.value !== "save") return;
   const name = $("#colForm [name=name]").value.trim();
   const plugins = [...$("#colForm").querySelectorAll("[name=plugin]:checked")].map(x => x.value);
+  const view = $("#colForm [name=view]").value;
   try {
-    if (editingCol) { putCollection(await req("PATCH", "collections/" + editingCol.id, { name, plugins })); render(); }
-    else {
-      const c = putCollection(await req("POST", "collections", { name, plugins, view: plugins.find(id => BY_ID[id].view) || "" }));
+    if (editingCol) {
+      const c = putCollection(await req("PATCH", "collections/" + editingCol.id, { name, plugins, view }));
+      state.viewState["tab:" + c.id] = view; render();
+    } else {
+      const c = putCollection(await req("POST", "collections", { name, plugins, view }));
       setView("c:" + c.id);
+      if (afterCreate) { const then = afterCreate; afterCreate = null; then(c); }
+      else toast(`Created “${c.name}”`);
     }
   } catch (err) { toast(err.message); }
 });
-async function share(username, role) {
-  const col = editingCol;
-  try {
-    const x = await req("POST", `collections/${col.id}/shares`, { username, role });
-    col.shares = [...(col.shares || []).filter(s => s.username !== x.username), x].sort((a, b) => a.username.localeCompare(b.username));
-    openCollection(col); render();
-    toast(`${x.name} can now ${role === "edit" ? "edit" : "view"} “${col.name}”`);
-  } catch (err) { toast(err.message); }
-}
+$("#colDlg").addEventListener("close", () => { if ($("#colDlg").returnValue !== "save") afterCreate = null; });
+$("#colForm").addEventListener("input", e => {
+  const f = e.target;
+  if (f.name === "name") checkName();
+  if (f.name === "template") {
+    const t = TEMPLATES.find(x => x.id === f.value);
+    $("#colForm").querySelectorAll("[name=plugin]").forEach(x => { x.checked = t.plugins.includes(x.value); });
+    viewChoices(t.view);
+  }
+  if (f.name === "plugin") {
+    $("#colForm").querySelectorAll("[name=template]").forEach(x => { x.checked = false; });
+    viewChoices($("#colForm [name=view]").value);
+  }
+});
 $("#colForm").addEventListener("change", e => {
   const r = e.target.closest("[data-role]"); if (r) share(r.dataset.role, r.value);
 });
@@ -410,9 +451,9 @@ $("#colForm").addEventListener("click", async e => {
 
 /* ── toast ─────────────────────────────────────── */
 let toastT;
-function toast(msg, undo) {
+function toast(msg, undo, label = "Undo") {
   $("#toastMsg").textContent = msg; const b = $("#toastBtn");
-  b.hidden = !undo; b.onclick = () => { undo?.(); $("#toast").classList.remove("on"); };
+  b.hidden = !undo; b.textContent = label; b.onclick = () => { undo?.(); $("#toast").classList.remove("on"); };
   $("#toast").classList.add("on"); clearTimeout(toastT);
   toastT = setTimeout(() => $("#toast").classList.remove("on"), undo ? 5000 : 2600);
 }
@@ -438,7 +479,13 @@ $("#composer").addEventListener("submit", async e => {
   let col = cur.col || state.collections[0];
   if (quick.collection) {
     col = state.collections.find(c => writable(c) && c.name.toLowerCase() === quick.collection.toLowerCase());
-    if (!col) return toast(`There’s no collection called “${quick.collection}” you can add to.`);
+    if (!col) {
+      // Offer to make it, then add the item there once it exists.
+      return toast(`There’s no collection called “${quick.collection}” you can add to.`, () => {
+        afterCreate = () => { add.value = text; $("#composer").requestSubmit(); };
+        openCollection(null, quick.collection);
+      }, "Create it");
+    }
   }
   if (!writable(col)) return toast("You can view this collection but not add to it.");
   // Each plugin that's on decides what a new item starts with. On Today and
@@ -517,6 +564,7 @@ document.addEventListener("keydown", e => {
   switch (e.key) {
     case "n": case "a": e.preventDefault(); add.focus(); break;
     case "/": e.preventDefault(); $("#q").focus(); break;
+    case "c": e.preventDefault(); openCollection(null); break;
     case "?": $("#keys").showModal(); break;
     case "j": case "ArrowDown": if (ids.length) { e.preventDefault(); sel(ids[Math.min(i + 1, ids.length - 1)]); } break;
     case "k": case "ArrowUp": if (ids.length) { e.preventDefault(); sel(ids[Math.max(i - 1, 0)]); } break;
