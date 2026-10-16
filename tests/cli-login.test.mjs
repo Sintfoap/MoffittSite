@@ -3,6 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Browser, makeEnv, sqlOne, run, enable2fa } from "./helpers.mjs";
+import { APPS } from "../src/auth.js";
 
 // A terminal: no Origin header, no cookie jar; it sends its token as the session cookie.
 class Terminal extends Browser {
@@ -46,11 +47,12 @@ test("a terminal signs in once someone approves its code in the browser", async 
   assert.equal(t.json.username, "ryan");
   assert.ok(t.json.token.length >= 40);
 
-  // The token is a normal session: it reads the todo list and can write without an Origin header.
+  // The token is a normal session: it reaches signed-in pages and can write without an Origin header.
   term.cookie = t.json.token;
   assert.equal((await term.get("/login/cli/me")).json.username, "ryan");
-  assert.equal((await term.req("POST", "/todo/api/tasks", { json: { title: "from the terminal" }, origin: null })).status, 201);
-  assert.equal((await b.get("/todo/api/tasks")).json.tasks[0].title, "from the terminal");
+  const inbox = (await term.get("/todo/api/state")).json.collections[0].id;
+  assert.equal((await term.req("POST", "/todo/api/items", { json: { title: "from the terminal", collection: inbox }, origin: null })).status, 201);
+  assert.ok((await b.get("/todo/api/state")).json.items.some(i => i.title === "from the terminal"));
 
   // The code is spent.
   assert.equal((await new Terminal(env).poll(s.json.device_code)).json.error, "expired_token");
@@ -95,10 +97,10 @@ test("signing out everywhere or disabling the account ends terminal sign-ins too
   const s = await term.start();
   await approve(b, s.json.user_code);
   term.cookie = (await term.poll(s.json.device_code)).json.token;
-  assert.equal((await term.get("/todo/api/tasks")).status, 200);
+  assert.equal((await term.get("/todo/api/state")).status, 200);
 
   run(env, "UPDATE users SET disabled = 1");
-  assert.equal((await term.get("/todo/api/tasks")).status, 401);
+  assert.equal((await term.get("/todo/api/state")).status, 401);
   assert.equal((await term.get("/login/cli/me")).status, 401);
 
   // A code approved just before the account was disabled gets nothing.
@@ -117,8 +119,8 @@ test("the terminal can sign itself out", async () => {
   const token = (await term.poll(s.json.device_code)).json.token;
   term.cookie = token;
   await term.req("POST", "/logout", { origin: null });
-  assert.equal((await term.get("/todo/api/tasks", { cookie: token })).status, 401);
-  assert.equal((await b.get("/todo/api/tasks")).status, 200, "the browser stays signed in");
+  assert.equal((await term.get("/todo/api/state", { cookie: token })).status, 401);
+  assert.equal((await b.get("/todo/api/state")).status, 200, "the browser stays signed in");
 });
 
 test("two-factor accounts approve from their signed-in browser; admins must have it set up", async () => {
@@ -157,7 +159,9 @@ test("the terminal dashboard shows what /dashboard does", async () => {
   const d = (await term.get("/login/cli/dashboard")).json;
   assert.equal(d.site, "https://sintfoap.test");
   assert.deepEqual(d.user, { username: "ryan", display_name: "Ryan M", admin: false });
-  assert.deepEqual(d.apps.map(a => [a.name, a.url]), [["Drift", "https://sintfoap.test/todo/"]]);
+  // The same apps, in the same order, as the web dashboard gives a "todo" account.
+  assert.deepEqual(d.apps.map(a => [a.name, a.url]), APPS.filter(a => a.area === "todo").map(a => [a.name, "https://sintfoap.test" + a.href]));
+  assert.ok(d.apps.some(a => a.name === "Drift"));
   assert.equal(d.account.two_factor, false);
   assert.equal(d.account.sessions, 2, "the browser and the terminal");
   assert.equal(d.account.recovery_codes_left, 0);
