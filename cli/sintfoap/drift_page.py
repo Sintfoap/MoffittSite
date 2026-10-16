@@ -8,7 +8,7 @@ as it is and their views are a press of w away.
 from __future__ import annotations
 
 import calendar
-from datetime import date
+from datetime import date, datetime
 
 from rich.text import Text
 from textual.app import ComposeResult
@@ -687,13 +687,30 @@ class DriftPage(Page):
     def calendar(self, opts: list, shown: list[dict], name_of) -> None:
         events = [it for it in shown if it["meta"].get("event")]
         opts.append(Option(month_grid(self.month, self.day, events), disabled=True))
-        on = sorted([it for it in events if R.on_day(it["meta"]["event"], self.day)], key=R.by_start)
         later = sorted([it for it in events if self.day < R.day_of(it["meta"]["event"]["start"]) <= R.add_days(14, self.day)], key=R.by_start)
-        opts.append(Option(header(R.nice_day(self.day), len(on) or ""), disabled=True))
-        for it in on:
-            opts.append(Option(item_row(it, col_name=name_of(it), skip_event=True, extra=[(R.when(it["meta"]["event"]), GOLD)]), id=it["id"]))
-        if not on:
-            opts.append(Option(Text("   Nothing on this day. Items you add now land here.", style=FAINT), disabled=True))
+        now_h = datetime.now().hour if self.day == R.today() else None
+        plan = R.day_plan(events, self.day, now_h)
+        n = len(plan["untimed"]) + sum(len(v) for v in plan["hours"].values())
+        opts.append(Option(header(R.nice_day(self.day), n or ""), disabled=True))
+        opts.append(Option(Text(f"  No set time  {len(plan['untimed']) or ''}", style=f"bold {MUTED}"), disabled=True))
+        for it in plan["untimed"]:
+            ev = it["meta"]["event"]
+            extra = [("continues" + (f" until {R.nice_time(R.time_of(ev['end'])) or R.nice_day(R.day_of(ev['end']))}" if ev.get("end") else ""), GOLD)] \
+                if R.time_of(ev["start"]) else []
+            opts.append(Option(item_row(it, col_name=name_of(it), skip_event=True, extra=extra), id=it["id"]))
+        if not plan["untimed"]:
+            opts.append(Option(Text("   Items you add without a time land here.", style=FAINT), disabled=True))
+        opts.append(Option(Text("\n  By the hour", style=f"bold {MUTED}"), disabled=True))
+        for h in range(plan["lo"], plan["hi"] + 1):
+            label = Text(f"{R.nice_time(f'{h:02d}:00'):>6} ", style=f"bold {GOLD}" if h == now_h else MUTED if h in plan["busy"] else FAINT)
+            label.append("┃" if h in plan["busy"] else "│", style=GOLD if h in plan["busy"] else FAINT)
+            items = plan["hours"].get(h, [])
+            if not items:
+                opts.append(Option(label, disabled=True))
+            for i, it in enumerate(items):
+                row = label.copy() if i == 0 else Text(" " * 7 + "┃", style=GOLD)
+                row.append_text(item_row(it, col_name=name_of(it), skip_event=True, extra=[(R.when(it["meta"]["event"]), GOLD)]))
+                opts.append(Option(row, id=it["id"]))
         if later:
             opts.append(Option(header("Next two weeks", len(later)), disabled=True))
             for it in later:

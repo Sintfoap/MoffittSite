@@ -335,3 +335,36 @@ def test_outline_moves():
     items[1]["meta"]["list"] = {"order": 0, "parent": "i_0"}
     assert [(it["id"], d) for it, d in R.walk_outline(items)] == [("i_0", 0), ("i_1", 1), ("i_2", 0)]
     assert R.list_move(items[1], items, "outdent") == {"parent": None, "order": 1}
+
+
+def test_day_plan_splits_a_day_into_no_set_time_and_hours():
+    d = "2026-03-10"
+    ev = lambda title, start, end=None: {"title": title, "meta": {"event": {"start": start, "end": end}}}
+    items = [ev("Rent", d), ev("Standup", d + "T09:15"), ev("Workshop", d + "T13:00", d + "T15:00"),
+             ev("Trip", "2026-03-09T18:00", "2026-03-11T10:00"), ev("Late", d + "T22:30"), ev("Elsewhere", "2026-03-12")]
+    plan = R.day_plan(items, d)
+    assert [i["title"] for i in plan["untimed"]] == ["Rent", "Trip"]
+    assert {h: [i["title"] for i in v] for h, v in plan["hours"].items()} == {9: ["Standup"], 13: ["Workshop"], 22: ["Late"]}
+    assert plan["busy"] == {9, 13, 14, 22}
+    assert (plan["lo"], plan["hi"]) == (8, 22)
+    assert R.day_plan(items, d, now_hour=6)["lo"] == 6
+
+
+def test_drift_calendar_shows_the_day_by_the_hour(real_site):
+    col = site.drift_state()["collections"][0]
+    for title, start in [("Pay rent", R.today()), ("Standup", R.today() + "T09:00"), ("Lunch", R.today() + "T12:30")]:
+        site.add_item({"title": title, "collection": col["id"], "meta": {"event": {"start": start, "end": None}}})
+
+    async def calendar_day(app, pilot):
+        page = app.screen
+        page.view = "calendar"
+        page.render_all()
+        await settle(pilot)
+        lst = page.query_one("#items")
+        lines = [str(lst.get_option_at_index(i).prompt) for i in range(lst.option_count)]
+        text = "\n".join(lines)
+        assert "No set time" in text and "By the hour" in text
+        assert text.index("Pay rent") < text.index("By the hour") < text.index("Standup") < text.index("Lunch")
+        assert any(l.lstrip().startswith("9am") and "Standup" in l for l in lines)
+        assert any(l.lstrip().startswith("12pm") and "Lunch" in l for l in lines)
+    run_app("drift", calendar_day)

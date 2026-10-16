@@ -13,6 +13,51 @@ function when(m) {
 // Does the event cover this day? (multi-day events show on every day they span)
 const onDay = (m, d) => dayOf(m.start) <= d && d <= dayOf(m.end || m.start);
 const byStart = (a, b) => (a.meta.event.start.length - b.meta.event.start.length) || a.meta.event.start.localeCompare(b.meta.event.start);
+const hourOf = s => +timeOf(s).slice(0, 2);
+
+// One day split for the hour-by-hour view: items with no time slot that day
+// (all-day ones, and timed ones carried over from an earlier day), and timed
+// items by the hour they start. The hours shown run 8am–8pm, stretched to fit
+// whatever is on, the hours a timed item runs on through, and now if it's today.
+export function dayPlan(events, d, nowHour = null) {
+  const untimed = [], hours = {}, busy = new Set();
+  let lo = 8, hi = 20;
+  for (const it of events) {
+    const m = it.meta.event;
+    if (!onDay(m, d)) continue;
+    if (!timeOf(m.start) || dayOf(m.start) !== d) { untimed.push(it); continue; }
+    const h = hourOf(m.start);
+    (hours[h] ||= []).push(it);
+    const last = m.end && timeOf(m.end) ? (dayOf(m.end) === d ? Math.max(h, hourOf(m.end) - (m.end.endsWith(":00") ? 1 : 0)) : 23) : h;
+    for (let x = h; x <= last; x++) busy.add(x);
+    lo = Math.min(lo, h); hi = Math.max(hi, last);
+  }
+  if (nowHour !== null) { lo = Math.min(lo, nowHour); hi = Math.max(hi, nowHour); }
+  for (const list of Object.values(hours)) list.sort(byStart);
+  untimed.sort(byStart);
+  return { untimed, hours, busy, lo, hi };
+}
+const hourLabel = h => niceTime(`${String(h).padStart(2, "0")}:00`);
+
+function dayView(ctx, events, sel) {
+  const nowH = sel === today() ? new Date().getHours() : null;
+  const { untimed, hours, busy, lo, hi } = dayPlan(events, sel, nowH);
+  const opts = { skip: ["event"], chips: it => [`<span class="chip">${esc(when(it.meta.event))}</span>`] };
+  const untimedOpts = { skip: ["event"], chips: it => it.meta.event.start.includes("T") ? [`<span class="chip">Continues${it.meta.event.end ? " until " + esc(niceTime(timeOf(it.meta.event.end)) || niceDay(dayOf(it.meta.event.end))) : ""}</span>`] : [] };
+  const n = untimed.length + Object.values(hours).reduce((a, l) => a + l.length, 0);
+  let rows = "";
+  for (let h = lo; h <= hi; h++) {
+    const list = hours[h] || [];
+    rows += `<li class="hour${busy.has(h) ? " busy" : ""}${h === nowH ? " now" : ""}"><span class="hh">${esc(hourLabel(h))}</span>${
+      list.length ? `<ul class="items">${list.map(it => ctx.row(it, opts)).join("")}</ul>`
+        : `<button class="slot" data-act="event:at" data-hour="${h}" aria-label="Add an item at ${esc(hourLabel(h))}"></button>`}</li>`;
+  }
+  return `<div class="group dayplan"><h2>${esc(niceDay(sel))}<small>${n || ""}</small></h2>
+    <h3>No set time<small>${untimed.length || ""}</small></h3>
+    ${untimed.length ? `<ul class="items">${untimed.map(it => ctx.row(it, untimedOpts)).join("")}</ul>` : `<p class="hint">Items you add without a time land here.</p>`}
+    <h3>By the hour</h3>
+    <ol class="hours">${rows}</ol></div>`;
+}
 
 function monthGrid(ctx, events) {
   const vs = ctx.viewState, sel = vs.day || today();
@@ -104,6 +149,14 @@ export default {
 
   actions: {
     pick(_, ctx, el) { ctx.viewState.day = el.dataset.day; ctx.render(); },
+    // An empty hour: start an item at that time on the selected day.
+    at(_, ctx, el) {
+      const add = document.getElementById("add");
+      if (!add || add.disabled) return;
+      const rest = add.value.replace(/(^|\s)@\S+/g, "").trim();
+      add.value = (rest ? rest + " " : "") + `@${el.dataset.hour}:00 `;
+      add.dispatchEvent(new Event("input")); add.focus();
+    },
     month(_, ctx, el) {
       const step = +el.dataset.step, vs = ctx.viewState;
       if (!step) { vs.month = today().slice(0, 7); vs.day = today(); }
@@ -117,10 +170,9 @@ export default {
     render(ctx) {
       const events = ctx.items.filter(it => it.meta.event);
       const sel = ctx.viewState.day || today();
-      const day = events.filter(it => onDay(it.meta.event, sel)).sort(byStart);
       const later = events.filter(it => dayOf(it.meta.event.start) > sel && dayOf(it.meta.event.start) <= addDays(14, sel)).sort(byStart);
       let html = monthGrid(ctx, events);
-      html += ctx.group(niceDay(sel), day, day.length ? "" : `<p class="hint">Nothing on this day. Items you add now land here.</p>`, { skip: ["event"], chips: it => [`<span class="chip">${esc(when(it.meta.event))}</span>`] });
+      html += dayView(ctx, events, sel);
       if (later.length) html += ctx.group("Next two weeks", later);
       return html;
     },
