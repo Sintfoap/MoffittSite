@@ -481,6 +481,7 @@ async function admin(request, env, me, pathname, method) {
           d.prepare("DELETE FROM chat_mentions WHERE user_id = ? OR message IN (SELECT id FROM chat_messages WHERE user_id = ?)").bind(target.id, target.id),
           d.prepare("DELETE FROM chat_messages WHERE user_id = ?").bind(target.id),
           d.prepare("DELETE FROM chat_members WHERE user_id = ?").bind(target.id),
+          d.prepare("DELETE FROM chat_presence WHERE user_id = ?").bind(target.id),
           d.prepare("DELETE FROM users WHERE id = ?").bind(target.id),
         ]);
         return show({ notice: `${target.username} and their tasks are deleted.` });

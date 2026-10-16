@@ -251,3 +251,120 @@ test("members react to messages from a short list", async () => {
   assert.equal((await react(sam, "👍")).status, 404);
   assert.equal(sqlOne(env, "SELECT COUNT(*) AS n FROM chat_reactions").n, 0);
 });
+
+test("private rooms are only for their members, who add each other", async () => {
+  const env = makeEnv();
+  const boss = await admin(env);
+  const josh = await signedIn(env, "josh"), sam = await signedIn(env, "sam"), kim = await signedIn(env, "kim");
+  const made = await api(josh, "POST", "/rooms", { name: "Secret", private: true });
+  assert.equal(made.json.kind, "private");
+  const room = made.json.id;
+  assert.equal((await api(josh, "POST", "/rooms", { name: "x", private: "yes" })).status, 400);
+  // Private names don't clash with open ones.
+  assert.equal((await api(sam, "POST", "/rooms", { name: "secret" })).status, 201);
+  await say(josh, room, "just us");
+
+  // To everyone else it doesn't exist, admins included.
+  for (const b of [sam, boss]) {
+    assert.deepEqual((await api(b, "GET", "/state")).json.rooms.filter(r => r.id === room), []);
+    for (const [m, p] of [["GET", "/messages"], ["GET", "/members"], ["POST", "/join"], ["GET", "/search?q=just"], ["POST", "/typing"]]) {
+      assert.equal((await api(b, m, `/rooms/${room}${p}`)).status, 404, `${m} ${p}`);
+    }
+    assert.equal((await api(b, "DELETE", `/rooms/${room}`)).status, 404);
+  }
+
+  // A member adds Sam, who then sees it all, unread.
+  assert.equal((await api(sam, "POST", `/rooms/${room}/members`, { username: "kim" })).status, 404);
+  assert.equal((await api(josh, "POST", `/rooms/${room}/members`, { username: "nobody" })).status, 400);
+  const added = await api(josh, "POST", `/rooms/${room}/members`, { username: "@Sam" });
+  assert.deepEqual(added.json.map(m => m.username), ["josh", "sam"]);
+  const [listed] = (await api(sam, "GET", "/state")).json.rooms.filter(r => r.id === room);
+  assert.deepEqual([listed.kind, listed.joined, listed.unread, listed.manage], ["private", true, 1, false]);
+  assert.equal((await api(sam, "POST", `/rooms/${room}/members`, { username: "kim" })).status, 200, "any member can add people");
+
+  // Only the owner takes people out; anyone can take themselves out.
+  assert.equal((await api(sam, "DELETE", `/rooms/${room}/members/kim`)).status, 403);
+  assert.equal((await api(josh, "DELETE", `/rooms/${room}/members/kim`)).status, 200);
+  assert.equal((await api(kim, "GET", `/rooms/${room}/messages`)).status, 404);
+  assert.equal((await api(sam, "DELETE", `/rooms/${room}/members/josh`)).status, 403);
+  assert.equal((await api(sam, "DELETE", `/rooms/${room}/members/sam`)).status, 200);
+  assert.equal((await api(sam, "GET", `/rooms/${room}/messages`)).status, 404);
+
+  // When the last member leaves, the room goes.
+  assert.equal((await api(josh, "POST", `/rooms/${room}/leave`)).status, 200);
+  assert.equal(sqlOne(env, "SELECT COUNT(*) AS n FROM chat_rooms WHERE id = ?", room).n, 0);
+  assert.equal(sqlOne(env, "SELECT COUNT(*) AS n FROM chat_messages WHERE room = ?", room).n, 0);
+
+  // Open rooms don't take additions.
+  const open = (await api(josh, "POST", "/rooms", { name: "Open" })).json.id;
+  assert.equal((await api(josh, "POST", `/rooms/${open}/members`, { username: "sam" })).status, 400);
+});
+
+test("direct messages are between two people", async () => {
+  const env = makeEnv();
+  const josh = await signedIn(env, "josh"), sam = await signedIn(env, "sam"), kim = await signedIn(env, "kim");
+  run(env, "UPDATE users SET display_name = 'Sam S' WHERE username = 'sam'");
+  assert.equal((await api(josh, "POST", "/dms", { username: "josh" })).status, 400);
+  assert.equal((await api(josh, "POST", "/dms", { username: "ghost" })).status, 400);
+  const people = (await api(josh, "GET", "/people")).json;
+  assert.deepEqual(people.map(p => p.username).sort(), ["kim", "sam"]);
+
+  const dm = (await api(josh, "POST", "/dms", { username: "sam" })).json;
+  assert.deepEqual([dm.kind, dm.name, dm.with, dm.joined, dm.manage], ["dm", "Sam S", "sam", true, false]);
+  assert.equal((await api(sam, "POST", "/dms", { username: "josh" })).json.id, dm.id, "the same room from either side");
+  await say(josh, dm.id, "psst");
+  const [theirs] = (await api(sam, "GET", "/state")).json.rooms;
+  assert.deepEqual([theirs.name, theirs.with, theirs.unread], ["josh", "josh", 1]);
+  assert.deepEqual((await api(kim, "GET", "/state")).json.rooms, []);
+  assert.equal((await api(kim, "GET", `/rooms/${dm.id}/messages`)).status, 404);
+
+  assert.equal((await api(josh, "POST", `/rooms/${dm.id}/members`, { username: "kim" })).status, 400);
+  assert.equal((await api(josh, "POST", `/rooms/${dm.id}/leave`)).status, 403);
+  assert.equal((await api(josh, "PATCH", `/rooms/${dm.id}`, { name: "x" })).status, 403);
+  assert.equal((await api(josh, "DELETE", `/rooms/${dm.id}`)).status, 403);
+
+  // People without chat can't be messaged.
+  const { id } = sqlOne(env, "SELECT id FROM users WHERE username = 'kim'");
+  run(env, "DELETE FROM user_areas WHERE user_id = ?", id);
+  assert.equal((await api(josh, "POST", "/dms", { username: "kim" })).status, 400);
+  assert.equal((await api(josh, "GET", "/people")).json.length, 1);
+});
+
+test("searching a room", async () => {
+  const env = makeEnv();
+  const josh = await signedIn(env, "josh");
+  const room = (await api(josh, "POST", "/rooms", { name: "Find" })).json.id;
+  for (const t of ["pizza tonight", "no PIZZA", "100% sure", "a_b", "gone pizza"]) await say(josh, room, t);
+  const gone = (await api(josh, "GET", `/rooms/${room}/messages`)).json.messages.at(-1);
+  await api(josh, "DELETE", `/rooms/${room}/messages/${gone.id}`);
+  const find = async q => (await api(josh, "GET", `/rooms/${room}/search?q=${encodeURIComponent(q)}`)).json.messages?.map(m => m.body);
+  assert.deepEqual(await find("pizza"), ["no PIZZA", "pizza tonight"]);
+  assert.deepEqual(await find("0%"), ["100% sure"]);
+  assert.deepEqual(await find("a_"), ["a_b"]);
+  assert.equal((await api(josh, "GET", `/rooms/${room}/search?q=a`)).status, 400);
+  assert.equal((await api(josh, "GET", `/rooms/${room}/search`)).status, 400);
+});
+
+test("who's here, who's online and who's typing", async () => {
+  const env = makeEnv();
+  const josh = await signedIn(env, "josh"), sam = await signedIn(env, "sam"), kim = await signedIn(env, "kim");
+  const room = (await api(josh, "POST", "/rooms", { name: "Live" })).json.id;
+  await api(sam, "POST", `/rooms/${room}/join`);
+  assert.deepEqual((await api(josh, "GET", "/state")).json.online, []);
+  await api(sam, "GET", `/rooms/${room}/messages`);
+  let seen = (await api(josh, "GET", `/rooms/${room}/messages?since=0`)).json;
+  assert.deepEqual([seen.here, seen.typing], [["sam"], []]);
+  assert.deepEqual((await api(kim, "GET", "/state")).json.online, ["josh", "sam"]);
+  assert.equal((await api(josh, "GET", `/rooms/${room}/members`)).json.find(m => m.username === "sam").online, true);
+
+  assert.equal((await api(kim, "POST", `/rooms/${room}/typing`)).status, 403, "only members");
+  assert.equal((await api(sam, "POST", `/rooms/${room}/typing`)).status, 200);
+  seen = (await api(josh, "GET", `/rooms/${room}/messages?since=0`)).json;
+  assert.deepEqual(seen.typing, ["sam"]);
+  await say(sam, room, "done typing");
+  assert.deepEqual((await api(josh, "GET", `/rooms/${room}/messages?since=0`)).json.typing, []);
+
+  // An hour later nobody's here.
+  run(env, "UPDATE chat_presence SET seen_at = seen_at - 3600, typing_at = 0");
+  assert.deepEqual((await api(josh, "GET", `/rooms/${room}/messages?since=0`)).json.here, []);
+});

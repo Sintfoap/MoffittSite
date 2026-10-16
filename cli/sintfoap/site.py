@@ -318,12 +318,12 @@ def review(plugin_id: str, version: int, decision: str, note: str = "") -> dict:
 # /chat/api/ (src/chat.js)
 
 def chat_state() -> dict:
-    """{user, rooms, reactions}: every room, with joined, unread, mentions and manage for this account."""
+    """{user, rooms, online, reactions}: every room you can see, with kind, joined, unread, mentions and manage."""
     return _get("/chat/api/state")
 
 
 def chat_messages(room: str, since: int | None = None, before: int | None = None) -> dict:
-    """{seq, more, joined, messages}: the newest page, older ones (before), or changes (since)."""
+    """{seq, more, joined, messages, here, typing}: the newest page, older ones (before), or changes (since)."""
     q = f"?since={int(since)}" if since is not None else f"?before={int(before)}" if before is not None else ""
     return _get(f"/chat/api/rooms/{_q(room)}/messages{q}")
 
@@ -351,8 +351,39 @@ def chat_members(room: str) -> list:
     return _get(f"/chat/api/rooms/{_q(room)}/members")
 
 
-def chat_create(name: str, topic: str = "") -> dict:
-    return api("POST", "/chat/api/rooms", {"name": name, "topic": topic})
+def chat_create(name: str, topic: str = "", private: bool = False) -> dict:
+    body = {"name": name, "topic": topic}
+    if private:
+        body["private"] = True
+    return api("POST", "/chat/api/rooms", body)
+
+
+def chat_dm(username: str) -> dict:
+    """Your direct message room with someone, made if it's new."""
+    return api("POST", "/chat/api/dms", {"username": username})
+
+
+def chat_people() -> list:
+    """[{username, name, online}]: everyone else who can use chat."""
+    return _get("/chat/api/people")
+
+
+def chat_add(room: str, username: str) -> list:
+    """Adds someone to a private room; returns its members."""
+    return api("POST", f"/chat/api/rooms/{_q(room)}/members", {"username": username})
+
+
+def chat_remove(room: str, username: str) -> list:
+    return api("DELETE", f"/chat/api/rooms/{_q(room)}/members/{_q(username)}")
+
+
+def chat_search(room: str, text: str) -> dict:
+    """{more, messages}: messages in a room containing text, newest first."""
+    return _get(f"/chat/api/rooms/{_q(room)}/search?q={_q(text)}")
+
+
+def chat_typing(room: str) -> dict:
+    return api("POST", f"/chat/api/rooms/{_q(room)}/typing")
 
 
 def chat_update(room: str, **fields: str) -> dict:

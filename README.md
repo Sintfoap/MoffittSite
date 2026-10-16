@@ -198,8 +198,12 @@ The store page and its "Try it" are served with a strict Content-Security-Policy
 
 `/chat/` is chat rooms for everyone with the `todo` area, the same people who can use Drift and the plugin store.
 
-- **Rooms:** anyone can make a room (up to 20 each) and every room is listed for everyone. Names are unique. Whoever made a room can rename it, change its topic or delete it; admins can too.
-- **Joining:** anyone can open a room and read it. Joining lets you post and puts the room under "Your rooms" with an unread count.
+- **Rooms:** anyone can make a room (up to 20 each). Open rooms are listed for everyone and their names are unique. Whoever made a room can rename it, change its topic or delete it; admins can too, for rooms they can see.
+- **Private rooms** are only for their members: to anyone else, admins included, they don't exist (every request about one is a 404). Any member can add people; the owner can take people out; anyone can leave, and a private room with nobody left in it is deleted.
+- **Direct messages:** "Message someone" (`m`) opens the room between you and one other person, made the first time either of you asks. Its id comes from the two accounts, so there's only ever one. It's named for the other person and can't be renamed, left or deleted.
+- **Joining:** anyone can open an open room and read it. Joining lets you post and puts the room under "Your rooms" with an unread count.
+- **Search** (`f`) finds messages in the open room containing some text, newest first; picking one scrolls back to it.
+- **Who's here:** each poll records that you have the room open. Others see "Here now: …" (anyone in the last 30 seconds) and "… is typing" (the page reports typing at most every 3 seconds, and it lasts 6). Members lists and DMs show who's had chat open in the last minute.
 - **Messages:** plain text up to 2,000 characters, shown with web links clickable and nothing else formatted. You can edit and delete your own (an edited message says so); a room's owner and admins can delete anyone's. Ten messages per ten seconds per person, at most. On the page, `↑` in an empty message box edits your last message.
 - **Mentions:** `@username` in a message mentions that person. It's highlighted for them, and the room shows `@` in their room list until they read it. Typing `@` offers the room's members to pick from.
 - **Reactions:** members react to a message with one of 👍 ❤️ 😂 🎉 😮 😢 👀 🙏; each shows a count, and hovering shows who.
@@ -208,14 +212,20 @@ The store page and its "Try it" are served with a strict Content-Security-Policy
 
 | Method | Path | Body |
 |---|---|---|
-| GET | `/chat/api/state` | (you, every room, and the reactions on offer) |
-| POST | `/chat/api/rooms` | `{name, topic}` |
+| GET | `/chat/api/state` | (you, every room you can see, who's online, and the reactions on offer) |
+| GET | `/chat/api/people` | (everyone else who can use chat) |
+| POST | `/chat/api/dms` | `{username}`: your direct message room with them |
+| POST | `/chat/api/rooms` | `{name, topic, private}` |
 | PATCH | `/chat/api/rooms/<id>` | any of `{name, topic}` (owner or admin) |
 | DELETE | `/chat/api/rooms/<id>` | (owner or admin) |
 | POST | `/chat/api/rooms/<id>/join` | |
 | POST | `/chat/api/rooms/<id>/leave` | |
 | GET | `/chat/api/rooms/<id>/members` | |
-| GET | `/chat/api/rooms/<id>/messages` | `?since=<seq>` for changes, `?before=<message id>` for older pages |
+| POST | `/chat/api/rooms/<id>/members` | `{username}`: add someone to a private room (members) |
+| DELETE | `/chat/api/rooms/<id>/members/<username>` | take someone out of a private room (owner, or yourself) |
+| GET | `/chat/api/rooms/<id>/search` | `?q=<text>` |
+| POST | `/chat/api/rooms/<id>/typing` | (members) |
+| GET | `/chat/api/rooms/<id>/messages` | `?since=<seq>` for changes, `?before=<message id>` for older pages; also says who's `here` and `typing` |
 | POST | `/chat/api/rooms/<id>/messages` | `{body}` (members) |
 | PATCH | `/chat/api/rooms/<id>/messages/<message id>` | `{body}` (author) |
 | DELETE | `/chat/api/rooms/<id>/messages/<message id>` | (author, room owner or admin) |

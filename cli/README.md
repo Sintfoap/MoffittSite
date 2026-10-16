@@ -92,13 +92,18 @@ The same rooms as `/chat/`: the list on the left, the open room on the right, an
 | `/edit [TEXT]` | change your last message; on its own (or `↑` on an empty line) it puts the message on the line to change |
 | `/react NAME` | react to the last message from someone else, or take it back: `+1` `heart` `laugh` `tada` `wow` `sad` `eyes` `pray` |
 | `/join` `/leave` | join or leave the open room |
-| `/new NAME \| TOPIC` | make a room (`ctrl+n` starts this for you) |
+| `/new NAME \| TOPIC` | make a room anyone can join (`ctrl+n` starts this for you) |
+| `/private NAME \| TOPIC` | make a room only people you add can see |
+| `/add NAME` `/remove NAME` | add someone to a private room, or take them out (its owner) |
+| `/dm NAME` | open your direct messages with someone; `tab` completes names |
+| `/who` | who's in the room, and who's online (●) |
+| `/search TEXT` | find messages in the room; `esc` or `/search` on its own goes back |
 | `/rename NAME` `/topic TEXT` | change the open room (its owner, or an admin) |
 | `/delete` | delete your last message in the open room |
 | `/older` | load older messages (`ctrl+u`) |
 | `/help` | these commands |
 
-Start a message with `//` to send one that begins with `/`. Messages that mention you are marked with a bar, reactions show under a message, and a room where you were mentioned shows `@` in the list.
+Start a message with `//` to send one that begins with `/`. Messages that mention you are marked with a bar, reactions show under a message, and a room where you were mentioned shows `@` in the list. Rooms are marked `#` (open), `*` (private) or `@` (direct message, with ● when they're online). The line above where you type says who else has the room open, or who's typing.
 
 ## Account settings
 

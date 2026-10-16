@@ -136,7 +136,8 @@ const SCHEMA = [
      owner      TEXT NOT NULL,                     -- user id of whoever made it
      seq        INTEGER NOT NULL DEFAULT 0,        -- last change number in this room
      created_at INTEGER NOT NULL,
-     last_at    INTEGER NOT NULL                   -- newest message (or creation), for sorting
+     last_at    INTEGER NOT NULL,                  -- newest message (or creation), for sorting
+     kind       TEXT NOT NULL DEFAULT 'open'       -- open (anyone), private (members only) or dm (two people)
    )`,
   `CREATE TABLE IF NOT EXISTS chat_members (
      room      TEXT NOT NULL,
@@ -175,6 +176,15 @@ const SCHEMA = [
      PRIMARY KEY (message, user_id)
    )`,
   `CREATE INDEX IF NOT EXISTS chat_mentions_user ON chat_mentions (user_id, message)`,
+  // When someone last had a room open, and last typed in it: "who's here" and "typing…".
+  `CREATE TABLE IF NOT EXISTS chat_presence (
+     room      TEXT NOT NULL,
+     user_id   TEXT NOT NULL,
+     seen_at   INTEGER NOT NULL DEFAULT 0,
+     typing_at INTEGER NOT NULL DEFAULT 0,
+     PRIMARY KEY (room, user_id)
+   )`,
+  `CREATE INDEX IF NOT EXISTS chat_presence_user ON chat_presence (user_id, seen_at)`,
 ];
 
 // Columns added after a table first shipped. CREATE TABLE IF NOT EXISTS
@@ -182,6 +192,7 @@ const SCHEMA = [
 const ADDED_COLUMNS = {
   users: ["email TEXT", "email_verified INTEGER NOT NULL DEFAULT 0"],
   chat_messages: ["posted_seq INTEGER", "edited_at INTEGER"],
+  chat_rooms: ["kind TEXT NOT NULL DEFAULT 'open'"],
 };
 
 async function addMissingColumns(d) {

@@ -15,6 +15,7 @@ class FakeChatApi:
     """The chat_* functions in site.py, kept in memory, with the site's rules."""
 
     def __init__(self):
+        self.typing_calls = 0
         self.seq = {}
         self.rooms = {}
         self.msgs = []
@@ -39,7 +40,7 @@ class FakeChatApi:
 
     def chat_state(self):
         rooms = [{**r, "joined": r["id"] in self.joined} for r in self.rooms.values()]
-        return {"user": {"username": "ryan", "name": "Ryan M", "admin": False}, "rooms": rooms,
+        return {"user": {"username": "ryan", "name": "Ryan M", "admin": False}, "rooms": rooms, "online": ["kim"],
                 "reactions": ["👍", "❤️", "😂", "🎉", "😮", "😢", "👀", "🙏"]}
 
     def chat_messages(self, room, since=None, before=None):
@@ -51,7 +52,8 @@ class FakeChatApi:
         else:
             ms = [m for m in ms if not m["deleted"] and (before is None or m["id"] < before)]
             out, more = ms[-3:], len(ms) > 3        # pages of 3, to test history
-        return {"seq": self.seq[room], "more": more, "joined": room in self.joined, "messages": out}
+        return {"seq": self.seq[room], "more": more, "joined": room in self.joined, "messages": out,
+                "here": ["Sam"], "typing": ["Kim"] if self.typing_calls else []}
 
     def chat_post(self, room, text):
         if room not in self.joined:
@@ -82,11 +84,38 @@ class FakeChatApi:
     def chat_members(self, room):
         return [{"username": u, "name": u.title(), "joined_at": 0, "owner": False} for u in ("ryan", "sam", "sandra", "kim")]
 
-    def chat_create(self, name, topic=""):
+    def chat_create(self, name, topic="", private=False):
         rid = f"r_{len(self.rooms):016x}"
         self.add_room(rid, name, owner=True)
-        self.rooms[rid]["topic"] = topic
+        self.rooms[rid].update(topic=topic, kind="private" if private else "open")
         return self.rooms[rid]
+
+    def chat_people(self):
+        return [{"username": "sam", "name": "Sam", "online": False}, {"username": "kim", "name": "Kim", "online": True}]
+
+    def chat_dm(self, username):
+        rid = f"r_dm{username:0>13}"
+        if rid not in self.rooms:
+            self.add_room(rid, username.title())
+            self.rooms[rid].update(kind="dm", **{"with": username})
+        return self.rooms[rid]
+
+    def chat_add(self, room, username):
+        self.added = (room, username)
+        return self.chat_members(room)
+
+    def chat_remove(self, room, username):
+        if username == "kim":
+            raise site.SiteError("the site said: only the room's owner can take people out")
+        return self.chat_members(room)
+
+    def chat_search(self, room, text):
+        found = [m for m in reversed(self.msgs) if m["room"] == room and not m["deleted"] and text.lower() in m["body"].lower()]
+        return {"more": False, "messages": found}
+
+    def chat_typing(self, room):
+        self.typing_calls += 1
+        return {"typing": True}
 
     def chat_update(self, room, **fields):
         self.rooms[room].update(fields)
@@ -264,6 +293,56 @@ def test_room_list_shows_mentions():
     assert str(RoomItem.label(room, True)) == "# general"
 
 
+def test_private_rooms_dms_search_and_presence():
+    api = FakeChatApi()
+    api.add_room("r_a", "general")
+    api.add_message("r_a", "pizza on friday")
+    api.add_message("r_a", "something else")
+
+    async def t(app, pilot):
+        assert "here now: Sam" in str(app.query_one("#presence").render())
+        # Typing a message tells the room; a command doesn't.
+        for ch in "/he":
+            await pilot.press(ch)
+        assert api.typing_calls == 0
+        app.query_one("#input").value = ""
+        await pilot.press("h", "i")
+        await pilot.pause()
+        assert api.typing_calls == 1
+        app.query_one("#input").value = ""
+        await app.poll()
+        assert "Kim is typing" in str(app.query_one("#presence").render())
+
+        await type_line(pilot, "/search PIZZA")
+        assert "1 message with" in shown(app) and "something else" not in shown(app)
+        await pilot.press("escape")                     # back to the room
+        assert "something else" in shown(app) and app.focused.id == "input"
+
+        await type_line(pilot, "/private plans | just us")
+        assert app.room()["kind"] == "private" and "/add NAME" in str(app.query_one("#head").render())
+        # Tab completes people for /add and /dm.
+        for ch in "/add k":
+            await pilot.press("space" if ch == " " else ch)
+        await pilot.press("tab")
+        assert app.query_one("#input").value == "/add kim "
+        await pilot.press("enter")
+        await pilot.pause()
+        assert api.added == (app.open["id"], "kim")
+        await type_line(pilot, "/remove sam")
+        assert "took out @sam" in str(app.query_one("#status").render())
+
+        await type_line(pilot, "/dm kim")
+        assert app.room()["kind"] == "dm" and app.room()["with"] == "kim"
+        head = str(app.query_one("#head").render())
+        assert "direct message with @kim" in head and "online" in head
+        item = next(i for i in app.query("RoomItem") if i.room["id"] == app.open["id"])
+        assert str(item.query_one("Label").render()).startswith("@ Kim ●")
+
+        await type_line(pilot, "/who")
+        assert "Members" in shown(app) and "@sandra" in shown(app)
+    run_chat(api, t)
+
+
 # ── site.py's chat calls, over HTTP ─────────────────────────────────────────
 
 class FakeSite(BaseHTTPRequestHandler):
@@ -318,6 +397,13 @@ def test_site_chat_calls(fake):
     site.chat_edit("r_a", 7, "fixed")
     site.chat_react("r_a", 7, "👍", on=False)
     site.chat_members("r_a")
+    site.chat_create("secret", private=True)
+    site.chat_dm("sam")
+    site.chat_people()
+    site.chat_add("r_a", "kim")
+    site.chat_remove("r_a", "kim")
+    site.chat_search("r_a", "pizza & beer")
+    site.chat_typing("r_a")
     with pytest.raises(site.SiteError, match="too quickly"):
         site.chat_post("r_a", "hello")
     assert [(m, p, b) for m, p, b, _, _ in FakeSite.seen] == [
@@ -331,6 +417,13 @@ def test_site_chat_calls(fake):
         ("PATCH", "/chat/api/rooms/r_a/messages/7", {"body": "fixed"}),
         ("POST", "/chat/api/rooms/r_a/messages/7/reactions", {"emoji": "👍", "on": False}),
         ("GET", "/chat/api/rooms/r_a/members", None),
+        ("POST", "/chat/api/rooms", {"name": "secret", "topic": "", "private": True}),
+        ("POST", "/chat/api/dms", {"username": "sam"}),
+        ("GET", "/chat/api/people", None),
+        ("POST", "/chat/api/rooms/r_a/members", {"username": "kim"}),
+        ("DELETE", "/chat/api/rooms/r_a/members/kim", None),
+        ("GET", "/chat/api/rooms/r_a/search?q=pizza%20%26%20beer", None),
+        ("POST", "/chat/api/rooms/r_a/typing", None),
         ("POST", "/chat/api/rooms/r_a/messages", {"body": "hello"}),
     ]
     # No Origin header: the site treats that like its own page.
@@ -345,7 +438,7 @@ def test_the_dashboard_chat_card_opens_the_chat_page(monkeypatch):
     api = FakeChatApi()
     api.add_room("r_a", "general")
     api.add_message("r_a", "hello ryan")
-    for name in ("chat_state", "chat_messages", "chat_post", "chat_members"):
+    for name in ("chat_state", "chat_messages", "chat_post", "chat_members", "chat_people"):
         monkeypatch.setattr(site, name, getattr(api, name))
     origin = "https://sintfoap.test"
     dash = {"site": origin, "user": {"username": "ryan", "display_name": "Ryan M", "admin": False},

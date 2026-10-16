@@ -2,6 +2,8 @@
 // It asks the server for changes every few seconds while the tab is visible:
 // the open room often, the room list (for unread counts) less often.
 // Messages can be edited by their author, reacted to, and can @mention people.
+// Rooms are open, private (members add each other) or direct messages; each
+// poll also says who else has the room open and who's typing.
 
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -13,6 +15,7 @@ const GROUP_SECONDS = 5 * 60;
 let me = {};
 let rooms = [];
 let reactions = [];       // the emoji the site accepts
+let online = new Set();   // usernames with chat open somewhere just now
 let open = null;          // { id, seq, more, joined, messages: Map(id → message), members: [] }
 let busy = false;         // a poll is in flight
 let editingId = null, editDraft = "";   // the message being edited in place
@@ -40,7 +43,7 @@ function toast(text) {
 
 async function loadRooms() {
   const s = await api("GET", "/state");
-  me = s.user; rooms = s.rooms; reactions = s.reactions || [];
+  me = s.user; rooms = s.rooms; reactions = s.reactions || []; online = new Set(s.online || []);
   renderRooms();
   const shown = open && rooms.find(r => r.id === open.id), count = $("#show-members");
   if (shown && count) count.textContent = `${shown.members} member${shown.members === 1 ? "" : "s"}`;
@@ -48,12 +51,16 @@ async function loadRooms() {
   if (open && !rooms.some(r => r.id === open.id)) { toast("That room was deleted."); closeRoom(); }
 }
 
+const roomTitle = r => r.kind === "dm" ? `@ ${r.name}` : `${r.kind === "private" ? "🔒" : "#"} ${r.name}`;
+
 function renderRooms() {
-  const row = r => `<button data-room="${esc(r.id)}" aria-current="${open?.id === r.id}" title="${esc(r.topic || r.name)}">
-    <span class="name">${esc(r.name)}</span>${r.mentions && open?.id !== r.id ? `<span class="n at" title="You were mentioned">@${r.mentions > 1 ? r.mentions : ""}</span>` : ""}${r.unread && open?.id !== r.id ? `<span class="n">${r.unread > 99 ? "99+" : r.unread}</span>` : ""}
+  const row = r => `<button data-room="${esc(r.id)}" aria-current="${open?.id === r.id}" title="${esc(r.topic || r.name)}" class="${r.kind}">
+    ${r.kind === "dm" ? `<span class="dot${online.has(r.with) ? " on" : ""}" title="${online.has(r.with) ? "Online" : "Away"}"></span>` : ""}<span class="name">${esc(r.name)}</span>${r.mentions && open?.id !== r.id ? `<span class="n at" title="You were mentioned">@${r.mentions > 1 ? r.mentions : ""}</span>` : ""}${r.unread && open?.id !== r.id ? `<span class="n">${r.unread > 99 ? "99+" : r.unread}</span>` : ""}
     ${r.joined ? "" : `<span class="count">${r.members}</span>`}</button>`;
   const joined = rooms.filter(r => r.joined), others = rooms.filter(r => !r.joined);
-  $("#joined").innerHTML = joined.map(row).join("") || `<p class="none">You haven't joined any rooms yet.</p>`;
+  const dms = joined.filter(r => r.kind === "dm");
+  $("#joined").innerHTML = joined.filter(r => r.kind !== "dm").map(row).join("") || `<p class="none">You haven't joined any rooms yet.</p>`;
+  $("#dms").innerHTML = dms.map(row).join("") || `<p class="none">No direct messages yet.</p>`;
   $("#others").innerHTML = others.map(row).join("") || `<p class="none">${rooms.length ? "You're in every room." : "No rooms yet. Make the first one."}</p>`;
   const total = joined.reduce((n, r) => n + (open?.id === r.id ? 0 : r.unread), 0);
   const pings = joined.reduce((n, r) => n + (open?.id === r.id ? 0 : r.mentions), 0);
@@ -68,7 +75,7 @@ document.querySelector(".side").addEventListener("click", e => {
 // ── the open room ────────────────────────────────────────────────────────
 
 function closeRoom() {
-  open = null; editingId = pickerFor = null; hideSuggest();
+  open = null; editingId = pickerFor = null; hideSuggest(); searching = null;
   document.body.classList.remove("in-room");
   $("#room").innerHTML = `<div class="welcome"><b>Pick a room</b>Choose one from the list, or make a new one. Anyone signed in here can find and join your rooms.</div>`;
   if (location.hash) history.replaceState(null, "", location.pathname);
@@ -79,14 +86,16 @@ async function openRoom(id) {
   const room = rooms.find(r => r.id === id);
   if (!room) { closeRoom(); return; }
   const data = await api("GET", `/rooms/${id}/messages`);
-  open = { id, seq: data.seq, more: data.more, joined: data.joined, messages: new Map(data.messages.map(m => [m.id, m])), members: [] };
-  editingId = pickerFor = null; hideSuggest();
+  open = { id, seq: data.seq, more: data.more, joined: data.joined, messages: new Map(data.messages.map(m => [m.id, m])), members: [],
+           here: data.here || [], typing: data.typing || [] };
+  editingId = pickerFor = null; hideSuggest(); searching = null;
   room.unread = 0; room.mentions = 0;
   // For completing @names as you type.
   api("GET", `/rooms/${id}/members`).then(list => { if (open?.id === id) open.members = list; }).catch(() => {});
   document.body.classList.add("in-room");
   renderRoomShell(room);
   renderLog({ toBottom: true });
+  renderPresence();
   renderRooms();
   if (open.joined && matchMedia("(min-width: 761px)").matches) $("#text")?.focus();
 }
@@ -95,16 +104,24 @@ function renderRoomShell(room) {
   $("#room").innerHTML = `
     <header class="room-head">
       <button class="link back" id="back" aria-label="Back to rooms">←</button>
-      <div class="title"><h2>${esc(room.name)}</h2>${room.topic ? `<p>${esc(room.topic)}</p>` : ""}</div>
-      <button class="link" id="show-members">${room.members} member${room.members === 1 ? "" : "s"}</button>
+      <div class="title"><h2 class="${room.kind}">${esc(room.name)}</h2>${room.kind === "dm" ? `<p>Direct message with @${esc(room.with || "")}${online.has(room.with) ? " · online" : ""}</p>` : room.topic ? `<p>${esc(room.topic)}</p>` : room.kind === "private" ? "<p>Private: only members can see this room.</p>" : ""}</div>
+      <button class="link" id="search-open" aria-label="Search this room">Search</button>
+      ${room.kind === "dm" ? "" : `<button class="link" id="show-members">${room.members} member${room.members === 1 ? "" : "s"}</button>`}
+      ${room.kind === "private" && open.joined ? `<button class="link" id="add-people">Add people</button>` : ""}
       ${room.manage ? `<button class="link" id="edit-room">Edit</button>` : ""}
-      ${open.joined ? `<button class="link" id="leave">Leave</button>` : ""}
+      ${open.joined && room.kind !== "dm" ? `<button class="link" id="leave">Leave</button>` : ""}
     </header>
+    <form class="searchbar" id="searchbar" hidden>
+      <input id="search-q" type="search" maxlength="100" placeholder="Search ${esc(roomTitle(room))}" aria-label="Search this room" autocomplete="off">
+      <button class="btn quiet" type="submit">Find</button>
+      <button class="link" type="button" id="search-close">Close</button>
+    </form>
     <div class="log" id="log"></div>
+    <div class="presence" id="presence" aria-live="polite"></div>
     ${open.joined
       ? `<form class="composer" id="composer">
           <span class="prompt" aria-hidden="true">&gt;</span>
-          <textarea id="text" rows="1" maxlength="2000" placeholder="Message # ${esc(room.name)}" aria-label="Message" autocomplete="off"></textarea>
+          <textarea id="text" rows="1" maxlength="2000" placeholder="Message ${esc(roomTitle(room))}" aria-label="Message" autocomplete="off"></textarea>
           <button class="btn" type="submit">Send</button>
           <ul class="suggest" id="suggest" role="listbox" aria-label="People to mention" hidden></ul>
         </form>`
@@ -145,7 +162,7 @@ function messageHtml(m) {
 
 function renderLog({ toBottom = false, keepFrom = null } = {}) {
   const log = $("#log");
-  if (!log) return;
+  if (!log || searching) return;
   const nearBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 80;
   const list = [...open.messages.values()].filter(m => !m.deleted).sort((a, b) => a.id - b.id);
   let html = open.more ? `<button class="link older" id="older">Show older messages</button>` : "";
@@ -179,7 +196,10 @@ async function pollRoom() {
   const id = open.id;
   try {
     const data = await api("GET", `/rooms/${id}/messages?since=${open.seq}`);
-    if (open?.id !== id || !data.messages.length) return;
+    if (open?.id !== id) return;
+    const people = JSON.stringify([data.here, data.typing]);
+    if (people !== JSON.stringify([open.here, open.typing])) { open.here = data.here || []; open.typing = data.typing || []; renderPresence(); }
+    if (!data.messages.length) return;
     for (const m of data.messages) open.messages.set(m.id, m);
     if (editingId && open.messages.get(editingId)?.deleted) editingId = null;
     open.seq = Math.max(open.seq, data.seq);
@@ -200,6 +220,10 @@ $("#room").addEventListener("click", async e => {
     }
     else if (t.id === "edit-room") editRoom(rooms.find(r => r.id === open.id));
     else if (t.id === "show-members") showMembers();
+    else if (t.id === "add-people") pickPerson("add");
+    else if (t.id === "search-open") openSearch();
+    else if (t.id === "search-close") closeSearch();
+    else if (t.closest("[data-jump]")) await jumpTo(Number(t.closest("[data-jump]").dataset.jump));
     else if (t.id === "older") {
       const oldest = Math.min(...open.messages.keys());
       const data = await api("GET", `/rooms/${open.id}/messages?before=${oldest}`);
@@ -223,6 +247,7 @@ $("#room").addEventListener("click", async e => {
       await api("DELETE", `/rooms/${open.id}/messages/${t.dataset.del}`);
       open.messages.get(Number(t.dataset.del)).deleted = true;
       renderLog();
+      typingSent = 0;
     }
   } catch (err) { toast(err.message); }
 });
@@ -255,12 +280,14 @@ async function saveEdit(form) {
 let tempId = -1;
 $("#room").addEventListener("submit", async e => {
   if (e.target.matches(".edit")) { e.preventDefault(); return saveEdit(e.target); }
+  if (e.target.id === "searchbar") { e.preventDefault(); return runSearch(); }
   if (e.target.id !== "composer") return;
   e.preventDefault();
   const box = $("#text"), body = box.value.trim();
   if (!body || !open) return;
   const id = open.id;
   // Shown straight away, then swapped for the real one.
+  typingSent = 0;
   const temp = { id: Number.MAX_SAFE_INTEGER + tempId--, body, created_at: Math.floor(Date.now() / 1000), author: me.username, author_name: me.name, mine: true, pending: true };
   open.messages.set(temp.id, temp);
   box.value = ""; grow(box);
@@ -298,8 +325,16 @@ $("#room").addEventListener("keydown", e => {
   } else if (e.key === "Escape" && pickerFor != null) { e.stopPropagation(); pickerFor = null; renderLog(); }
 });
 const grow = box => { box.style.height = "auto"; box.style.height = Math.min(box.scrollHeight + 2, 160) + "px"; };
+let typingSent = 0;
 $("#room").addEventListener("input", e => {
-  if (e.target.id === "text") { grow(e.target); suggest(e.target); }
+  if (e.target.id === "text") {
+    grow(e.target); suggest(e.target);
+    // Let the others know, at most every few seconds.
+    if (e.target.value && Date.now() - typingSent > 3000 && open?.joined) {
+      typingSent = Date.now();
+      api("POST", `/rooms/${open.id}/typing`).catch(() => {});
+    }
+  }
   else if (e.target.closest(".edit")) { editDraft = e.target.value; grow(e.target); }
 });
 
@@ -338,6 +373,116 @@ document.addEventListener("click", e => {
   if (pickerFor != null && !e.target.closest(".picker, [data-pick]")) { pickerFor = null; renderLog(); }
 });
 
+// ── who's here ───────────────────────────────────────────────────────────
+
+const names = list => list.length <= 2 ? list.join(" and ") : `${list.slice(0, -1).join(", ")} and ${list.at(-1)}`;
+function renderPresence() {
+  const el = $("#presence");
+  if (!el || !open) return;
+  const typing = open.typing, here = open.here.filter(n => !typing.includes(n));
+  el.innerHTML = typing.length
+    ? `<span class="typing"><i></i><i></i><i></i></span>${esc(names(typing))} ${typing.length === 1 ? "is" : "are"} typing…`
+    : here.length ? `<span class="dot on"></span>Here now: ${esc(names(here))}` : "";
+}
+
+// ── searching the open room ──────────────────────────────────────────────
+
+let searching = null;   // {q, results, more} while results are showing
+function openSearch() {
+  const bar = $("#searchbar");
+  bar.hidden = false;
+  $("#search-q").focus();
+  $("#search-q").select();
+}
+function closeSearch() {
+  searching = null;
+  const bar = $("#searchbar");
+  if (bar) bar.hidden = true;
+  renderLog({ toBottom: true });
+}
+async function runSearch() {
+  const q = $("#search-q").value.trim();
+  if (q.length < 2) return toast("Search for at least 2 characters.");
+  try {
+    const data = await api("GET", `/rooms/${open.id}/search?q=${encodeURIComponent(q)}`);
+    searching = { q, ...data };
+    renderResults();
+  } catch (err) { toast(err.message); }
+}
+function renderResults() {
+  const log = $("#log"), { q, messages: found, more } = searching;
+  const mark = text => linkify(text).replace(new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/[&<>"']/g, c => esc(c)), "gi"), x => `<mark>${x}</mark>`);
+  log.innerHTML = `<div class="results-head">${found.length ? `${found.length}${more ? "+" : ""} message${found.length === 1 ? "" : "s"} with “${esc(q)}”, newest first` : `Nothing here says “${esc(q)}”.`}</div>` +
+    found.map(m => `<button class="result" data-jump="${m.id}"><span class="who">${esc(m.author_name)}<span class="at">${esc(day(m.created_at))} ${time(m.created_at)}</span></span><span class="text">${mark(m.body)}</span></button>`).join("");
+  log.scrollTop = 0;
+}
+// Shows a message from the results in the room, loading older pages until it's there.
+async function jumpTo(id) {
+  for (let i = 0; i < 40 && !open.messages.has(id) && open.more; i++) {
+    const data = await api("GET", `/rooms/${open.id}/messages?before=${Math.min(...open.messages.keys())}`);
+    for (const m of data.messages) open.messages.set(m.id, m);
+    open.more = data.more;
+  }
+  searching = null;
+  $("#searchbar").hidden = true;
+  renderLog();
+  const el = $(`#log .msg[data-id="${id}"]`);
+  if (!el) return toast("That message is too far back to show.");
+  el.scrollIntoView({ block: "center" });
+  el.classList.add("found");
+  setTimeout(() => el.classList.remove("found"), 2500);
+}
+
+// ── people: direct messages and adding to private rooms ──────────────────
+
+let pickMode = "dm", everyone = [];
+async function pickPerson(mode) {
+  pickMode = mode;
+  $("#people-title").textContent = mode === "dm" ? "Message someone" : "Add people to this room";
+  $("#people-q").value = "";
+  $("#people-dialog").showModal();
+  $("#people-q").focus();
+  try {
+    everyone = await api("GET", "/people");
+    if (mode === "add") {
+      const inRoom = new Set((await api("GET", `/rooms/${open.id}/members`)).map(m => m.username));
+      everyone = everyone.filter(p => !inRoom.has(p.username));
+    }
+  } catch (err) { everyone = []; toast(err.message); }
+  drawPeople();
+}
+function drawPeople() {
+  const q = $("#people-q").value.trim().toLowerCase().replace(/^@/, "");
+  const list = everyone.filter(p => !q || p.username.includes(q) || p.name.toLowerCase().includes(q));
+  $("#people").innerHTML = list.map(p => `<li><button type="button" class="person" data-user="${esc(p.username)}">
+      <span class="dot${p.online ? " on" : ""}"></span>${esc(p.name)}<span>@${esc(p.username)}</span></button></li>`).join("")
+    || `<li class="none">${everyone.length ? "Nobody matches." : pickMode === "add" ? "Everyone's already in this room." : "There's no one else here yet."}</li>`;
+}
+$("#people-q").addEventListener("input", drawPeople);
+$("#people-q").addEventListener("keydown", e => {
+  if (e.key === "Enter") { e.preventDefault(); $("#people .person")?.click(); }
+});
+$("#people").addEventListener("click", async e => {
+  const b = e.target.closest("[data-user]");
+  if (!b) return;
+  try {
+    if (pickMode === "dm") {
+      const room = await api("POST", "/dms", { username: b.dataset.user });
+      $("#people-dialog").close();
+      await loadRooms();
+      location.hash = room.id;
+    } else {
+      await api("POST", `/rooms/${open.id}/members`, { username: b.dataset.user });
+      everyone = everyone.filter(p => p.username !== b.dataset.user);
+      drawPeople();
+      toast(`Added @${b.dataset.user}.`);
+      await loadRooms();
+      renderRoomShell(rooms.find(r => r.id === open.id)); renderLog(); renderPresence();
+    }
+  } catch (err) { toast(err.message); }
+});
+$("#dm").addEventListener("click", () => pickPerson("dm"));
+
 // ── making and editing rooms ─────────────────────────────────────────────
 
 let editing = null;   // the room being edited, or null for a new one
@@ -345,6 +490,8 @@ function editRoom(room = null) {
   editing = room;
   const f = $("#room-form");
   f.name.value = room?.name ?? ""; f.topic.value = room?.topic ?? "";
+  f.private.checked = room?.kind === "private"; f.private.disabled = !!room;
+  $("#private-row").hidden = !!room;
   $("#room-dialog-title").textContent = room ? "Edit room" : "New room";
   $("#room-save").textContent = room ? "Save" : "Create";
   $("#room-delete").hidden = !room;
@@ -359,15 +506,19 @@ document.addEventListener("keydown", e => {
   if (e.metaKey || e.ctrlKey || e.altKey || document.querySelector("dialog[open]")) return;
   const typing = e.target.matches?.("input, textarea");
   if (e.defaultPrevented) return;
+  if (e.key === "Escape" && e.target.id === "search-q") { e.preventDefault(); closeSearch(); $("#text")?.focus(); return; }
   if (e.key === "Escape" && typing) { e.target.blur(); document.querySelector(".rooms button[aria-current='true'], .rooms button")?.focus(); return; }
   if (typing) return;
   if (e.key === "n") { e.preventDefault(); editRoom(); }
+  else if (e.key === "m") { e.preventDefault(); pickPerson("dm"); }
+  else if (e.key === "f" && open) { e.preventDefault(); openSearch(); }
   else if (e.key === "/" && $("#text")) { e.preventDefault(); $("#text").focus(); }
 });
 $("#room-cancel").addEventListener("click", () => $("#room-dialog").close());
 $("#room-form").addEventListener("submit", async e => {
   e.preventDefault();
   const f = e.target, fields = { name: f.name.value, topic: f.topic.value };
+  if (!editing) fields.private = f.private.checked;
   try {
     const out = editing ? await api("PATCH", `/rooms/${editing.id}`, fields) : await api("POST", "/rooms", fields);
     $("#room-dialog").close();
@@ -386,11 +537,23 @@ $("#room-delete").addEventListener("click", async () => {
 });
 
 async function showMembers() {
-  const list = await api("GET", `/rooms/${open.id}/members`);
-  $("#members").innerHTML = list.map(m => `<li>${esc(m.name)}<span>@${esc(m.username)}${m.owner ? " · made this room" : ""}</span></li>`).join("")
+  const list = await api("GET", `/rooms/${open.id}/members`), room = rooms.find(r => r.id === open.id);
+  const canRemove = room?.kind === "private" && room.manage;
+  $("#members").innerHTML = list.map(m => `<li><span class="dot${m.online ? " on" : ""}"></span>${esc(m.name)}<span>@${esc(m.username)}${m.owner ? " · made this room" : ""}</span>
+      ${canRemove && !m.owner ? `<button type="button" class="link remove" data-remove="${esc(m.username)}">Take out</button>` : ""}</li>`).join("")
     || `<li>Nobody has joined yet.</li>`;
   $("#members-dialog").showModal();
 }
+$("#members").addEventListener("click", async e => {
+  const who = e.target.dataset?.remove;
+  if (!who || !confirm(`Take @${who} out of this room? They'll stop seeing it.`)) return;
+  try {
+    await api("DELETE", `/rooms/${open.id}/members/${encodeURIComponent(who)}`);
+    await loadRooms();
+    $("#members-dialog").close();
+    await showMembers();
+  } catch (err) { toast(err.message); }
+});
 
 // ── start ────────────────────────────────────────────────────────────────
 
