@@ -57,6 +57,17 @@ const SCHEMA = [
      window_start INTEGER NOT NULL,
      locked_until INTEGER NOT NULL DEFAULT 0
    )`,
+  // Terminal sign-ins waiting for someone to approve them in a browser (src/cli.js).
+  `CREATE TABLE IF NOT EXISTS cli_logins (
+     code_hash  TEXT PRIMARY KEY,                  -- SHA-256 of the code the terminal polls with
+     user_code  TEXT NOT NULL,                     -- the short code shown in the terminal, e.g. "KQ7M-4TXP"
+     status     TEXT NOT NULL,                     -- "pending", "approved" or "denied"
+     user_id    TEXT,                              -- who approved it
+     name       TEXT NOT NULL,                     -- the computer's name, as the terminal sent it
+     ip         TEXT NOT NULL,
+     created_at INTEGER NOT NULL,
+     expires_at INTEGER NOT NULL
+   )`,
 ];
 
 // Columns added after a table first shipped. CREATE TABLE IF NOT EXISTS

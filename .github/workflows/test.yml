@@ -18,3 +18,17 @@ jobs:
           # node:sqlite, used as the D1 stand-in, needs Node 22.5 or later.
           node-version: 22
       - run: node --no-warnings --test tests/*.test.mjs
+
+  drift:
+    # The terminal Drift app in apps/todo-esque (engine, site login, terminal UI).
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/todo-esque
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pytest textual
+      - run: python -m pytest -q tests
