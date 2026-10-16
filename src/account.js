@@ -12,7 +12,7 @@ import {
   adminExists, cleanDisplayName, clientIp,
   setEmail, confirmEmail, startEmailReset, emailResetUser, resetWithEmailToken,
 } from "./auth.js";
-import { mailReady, sendMail } from "./mail.js";
+import { mailReady, sendMail, MailError } from "./mail.js";
 import {
   html, loginPage, signupPage, mfaPage, forgotPage, forgotDonePage, forgotEmailSentPage, resetPage, dashboardPage, accountPage, changePasswordRequiredPage, adminPage, adminClaimPage, messagePage,
 } from "./pages.js";
@@ -322,7 +322,18 @@ async function account(request, env, pathname, method) {
         const token = await setEmail(env, request, user.id, f.email);
         if (!token) return show({ notice: "Email removed." });
         const fresh = await getUser(env, { id: user.id });
-        await sendConfirmation(env, request, fresh, fresh.email, token);
+        try { await sendConfirmation(env, request, fresh, fresh.email, token); }
+        catch (e) {
+          if (!(e instanceof MailError)) throw e;
+          // Put the old address back, so a failed send changes nothing.
+          console.error(e.message);
+          const d = await db(env);
+          await d.batch([
+            d.prepare("UPDATE users SET email = ?, email_verified = ? WHERE id = ?").bind(user.email ?? null, user.email_verified ?? 0, user.id),
+            d.prepare("DELETE FROM email_tokens WHERE user_id = ?").bind(user.id),
+          ]);
+          throw new AuthError(`The confirmation email couldn't be sent, so nothing was changed. The email service said: ${e.reason}`, { status: 502 });
+        }
         return show({ notice: `We sent a link to ${fresh.email}. Open it to confirm the address.` });
       } catch (e) { return fail(passwordError(e)); }
 

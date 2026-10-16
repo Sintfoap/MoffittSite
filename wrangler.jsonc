@@ -27,7 +27,7 @@
     "PASSWORD_ITERATIONS": "100000",
     // Sender for confirmation and password-reset emails. Email stays off until
     // the RESEND_API_KEY secret is also set. See README.
-    "MAIL_FROM": "sintfoap.xyz <no-reply@sintfoap.xyz>"
+    "MAIL_FROM": "Sintfoap <no-reply@sintfoap.xyz>"
   },
   // Also needed, set as a secret (not here): ADMIN_CLAIM_CODE, which lets one
   // account claim admin while there is none. See README.
@@ -39,7 +39,7 @@
       "SIGNUPS": "closed",
       "MAX_USERS": "0",
       "PASSWORD_ITERATIONS": "100000",
-      "MAIL_FROM": "sintfoap.xyz <no-reply@sintfoap.xyz>"
+      "MAIL_FROM": "Sintfoap <no-reply@sintfoap.xyz>"
     }
   },
 
