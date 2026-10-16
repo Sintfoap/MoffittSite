@@ -4,41 +4,41 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Drift</title>
-<meta name="theme-color" content="#1f2030">
+<meta name="theme-color" content="#0b0f0a">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,380;9..144,560&family=Onest:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
 <style>
 :root {
-  --bg: #eceef3; --surface: #f7f8fb; --raise: #ffffff; --line: #d9dce6; --line-2: #c7cbd8;
-  --ink: #23243a; --muted: #686b82; --faint: #9a9db0;
-  --accent: #c46a17; --accent-ink: #ffffff; --accent-soft: #f6e3cf;
-  --red: #c8423f; --amber: #b8860b; --blue: #3d64c9; --green: #3c8a4f; --violet: #7a53c2;
+  --bg: #f2f0e6; --surface: #ebe8dc; --raise: #fbfaf4; --line: #cfc9b0; --line-2: #a9a283;
+  --ink: #1c1d16; --muted: #4d4c3f; --faint: #7a7764;
+  --accent: #8a6510; --accent-ink: #fbf7ea; --accent-soft: #e9e1c2;
+  --red: #b4412f; --amber: #946c0c; --blue: #3f6aa8; --green: #2f7a52; --violet: #7656a8;
   --shadow: 0 1px 0 rgba(35,36,58,.04), 0 8px 24px -12px rgba(35,36,58,.18);
-  --radius-s: 6px; --radius-m: 10px; --radius-l: 16px;
-  --serif: "Fraunces", Georgia, serif;
-  --sans: "Onest", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --radius-s: 0; --radius-m: 0; --radius-l: 0;
+  --serif: "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+  --sans: "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --bg: #1f2030; --surface: #262839; --raise: #2d2f43; --line: #34364b; --line-2: #45475f;
-    --ink: #ece6da; --muted: #a29fb3; --faint: #6c6a82;
-    --accent: #f2a65a; --accent-ink: #1f2030; --accent-soft: #3d3330;
-    --red: #ef7b78; --amber: #f2c14e; --blue: #86a8f7; --green: #9ece6a; --violet: #c3a6f7;
+    --bg: #0b0f0a; --surface: #0e140e; --raise: #121a12; --line: #4a4430; --line-2: #6a6243;
+    --ink: #f4efe6; --muted: #c6bcab; --faint: #8a8270;
+    --accent: #d6ae5e; --accent-ink: #1a1206; --accent-soft: #24251a;
+    --red: #e47a62; --amber: #e0b25a; --blue: #7fa6d9; --green: #7fcf98; --violet: #c3a6f7;
     --shadow: 0 1px 0 rgba(0,0,0,.2), 0 12px 32px -14px rgba(0,0,0,.6);
   }
 }
 :root[data-theme="dark"] {
-  --bg: #1f2030; --surface: #262839; --raise: #2d2f43; --line: #34364b; --line-2: #45475f;
-  --ink: #ece6da; --muted: #a29fb3; --faint: #6c6a82;
-  --accent: #f2a65a; --accent-ink: #1f2030; --accent-soft: #3d3330;
-  --red: #ef7b78; --amber: #f2c14e; --blue: #86a8f7; --green: #9ece6a; --violet: #c3a6f7;
+  --bg: #0b0f0a; --surface: #0e140e; --raise: #121a12; --line: #4a4430; --line-2: #6a6243;
+    --ink: #f4efe6; --muted: #c6bcab; --faint: #8a8270;
+    --accent: #d6ae5e; --accent-ink: #1a1206; --accent-soft: #24251a;
+    --red: #e47a62; --amber: #e0b25a; --blue: #7fa6d9; --green: #7fcf98; --violet: #c3a6f7;
   --shadow: 0 1px 0 rgba(0,0,0,.2), 0 12px 32px -14px rgba(0,0,0,.6);
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; }
 body {
-  background: var(--bg); color: var(--ink); font: 400 15px/1.5 var(--sans);
+  background: var(--bg); color: var(--ink); font: 400 14px/1.55 var(--sans);
   -webkit-font-smoothing: antialiased; min-height: 100vh;
 }
 button, input, textarea, select { font: inherit; color: inherit; }
@@ -49,15 +49,23 @@ a { color: var(--accent); }
 .hint { color: var(--faint); font-size: 13px; margin: 6px 2px; }
 
 /* ── shell ───────────────────────────────────────── */
-.app { display: grid; grid-template-columns: 248px minmax(0, 1fr); min-height: 100vh; }
+.app { display: grid; grid-template-columns: 248px minmax(0, 1fr); min-height: 100vh; padding-bottom: 38px; }
 aside {
-  position: sticky; top: 0; height: 100vh; overflow-y: auto;
+  position: sticky; top: 0; height: calc(100vh - 38px); overflow-y: auto;
   padding: 22px 14px 18px; border-right: 1px solid var(--line); background: var(--surface);
   display: flex; flex-direction: column; gap: 18px;
 }
-.brand { display: flex; align-items: center; gap: 10px; padding: 0 10px; }
-.brand svg { flex: none; }
-.brand b { font-weight: 600; letter-spacing: -.01em; font-size: 17px; }
+.brand { display: flex; align-items: center; gap: 10px; padding: 0 10px; color: var(--ink); text-decoration: none; }
+.brand svg { flex: none; color: var(--accent); }
+.brand b { font: 700 14px var(--serif); letter-spacing: 1px; text-transform: uppercase; color: var(--accent); }
+/* the site's own rail, the same on every signed-in page; Drift's views sit under it */
+.site { display: flex; flex-direction: column; gap: 1px; padding-bottom: 14px; border-bottom: 1px solid var(--line); }
+.site a kbd.k { margin-left: auto; }
+.site a { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: var(--radius-s); color: var(--muted); text-decoration: none; }
+.site a svg { color: var(--faint); flex: none; }
+.site a:hover { background: var(--raise); color: var(--ink); }
+.site a[aria-current="page"] { color: var(--ink); font-weight: 700; box-shadow: inset 2px 0 var(--accent); background: var(--accent-soft); }
+.site a[aria-current="page"] svg { color: var(--accent); }
 .nav { display: flex; flex-direction: column; gap: 1px; }
 .nav h3 { margin: 0 0 4px; padding: 0 10px; font-size: 12.5px; font-weight: 500; color: var(--faint); }
 .nav button {
@@ -86,14 +94,13 @@ main { padding: 44px clamp(16px, 5vw, 64px) 120px; max-width: 900px; width: 100%
 /* ── heading ────────────────────────────────────── */
 .head { margin-bottom: 20px; }
 .head h1 {
-  margin: 0; font: 380 clamp(38px, 6vw, 58px)/1.02 var(--serif); letter-spacing: -.02em;
-  font-variation-settings: "opsz" 144; overflow-wrap: anywhere;
+  margin: 0; font: 700 clamp(24px, 4vw, 32px)/1.2 var(--serif); letter-spacing: .02em; overflow-wrap: anywhere;
 }
 .head .sub { margin-top: 8px; color: var(--muted); display: flex; gap: 14px; flex-wrap: wrap; align-items: baseline; }
 .tabs { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-top: 16px; }
 .tabs button {
   display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); background: none;
-  border-radius: 99px; padding: 5px 12px; font-size: 13.5px; color: var(--muted);
+  border-radius: 0; padding: 5px 12px; font-size: 13.5px; color: var(--muted);
 }
 .tabs button:hover { color: var(--ink); border-color: var(--line-2); }
 .tabs button[aria-pressed="true"] { background: var(--raise); color: var(--ink); border-color: var(--accent); font-weight: 500; }
@@ -178,7 +185,7 @@ ul.items { list-style: none; margin: 0; padding: 0; }
 /* ── calendar (Events plugin) ───────────────────── */
 .cal { margin-top: 18px; }
 .cal-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
-.cal-head h2 { margin: 0; font: 560 20px/1.2 var(--serif); }
+.cal-head h2 { margin: 0; font: 700 16px/1.3 var(--serif); }
 .cal-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; }
 .cal .wd { font-size: 12px; color: var(--faint); text-align: center; padding-bottom: 2px; }
 .cal .day {
@@ -187,7 +194,7 @@ ul.items { list-style: none; margin: 0; padding: 0; }
 }
 .cal .day:hover { border-color: var(--line-2); }
 .cal .day.out { opacity: .45; }
-.cal .day.now .dn { background: var(--accent); color: var(--accent-ink); border-radius: 99px; padding: 0 6px; }
+.cal .day.now .dn { background: var(--accent); color: var(--accent-ink); border-radius: 0; padding: 0 6px; }
 .cal .day.sel { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
 .cal .dn { font-size: 12.5px; font-weight: 600; align-self: flex-start; }
 .cal .ev { font-size: 11.5px; line-height: 1.3; padding: 1px 4px; border-radius: 4px; background: var(--accent-soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -234,7 +241,7 @@ dialog {
   padding: 22px; width: min(520px, calc(100vw - 32px)); max-height: calc(100vh - 48px); box-shadow: var(--shadow);
 }
 dialog::backdrop { background: rgba(20,20,32,.45); }
-dialog h2 { margin: 0 0 6px; font: 560 22px/1.2 var(--serif); }
+dialog h2 { margin: 0 0 6px; font: 700 17px/1.3 var(--serif); }
 dialog p { margin: 0 0 16px; color: var(--muted); font-size: 14px; }
 dialog form { display: grid; gap: 14px; }
 dialog label { display: grid; gap: 5px; font-size: 12.5px; color: var(--muted); }
@@ -257,7 +264,7 @@ dialog .acts { display: flex; justify-content: space-between; align-items: cente
 .plug b { color: var(--ink); font-size: 14px; font-weight: 500; }
 .plug span { grid-column: 2; font-size: 13px; }
 .quickdates { display: flex; gap: 6px; flex-wrap: wrap; }
-.quickdates button { border: 1px solid var(--line); background: var(--bg); border-radius: 99px; padding: 3px 10px; font-size: 12.5px; color: var(--muted); }
+.quickdates button { border: 1px solid var(--line); background: var(--bg); border-radius: 0; padding: 3px 10px; font-size: 12.5px; color: var(--muted); }
 .quickdates button:hover { border-color: var(--accent); color: var(--ink); }
 .danger { border: 0; background: none; color: var(--red); font-size: 13px; padding: 6px 0; }
 .btn { border: 1px solid var(--line); background: var(--bg); padding: 8px 14px; border-radius: 8px; font-weight: 500; font-size: 14px; }
@@ -265,6 +272,17 @@ dialog .acts { display: flex; justify-content: space-between; align-items: cente
 .link { border: 0; background: none; padding: 0; color: var(--accent); font-size: 12.5px; font-weight: 500; }
 kbd { font: 500 11.5px var(--sans); padding: 1px 6px; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 5px; background: var(--bg); color: var(--muted); }
 .keys { display: grid; grid-template-columns: auto 1fr; gap: 8px 14px; font-size: 14px; align-items: center; }
+
+
+/* the key bar, the same on every signed-in page */
+kbd.k { font: 700 11px var(--mono, var(--sans)); color: var(--accent); border: 0; background: none; padding: 0; }
+.keybar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 30; height: 38px; display: flex; align-items: center; gap: 22px; overflow-x: auto;
+  padding: 0 max(16px, env(safe-area-inset-right, 0px)) 0 max(16px, env(safe-area-inset-left, 0px)); white-space: nowrap; scrollbar-width: none;
+  background: var(--surface); border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; }
+.keybar kbd { font: 700 13px var(--sans); color: var(--accent); margin-right: 6px; border: 0; background: none; padding: 0; }
+.keybar a { color: var(--muted); text-decoration: none; }
+.keybar .end { margin-left: auto; }
+@media (max-width: 760px) { .keybar { display: none; } }
 
 /* ── mobile ─────────────────────────────────────── */
 @media (max-width: 760px) {
@@ -276,14 +294,18 @@ kbd { font: 500 11.5px var(--sans); padding: 1px 6px; border: 1px solid var(--li
     background: color-mix(in srgb, var(--surface) 92%, transparent); backdrop-filter: blur(10px);
   }
   aside::-webkit-scrollbar { display: none; }
-  .brand b, .nav h3, .me .who { display: none; }
+  .app { padding-bottom: 0; }
+  aside { height: auto; }
+  .brand b, .nav h3, .me .who, .site span, .site kbd, .site a[aria-current] { display: none; }
+  .site { flex-direction: row; padding: 0; border: 0; flex: none; }
+  .site a { padding: 6px; }
   .brand { padding: 0; }
   .nav { flex-direction: row; gap: 4px; flex: none; }
   .nav button span:nth-child(2) { overflow: visible; }
-  .nav button { grid-template-columns: auto auto; white-space: nowrap; padding: 6px 10px; border-radius: 99px; border: 1px solid var(--line); }
+  .nav button { grid-template-columns: auto auto; white-space: nowrap; padding: 6px 10px; border-radius: 0; border: 1px solid var(--line); }
   .nav button .ico { display: none; }
   .nav button .n:empty { display: none; }
-  .me { margin: 0; padding: 6px 12px; border-radius: 99px; flex: none; }
+  .me { margin: 0; padding: 6px 12px; border-radius: 0; flex: none; }
   main { padding: 24px 16px 140px; }
   .composer-wrap {
     position: fixed; left: 0; right: 0; bottom: 0; z-index: 20; padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
@@ -304,18 +326,17 @@ kbd { font: 500 11.5px var(--sans); padding: 1px 6px; border: 1px solid var(--li
 <body>
 <div class="app">
   <aside>
-    <div class="brand" title="Drift">
-      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-        <path d="M3 9c3-3 6 3 9 0s6 3 9 0" stroke="var(--accent)" stroke-width="2.2" stroke-linecap="round"/>
-        <path d="M3 15c3-3 6 3 9 0s6 3 9 0" stroke="var(--accent)" stroke-opacity=".45" stroke-width="2.2" stroke-linecap="round"/>
-      </svg>
-      <b>Drift</b>
-    </div>
+    <a class="brand" href="/" aria-label="sintfoap.xyz home"><svg viewBox="0 0 120 120" width="28" height="28" aria-hidden="true"><circle cx="60" cy="60" r="54" fill="none" stroke="currentColor" stroke-width="3"/><circle cx="60" cy="60" r="45" fill="none" stroke="currentColor" stroke-width="1.2"/><g transform="translate(60,66)" stroke="currentColor" stroke-width="3" fill="none" stroke-linecap="round"><line x1="-11" y1="-11" x2="11" y2="11"/><line x1="11" y1="-11" x2="-11" y2="11"/><line x1="0" y1="-24" x2="0" y2="-2"/><line x1="-6" y1="-18" x2="6" y2="-18"/></g><path d="M 34 78 Q 44 66 60 66 Q 76 66 86 78 L 82 88 Q 71 78 60 78 Q 49 78 38 88 Z" fill="currentColor"/></svg><b>sintfoap</b></a>
+    <nav class="site" aria-label="Site">
+      <a href="/dashboard" aria-label="Home" data-key="h"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 10.5 12 3l9 7.5V21h-6v-6H9v6H3z"/></svg><span>Home</span><kbd class="k" aria-hidden="true">g h</kbd></a>
+      <a href="/todo/" aria-current="page" aria-label="Drift" data-key="d"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8c3-3 6 3 9 0s6-3 9 0M3 14c3-3 6 3 9 0s6-3 9 0"/></svg><span>Drift</span><kbd class="k" aria-hidden="true">g d</kbd></a>
+      <a href="/plugins/" aria-label="Plugin store" data-key="p"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M17.5 14v7M14 17.5h7"/></svg><span>Plugin store</span><kbd class="k" aria-hidden="true">g p</kbd></a>
+    </nav>
     <nav class="nav" id="views" aria-label="Views"></nav>
     <nav class="nav" id="cols" aria-label="Collections"></nav>
     <div class="me">
       <span class="who">Signed in as <b id="who"></b></span>
-      <span class="links"><a href="/dashboard">Dashboard</a><a href="/logout">Sign out</a></span>
+      <span class="links"><a href="/account" data-key="s">Settings</a><a href="/logout">Sign out</a></span>
     </div>
   </aside>
 
@@ -380,6 +401,8 @@ kbd { font: 500 11.5px var(--sans); padding: 1px 6px; border: 1px solid var(--li
   </form>
 </dialog>
 
+<footer class="keybar" aria-label="Keyboard shortcuts"><span><kbd>n</kbd>New item</span><span><kbd>/</kbd>Filter</span><span><kbd>j k</kbd>Move</span><span><kbd>e</kbd>Open</span><span><kbd>?</kbd>All keys</span><span><kbd>g</kbd>then a key from the menu to jump</span><a class="end" href="/logout" data-key="o"><kbd>g o</kbd>Sign out</a></footer>
+<script src="/keys.js" defer></script>
 <script type="module" src="app.js"></script>
 </body>
 </html>
