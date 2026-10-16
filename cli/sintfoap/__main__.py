@@ -7,6 +7,7 @@ sintfoap — sintfoap.xyz from the terminal.
   sintfoap drift              Drift, in the terminal
   sintfoap store              the plugin store
   sintfoap settings           your account settings
+  sintfoap chat [ROOM]        chat rooms
   sintfoap whoami
   sintfoap logout             ends this terminal's session on the site
 """
@@ -55,6 +56,8 @@ def main(argv=None):
     d.add_argument("--plain", action="store_true", help="print it instead of opening the terminal UI")
     for page, what in (("drift", "Drift, in the terminal"), ("store", "the plugin store"), ("settings", "your account settings")):
         sub.add_parser(page, help=what)
+    ch = sub.add_parser("chat", help="chat rooms")
+    ch.add_argument("room", nargs="?", help="a room to open, by name")
     sub.add_parser("whoami")
     sub.add_parser("logout")
     args = ap.parse_args(argv)
@@ -79,7 +82,7 @@ def main(argv=None):
                 sys.exit(f"sintfoap {cmd} needs a terminal; try  sintfoap dashboard --plain")
             else:
                 from .tui import run
-                run(cmd)
+                run(cmd, room=getattr(args, "room", None))
     except site.SiteError as e:
         sys.exit(f"sintfoap: {e}")
     except KeyboardInterrupt:

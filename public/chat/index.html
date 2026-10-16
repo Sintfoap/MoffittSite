@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Chat</title>
+<meta name="theme-color" content="#1f2030">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,380;9..144,560&family=Onest:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #eceef3; --surface: #f7f8fb; --raise: #ffffff; --line: #d9dce6; --line-2: #c7cbd8;
+  --ink: #23243a; --muted: #686b82; --faint: #9a9db0;
+  --accent: #c46a17; --accent-ink: #ffffff; --accent-soft: #f6e3cf;
+  --red: #c8423f;
+  --shadow: 0 1px 0 rgba(35,36,58,.04), 0 8px 24px -12px rgba(35,36,58,.18);
+  --radius-s: 6px; --radius-m: 10px; --radius-l: 16px;
+  --serif: "Fraunces", Georgia, serif;
+  --sans: "Onest", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #1f2030; --surface: #262839; --raise: #2d2f43; --line: #34364b; --line-2: #45475f;
+    --ink: #ece6da; --muted: #a29fb3; --faint: #6c6a82;
+    --accent: #f2a65a; --accent-ink: #1f2030; --accent-soft: #3d3330;
+    --red: #ef7b78;
+    --shadow: 0 1px 0 rgba(0,0,0,.2), 0 12px 32px -14px rgba(0,0,0,.6);
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #1f2030; --surface: #262839; --raise: #2d2f43; --line: #34364b; --line-2: #45475f;
+  --ink: #ece6da; --muted: #a29fb3; --faint: #6c6a82;
+  --accent: #f2a65a; --accent-ink: #1f2030; --accent-soft: #3d3330;
+  --red: #ef7b78;
+  --shadow: 0 1px 0 rgba(0,0,0,.2), 0 12px 32px -14px rgba(0,0,0,.6);
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body { background: var(--bg); color: var(--ink); font: 400 15px/1.5 var(--sans); -webkit-font-smoothing: antialiased; }
+button, input, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+[hidden] { display: none !important; }
+a { color: var(--accent); }
+
+main { height: 100vh; height: 100dvh; display: flex; flex-direction: column; padding: 20px clamp(16px, 4vw, 48px) 16px; max-width: 1180px; margin: 0 auto; }
+.top { display: flex; justify-content: space-between; align-items: center; gap: 12px; font-size: 13.5px; color: var(--muted); }
+.top a { color: var(--muted); text-decoration: none; }
+.top a:hover { color: var(--ink); }
+h1 { margin: 12px 0 14px; font: 380 clamp(30px, 5vw, 42px)/1.04 var(--serif); letter-spacing: -.02em; font-variation-settings: "opsz" 144; }
+
+.btn { border: 1px solid var(--line-2); background: var(--raise); border-radius: 8px; padding: 7px 13px; font-size: 14px; font-weight: 500; }
+.btn:hover { border-color: var(--muted); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.btn.danger { color: var(--red); }
+.btn:disabled { opacity: .45; cursor: default; }
+.ghost { border: 0; background: none; color: var(--muted); font-size: 13px; padding: 4px 8px; border-radius: var(--radius-s); }
+.ghost:hover { background: var(--surface); color: var(--ink); }
+
+.layout { flex: 1; min-height: 0; display: grid; grid-template-columns: 260px minmax(0, 1fr); gap: 18px; }
+
+/* ── room list ─────────────────────────────────── */
+.side { display: flex; flex-direction: column; gap: 10px; min-height: 0; }
+.side .lists { overflow-y: auto; display: flex; flex-direction: column; gap: 14px; padding-right: 2px; }
+.side h2 { margin: 0 0 4px; padding: 0 10px; font-size: 12px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--faint); }
+.rooms { display: flex; flex-direction: column; gap: 2px; }
+.rooms button {
+  display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; border: 0; background: none;
+  padding: 8px 10px; border-radius: var(--radius-s); color: var(--muted);
+}
+.rooms button:hover { background: var(--surface); color: var(--ink); }
+.rooms button[aria-current="true"] { background: var(--accent-soft); color: var(--ink); }
+.rooms .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.rooms .name::before { content: "# "; color: var(--faint); font-weight: 400; }
+.rooms .n { font-size: 12px; padding: 0 7px; border-radius: 99px; background: var(--accent); color: var(--accent-ink); font-weight: 600; }
+.rooms .count { font-size: 12px; color: var(--faint); }
+.side .none { padding: 0 10px; font-size: 13.5px; color: var(--faint); }
+
+/* ── a room ────────────────────────────────────── */
+.room { display: flex; flex-direction: column; min-height: 0; background: var(--raise); border: 1px solid var(--line); border-radius: var(--radius-m); box-shadow: var(--shadow); overflow: hidden; }
+.room-head { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+.room-head .title { flex: 1; min-width: 0; }
+.room-head h2 { margin: 0; font-size: 17px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.room-head p { margin: 0; font-size: 13.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.room-head .back { display: none; }
+.log { flex: 1; overflow-y: auto; padding: 12px 16px; display: flex; flex-direction: column; }
+.log .older { align-self: center; margin-bottom: 8px; }
+.log .day { align-self: center; margin: 12px 0 6px; font-size: 12px; color: var(--faint); }
+.msg { position: relative; padding: 2px 64px 2px 0; }
+.msg.first { margin-top: 10px; }
+.msg .who { font-weight: 600; font-size: 14.5px; }
+.msg .who .at { margin-left: 8px; font-weight: 400; font-size: 12px; color: var(--faint); }
+.msg .text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.msg.mine .who { color: var(--accent); }
+.msg .del { position: absolute; right: 0; top: 0; visibility: hidden; }
+.msg:hover .del, .msg:focus-within .del { visibility: visible; }
+.msg.pending { opacity: .55; }
+.log .empty { margin: auto; text-align: center; color: var(--muted); padding: 24px; }
+.log .empty b { display: block; color: var(--ink); font-weight: 500; margin-bottom: 4px; }
+
+.composer { display: flex; gap: 8px; align-items: flex-end; padding: 12px 16px; border-top: 1px solid var(--line); background: var(--surface); }
+.composer textarea {
+  flex: 1; min-width: 0; resize: none; max-height: 160px; padding: 9px 12px; border: 1px solid var(--line); border-radius: var(--radius-m);
+  background: var(--raise); color: var(--ink); line-height: 1.4;
+}
+.composer textarea:focus { outline: none; border-color: var(--accent); }
+.joinbar { display: flex; gap: 12px; align-items: center; justify-content: center; padding: 14px 16px; border-top: 1px solid var(--line); background: var(--surface); color: var(--muted); font-size: 14px; }
+
+.welcome { margin: auto; text-align: center; color: var(--muted); padding: 32px; max-width: 420px; }
+.welcome b { display: block; color: var(--ink); font-weight: 500; font-size: 17px; margin-bottom: 6px; }
+
+dialog { border: 1px solid var(--line); border-radius: var(--radius-l); background: var(--raise); color: var(--ink); padding: 0; width: min(480px, calc(100vw - 32px)); box-shadow: var(--shadow); }
+dialog::backdrop { background: rgba(20, 20, 32, .45); }
+dialog form { padding: 22px; display: flex; flex-direction: column; gap: 12px; }
+dialog h2 { margin: 0; font: 500 24px/1.2 var(--serif); }
+dialog ul { margin: 0; padding: 0; list-style: none; max-height: 50vh; overflow-y: auto; }
+dialog li { padding: 6px 0; border-bottom: 1px solid var(--line); }
+dialog li span { color: var(--faint); font-size: 13px; margin-left: 6px; }
+label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
+label input { padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--radius-s); background: var(--raise); color: var(--ink); font-size: 14.5px; }
+.actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.actions .spacer { flex: 1; }
+.error { color: var(--red); font-size: 14px; margin: 0; }
+
+.toast { position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%); padding: 9px 16px; border-radius: 99px; background: var(--ink); color: var(--bg); font-size: 14px; box-shadow: var(--shadow); }
+
+/* Phones: the list and the open room take turns. */
+@media (max-width: 760px) {
+  main { padding-top: 14px; }
+  h1 { display: none; }
+  .layout { grid-template-columns: 1fr; margin-top: 10px; }
+  body.in-room .side { display: none; }
+  body:not(.in-room) .room { display: none; }
+  .room-head .back { display: inline-block; }
+  .msg { padding-right: 0; }
+  .msg .del { visibility: visible; position: static; }
+}
+</style>
+</head>
+<body>
+<main>
+  <div class="top"><a href="/dashboard">← Dashboard</a><span id="who"></span></div>
+  <h1>Chat</h1>
+  <div class="layout">
+    <aside class="side">
+      <button class="btn primary" id="new">New room</button>
+      <div class="lists">
+        <section><h2>Your rooms</h2><div class="rooms" id="joined"></div></section>
+        <section><h2>Other rooms</h2><div class="rooms" id="others"></div></section>
+      </div>
+    </aside>
+    <section class="room" id="room" aria-live="polite">
+      <div class="welcome" id="welcome"><b>Pick a room</b>Choose one from the list, or make a new one. Anyone signed in here can find and join your rooms.</div>
+    </section>
+  </div>
+</main>
+
+<dialog id="room-dialog">
+  <form method="dialog" id="room-form">
+    <h2 id="room-dialog-title">New room</h2>
+    <label>Name<input name="name" maxlength="60" required autocomplete="off"></label>
+    <label>Topic<input name="topic" maxlength="200" autocomplete="off" placeholder="Optional"></label>
+    <p class="error" id="room-error" hidden></p>
+    <div class="actions">
+      <button type="button" class="btn danger" id="room-delete" hidden>Delete room</button>
+      <span class="spacer"></span>
+      <button type="button" class="btn" value="cancel" id="room-cancel">Cancel</button>
+      <button type="submit" class="btn primary" id="room-save">Create</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="members-dialog">
+  <form method="dialog">
+    <h2>Members</h2>
+    <ul id="members"></ul>
+    <div class="actions"><span class="spacer"></span><button class="btn">Close</button></div>
+  </form>
+</dialog>
+
+<div class="toast" id="toast" role="status" hidden></div>
+<script type="module" src="/chat/app.js"></script>
+</body>
+</html>

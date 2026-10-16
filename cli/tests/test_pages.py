@@ -1,4 +1,4 @@
-"""The terminal's Drift, plugin store and settings pages, against the site's real Worker (tests/devsite.mjs)."""
+"""The terminal's Drift, plugin store, settings and chat pages, against the site's real Worker (tests/devsite.mjs)."""
 import asyncio
 import json
 import os
@@ -289,6 +289,31 @@ def test_dashboard_cards_open_the_terminal_pages(real_site):
         await settle(pilot, 0.5)
         assert type(app.screen).__name__ == "SettingsPage"
     run_app("dashboard", cards)
+
+
+# ── Chat ───────────────────────────────────────────────────────────────────
+
+def test_chat_makes_a_room_and_posts_to_the_real_site(real_site):
+    async def chat(app, pilot):
+        assert type(app.screen).__name__ == "ChatPage"
+        await pilot.press("ctrl+n")
+        await type_(pilot, "general | hello all")
+        await pilot.press("enter")
+        await settle(pilot, 0.5)
+        await type_(pilot, "first post")
+        await pilot.press("enter")
+        await settle(pilot, 0.5)
+        page = app.screen
+        assert page.room()["name"] == "general" and page.room()["topic"] == "hello all"
+        assert "first post" in str(page.query_one("#messages").render())
+        await type_(pilot, "/delete")
+        await pilot.press("enter")
+        await settle(pilot, 0.5)
+    run_app("chat", chat)
+    [room] = site.chat_state()["rooms"]
+    assert room["name"] == "general" and room["joined"]
+    msgs = site.chat_messages(room["id"])["messages"]
+    assert msgs == [], "the post was deleted"
 
 
 # ── the rules, without a site ──────────────────────────────────────────────

@@ -8,10 +8,10 @@
   "assets": {
     "directory": "./public",
     "binding": "ASSETS",
-    // Only these paths run src/worker.js (sign-in check + todo API);
+    // Only these paths run src/worker.js (sign-in check + todo and chat APIs);
     // everything else is served straight from public/.
     "run_worker_first": [
-      "/todo", "/todo/*", "/plugins", "/plugins/*", "/sandbox/*",
+      "/todo", "/todo/*", "/plugins", "/plugins/*", "/sandbox/*", "/chat", "/chat/*",
       "/login", "/login/*", "/signup", "/logout",
       "/dashboard", "/dashboard/*", "/account", "/account/*", "/admin", "/admin/*"
     ]

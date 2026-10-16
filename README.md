@@ -14,6 +14,7 @@ public/          the website, served as static files
     plugins/         Checklist, Events, List, Graph; one file each
   plugins/         the plugin store page (signed-in Drift users)
   sandbox/         the frame store plugins run in
+  chat/            chat rooms (signed-in Drift users)
 src/             the Worker: runs only for the paths in run_worker_first
   worker.js        routing: sign-in pages, then /todo behind protect()
   account.js       /login /signup /logout /dashboard /account /admin, and protect()
@@ -25,6 +26,7 @@ src/             the Worker: runs only for the paths in run_worker_first
   db.js            D1 tables (created on first use)
   drift.js         Drift storage: collections and items per account
   store.js         the plugin store: drafts, review queue, approved plugins
+  chat.js          chat: rooms, members, messages
   vendor/uqr.mjs   QR codes for two-factor setup (MIT)
 cli/             the `sintfoap` command: sign in from a terminal; dashboard, Drift, plugin store and settings as a terminal UI
 apps/todo-esque/ the original Drift app (Python engine, terminal UI, CLI)
@@ -189,3 +191,26 @@ The store page and its "Try it" are served with a strict Content-Security-Policy
 | GET | `/todo/api/installs` | the store plugins you've added to Drift |
 | POST | `/todo/api/installs/<id>` | add an approved plugin |
 | DELETE | `/todo/api/installs/<id>` | remove it (collections using it keep their data) |
+
+## Chat
+
+`/chat/` is chat rooms for everyone with the `todo` area, the same people who can use Drift and the plugin store.
+
+- **Rooms:** anyone can make a room (up to 20 each) and every room is listed for everyone. Names are unique. Whoever made a room can rename it, change its topic or delete it; admins can too.
+- **Joining:** anyone can open a room and read it. Joining lets you post and puts the room under "Your rooms" with an unread count.
+- **Messages:** plain text up to 2,000 characters, shown with web links clickable and nothing else formatted. You can delete your own; a room's owner and admins can delete anyone's. Ten messages per ten seconds per person, at most.
+- **Updates:** the page asks for new messages every 2.5 seconds while it's visible and refreshes the room list every 15. Every change in a room takes the room's next `seq` number, so asking for what changed since a number catches deletions too. Rooms and messages are in D1 like everything else, so no extra Cloudflare setup is needed.
+- **Deleting an account** removes its messages and memberships. Rooms it made stay, for admins to manage.
+
+| Method | Path | Body |
+|---|---|---|
+| GET | `/chat/api/state` | |
+| POST | `/chat/api/rooms` | `{name, topic}` |
+| PATCH | `/chat/api/rooms/<id>` | any of `{name, topic}` (owner or admin) |
+| DELETE | `/chat/api/rooms/<id>` | (owner or admin) |
+| POST | `/chat/api/rooms/<id>/join` | |
+| POST | `/chat/api/rooms/<id>/leave` | |
+| GET | `/chat/api/rooms/<id>/members` | |
+| GET | `/chat/api/rooms/<id>/messages` | `?since=<seq>` for changes, `?before=<message id>` for older pages |
+| POST | `/chat/api/rooms/<id>/messages` | `{body}` (members) |
+| DELETE | `/chat/api/rooms/<id>/messages/<message id>` | (author, room owner or admin) |

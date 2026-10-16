@@ -26,6 +26,7 @@ export const APPS = [
   { area: "todo", name: "Drift", href: "/todo/", blurb: "Your items as checklists, calendars and lists." },
   { area: "admin", name: "Admin", href: "/admin", blurb: "Accounts, access and resets." },
   { area: "todo", name: "Plugin store", href: "/plugins/", blurb: "Find, write and share plugins for Drift." },
+  { area: "todo", name: "Chat", href: "/chat/", blurb: "Rooms to talk in with everyone else here." },
 ];
 
 const RESERVED = new Set(["admin", "administrator", "root", "system", "support", "help", "login", "logout",

@@ -213,7 +213,7 @@ class GoTo(ModalScreen[str | None]):
     GoTo {{ background: rgba(0,0,0,0.3); }}
     GoTo > Static {{ width: auto; background: {PANEL}; border: round {GOLD_DIM}; padding: 0 2; margin-bottom: 2; }}
     """
-    KEYS = {"h": "home", "d": "Drift", "p": "plugin store", "s": "settings", "a": "admin", "o": "sign out"}
+    KEYS = {"h": "home", "d": "Drift", "p": "plugin store", "c": "chat", "s": "settings", "a": "admin", "o": "sign out"}
 
     def __init__(self, admin: bool = False):
         super().__init__()

@@ -23,7 +23,7 @@ WARN = "#e0b25a"
 REFRESH_EVERY = 30   # seconds
 
 # Which site pages have a terminal version, by the path the dashboard links to.
-IN_TERMINAL = {"/todo/": "drift", "/plugins/": "store"}
+IN_TERMINAL = {"/todo/": "drift", "/plugins/": "store", "/chat/": "chat"}
 
 
 def account_lines(data: dict) -> Text:
@@ -231,9 +231,9 @@ class SiteApp(App):
     TITLE = "sintfoap.xyz"
     CSS = CSS
 
-    def __init__(self, start: str = "dashboard", load=site.dashboard):
+    def __init__(self, start: str = "dashboard", load=site.dashboard, room: str | None = None):
         super().__init__()
-        self.start, self.load = start, load
+        self.start, self.load, self.room = start, load, room
         self.data: dict | None = None
         self.signed_out = False
 
@@ -265,7 +265,7 @@ class SiteApp(App):
             return
         while len(self.screen_stack) > 1:
             self.pop_screen()
-        page = {"d": "drift", "p": "store", "s": "settings"}.get(where)
+        page = {"d": "drift", "p": "store", "s": "settings", "c": "chat"}.get(where)
         if page:
             self.open_page(page)
 
@@ -279,11 +279,16 @@ class SiteApp(App):
         elif name == "store":
             from .store_page import StorePage
             self.push_screen(StorePage())
+        elif name == "chat":
+            from .chat_page import ChatPage
+            # The room named on the command line, the first time only.
+            self.push_screen(ChatPage(room=self.room))
+            self.room = None
 
 
 # The name the first version had.
 Dashboard = SiteApp
 
 
-def run(start: str = "dashboard") -> None:
-    SiteApp(start).run()
+def run(start: str = "dashboard", room: str | None = None) -> None:
+    SiteApp(start, room=room).run()

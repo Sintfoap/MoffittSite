@@ -312,3 +312,41 @@ def review_queue() -> list[dict]:
 
 def review(plugin_id: str, version: int, decision: str, note: str = "") -> dict:
     return api("POST", f"/plugins/api/review/{_q(plugin_id)}/{int(version)}", {"decision": decision, "note": note})
+
+
+# ──────────────────────────────── chat ──────────────────────────────────────
+# /chat/api/ (src/chat.js)
+
+def chat_state() -> dict:
+    """{user, rooms}: every room, with joined, unread and manage for this account."""
+    return _get("/chat/api/state")
+
+
+def chat_messages(room: str, since: int | None = None, before: int | None = None) -> dict:
+    """{seq, more, joined, messages}: the newest page, older ones (before), or changes (since)."""
+    q = f"?since={int(since)}" if since is not None else f"?before={int(before)}" if before is not None else ""
+    return _get(f"/chat/api/rooms/{_q(room)}/messages{q}")
+
+
+def chat_post(room: str, text: str) -> dict:
+    return api("POST", f"/chat/api/rooms/{_q(room)}/messages", {"body": text})
+
+
+def chat_delete(room: str, message_id: int) -> dict:
+    return api("DELETE", f"/chat/api/rooms/{_q(room)}/messages/{int(message_id)}")
+
+
+def chat_create(name: str, topic: str = "") -> dict:
+    return api("POST", "/chat/api/rooms", {"name": name, "topic": topic})
+
+
+def chat_update(room: str, **fields: str) -> dict:
+    return api("PATCH", f"/chat/api/rooms/{_q(room)}", fields)
+
+
+def chat_join(room: str) -> dict:
+    return api("POST", f"/chat/api/rooms/{_q(room)}/join")
+
+
+def chat_leave(room: str) -> dict:
+    return api("POST", f"/chat/api/rooms/{_q(room)}/leave")

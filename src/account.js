@@ -476,6 +476,9 @@ async function admin(request, env, me, pathname, method) {
           d.prepare("DELETE FROM drift_items WHERE owner = ?").bind(target.id),
           d.prepare("DELETE FROM drift_collections WHERE owner = ?").bind(target.id),
           d.prepare("DELETE FROM drift_shares WHERE owner = ? OR user_id = ?").bind(target.id, target.id),
+          // Their chat messages go; rooms they made stay, for admins to manage.
+          d.prepare("DELETE FROM chat_messages WHERE user_id = ?").bind(target.id),
+          d.prepare("DELETE FROM chat_members WHERE user_id = ?").bind(target.id),
           d.prepare("DELETE FROM users WHERE id = ?").bind(target.id),
         ]);
         return show({ notice: `${target.username} and their tasks are deleted.` });
