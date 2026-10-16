@@ -1,0 +1,203 @@
+"""What every terminal page shares: the site's colours, the top bar, and talking to the site without freezing the UI."""
+from __future__ import annotations
+
+import asyncio
+import functools
+import webbrowser
+
+from rich.text import Text
+from textual.app import ComposeResult
+from textual.binding import Binding
+from textual.containers import Horizontal
+from textual.screen import ModalScreen, Screen
+from textual.widgets import Button, Input, Label, Static, TextArea
+from textual.containers import Vertical
+
+from . import site
+
+# The site's palette (src/pages.js), converted from oklch.
+BG, PANEL, FIELD = "#0b0f0a", "#121a12", "#0e140e"
+GOLD, GOLD_DIM = "#d6ae5e", "#a08850"
+INK, MUTED, FAINT = "#f4efe6", "#c6bcab", "#6f6857"
+LINE = "#4a4430"
+BAD, GOOD = "#e47a62", "#7fcf98"
+# Drift's priority colours (none, low, medium, high).
+PRI = ["", "#7fa6d9", "#e0b25a", "#e47a62"]
+
+CSS = f"""
+Screen {{ background: {BG}; color: {INK}; }}
+#top {{ height: 3; padding: 1 2 0 2; }}
+#crest {{ width: auto; color: {GOLD}; text-style: bold; }}
+#who {{ width: 1fr; content-align: right middle; color: {MUTED}; }}
+.kicker {{ color: {GOLD}; text-style: bold; }}
+.h1 {{ color: {INK}; text-style: bold; padding: 1 0 0 0; }}
+.sub {{ color: {MUTED}; padding-bottom: 1; }}
+.hint {{ color: {GOLD_DIM}; }}
+.card {{ background: {PANEL}; border: round {LINE}; padding: 1 2; height: auto; margin-bottom: 1; }}
+.card:focus, .card:focus-within {{ border: round {GOLD}; }}
+.card-title {{ color: {INK}; text-style: bold; margin-bottom: 1; }}
+Input {{ background: {FIELD}; border: round {LINE}; color: {INK}; }}
+Input:focus {{ border: round {GOLD}; background-tint: {BG} 0%; }}
+Input > .input--placeholder {{ color: {FAINT}; }}
+TextArea {{ background: {FIELD}; border: round {LINE}; scrollbar-size: 1 1; scrollbar-background: {FIELD}; scrollbar-color: {LINE}; scrollbar-color-hover: {GOLD_DIM}; scrollbar-color-active: {GOLD}; scrollbar-corner-color: {FIELD}; }}
+TextArea:focus {{ border: round {GOLD}; }}
+Button {{ background: {GOLD}; color: #1a1206; border: none; text-style: bold; min-width: 10; height: 1; margin-right: 2; }}
+Button:hover {{ background: {GOLD_DIM}; }}
+Button:focus {{ text-style: bold reverse; }}
+Button.quiet {{ background: {PANEL}; color: {GOLD}; }}
+Button.danger {{ background: {PANEL}; color: {BAD}; }}
+Select > SelectCurrent {{ background: {FIELD}; border: round {LINE}; color: {INK}; }}
+Select:focus > SelectCurrent {{ border: round {GOLD}; background-tint: {BG} 0%; }}
+Select > SelectOverlay {{ background: {PANEL}; border: round {GOLD_DIM}; }}
+Checkbox {{ background: {BG} 0%; border: none; padding: 0 1 0 0; }}
+Checkbox:focus {{ border: none; background-tint: {BG} 0%; }}
+Checkbox:focus > .toggle--label {{ text-style: underline; background: {BG} 0%; }}
+Checkbox > .toggle--button {{ background: {FIELD}; color: {FIELD}; }}
+Checkbox.-on > .toggle--button {{ color: {GOLD}; }}
+Label.lbl {{ color: {MUTED}; margin-top: 1; }}
+VerticalScroll, OptionList {{ scrollbar-size-vertical: 1; scrollbar-background: {BG}; scrollbar-color: {LINE}; scrollbar-color-hover: {GOLD_DIM}; scrollbar-color-active: {GOLD}; }}
+OptionList {{ background: {BG}; border: none; padding: 0; }}
+OptionList:focus {{ border: none; background-tint: {BG} 0%; }}
+OptionList > .option-list--option-highlighted {{ background: {PANEL}; text-style: none; }}
+OptionList:focus > .option-list--option-highlighted {{ background: #1d2a1b; }}
+OptionList > .option-list--option-disabled {{ color: {INK}; }}
+Footer {{ background: {PANEL}; }}
+Toast {{ background: {PANEL}; border-left: outer {GOLD}; color: {INK}; }}
+Toast.-error {{ border-left: outer {BAD}; }}
+ModalScreen {{ background: rgba(0,0,0,0.6); align: center middle; }}
+.dialog {{ width: 76; max-width: 95%; height: auto; max-height: 95%; background: {PANEL}; border: round {GOLD_DIM}; padding: 1 2; }}
+.dialog .buttons {{ height: auto; margin-top: 1; }}
+"""
+
+
+def plural(n: int, word: str) -> str:
+    return f"{n} {word}{'' if n == 1 else 's'}"
+
+
+class Failed(Exception):
+    """A request failed and the person has already been told why."""
+
+
+def attempt(fn):
+    """For page actions that talk to the site: a failure becomes a message, not a crash."""
+    @functools.wraps(fn)
+    async def go(self, *a, **k):
+        try:
+            return await fn(self, *a, **k)
+        except Failed:
+            return None
+    return go
+
+
+async def fetch(app, fn, *args):
+    """Runs a site.* call off the UI thread. Signed out on the site → leave; other failures → a message and Failed."""
+    try:
+        return await asyncio.to_thread(fn, *args)
+    except site.SignedOut:
+        app.signed_out = True
+        app.exit(message="Signed out on the site. Run  sintfoap login  to sign in again.")
+        raise Failed() from None
+    except site.SiteError as e:
+        app.notify(str(e).removeprefix("the site said: ").capitalize(), severity="error", timeout=5)
+        raise Failed() from None
+
+
+def open_in_browser(app, url: str) -> None:
+    webbrowser.open(url)
+    app.notify(f"Opened {url}", timeout=3)
+
+
+class Page(Screen):
+    """A page of the site: the crest and who's signed in at the top, Esc goes back."""
+    WEB_PATH = "/dashboard"
+    BINDINGS = [
+        Binding("escape", "back", "Back"),
+        Binding("w", "web", "In browser"),
+        Binding("q", "app.quit", "Quit"),
+    ]
+
+    def top(self) -> ComposeResult:
+        with Horizontal(id="top"):
+            yield Static("✕ SINTFOAP.XYZ", id="crest")
+            yield Static(self.app.who_line(), id="who")
+
+    def set_who(self) -> None:
+        for w in self.query("#who"):
+            w.update(self.app.who_line())
+
+    def action_back(self) -> None:
+        if isinstance(self.focused, (Input, TextArea)) and self.leave_field():
+            return
+        if len(self.app.screen_stack) > 1:
+            self.app.pop_screen()
+        else:
+            self.app.exit()
+
+    def leave_field(self) -> bool:
+        """Esc in a text box: where focus goes instead of leaving the page. False to leave."""
+        return False
+
+    def action_web(self) -> None:
+        open_in_browser(self.app, site.site_url(self.WEB_PATH))
+
+    async def fetch(self, fn, *args):
+        return await fetch(self.app, fn, *args)
+
+
+# ── small dialogs ──────────────────────────────────────────────────────────
+
+class Ask(ModalScreen[str | None]):
+    """One line of text, or None if cancelled."""
+    BINDINGS = [Binding("escape", "cancel", "Cancel")]
+
+    def __init__(self, title: str, hint: str = "", value: str = "", placeholder: str = "", ok: str = "OK"):
+        super().__init__()
+        self._title, self._hint, self._value, self._ph, self._ok = title, hint, value, placeholder, ok
+
+    def compose(self) -> ComposeResult:
+        with Vertical(classes="dialog"):
+            yield Label(Text(self._title, style=f"bold {INK}"))
+            if self._hint:
+                yield Static(Text(self._hint, style=MUTED))
+            yield Input(self._value, placeholder=self._ph, id="answer")
+            with Horizontal(classes="buttons"):
+                yield Button(self._ok, id="ok")
+                yield Button("Cancel", id="cancel", classes="quiet")
+
+    def on_input_submitted(self) -> None:
+        self.dismiss(self.query_one("#answer", Input).value)
+
+    def on_button_pressed(self, e: Button.Pressed) -> None:
+        self.dismiss(self.query_one("#answer", Input).value if e.button.id == "ok" else None)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
+class Confirm(ModalScreen[bool]):
+    BINDINGS = [Binding("escape", "no", "Cancel"), Binding("y", "yes", "Yes"), Binding("n", "no", "No")]
+
+    def __init__(self, title: str, text: str = "", yes: str = "Yes", danger: bool = False):
+        super().__init__()
+        self._title, self._text, self._yes, self._danger = title, text, yes, danger
+
+    def compose(self) -> ComposeResult:
+        with Vertical(classes="dialog"):
+            yield Label(Text(self._title, style=f"bold {INK}"))
+            if self._text:
+                yield Static(Text(self._text, style=MUTED))
+            with Horizontal(classes="buttons"):
+                yield Button(self._yes, id="yes", classes="danger" if self._danger else "")
+                yield Button("Cancel", id="no", classes="quiet")
+
+    def on_mount(self) -> None:
+        self.query_one("#no" if self._danger else "#yes", Button).focus()
+
+    def on_button_pressed(self, e: Button.Pressed) -> None:
+        self.dismiss(e.button.id == "yes")
+
+    def action_yes(self) -> None:
+        self.dismiss(True)
+
+    def action_no(self) -> None:
+        self.dismiss(False)

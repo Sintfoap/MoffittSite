@@ -1,6 +1,6 @@
 # sintfoap
 
-sintfoap.xyz from the terminal: sign in, and see your dashboard as a terminal UI.
+sintfoap.xyz from the terminal: sign in, then use your dashboard, Drift, the plugin store and your account settings as a terminal UI.
 
 ```bash
 pipx install ./cli          # or: pip install ./cli    (Python 3.10+)
@@ -10,6 +10,9 @@ sintfoap                    # signs you in the first time, then opens your dashb
 | Command | |
 |---|---|
 | `sintfoap` | your dashboard (signs in first if needed) |
+| `sintfoap drift` | Drift |
+| `sintfoap store` | the plugin store |
+| `sintfoap settings` | account settings |
 | `sintfoap login` | shows a code and opens the site; approve it there |
 | `sintfoap dashboard --plain` | the dashboard as text, for scripts and pipes |
 | `sintfoap whoami` | which account this terminal is signed in as |
@@ -25,24 +28,65 @@ Without installing: `cd cli && python -m sintfoap`.
 
 ## The dashboard
 
-The same cards as `/dashboard`, in the site's colours: one per app your account can use, and your account summary (two-factor, devices, recovery codes, email). It refreshes every 30 seconds.
+The same cards as `/dashboard`, in the site's colours: one per app your account can use, and your account summary (two-factor, devices, recovery codes, email). It refreshes every 30 seconds. Drift, the plugin store and account settings open here in the terminal; anything else (like Admin) opens in your browser.
 
 | Key | |
 |---|---|
 | `tab` `↑↓←→` `hjkl` | move between cards |
-| `enter` / click | open that card's page in your browser |
-| `s` | account settings in your browser |
+| `enter` / click | open that card's page |
+| `w` | open it in your browser instead |
+| `s` | account settings |
 | `r` | refresh now |
 | `o` | sign out this terminal |
 | `q` | quit |
 
+On every page `esc` goes back, `w` opens the same page in your browser and `q` quits.
+
+## Drift
+
+Your collections down the left (`tab` to move between them, the composer and the items), with Today and Calendar on top. A collection shows its plugins' views: Checklist, Calendar and List, and Graph as a list of links. Changes made in the browser or by people you share with show up within a few seconds.
+
+The composer takes the same quick-add as the web page: `Call Sam #family +home !2 ^fri @3pm`.
+
+| Key (on the items) | |
+|---|---|
+| `a` | add an item |
+| `enter` / `e` | edit it: title, notes, tags, collection, priority, date and time |
+| `x` / `space` | tick it off |
+| `0`–`3` | priority |
+| `t` | date it today |
+| `d` | delete (`u` undoes) |
+| `v` | next view |
+| `h` | show or hide done items |
+| `>` `<` `K` `J` | List: nest, unnest, move up, move down |
+| `[` `]` `{` `}` `g` | Calendar: day, month, today |
+| `/` | search |
+| `c` | the collection's plugins and sharing (or leave one shared with you) |
+| `N` | new collection |
+
+Store plugins run only in the browser's sandbox, so their data is kept as it is here and their views are on `w`.
+
+## Plugin store
+
+`1` the store: `enter` shows a plugin and its code, `i` adds it to Drift or removes it. `2` your plugins: `n` starts one from the same example as the website, and the editor saves drafts (`ctrl+s`), submits them for review (`ctrl+r`) and withdraws or deletes them. Admins get `3`, the review queue, with each submission compared line by line to the live version and Approve or Reject (with a note). Nothing in the terminal runs plugin code; "Try it" is on the website.
+
+## Account settings
+
+Your profile, two-factor, recovery codes, email and sessions, like `/account`. Here you can change your display name, sign out every other device, or sign out this terminal. Anything that needs your password (two-factor, recovery codes, email, the password itself) opens the website instead, so the terminal never asks for it.
+
 ## Files
 
 ```
-sintfoap/site.py      signing in and out, reading the dashboard (stdlib)
-sintfoap/tui.py       the dashboard (Textual)
-sintfoap/__main__.py  the command
-tests/                python -m pytest tests
+sintfoap/site.py           signing in and out, and the site's JSON APIs (stdlib)
+sintfoap/tui.py            the app and the dashboard (Textual)
+sintfoap/look.py           colours, the top bar and dialogs every page shares
+sintfoap/drift_page.py     Drift
+sintfoap/drift_rules.py    quick-add, dates and ordering, as on the web page
+sintfoap/store_page.py     the plugin store
+sintfoap/settings_page.py  account settings
+sintfoap/__main__.py       the command
+tests/                     python -m pytest tests
+tests/devsite.mjs          the site's real Worker on localhost, for tests/test_pages.py (needs node 22)
 ```
 
-The site's side is `src/cli.js`.
+The site's side is `src/cli.js` (signing in, the dashboard and settings) and the same `/todo/api/` and `/plugins/api/` the web pages use.

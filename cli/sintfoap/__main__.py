@@ -4,6 +4,9 @@ sintfoap — sintfoap.xyz from the terminal.
   sintfoap                    your dashboard (signs in first if needed)
   sintfoap login [--site URL] sign in: shows a code to approve in your browser
   sintfoap dashboard [--plain]
+  sintfoap drift              Drift, in the terminal
+  sintfoap store              the plugin store
+  sintfoap settings           your account settings
   sintfoap whoami
   sintfoap logout             ends this terminal's session on the site
 """
@@ -50,6 +53,8 @@ def main(argv=None):
     lg.add_argument("--no-browser", action="store_true", help="just print the link")
     d = sub.add_parser("dashboard", help="your dashboard")
     d.add_argument("--plain", action="store_true", help="print it instead of opening the terminal UI")
+    for page, what in (("drift", "Drift, in the terminal"), ("store", "the plugin store"), ("settings", "your account settings")):
+        sub.add_parser(page, help=what)
     sub.add_parser("whoami")
     sub.add_parser("logout")
     args = ap.parse_args(argv)
@@ -68,11 +73,13 @@ def main(argv=None):
         else:
             if not site.load_login():
                 site.login()
-            if getattr(args, "plain", False) or not sys.stdout.isatty():
+            if cmd == "dashboard" and (getattr(args, "plain", False) or not sys.stdout.isatty()):
                 plain(site.dashboard())
+            elif not sys.stdout.isatty():
+                sys.exit(f"sintfoap {cmd} needs a terminal; try  sintfoap dashboard --plain")
             else:
                 from .tui import run
-                run()
+                run(cmd)
     except site.SiteError as e:
         sys.exit(f"sintfoap: {e}")
     except KeyboardInterrupt:

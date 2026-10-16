@@ -152,7 +152,7 @@ def run_tui(test):
     return asyncio.run(go())
 
 
-def test_terminal_dashboard_shows_the_cards_and_moves_between_them(fake, monkeypatch):
+def test_terminal_dashboard_shows_the_cards_and_opens_them_in_the_browser_with_w(fake, monkeypatch):
     sign_in(fake)
     opened = []
     monkeypatch.setattr("webbrowser.open", opened.append)
@@ -161,10 +161,11 @@ def test_terminal_dashboard_shows_the_cards_and_moves_between_them(fake, monkeyp
         assert app.focused.id == "app-0"
         assert "Welcome, Ryan M" in str(app.query_one("#welcome").render())
         assert "7 recovery codes left" in str(app.query_one("#account").render())
-        await pilot.press("enter")
+        assert app.focused.page == "drift", "Drift opens in the terminal"
+        await pilot.press("w")
         await pilot.press("down")
         assert app.focused.id == "account"
-        await pilot.press("enter")
+        await pilot.press("w")
         await pilot.press("r")
         await pilot.pause()
         assert app.focused.id == "account", "a refresh keeps your place"
