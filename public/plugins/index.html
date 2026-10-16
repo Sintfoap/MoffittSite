@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Plugin Store</title>
+<meta name="theme-color" content="#1f2030">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,380;9..144,560&family=Onest:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #eceef3; --surface: #f7f8fb; --raise: #ffffff; --line: #d9dce6; --line-2: #c7cbd8;
+  --ink: #23243a; --muted: #686b82; --faint: #9a9db0;
+  --accent: #c46a17; --accent-ink: #ffffff; --accent-soft: #f6e3cf;
+  --red: #c8423f; --amber: #b8860b; --blue: #3d64c9; --green: #3c8a4f; --violet: #7a53c2;
+  --add: #e3f1e5; --del: #f8e1e0;
+  --shadow: 0 1px 0 rgba(35,36,58,.04), 0 8px 24px -12px rgba(35,36,58,.18);
+  --radius-s: 6px; --radius-m: 10px; --radius-l: 16px;
+  --serif: "Fraunces", Georgia, serif;
+  --sans: "Onest", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #1f2030; --surface: #262839; --raise: #2d2f43; --line: #34364b; --line-2: #45475f;
+    --ink: #ece6da; --muted: #a29fb3; --faint: #6c6a82;
+    --accent: #f2a65a; --accent-ink: #1f2030; --accent-soft: #3d3330;
+    --red: #ef7b78; --amber: #f2c14e; --blue: #86a8f7; --green: #9ece6a; --violet: #c3a6f7;
+    --add: #26372b; --del: #3d2a2c;
+    --shadow: 0 1px 0 rgba(0,0,0,.2), 0 12px 32px -14px rgba(0,0,0,.6);
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #1f2030; --surface: #262839; --raise: #2d2f43; --line: #34364b; --line-2: #45475f;
+  --ink: #ece6da; --muted: #a29fb3; --faint: #6c6a82;
+  --accent: #f2a65a; --accent-ink: #1f2030; --accent-soft: #3d3330;
+  --red: #ef7b78; --amber: #f2c14e; --blue: #86a8f7; --green: #9ece6a; --violet: #c3a6f7;
+  --add: #26372b; --del: #3d2a2c;
+  --shadow: 0 1px 0 rgba(0,0,0,.2), 0 12px 32px -14px rgba(0,0,0,.6);
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--bg); color: var(--ink); font: 400 15px/1.5 var(--sans); -webkit-font-smoothing: antialiased; min-height: 100vh; }
+button, input, textarea, select { font: inherit; color: inherit; }
+button { cursor: pointer; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+[hidden] { display: none !important; }
+a { color: var(--accent); }
+
+main { padding: 36px clamp(16px, 5vw, 64px) 120px; max-width: 1180px; margin: 0 auto; }
+.top { display: flex; justify-content: space-between; align-items: center; gap: 12px; font-size: 13.5px; color: var(--muted); }
+.top a { color: var(--muted); text-decoration: none; }
+.top a:hover { color: var(--ink); }
+h1 { margin: 22px 0 6px; font: 380 clamp(36px, 6vw, 54px)/1.04 var(--serif); letter-spacing: -.02em; font-variation-settings: "opsz" 144; }
+.sub { margin: 0 0 22px; color: var(--muted); max-width: 640px; }
+
+.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin-bottom: 22px; overflow-x: auto; }
+.tabs button { border: 0; background: none; padding: 9px 12px; color: var(--muted); border-bottom: 2px solid transparent; margin-bottom: -1px; white-space: nowrap; }
+.tabs button[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--accent); font-weight: 500; }
+.tabs .n { margin-left: 6px; font-size: 12px; padding: 1px 7px; border-radius: 99px; background: var(--accent); color: var(--accent-ink); font-weight: 600; }
+
+.btn { border: 1px solid var(--line-2); background: var(--raise); border-radius: 8px; padding: 7px 13px; font-size: 14px; font-weight: 500; }
+.btn:hover { border-color: var(--muted); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.btn.danger { color: var(--red); }
+.btn:disabled { opacity: .45; cursor: default; }
+.ghost { border: 0; background: none; color: var(--muted); font-size: 13px; padding: 6px 8px; border-radius: var(--radius-s); }
+.ghost:hover { background: var(--surface); color: var(--ink); }
+
+.search { display: flex; gap: 10px; margin-bottom: 16px; }
+.search input { flex: 1; min-width: 0; padding: 9px 12px; border: 1px solid var(--line); border-radius: var(--radius-m); background: var(--raise); }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
+.card {
+  text-align: left; display: flex; flex-direction: column; gap: 6px; padding: 16px; min-height: 130px;
+  background: var(--raise); border: 1px solid var(--line); border-radius: var(--radius-m); box-shadow: var(--shadow);
+}
+.card:hover { border-color: var(--line-2); }
+.card b { font-weight: 600; }
+.card p { margin: 0; color: var(--muted); font-size: 14px; flex: 1; }
+.meta { font-size: 12.5px; color: var(--faint); display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.empty { padding: 48px 16px; text-align: center; color: var(--muted); border: 1px dashed var(--line-2); border-radius: var(--radius-m); }
+.empty b { display: block; color: var(--ink); font-weight: 500; margin-bottom: 4px; }
+
+.badge { font-size: 12px; padding: 1px 8px; border-radius: 99px; border: 1px solid currentColor; white-space: nowrap; }
+.badge.draft { color: var(--muted); }
+.badge.pending { color: var(--amber); }
+.badge.approved { color: var(--green); }
+.badge.rejected { color: var(--red); }
+
+/* ── workshop ───────────────────────────────────── */
+.workshop { display: grid; grid-template-columns: 230px minmax(0, 1fr); gap: 22px; align-items: start; }
+.mine { display: flex; flex-direction: column; gap: 4px; }
+.mine button.item {
+  display: flex; flex-direction: column; gap: 2px; text-align: left; border: 0; background: none;
+  width: 100%; padding: 8px 10px; border-radius: var(--radius-s); color: var(--muted);
+}
+.mine button.item:hover { background: var(--surface); color: var(--ink); }
+.mine button.item[aria-current="true"] { background: var(--accent-soft); color: var(--ink); }
+.mine button.item span { font-weight: 500; }
+.mine .new { margin-bottom: 8px; }
+.editor { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.fields { display: grid; grid-template-columns: 1fr 2fr; gap: 12px; }
+label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
+label input, label textarea {
+  padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--radius-s); background: var(--raise); color: var(--ink); font-size: 14.5px;
+}
+.notice { padding: 10px 12px; border-radius: var(--radius-s); border: 1px solid var(--line); background: var(--surface); font-size: 14px; }
+.notice.bad { border-color: var(--red); }
+.notice.good { border-color: var(--green); }
+.notice b { font-weight: 600; }
+
+.code {
+  display: grid; grid-template-columns: auto minmax(0, 1fr); border: 1px solid var(--line); border-radius: var(--radius-m);
+  background: var(--raise); overflow: hidden; font: 13px/1.6 var(--mono); font-variant-ligatures: none;
+}
+.code:focus-within { border-color: var(--accent); }
+.code .nums { padding: 12px 8px 12px 12px; text-align: right; color: var(--faint); user-select: none; white-space: pre; background: var(--surface); border-right: 1px solid var(--line); overflow: hidden; }
+.code textarea {
+  border: 0; outline: 0; resize: vertical; min-height: 420px; padding: 12px 14px; background: none; color: var(--ink);
+  font: inherit; white-space: pre; overflow: auto; tab-size: 2;
+}
+.code textarea[readonly] { min-height: 0; }
+.actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.actions .spacer { flex: 1; }
+.status { font-size: 13px; color: var(--faint); }
+
+/* ── review ─────────────────────────────────────── */
+.review { display: flex; flex-direction: column; gap: 18px; }
+.sub-card { padding: 18px; background: var(--raise); border: 1px solid var(--line); border-radius: var(--radius-m); box-shadow: var(--shadow); display: flex; flex-direction: column; gap: 12px; }
+.sub-card h3 { margin: 0; font-size: 17px; font-weight: 600; }
+.sub-card blockquote { margin: 0; padding: 8px 12px; border-left: 3px solid var(--line-2); color: var(--muted); white-space: pre-wrap; }
+.diff { font-variant-ligatures: none; margin: 0; max-height: 480px; overflow: auto; border: 1px solid var(--line); border-radius: var(--radius-s); font: 12.5px/1.55 var(--mono); background: var(--surface); }
+.diff div { padding: 0 12px; white-space: pre; min-height: 1.55em; }
+.diff .add { background: var(--add); }
+.diff .del { background: var(--del); }
+.diff .add::before { content: "+ "; color: var(--green); }
+.diff .del::before { content: "- "; color: var(--red); }
+.diff .same::before { content: "  "; }
+.diff .gap { color: var(--faint); font-style: italic; }
+
+dialog { border: 1px solid var(--line); border-radius: var(--radius-l); background: var(--raise); color: var(--ink); padding: 0; width: min(760px, calc(100vw - 32px)); box-shadow: var(--shadow); }
+dialog::backdrop { background: rgba(20, 20, 32, .45); }
+dialog form, dialog .body { padding: 22px; display: flex; flex-direction: column; gap: 12px; }
+dialog h2 { margin: 0; font: 500 24px/1.2 var(--serif); }
+
+.toast { position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%); padding: 9px 16px; border-radius: 99px; background: var(--ink); color: var(--bg); font-size: 14px; box-shadow: var(--shadow); }
+
+@media (max-width: 760px) {
+  .workshop { grid-template-columns: 1fr; }
+  .fields { grid-template-columns: 1fr; }
+  .code textarea { min-height: 320px; }
+}
+</style>
+</head>
+<body>
+<main>
+  <div class="top"><a href="/dashboard">← Dashboard</a><span id="who"></span></div>
+  <h1>Plugin store</h1>
+  <p class="sub">Plugins add new kinds of data and new views to Drift. Write one here, send it for review, and once it's approved anyone can find it in the store.</p>
+
+  <nav class="tabs" role="tablist">
+    <button role="tab" data-tab="store" aria-selected="true">Store</button>
+    <button role="tab" data-tab="workshop" aria-selected="false">My plugins</button>
+    <button role="tab" data-tab="review" aria-selected="false" hidden>Review<span class="n" id="waiting" hidden></span></button>
+  </nav>
+
+  <section id="tab-store">
+    <div class="search"><input id="q" type="search" placeholder="Search plugins" aria-label="Search plugins"></div>
+    <div id="store" class="grid"></div>
+  </section>
+
+  <section id="tab-workshop" hidden>
+    <div class="workshop">
+      <div class="mine">
+        <button class="btn primary new" id="new">New plugin</button>
+        <div id="mine"></div>
+      </div>
+      <div class="editor" id="editor"></div>
+    </div>
+  </section>
+
+  <section id="tab-review" hidden>
+    <div class="review" id="queue"></div>
+  </section>
+</main>
+
+<dialog id="create">
+  <form method="dialog" id="create-form">
+    <h2>New plugin</h2>
+    <label>Id<input name="id" required pattern="[a-z]{2,30}" placeholder="mood" autocomplete="off" spellcheck="false">
+      <span class="status">2 to 30 lowercase letters. It's where the plugin keeps its data on each item, and can't change later.</span></label>
+    <label>Name<input name="name" required maxlength="60" placeholder="Mood"></label>
+    <label>Description<input name="description" maxlength="300" placeholder="Note how you felt about each item."></label>
+    <div class="notice bad" id="create-error" hidden></div>
+    <div class="actions"><span class="spacer"></span><button class="btn" value="cancel" formnovalidate>Cancel</button><button class="btn primary" value="ok">Create</button></div>
+  </form>
+</dialog>
+
+<dialog id="detail"><div class="body" id="detail-body"></div></dialog>
+
+<div class="toast" id="toast" role="status" hidden></div>
+<script type="module" src="/plugins/store.js"></script>
+</body>
+</html>

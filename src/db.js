@@ -2,6 +2,37 @@
 // so a fresh database needs no manual setup.
 
 const SCHEMA = [
+  // Drift: each user's collections and items (src/drift.js). data is JSON.
+  `CREATE TABLE IF NOT EXISTS drift_collections (
+     owner   TEXT NOT NULL,          -- user id
+     id      TEXT NOT NULL,          -- "c_" + random hex
+     data    TEXT NOT NULL,
+     updated TEXT NOT NULL,
+     rev     INTEGER NOT NULL DEFAULT 0,   -- counts edits, for the sync check
+     PRIMARY KEY (owner, id)
+   )`,
+  `CREATE TABLE IF NOT EXISTS drift_items (
+     owner   TEXT NOT NULL,          -- user id
+     id      TEXT NOT NULL,          -- "i_" + random hex ("t_" for tasks brought over from todo_tasks)
+     data    TEXT NOT NULL,
+     updated TEXT NOT NULL,
+     rev     INTEGER NOT NULL DEFAULT 0,   -- counts edits, for the sync check
+     PRIMARY KEY (owner, id)
+   )`,
+  // Drift collections shared with other accounts. Items stay stored under the
+  // collection's owner; role "edit" can add and change items, "view" only reads.
+  `CREATE TABLE IF NOT EXISTS drift_shares (
+     owner      TEXT NOT NULL,       -- the collection's owner (user id)
+     collection TEXT NOT NULL,       -- collection id
+     user_id    TEXT NOT NULL,       -- who it's shared with
+     role       TEXT NOT NULL,       -- "edit" or "view"
+     created_at INTEGER NOT NULL,
+     rev        INTEGER NOT NULL DEFAULT 0,
+     PRIMARY KEY (owner, collection, user_id)
+   )`,
+  `CREATE INDEX IF NOT EXISTS drift_shares_user ON drift_shares (user_id)`,
+  // The old todo list. Rows move into drift_items the next time their owner
+  // opens Drift; rows whose owner isn't an account wait here for an admin.
   `CREATE TABLE IF NOT EXISTS todo_tasks (
      owner   TEXT NOT NULL,          -- user id (older rows: the Access email)
      id      TEXT NOT NULL,
@@ -57,16 +88,25 @@ const SCHEMA = [
      window_start INTEGER NOT NULL,
      locked_until INTEGER NOT NULL DEFAULT 0
    )`,
-  // Terminal sign-ins waiting for someone to approve them in a browser (src/cli.js).
-  `CREATE TABLE IF NOT EXISTS cli_logins (
-     code_hash  TEXT PRIMARY KEY,                  -- SHA-256 of the code the terminal polls with
-     user_code  TEXT NOT NULL,                     -- the short code shown in the terminal, e.g. "KQ7M-4TXP"
-     status     TEXT NOT NULL,                     -- "pending", "approved" or "denied"
-     user_id    TEXT,                              -- who approved it
-     name       TEXT NOT NULL,                     -- the computer's name, as the terminal sent it
-     ip         TEXT NOT NULL,
-     created_at INTEGER NOT NULL,
-     expires_at INTEGER NOT NULL
+  // The plugin store (src/store.js): shared Drift plugins and their reviewed versions.
+  `CREATE TABLE IF NOT EXISTS store_plugins (
+     id         TEXT PRIMARY KEY,                  -- lowercase letters; also its key in Drift's item.meta
+     owner      TEXT NOT NULL,                     -- user id of the author
+     created_at INTEGER NOT NULL
+   )`,
+  `CREATE TABLE IF NOT EXISTS store_versions (
+     plugin_id   TEXT NOT NULL,
+     version     INTEGER NOT NULL,                 -- 1, 2, 3, …
+     status      TEXT NOT NULL,                    -- "draft", "pending", "approved" or "rejected"
+     name        TEXT NOT NULL,
+     description TEXT NOT NULL,
+     code        TEXT NOT NULL,
+     note        TEXT,                             -- the author's note to the reviewer
+     review_note TEXT,                             -- the reviewer's reason
+     reviewed_by TEXT,                             -- user id
+     created_at  INTEGER NOT NULL,                 -- saved, or submitted once pending
+     reviewed_at INTEGER,
+     PRIMARY KEY (plugin_id, version)
    )`,
 ];
 
