@@ -72,7 +72,7 @@ class Dashboard(App):
     #top {{ height: 3; padding: 1 2 0 2; }}
     #crest {{ width: auto; color: {GOLD}; text-style: bold; }}
     #who {{ width: 1fr; content-align: right middle; color: {MUTED}; }}
-    #body {{ padding: 1 4; }}
+    #body {{ padding: 1 4; scrollbar-size-vertical: 1; scrollbar-background: {BG}; scrollbar-color: {LINE}; scrollbar-color-hover: {GOLD_DIM}; scrollbar-color-active: {GOLD}; }}
     #kicker {{ color: {GOLD}; text-style: bold; }}
     #welcome {{ color: {INK}; text-style: bold; padding: 1 0 1 0; }}
     #notice {{ display: none; border: round {BAD}; color: {BAD}; padding: 0 1; margin-bottom: 1; }}
