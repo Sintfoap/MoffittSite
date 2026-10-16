@@ -89,6 +89,24 @@ test("graph links are stored on one item and survive other plugins' edits", asyn
   assert.deepEqual((await api(b, "GET", "state")).json.items.find(i => i.id === c.id).meta.graph.links, [a.id]);
 });
 
+test("graph links can have a type and items a kind", async () => {
+  const b = await signedIn(makeEnv(), "ryan");
+  const col = await inbox(b);
+  const { json: a } = await api(b, "POST", "items", { title: "A", collection: col.id });
+  const { json: d } = await api(b, "POST", "items", { title: "D", collection: col.id });
+  const { json: c } = await api(b, "POST", "items", { title: "C", collection: col.id,
+    meta: { graph: { links: [a.id, d.id], rel: { [a.id]: "  Depends   On ", [d.id]: "" }, kind: " Person " } } });
+  assert.deepEqual(c.meta.graph, { links: [a.id, d.id], x: null, y: null, rel: { [a.id]: "depends on" }, kind: "person" },
+    "types and kinds tidied, an empty type means a plain link");
+  const { json: c2 } = await api(b, "PATCH", `items/${c.id}`, { meta: { graph: { links: [d.id] } } });
+  assert.deepEqual(c2.meta.graph, { links: [d.id], x: null, y: null }, "unlinking drops the type, and the kind can be cleared");
+  const post = graph => api(b, "POST", "items", { title: "x", collection: col.id, meta: { graph } });
+  assert.equal((await post({ links: [], rel: { [a.id]: "blocks" } })).status, 400, "a type needs its link");
+  assert.equal((await post({ links: [a.id], rel: [a.id] })).status, 400);
+  assert.equal((await post({ links: [a.id], rel: { [a.id]: 3 } })).status, 400);
+  assert.equal((await post({ links: [], kind: ["person"] })).status, 400);
+});
+
 test("deletes are undoable, and a deleted collection hides its items", async () => {
   const b = await signedIn(makeEnv(), "ryan");
   const first = await inbox(b);

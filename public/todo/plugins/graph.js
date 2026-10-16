@@ -1,32 +1,67 @@
 // Graph: link items to each other and see them as a network you can drag,
 // pan and zoom.
-// meta.graph = { links, x, y }   links: other items' ids; x, y: where you
-// pinned the node (null lets the layout place it)
+// meta.graph = { links, rel?, kind?, x, y }
+//   links  other items' ids this item links to
+//   rel    optional { id: type } for links with a type, like "depends on". A typed
+//          link points one way, from this item to the other, and is drawn as an
+//          arrow; a link with no type is a plain two-way "related" line.
+//   kind   optional type of the item itself, like "person" or "idea", which
+//          colours its node and can be filtered on
+//   x, y   where you pinned the node (null lets the layout place it)
 
 import { esc } from "../lib.js";
 
 const ID = /^[a-z]_[0-9a-z]{1,32}$/;
 const MAX_LINKS = 200;
 const SVG = "http://www.w3.org/2000/svg";
+export const LINK_TYPES = ["leads to", "depends on", "blocks", "part of"];
+const COLORS = ["blue", "green", "violet", "red", "amber"];
 const isDone = it => Boolean(it.meta.checklist?.done);
+// Lower case, single spaces, at most 32 characters; "" for none.
+export const label = s => String(s ?? "").trim().replace(/\s+/g, " ").toLowerCase().slice(0, 32);
+// The same name always gets the same colour.
+const colorOf = name => {
+  let h = 0; for (const c of name) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+  return `var(--${COLORS[h % COLORS.length]})`;
+};
+const blank = () => ({ links: [], x: null, y: null });
+const typeOf = (g, to) => g?.rel?.[to] || "";
 
 // Every link once, whichever item it's stored on, between items in view.
-function edges(items) {
+// A plain link between two items is one line whichever side stores it;
+// typed links keep their direction.
+export function edges(items) {
   const here = new Set(items.map(it => it.id)), seen = new Set(), out = [];
   for (const it of items) for (const to of it.meta.graph?.links || []) {
     if (to === it.id || !here.has(to)) continue;
-    const key = it.id < to ? `${it.id} ${to}` : `${to} ${it.id}`;
-    if (!seen.has(key)) { seen.add(key); out.push([it.id, to]); }
+    const type = typeOf(it.meta.graph, to);
+    const key = type ? `${it.id}>${to}>${type}` : it.id < to ? `${it.id} ${to}` : `${to} ${it.id}`;
+    if (!seen.has(key)) { seen.add(key); out.push({ a: it.id, b: to, type }); }
   }
   return out;
 }
 
-// Links a to b, or unlinks them if they're already linked (from either side).
-function toggleLink(a, b, ctx) {
-  const ga = a.meta.graph || { links: [], x: null, y: null }, gb = b.meta.graph || { links: [], x: null, y: null };
-  if (ga.links.includes(b.id)) return ctx.setMeta(a.id, "graph", { ...ga, links: ga.links.filter(x => x !== b.id) });
-  if (gb.links.includes(a.id)) return ctx.setMeta(b.id, "graph", { ...gb, links: gb.links.filter(x => x !== a.id) });
-  return ctx.setMeta(a.id, "graph", { ...ga, links: [...ga.links, b.id] });
+function withLink(g, to, type) {
+  const rel = { ...(g.rel || {}) };
+  if (type) rel[to] = type; else delete rel[to];
+  const out = { ...g, links: g.links.includes(to) ? g.links : [...g.links, to], rel };
+  if (!Object.keys(rel).length) delete out.rel;
+  return out;
+}
+function withoutLink(g, to) {
+  const rel = { ...(g.rel || {}) }; delete rel[to];
+  const out = { ...g, links: g.links.filter(x => x !== to), rel };
+  if (!Object.keys(rel).length) delete out.rel;
+  return out;
+}
+
+// Links a to b as `type` ("" for a plain link). Doing the same link again
+// removes it; a different type replaces the link a stores to b.
+export function toggleLink(a, b, type, ctx) {
+  const ga = a.meta.graph || blank(), gb = b.meta.graph || blank();
+  if (ga.links.includes(b.id) && typeOf(ga, b.id) === type) return ctx.setMeta(a.id, "graph", withoutLink(ga, b.id));
+  if (!type && gb.links.includes(a.id) && !typeOf(gb, a.id)) return ctx.setMeta(b.id, "graph", withoutLink(gb, a.id));
+  return ctx.setMeta(a.id, "graph", withLink(ga, b.id, type));
 }
 
 // The live view. Lives between renders so the layout, zoom and any drag in
@@ -35,19 +70,31 @@ class GraphView {
   constructor(el, ctx) {
     this.ctx = ctx; this.nodes = new Map(); this.links = [];
     this.zoom = { k: 1, x: 0, y: 0 }; this.linkFrom = null; this.linking = false;
+    this.hidden = new Set();                                         // "k:<kind>" and "t:<link type>" switched off
     el.innerHTML = `<div class="graph">
       <div class="graph-bar">
         <button class="ghost" data-g="link" aria-pressed="false">Link items</button>
+        <label class="as">as <input data-g="type" list="graph-types" placeholder="related" size="11" aria-label="Type of link to make"></label>
+        <datalist id="graph-types">${LINK_TYPES.map(t => `<option value="${esc(t)}">`).join("")}</datalist>
         <button class="ghost" data-g="fit">Fit</button>
         <button class="ghost" data-g="in" aria-label="Zoom in">+</button>
         <button class="ghost" data-g="out" aria-label="Zoom out">−</button>
         <span class="hint" data-g="hint">Drag to move, scroll to zoom, click to open.</span>
       </div>
+      <div class="graph-legend" data-g="legend"></div>
       <svg role="img" aria-label="Graph of linked items"><g class="vp"><g class="edges"></g><g class="nodes"></g></g></svg>
     </div>`;
     this.svg = el.querySelector("svg"); this.vp = el.querySelector(".vp");
     this.gEdges = el.querySelector(".edges"); this.gNodes = el.querySelector(".nodes");
     this.hint = el.querySelector('[data-g="hint"]'); this.linkBtn = el.querySelector('[data-g="link"]');
+    this.typeIn = el.querySelector('[data-g="type"]'); this.legend = el.querySelector('[data-g="legend"]');
+    this.typeIn.addEventListener("focus", () => { if (!this.linking) this.setLinking(true); });
+    this.legend.addEventListener("click", e => {
+      const b = e.target.closest("[data-hide]"); if (!b) return;
+      const k = b.dataset.hide;
+      if (this.hidden.has(k)) this.hidden.delete(k); else this.hidden.add(k);
+      this.sync(this.ctx);
+    });
     el.querySelector(".graph-bar").addEventListener("click", e => {
       const b = e.target.closest("[data-g]"); if (!b) return;
       if (b.dataset.g === "link") this.setLinking(!this.linking);
@@ -61,14 +108,16 @@ class GraphView {
   setLinking(on) {
     this.linking = on; this.linkFrom = null;
     this.linkBtn.setAttribute("aria-pressed", on);
-    this.hint.textContent = on ? "Click one item, then another, to link or unlink them." : "Drag to move, scroll to zoom, click to open.";
+    this.hint.textContent = on ? "Click one item, then the one it points to. Again to unlink." : "Drag to move, scroll to zoom, click to open.";
     this.paint();
   }
 
   // Brings nodes and links in line with the items, keeping positions.
   sync(ctx, first = false) {
     this.ctx = ctx;
-    const items = ctx.items, w = this.svg.clientWidth || 800, h = this.svg.clientHeight || 520;
+    this.drawLegend(ctx.items);
+    const items = ctx.items.filter(it => !this.hidden.has("k:" + (it.meta.graph?.kind || ""))),
+      w = this.svg.clientWidth || 800, h = this.svg.clientHeight || 520;
     const keep = new Set(items.map(it => it.id));
     for (const id of [...this.nodes.keys()]) if (!keep.has(id)) this.nodes.delete(id);
     items.forEach((it, i) => {
@@ -83,20 +132,38 @@ class GraphView {
       n.pinned = g && Number.isFinite(g.x) && Number.isFinite(g.y);
       if (n.pinned && !n.dragging) { n.x = g.x; n.y = g.y; }
     });
-    this.links = edges(items);
+    this.links = edges(items).filter(e => !this.hidden.has("t:" + e.type));
     this.draw();
     this.heat(first ? 1 : 0.4);
     if (first) requestAnimationFrame(() => this.fit());
   }
 
+  // Kinds of item and types of link in view, as switches that hide or show them.
+  drawLegend(items) {
+    const kinds = new Set(items.map(it => it.meta.graph?.kind || "").filter(Boolean));
+    const types = new Set(edges(items).map(e => e.type));
+    const chip = (key, name, color, arrow) => `<button class="ghost" data-hide="${esc(key)}" aria-pressed="${!this.hidden.has(key)}" style="--c:${color}">${
+      arrow ? `<i class="arrow"></i>` : `<i class="dot"></i>`}${esc(name)}</button>`;
+    const html = (kinds.size ? `<span class="hint">Kinds</span>` + [...kinds].sort().map(k => chip("k:" + k, k, colorOf(k))).join("") : "")
+      + (types.size > 1 || [...types].some(Boolean) ? `<span class="hint">Links</span>` + [...types].sort().map(t => chip("t:" + t, t || "related", t ? colorOf(t) : "var(--line-2)", Boolean(t))).join("") : "");
+    this.legend.innerHTML = html;
+    this.legend.hidden = !html;
+  }
+
   draw() {
-    this.gEdges.replaceChildren(...this.links.map(([a, b]) => {
-      const l = document.createElementNS(SVG, "line"); l.dataset.a = a; l.dataset.b = b; return l;
+    this.gEdges.replaceChildren(...this.links.map(({ a, b, type }) => {
+      const g = document.createElementNS(SVG, "g");
+      g.dataset.a = a; g.dataset.b = b;
+      g.setAttribute("class", type ? "edge typed" : "edge");
+      if (type) g.setAttribute("style", `--c:${colorOf(type)}`);
+      g.innerHTML = `<line></line>${type ? `<path class="arrow" d="M0 0L-9 -4.5L-9 4.5Z"></path><text>${esc(type)}</text>` : ""}`;
+      return g;
     }));
     this.gNodes.replaceChildren(...[...this.nodes.values()].map(n => {
-      const g = document.createElementNS(SVG, "g");
+      const g = document.createElementNS(SVG, "g"), kind = n.item.meta.graph?.kind;
       g.dataset.id = n.id;
-      g.innerHTML = `<circle r="9"></circle><text x="14" y="4">${esc(n.item.title.length > 40 ? n.item.title.slice(0, 39) + "…" : n.item.title)}</text>`;
+      if (kind) g.setAttribute("style", `--c:${colorOf(kind)}`);
+      g.innerHTML = `<title>${esc(n.item.title)}${kind ? ` (${esc(kind)})` : ""}</title><circle r="9"></circle><text x="14" y="4">${esc(n.item.title.length > 40 ? n.item.title.slice(0, 39) + "…" : n.item.title)}</text>`;
       return g;
     }));
     this.paint();
@@ -105,9 +172,17 @@ class GraphView {
   paint() {
     const { k, x, y } = this.zoom;
     this.vp.setAttribute("transform", `translate(${x} ${y}) scale(${k})`);
-    for (const l of this.gEdges.children) {
-      const a = this.nodes.get(l.dataset.a), b = this.nodes.get(l.dataset.b);
-      l.setAttribute("x1", a.x); l.setAttribute("y1", a.y); l.setAttribute("x2", b.x); l.setAttribute("y2", b.y);
+    for (const e of this.gEdges.children) {
+      const a = this.nodes.get(e.dataset.a), b = this.nodes.get(e.dataset.b), [l, arrow, text] = e.children;
+      const dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy) || 1;
+      const end = arrow ? Math.max(0, d - 12) / d : 1;                // stop arrows at the node's edge
+      l.setAttribute("x1", a.x); l.setAttribute("y1", a.y); l.setAttribute("x2", a.x + dx * end); l.setAttribute("y2", a.y + dy * end);
+      if (arrow) {
+        const deg = Math.atan2(dy, dx) * 180 / Math.PI;
+        arrow.setAttribute("transform", `translate(${a.x + dx * end} ${a.y + dy * end}) rotate(${deg})`);
+        const flip = deg > 90 || deg < -90;                           // keep labels the right way up
+        text.setAttribute("transform", `translate(${(a.x + b.x) / 2} ${(a.y + b.y) / 2}) rotate(${flip ? deg + 180 : deg}) translate(0 -5)`);
+      }
     }
     for (const g of this.gNodes.children) {
       const n = this.nodes.get(g.dataset.id);
@@ -129,7 +204,7 @@ class GraphView {
       const f = 2500 / d2 * a, d = Math.sqrt(d2); dx /= d; dy /= d;
       p.vx -= dx * f; p.vy -= dy * f; q.vx += dx * f; q.vy += dy * f;
     }
-    for (const [ia, ib] of this.links) {
+    for (const { a: ia, b: ib } of this.links) {
       const p = this.nodes.get(ia), q = this.nodes.get(ib), dx = q.x - p.x, dy = q.y - p.y, d = Math.hypot(dx, dy) || 1;
       const f = (d - 110) * 0.04 * a;
       p.vx += dx / d * f; p.vy += dy / d * f; q.vx -= dx / d * f; q.vy -= dy / d * f;
@@ -186,12 +261,12 @@ class GraphView {
       if (d.pan) return;
       d.n.dragging = false;
       if (d.moved && !this.linking) {                               // pin it where it was dropped
-        const g = d.n.item.meta.graph || { links: [] };
-        this.ctx.setMeta(d.n.id, "graph", { links: g.links || [], x: Math.round(d.n.x), y: Math.round(d.n.y) });
+        const g = d.n.item.meta.graph || blank();
+        this.ctx.setMeta(d.n.id, "graph", { ...g, x: Math.round(d.n.x), y: Math.round(d.n.y) });
       } else if (this.linking) {
         if (!this.linkFrom) { this.linkFrom = d.n.id; this.paint(); }
         else if (this.linkFrom === d.n.id) { this.linkFrom = null; this.paint(); }
-        else { toggleLink(this.nodes.get(this.linkFrom).item, d.n.item, this.ctx); this.linkFrom = null; }
+        else { toggleLink(this.nodes.get(this.linkFrom).item, d.n.item, label(this.typeIn.value), this.ctx); this.linkFrom = null; }
       } else this.ctx.open(d.n.id);
     };
     this.svg.addEventListener("pointerup", end);
@@ -220,33 +295,67 @@ export default {
     if (!Array.isArray(links) || links.length > MAX_LINKS) fail(`graph.links must be a list of at most ${MAX_LINKS} item ids`);
     const ids = [...new Set(links.map(String))];
     if (ids.some(id => !ID.test(id))) fail("graph.links must be item ids");
+    const relIn = v.rel == null ? {} : v.rel;
+    if (typeof relIn !== "object" || Array.isArray(relIn)) fail("graph.rel must be an object of item id to link type");
+    const rel = {};
+    for (const [to, t] of Object.entries(relIn)) {
+      if (!ids.includes(to)) fail("graph.rel can only type links in graph.links");
+      if (typeof t !== "string") fail("graph.rel types must be text");
+      if (label(t)) rel[to] = label(t);
+    }
+    if (v.kind != null && typeof v.kind !== "string") fail("graph.kind must be text");
+    const kind = label(v.kind);
     const coord = c => {
       if (c == null || c === "") return null;
       const n = Number(c);
       if (!Number.isFinite(n) || Math.abs(n) > 1e6) fail("graph.x and graph.y must be numbers");
       return Math.round(n);
     };
-    return { links: ids, x: coord(v.x), y: coord(v.y) };
+    const out = { links: ids, x: coord(v.x), y: coord(v.y) };
+    if (Object.keys(rel).length) out.rel = rel;
+    if (kind) out.kind = kind;
+    return out;
   },
 
   fresh: () => ({ links: [], x: null, y: null }),
 
   chips(item, ctx) {
-    const n = item.meta.graph.links.length + ctx.all.filter(o => o.meta.graph?.links.includes(item.id)).length;
-    return n ? [`<span class="chip">${n} link${n === 1 ? "" : "s"}</span>`] : [];
+    const g = item.meta.graph, n = g.links.length + ctx.all.filter(o => o.meta.graph?.links.includes(item.id)).length;
+    return [
+      ...(g.kind ? [`<span class="chip" style="color:${colorOf(g.kind)}">${esc(g.kind)}</span>`] : []),
+      ...(n ? [`<span class="chip">${n} link${n === 1 ? "" : "s"}</span>`] : []),
+    ];
   },
 
-  // Links stored on this item, as tick boxes. Links other items made to this
-  // one are listed below; unlink those from the other item or in the graph.
+  // The item's kind, then links stored on this item as tick boxes, each with
+  // an optional type. Links other items made to this one are listed below;
+  // change those from the other item or in the graph.
   editor(item, ctx) {
-    const g = item.meta.graph, others = ctx.all.filter(o => o.collection === item.collection && o.id !== item.id);
+    const g = item.meta.graph, mates = ctx.all.filter(o => o.collection === item.collection);
+    const others = mates.filter(o => o.id !== item.id);
+    const kinds = [...new Set(mates.map(o => o.meta.graph?.kind).filter(Boolean))].sort();
+    const types = [...new Set([...LINK_TYPES, ...mates.flatMap(o => Object.values(o.meta.graph?.rel || {}))])];
     const from = ctx.all.filter(o => o.meta.graph?.links.includes(item.id));
     return `<input type="hidden" name="x" value="${g.x ?? ""}"><input type="hidden" name="y" value="${g.y ?? ""}">
-      ${others.length ? `<div class="picks">${others.map(o => `<label class="inline"><input type="checkbox" name="links" value="${esc(o.id)}" ${g.links.includes(o.id) ? "checked" : ""}> ${esc(o.title)}</label>`).join("")}</div>`
+      <label>Kind<input name="kind" value="${esc(g.kind || "")}" list="graph-kinds-ed" placeholder="Like person, idea or place" maxlength="32"></label>
+      <datalist id="graph-kinds-ed">${kinds.map(k => `<option value="${esc(k)}">`).join("")}</datalist>
+      <datalist id="graph-types-ed">${types.map(t => `<option value="${esc(t)}">`).join("")}</datalist>
+      ${others.length ? `<div class="picks links">${others.map(o => `<span class="linkpick"><label class="inline"><input type="checkbox" name="links" value="${esc(o.id)}" ${g.links.includes(o.id) ? "checked" : ""}> ${esc(o.title)}</label>
+          <input name="rel:${esc(o.id)}" value="${esc(typeOf(g, o.id))}" list="graph-types-ed" placeholder="related" maxlength="32" aria-label="Type of link to ${esc(o.title)}"></span>`).join("")}</div>
+          <p class="hint">A link with a type, like “depends on”, points from this item to the other one.</p>`
         : `<p class="hint">Add more items to this collection to link them.</p>`}
-      ${from.length ? `<p class="hint">Also linked from ${from.map(o => `“${esc(o.title)}”`).join(", ")}.</p>` : ""}`;
+      ${from.length ? `<p class="hint">Linked from ${from.map(o => `“${esc(o.title)}”${typeOf(o.meta.graph, item.id) ? ` (${esc(typeOf(o.meta.graph, item.id))})` : ""}`).join(", ")}.</p>` : ""}`;
   },
-  read: f => ({ links: f.links || [], x: f.x === "" ? null : f.x, y: f.y === "" ? null : f.y }),
+  read(f) {
+    // Giving a link a type ticks it too.
+    const typed = Object.keys(f).filter(k => k.startsWith("rel:") && label(f[k])).map(k => k.slice(4));
+    const links = [...new Set([...(f.links || []), ...typed])], rel = {};
+    for (const to of links) if (label(f["rel:" + to])) rel[to] = label(f["rel:" + to]);
+    const out = { links, x: f.x === "" ? null : f.x, y: f.y === "" ? null : f.y };
+    if (Object.keys(rel).length) out.rel = rel;
+    if (label(f.kind)) out.kind = label(f.kind);
+    return out;
+  },
 
   view: {
     label: "Graph",

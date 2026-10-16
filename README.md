@@ -121,7 +121,7 @@ Drift lives at `/todo/`. Everything in it is an **item**: a title, notes, tags a
 | Checklist (`checklist`) | `{done, done_at, priority}` | open and done items, tick boxes |
 | Events (`event`) | `{start, end}`, as `YYYY-MM-DD` or `YYYY-MM-DDTHH:MM` | month calendar; the picked day shown by the hour, with a "No set time" list for undated-time items; an agenda |
 | List (`list`) | `{order, parent}` | an outline you reorder and nest |
-| Graph (`graph`) | `{links, x, y}`: linked item ids, and where you pinned it | a network you drag, pan and zoom; "Link items" links or unlinks two items |
+| Graph (`graph`) | `{links, rel?, kind?, x, y}`: linked item ids, an optional type per link (`{id: "depends on"}`, which makes it point one way), an optional kind for the item, and where you pinned it | a network you drag, pan and zoom; "Link items" links or unlinks two items, as a plain link or a typed arrow; kinds colour the nodes, and the legend hides kinds and link types |
 
 Each **collection** picks which plugins are on, and shows a tab for each one's view. One item can carry several plugins' metadata at once, so a dated checklist item is also on the calendar. **Today** and **Calendar** in the sidebar show events from every collection.
 

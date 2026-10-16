@@ -23,7 +23,7 @@ from . import drift_rules as R
 from .look import BAD, FAINT, GOLD, GOLD_DIM, GOOD, INK, LINE, MUTED, PRI, Confirm, Failed, Page, attempt, fetch, plural
 
 POLL_EVERY = 5      # seconds between "did anything change?" checks, like the web page
-TAG, COL = "#8fb3d9", "#b79ad6"
+TAG, COL, KIND = "#8fb3d9", "#b79ad6", "#c3a6f7"
 STARTER = ["checklist", "event", "list", "graph"]
 
 
@@ -642,8 +642,11 @@ class DriftPage(Page):
             linked = [it for it in shown if it["meta"].get("graph")]
             opts.append(Option(header("Items", len(linked) or ""), disabled=True))
             for it in linked:
-                links = [titles[x] for x in it["meta"]["graph"].get("links", []) if x in titles]
-                opts.append(Option(item_row(it, col_name=name_of(it), links=links), id=it["id"]))
+                g = it["meta"]["graph"]
+                rel = g.get("rel") or {}
+                links = [(f"{rel[x]} " if rel.get(x) else "") + titles[x] for x in g.get("links", []) if x in titles]
+                kind = [(g["kind"], KIND)] if g.get("kind") else []
+                opts.append(Option(item_row(it, col_name=name_of(it), links=links, extra=kind), id=it["id"]))
         else:
             if shown:
                 group("Items", shown)
