@@ -5,10 +5,12 @@
 // through here: the sign-in pages (src/account.js), /login/status for the
 // homepage's sign-in link, and /todo, which needs a signed-in account with the
 // "todo" area before the page or API is served. /plugins (the plugin store,
-// src/store.js) is open to the same accounts.
+// src/store.js) is open to the same accounts. /login/cli is signing in from a
+// terminal (src/cli.js).
 import { plugins } from "./store.js";
 import { protect, handleAuth, AUTH_PATHS, sameOrigin } from "./account.js";
 import { currentSession } from "./auth.js";
+import { handleCli, CLI_PATHS } from "./cli.js";
 import { state, version, createItem, updateItem, createCollection, updateCollection, shareCollection, unshareCollection, readJson, BadRequest, ID } from "./drift.js";
 
 // /todo/api/state, /todo/api/version, /todo/api/items[/<id>],
@@ -35,6 +37,7 @@ export default {
       return protect(request, env, "todo", user => plugins(request, env, user, pathname));
     }
     if (pathname === "/login/status") return loginStatus(request, env);
+    if (CLI_PATHS.test(pathname)) return handleCli(request, env);
     if (AUTH_PATHS.test(pathname)) return handleAuth(request, env);
     return env.ASSETS.fetch(request);
   },
