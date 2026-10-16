@@ -15,14 +15,15 @@
 
 import { db, now } from "./db.js";
 import { sameOrigin } from "./account.js";
+import { BY_ID } from "../public/todo/plugins/index.js";
 
 export class BadRequest extends Error {}
 const fail = msg => { throw new BadRequest(msg); };
 
 const LIMITS = { name: 60, description: 300, note: 1000, code: 64 * 1024, body: 80 * 1024, plugins: 20 };
 export const PLUGIN_ID = /^[a-z]{2,30}$/;
-// Ids Drift's own plugins use or may use. Store plugins can't take them.
-const RESERVED = new Set(["checklist", "event", "events", "list", "graph", "meta", "core", "drift", "store", "plugin", "plugins"]);
+// Ids Drift's own plugins use, and a few it may want. Store plugins can't take them.
+const RESERVED = new Set([...Object.keys(BY_ID), "events", "meta", "core", "drift", "store", "plugin", "plugins"]);
 
 const isObj = v => v && typeof v === "object" && !Array.isArray(v);
 

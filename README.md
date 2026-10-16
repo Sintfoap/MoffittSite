@@ -10,6 +10,7 @@ public/          the website, served as static files
     app.js           the page: collections, views, item dialog
     lib.js           dates and quick-add parsing
     plugins/         Checklist, Events, List, Graph; one file each
+  plugins/         the plugin store page (signed-in Drift users)
 src/             the Worker: runs only for the paths in run_worker_first
   worker.js        routing: sign-in pages, then /todo behind protect()
   account.js       /login /signup /logout /dashboard /account /admin, and protect()
@@ -19,6 +20,7 @@ src/             the Worker: runs only for the paths in run_worker_first
   pages.js         the sign-in, dashboard and account pages
   db.js            D1 tables (created on first use)
   drift.js         Drift storage: collections and items per account
+  store.js         the plugin store: drafts, review queue, approved plugins
   vendor/uqr.mjs   QR codes for two-factor setup (MIT)
 apps/todo-esque/ the original Drift app (Python engine, terminal UI, CLI)
 tests/           node --no-warnings --test tests/*.test.mjs
@@ -142,3 +144,24 @@ All endpoints act only on the signed-in user's own data.
 The first time someone opens Drift, their old tasks (`todo_tasks`) move over: each project becomes a collection (no project goes to Inbox), done and priority become Checklist metadata, and a due date becomes an all-day event. Tasks an admin moves to an account later move over the same way.
 
 `apps/todo-esque/` is the original standalone Drift (Python, terminal UI, sync folder). It isn't deployed and doesn't share data with the site.
+
+## Plugin store
+
+`/plugins/` is where people share Drift plugins. Anyone with the `todo` area can use it.
+
+- **Writing:** "My plugins" has an editor in the browser. A new plugin starts from a small working example. Saving keeps a private draft.
+- **Review:** "Submit for review" sends the draft to the queue. Admins see a Review tab with each submission's code, compared line by line with the version that's live. Approving puts it in the store; rejecting needs a note, which the author sees.
+- **Versions:** edits after approval stay private until the next approval, so the store always serves code an admin has read. Deleting a plugin, or its author's account, takes it out of the store.
+- **Safety:** plugin code is stored and shown only as text. Nothing runs it yet. The page has a strict Content-Security-Policy (no inline scripts) because it shows other people's code.
+
+| Method | Path | Body |
+|---|---|---|
+| GET | `/plugins/api/state` | |
+| GET | `/plugins/api/store/<id>` | (the approved version, with code) |
+| POST | `/plugins/api/mine` | `{id, name, description, code}` |
+| PATCH | `/plugins/api/mine/<id>` | any of `{name, description, code}` |
+| DELETE | `/plugins/api/mine/<id>` | |
+| POST | `/plugins/api/mine/<id>/submit` | `{note}` |
+| POST | `/plugins/api/mine/<id>/withdraw` | |
+| GET | `/plugins/api/review` | admins only |
+| POST | `/plugins/api/review/<id>/<version>` | admins only: `{decision: "approve" \| "reject", note}` |
