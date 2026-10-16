@@ -6,11 +6,12 @@
 // homepage's sign-in link, and /todo, which needs a signed-in account with the
 // "todo" area before the page or API is served. /plugins (the plugin store,
 // src/store.js) is open to the same accounts. /login/cli is signing in from a
-// terminal (src/cli.js).
+// terminal (src/cli.js). /chat (src/chat.js) is open to the same accounts.
 import { plugins, installed, install, uninstall, PLUGIN_ID, SANDBOX_CSP } from "./store.js";
 import { protect, handleAuth, AUTH_PATHS, sameOrigin } from "./account.js";
 import { currentSession } from "./auth.js";
 import { handleCli, CLI_PATHS } from "./cli.js";
+import { chat } from "./chat.js";
 import { state, version, createItem, updateItem, createCollection, updateCollection, shareCollection, unshareCollection, readJson, BadRequest, ID } from "./drift.js";
 
 // /todo/api/state, /todo/api/version, /todo/api/items[/<id>],
@@ -35,6 +36,13 @@ export default {
     }
     if (pathname.startsWith("/plugins/")) {
       return protect(request, env, "todo", user => plugins(request, env, user, pathname));
+    }
+    if (pathname === "/chat") {
+      url.pathname = "/chat/";
+      return Response.redirect(url.toString(), 308);
+    }
+    if (pathname.startsWith("/chat/")) {
+      return protect(request, env, "todo", user => chat(request, env, user, pathname));
     }
     // The frame store plugins run in. It holds no data and needs no sign-in.
     if (pathname.startsWith("/sandbox/")) return sandbox(request, env);

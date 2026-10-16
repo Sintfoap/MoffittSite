@@ -126,6 +126,37 @@ const SCHEMA = [
      installed_at INTEGER NOT NULL,
      PRIMARY KEY (owner, plugin_id)
    )`,
+  // Chat (src/chat.js). Every change in a room (a new or deleted message)
+  // takes the room's next seq, so a client asking "since N" sees both.
+  `CREATE TABLE IF NOT EXISTS chat_rooms (
+     id         TEXT PRIMARY KEY,                  -- "r_" + random hex
+     name       TEXT NOT NULL,
+     topic      TEXT NOT NULL DEFAULT '',
+     owner      TEXT NOT NULL,                     -- user id of whoever made it
+     seq        INTEGER NOT NULL DEFAULT 0,        -- last change number in this room
+     created_at INTEGER NOT NULL,
+     last_at    INTEGER NOT NULL                   -- newest message (or creation), for sorting
+   )`,
+  `CREATE TABLE IF NOT EXISTS chat_members (
+     room      TEXT NOT NULL,
+     user_id   TEXT NOT NULL,
+     joined_at INTEGER NOT NULL,
+     read_seq  INTEGER NOT NULL DEFAULT 0,         -- how far they've read, for unread counts
+     PRIMARY KEY (room, user_id)
+   )`,
+  `CREATE INDEX IF NOT EXISTS chat_members_user ON chat_members (user_id)`,
+  `CREATE TABLE IF NOT EXISTS chat_messages (
+     id         INTEGER PRIMARY KEY AUTOINCREMENT, -- also the order messages are shown in
+     room       TEXT NOT NULL,
+     user_id    TEXT NOT NULL,
+     body       TEXT NOT NULL,                     -- '' once deleted
+     deleted    INTEGER NOT NULL DEFAULT 0,
+     seq        INTEGER NOT NULL,                  -- the room's seq when this row last changed
+     created_at INTEGER NOT NULL
+   )`,
+  `CREATE INDEX IF NOT EXISTS chat_messages_room ON chat_messages (room, id)`,
+  `CREATE INDEX IF NOT EXISTS chat_messages_seq ON chat_messages (room, seq)`,
+  `CREATE INDEX IF NOT EXISTS chat_messages_user ON chat_messages (user_id, created_at)`,
 ];
 
 // Columns added after a table first shipped. CREATE TABLE IF NOT EXISTS
