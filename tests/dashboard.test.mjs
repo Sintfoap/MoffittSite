@@ -1,7 +1,7 @@
 // The dashboard's "Today" card and account checks.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { Browser, makeEnv } from "./helpers.mjs";
+import { Browser, makeEnv, grantApps } from "./helpers.mjs";
 
 const day = n => new Date(Date.now() + n * 864e5).toISOString().slice(0, 10);
 
@@ -42,6 +42,7 @@ test("Drift, the plugin store and chat get the dashboard's rail, Chat included",
   const marked = { fetch: async () => new Response("<!doctype html><body><!--site-rail--><main></main></body>", { headers: { "Content-Type": "text/html", ETag: '"x"' } }) };
   const env = makeEnv({ ASSETS: marked }), b = new Browser(env);
   await b.signup("ryan", "correct horse battery", "Ryan Moffitt");
+  grantApps(env, "ryan", "plugins", "chat");
   for (const [path, here] of [["/todo/", "Drift"], ["/plugins/", "Plugin store"], ["/chat/", "Chat"]]) {
     const r = await b.get(path);
     assert.equal(r.status, 200, path);

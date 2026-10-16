@@ -2,7 +2,7 @@
 // Run with:  node --no-warnings --test tests/*.test.mjs
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { Browser, makeEnv, sqlOne, run, enable2fa } from "./helpers.mjs";
+import { Browser, makeEnv, sqlOne, run, enable2fa, grantApps } from "./helpers.mjs";
 import { APPS } from "../src/auth.js";
 
 // A terminal: no Origin header, no cookie jar; it sends its token as the session cookie.
@@ -151,6 +151,7 @@ test("one address can only have a few codes waiting", async () => {
 test("the terminal dashboard shows what /dashboard does", async () => {
   const env = makeEnv(), b = new Browser(env), term = new Terminal(env);
   await b.signup("ryan", undefined, "Ryan M");
+  grantApps(env, "ryan", "plugins", "chat");
   assert.equal((await term.get("/login/cli/dashboard")).status, 401);
   const s = await term.start();
   await approve(b, s.json.user_code);
@@ -159,8 +160,8 @@ test("the terminal dashboard shows what /dashboard does", async () => {
   const d = (await term.get("/login/cli/dashboard")).json;
   assert.equal(d.site, "https://sintfoap.test");
   assert.deepEqual(d.user, { username: "ryan", display_name: "Ryan M", admin: false });
-  // The same apps, in the same order, as the web dashboard gives a "todo" account.
-  assert.deepEqual(d.apps.map(a => [a.name, a.url]), APPS.filter(a => a.area === "todo").map(a => [a.name, "https://sintfoap.test" + a.href]));
+  // The same apps, in the same order, as the web dashboard shows this account.
+  assert.deepEqual(d.apps.map(a => [a.name, a.url]), APPS.filter(a => a.id !== "admin").map(a => [a.name, "https://sintfoap.test" + a.href]));
   assert.ok(d.apps.some(a => a.name === "Drift"));
   assert.equal(d.account.two_factor, false);
   assert.equal(d.account.sessions, 2, "the browser and the terminal");

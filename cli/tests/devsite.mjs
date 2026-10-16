@@ -8,12 +8,13 @@
 // serves until it's stopped. "sam" has an approved plugin, "stars", in the store.
 import http from "node:http";
 import worker from "../../src/worker.js";
-import { Browser, makeEnv, sqlOne, run } from "../../tests/helpers.mjs";
+import { Browser, makeEnv, sqlOne, run, grantApps } from "../../tests/helpers.mjs";
 
 const env = makeEnv();
 const ryan = new Browser(env), sam = new Browser(env);
 await ryan.signup("ryan", undefined, "Ryan M");
 await sam.signup("sam", undefined, "Sam");
+for (const who of ["ryan", "sam"]) grantApps(env, who, "plugins", "chat");
 const id = name => sqlOne(env, "SELECT id FROM users WHERE username = ?", name).id;
 
 // sam's plugin, approved by an admin (made straight in the database).

@@ -55,7 +55,7 @@ Branch builds run `npx wrangler preview`, which uses the `previews` section of `
 
 The site has its own login. There's no Cloudflare Access.
 
-- **Accounts:** anyone can create one at `/signup` while `SIGNUPS` is `"open"`, up to `MAX_USERS`. New accounts get the `todo` area, so each person has their own todo list.
+- **Accounts:** anyone can create one at `/signup` while `SIGNUPS` is `"open"`, up to `MAX_USERS`. New accounts get Drift (the `todo` area); every other app starts off until an admin turns it on.
 - **Passwords** are stored as salted PBKDF2-SHA256 hashes. `PASSWORD_ITERATIONS` sets the strength, at most 100,000, which is the Workers limit. On the Workers free plan (10 ms of CPU per request) a sign-in at 100,000 takes about 18 ms. If sign-ins fail with "exceeded resource limits", lower it, e.g. to `50000`. Existing hashes are upgraded or downgraded at each person's next sign-in.
 - **Sessions** use a `__Host-sid` cookie: HttpOnly, Secure and SameSite=Lax. The database stores only its SHA-256. Sessions end after 30 days, or after 7 days unused. Changing your password signs out your other devices.
 - **Throttling:** 5 wrong passwords lock that username for 1, then 2, 4 and 8, then 15 minutes. 30 failures from one address lock that address for 15 minutes. Each address can create 5 accounts per hour. Wrong usernames and wrong passwords give the same answer.
@@ -68,7 +68,7 @@ The site has its own login. There's no Cloudflare Access.
 - **Dashboard:** `/dashboard` is where people land after signing in. It shows what's due today and overdue in Drift (by the visitor's time zone, from Cloudflare), an account check (two-factor, recovery codes, email) and a card for each app their areas give them (from `APPS` in `src/auth.js`).
 - **Look:** every signed-in page (dashboard, settings, admin, Drift, plugin store) uses the terminal dashboard's look: monospace type, square double-ruled panels, gold on green-black (or on paper in light mode, following the system), one shared side rail and a key bar along the bottom. `g` then a letter jumps between apps (`public/keys.js`; the rail shows each letter). The server pages' styles are in `src/pages.js`; Drift and the store carry the same colours in their own `<style>` blocks.
 - **Menu:** the dashboard owns the side rail. `siteNav()` in `src/nav.js` builds it from `APPS` in `src/auth.js` and the account's areas; server pages render it directly, and the Worker puts it into Drift, the plugin store and chat where their HTML has `<!--site-rail-->`. A new app only needs an entry in `APPS` (with its `icon` and `g` `key`) to show up everywhere, the terminal UI included (it reads the same list as `nav` from `/login/cli/dashboard`).
-- **Areas** (`user_areas` table) decide who can use which part of the site. `protect(request, env, "<area>", inner)` in `src/account.js` lets only signed-in accounts with that area through. Pages redirect to `/login`; API calls get 401 or 403.
+- **Areas** (`user_areas` table) decide who can use which part of the site. Each app in `APPS` is its own area (Drift's is `todo`), so each has its own per-account toggle on `/admin`. `protect(request, env, "<area>", inner)` in `src/account.js` lets only signed-in accounts with that area through. Pages redirect to `/login`; API calls get 401 or 403.
 - **Terminal sign-in** (`/login/cli`): `sintfoap login` (see `cli/`) shows a short code; you open `/login/cli` in a browser where you're signed in (two-factor included) and approve it. The terminal never sees your password. What it gets is an ordinary session, so it expires the same way, counts in your sessions, and ends with "Sign out everywhere" or a password change. Codes work once, for 10 minutes, and one address can have 5 waiting. Approving always needs a button press on the site, so a link with someone else's code in it can't sign them in as you without you clicking Approve. Once signed in, `sintfoap` shows the dashboard in the terminal, from `GET /login/cli/dashboard`. That gives the terminal the same things the web dashboard shows, including the Today items (`today`) and the date label (`date`), and Drift and the plugin store through the same APIs as their web pages. Its settings page uses `GET`/`POST /login/cli/account` (display name) and `POST /login/cli/account/sessions` (sign out everywhere else); everything on `/account` that needs the password stays on the website.
 - **Forms and API writes** sent from another website are refused, based on the `Origin` and `Sec-Fetch-Site` headers.
 
@@ -79,7 +79,7 @@ The site has its own login. There's no Cloudflare Access.
 - reset a password (shows a one-time temporary password the person must change),
 - remove someone's two-factor,
 - sign someone out everywhere,
-- give or remove areas,
+- turn each app on or off for each account: there's a toggle per app in `APPS`, so a new app shows up there by itself, off for everyone (the terminal's admin page, `g a`, has the same toggles),
 - delete an account and its tasks.
 
 It also lists todo tasks whose owner isn't an account, such as lists from the old Access login, and can move them to an account.
@@ -103,12 +103,14 @@ Email goes out through [Resend](https://resend.com) (free for up to 3,000 emails
 
 If adding an email fails, the account page shows Resend's reason, and the Worker's logs (**moffittsite → Observability**) have the full error. The usual one is that the domain isn't verified yet: until it is, Resend refuses every send from `sintfoap.xyz`.
 
-## Adding another protected area
+## Adding another app
 
-1. Add `"/<area>"` and `"/<area>/*"` to `run_worker_first` in `wrangler.jsonc`.
-2. Add the area's name to `AREAS` in `src/auth.js`. Add it to `DEFAULT_AREAS` too if new accounts should get it, and add an entry to `APPS` so it shows on the dashboard.
-3. In `src/worker.js`, route those paths through `protect(request, env, "<area>", user => ...)`, the same way `/todo` is.
-4. Give people the area from `/admin`.
+1. Add `"/<path>"` and `"/<path>/*"` to `run_worker_first` in `wrangler.jsonc`.
+2. Add an entry to `APPS` in `src/auth.js` with its own `area` (usually its id), `icon` and `g` `key`. That puts it on the dashboard, the side rail, the terminal's menu and the admin page's toggles. It's off for everyone, existing and new accounts alike; only apps marked `onForNew` are given to new accounts.
+3. In `src/worker.js`, route those paths through `protect(request, env, areaOf("<id>"), user => ...)`, the same way `/chat` is.
+4. Turn it on for people from `/admin`.
+
+The plugin store and chat used to come with Drift's area. The first time the Worker runs against a database, `SPLIT_FROM_TODO` in `src/db.js` gives them to everyone who had Drift (once; `area_splits` records it), so nobody lost access when they got their own toggles.
 
 ## Drift
 

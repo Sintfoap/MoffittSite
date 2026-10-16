@@ -8,6 +8,7 @@ sintfoap — sintfoap.xyz from the terminal.
   sintfoap store              the plugin store
   sintfoap settings           your account settings
   sintfoap chat [ROOM]        chat rooms
+  sintfoap admin              which apps each account can use (admins)
   sintfoap whoami
   sintfoap logout             ends this terminal's session on the site
 """
@@ -54,7 +55,8 @@ def main(argv=None):
     lg.add_argument("--no-browser", action="store_true", help="just print the link")
     d = sub.add_parser("dashboard", help="your dashboard")
     d.add_argument("--plain", action="store_true", help="print it instead of opening the terminal UI")
-    for page, what in (("drift", "Drift, in the terminal"), ("store", "the plugin store"), ("settings", "your account settings")):
+    for page, what in (("drift", "Drift, in the terminal"), ("store", "the plugin store"), ("settings", "your account settings"),
+                       ("admin", "which apps each account can use (admins)")):
         sub.add_parser(page, help=what)
     ch = sub.add_parser("chat", help="chat rooms")
     ch.add_argument("room", nargs="?", help="a room to open, by name")

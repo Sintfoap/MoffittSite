@@ -2,11 +2,12 @@
 // Run with:  node --no-warnings --test tests/*.test.mjs
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { Browser, makeEnv, run, sqlOne } from "./helpers.mjs";
+import { Browser, makeEnv, run, sqlOne, grantApps } from "./helpers.mjs";
 
 async function signedIn(env, name) {
   const b = new Browser(env);
   assert.equal((await b.signup(name)).status, 303);
+  grantApps(env, name, "chat");
   return b;
 }
 async function admin(env, name = "ryan") {

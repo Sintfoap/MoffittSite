@@ -1,6 +1,7 @@
 """
 The site in the terminal (Textual): the dashboard, and from it Drift, the
-plugin store and account settings, in the same colours as the website.
+plugin store, chat, account settings and (for admins) who can use which app,
+in the same colours as the website.
 """
 from __future__ import annotations
 
@@ -23,7 +24,7 @@ WARN = "#e0b25a"
 REFRESH_EVERY = 30   # seconds
 
 # Which site pages have a terminal version, by the path the dashboard links to.
-IN_TERMINAL = {"/todo/": "drift", "/plugins/": "store", "/chat/": "chat"}
+IN_TERMINAL = {"/todo/": "drift", "/plugins/": "store", "/chat/": "chat", "/admin": "admin"}
 
 
 def account_lines(data: dict) -> Text:
@@ -271,10 +272,7 @@ class SiteApp(App):
                 open_in_browser(self, item["url"])
                 return
         else:  # a site too old to send its menu
-            if where == "a":
-                open_in_browser(self, site.site_url("/admin"))
-                return
-            page = {"h": "home", "d": "drift", "p": "store", "s": "settings", "c": "chat"}.get(where)
+            page = {"h": "home", "d": "drift", "p": "store", "s": "settings", "c": "chat", "a": "admin"}.get(where)
         while len(self.screen_stack) > 1:
             self.pop_screen()
         if page and page != "home":
@@ -290,6 +288,9 @@ class SiteApp(App):
         elif name == "store":
             from .store_page import StorePage
             self.push_screen(StorePage())
+        elif name == "admin":
+            from .admin_page import AdminPage
+            self.push_screen(AdminPage())
         elif name == "chat":
             from .chat_page import ChatPage
             # The room named on the command line, the first time only.

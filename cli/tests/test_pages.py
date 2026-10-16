@@ -255,6 +255,40 @@ def test_admins_review_in_the_terminal(admin_site):
     run_app("store", review)
 
 
+# ── admin ──────────────────────────────────────────────────────────────────
+
+def test_admins_switch_apps_on_and_off_in_the_terminal(admin_site):
+    async def access(app, pilot):
+        page = app.screen
+        assert type(page).__name__ == "AdminPage"
+        apps = [a["id"] for a in page.data["apps"]]
+        assert apps == ["drift", "admin", "plugins", "chat"]
+        # A switch for every app on every account; your own admin one can't be turned off.
+        assert len(page.boxes) == len(apps) * len(page.data["users"])
+        me = next(i for i, u in enumerate(page.data["users"]) if u["you"])
+        assert page.query_one(f"#u{me}-admin").disabled
+        sam = next(i for i, u in enumerate(page.data["users"]) if u["username"] == "sam")
+        page.query_one(f"#u{sam}-chat").focus()
+        await pilot.press("space")
+        await settle(pilot, 0.5)
+        assert "chat" not in next(u for u in site.admin_access()["users"] if u["username"] == "sam")["apps"]
+        assert not page.query_one(f"#u{sam}-chat").value
+        assert app.focused.id == f"u{sam}-chat"
+        await pilot.press("space")
+        await settle(pilot, 0.5)
+        assert "chat" in next(u for u in site.admin_access()["users"] if u["username"] == "sam")["apps"]
+    run_app("admin", access)
+
+
+def test_g_a_opens_the_terminal_admin_page(admin_site):
+    async def go(app, pilot):
+        await settle(pilot, 0.5)
+        app.go("a")
+        await settle(pilot, 0.5)
+        assert type(app.screen).__name__ == "AdminPage"
+    run_app("dashboard", go)
+
+
 # ── settings ───────────────────────────────────────────────────────────────
 
 def test_settings_renames_and_signs_out_other_devices(real_site):

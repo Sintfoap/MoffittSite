@@ -350,3 +350,16 @@ def chat_join(room: str) -> dict:
 
 def chat_leave(room: str) -> dict:
     return api("POST", f"/chat/api/rooms/{_q(room)}/leave")
+
+
+# ──────────────────────────────── admin ─────────────────────────────────────
+# /admin/api/access (src/account.js); admins only.
+
+def admin_access() -> dict:
+    """{apps: [{id, name}], users: [{id, username, display_name, disabled, you, apps}]}."""
+    return _get("/admin/api/access")
+
+
+def set_access(user_id: str, app: str, on: bool) -> dict:
+    """Turns one app on or off for an account; the same as admin_access() after."""
+    return api("POST", "/admin/api/access", {"user_id": user_id, "app": app, "on": bool(on)})

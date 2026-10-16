@@ -18,19 +18,23 @@ export const SESSION_IDLE = 7 * DAY;     // signed out after a week unused
 const MFA_TTL = 5 * 60;                  // time to type the code after the password
 const TOUCH_EVERY = 5 * 60;              // how often last_seen is written
 
-export const DEFAULT_AREAS = ["todo"];   // what a new account can use
-export const AREAS = ["todo", "admin"];  // every area the site knows about
-
-// What the dashboard shows for each area, in this order.
 // Every app on the site, in menu order. This is the one list the dashboard,
-// the side rail on every page (src/nav.js) and the terminal UI all read.
+// the side rail on every page (src/nav.js), the admin page's access toggles
+// and the terminal UI all read. Each app is its own area, so an admin turns it
+// on or off per account. A new app is off for everyone until an admin turns it
+// on; only apps marked `onForNew` are given to new accounts.
 // `key` is the letter for its "g" shortcut; `icon` names a drawing in src/pages.js.
+// (Drift's area is "todo", the name it had before it was called Drift.)
 export const APPS = [
-  { id: "drift", area: "todo", name: "Drift", href: "/todo/", icon: "todo", key: "d", blurb: "Your items as checklists, calendars and lists." },
+  { id: "drift", area: "todo", name: "Drift", href: "/todo/", icon: "todo", key: "d", blurb: "Your items as checklists, calendars and lists.", onForNew: true },
   { id: "admin", area: "admin", name: "Admin", href: "/admin", icon: "admin", key: "a", blurb: "Accounts, access and resets." },
-  { id: "plugins", area: "todo", name: "Plugin store", href: "/plugins/", icon: "plugins", key: "p", blurb: "Find, write and share plugins for Drift." },
-  { id: "chat", area: "todo", name: "Chat", href: "/chat/", icon: "chat", key: "c", blurb: "Rooms to talk in with everyone else here." },
+  { id: "plugins", area: "plugins", name: "Plugin store", href: "/plugins/", icon: "plugins", key: "p", blurb: "Find, write and share plugins for Drift." },
+  { id: "chat", area: "chat", name: "Chat", href: "/chat/", icon: "chat", key: "c", blurb: "Rooms to talk in with everyone else here." },
 ];
+
+export const AREAS = APPS.map(a => a.area);                                // every area the site knows about
+export const DEFAULT_AREAS = APPS.filter(a => a.onForNew).map(a => a.area); // what a new account can use
+export const areaOf = id => APPS.find(a => a.id === id).area;
 
 const RESERVED = new Set(["admin", "administrator", "root", "system", "support", "help", "login", "logout",
   "signup", "account", "dashboard", "api", "www", "mail", "moderator", "owner", "security", "null", "undefined"]);
