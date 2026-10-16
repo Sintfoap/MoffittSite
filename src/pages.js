@@ -35,16 +35,17 @@ const icon = name => `<svg viewBox="0 0 24 24" width="18" height="18" fill="none
 
 // Console: the terminal dashboard's look in the browser. Monospace type,
 // square double-ruled panels, gold on green-black, and a key bar along the
-// bottom. Dark follows the terminal; light is the same screen on paper.
+// bottom. Dark uses the terminal UI's own colours (cli/sintfoap/look.py);
+// light is the same screen on paper.
 const STYLE = `
   :root { color-scheme: light;
           --bg:#f2f0e6; --rail:#ebe8dc; --panel:#fbfaf4; --field:#ffffff; --line:#cfc9b0; --line-2:#a9a283;
           --gold:#8a6510; --gold-soft:#e9e1c2; --on-gold:#fbf7ea; --ink:#1c1d16; --muted:#4d4c3f; --faint:#7a7764;
           --bad:#b4412f; --good:#2f7a52; --warn:#946c0c; --mono:'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace; }
   @media (prefers-color-scheme: dark) { :root { color-scheme: dark;
-          --bg:#0d100c; --rail:#0f130e; --panel:#121611; --field:#0b0e0a; --line:#3a3a26; --line-2:#57553a;
-          --gold:#e2b552; --gold-soft:#24251a; --on-gold:#14110a; --ink:#f1ecdf; --muted:#c9c2ae; --faint:#8a8670;
-          --bad:#ff8a65; --good:#7fd6a3; --warn:#f2c14e; } }
+          --bg:#0b0f0a; --rail:#0e140e; --panel:#121a12; --field:#0e140e; --line:#4a4430; --line-2:#6a6243;
+          --gold:#d6ae5e; --gold-soft:#24251a; --on-gold:#1a1206; --ink:#f4efe6; --muted:#c6bcab; --faint:#8a8270;
+          --bad:#e47a62; --good:#7fcf98; --warn:#e0b25a; } }
   * { box-sizing: border-box; }
   html, body { margin: 0; }
   body { min-height: 100vh; background: var(--bg); color: var(--ink); font: 400 14px/1.6 var(--mono); -webkit-font-smoothing: antialiased; }
