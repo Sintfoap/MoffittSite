@@ -6,14 +6,14 @@
 // homepage's sign-in link, and /todo, which needs a signed-in account with the
 // "todo" area before the page or API is served. /plugins (the plugin store,
 // src/store.js) is open to the same accounts.
-import { plugins } from "./store.js";
+import { plugins, installed, install, uninstall, PLUGIN_ID, SANDBOX_CSP } from "./store.js";
 import { protect, handleAuth, AUTH_PATHS, sameOrigin } from "./account.js";
 import { currentSession } from "./auth.js";
 import { state, version, createItem, updateItem, createCollection, updateCollection, shareCollection, unshareCollection, readJson, BadRequest, ID } from "./drift.js";
 
 // /todo/api/state, /todo/api/version, /todo/api/items[/<id>],
 // /todo/api/collections[/<id>[/shares[/<username>]]]
-const API = /^\/todo\/api\/(state|version|items|collections)(?:\/([^/]+)(?:\/(shares)(?:\/([^/]+))?)?)?\/?$/;
+const API = /^\/todo\/api\/(state|version|items|collections|installs)(?:\/([^/]+)(?:\/(shares)(?:\/([^/]+))?)?)?\/?$/;
 const USERNAME = /^[a-z0-9_.-]{1,64}$/;
 
 export default {
@@ -34,6 +34,8 @@ export default {
     if (pathname.startsWith("/plugins/")) {
       return protect(request, env, "todo", user => plugins(request, env, user, pathname));
     }
+    // The frame store plugins run in. It holds no data and needs no sign-in.
+    if (pathname.startsWith("/sandbox/")) return sandbox(request, env);
     if (pathname === "/login/status") return loginStatus(request, env);
     if (AUTH_PATHS.test(pathname)) return handleAuth(request, env);
     return env.ASSETS.fetch(request);
@@ -66,6 +68,18 @@ async function todo(request, env, user, pathname) {
     // GET → a fingerprint that changes whenever any of the user's data does
     if (kind === "version") return method === "GET" && !id ? json({ version: await version(env, user.id) }) : json({ error: "not found" }, 404);
 
+    // GET    installs       → the ids of the store plugins you've added to Drift
+    // POST   installs/<id>  → add an approved store plugin
+    // DELETE installs/<id>  → remove it (collections using it keep their data)
+    if (kind === "installs") {
+      if (sub) return json({ error: "not found" }, 404);
+      if (!id) return method === "GET" ? json({ installed: await installed(env, user.id) }) : json({ error: "method not allowed" }, 405);
+      if (!PLUGIN_ID.test(id)) return json({ error: "not found" }, 404);
+      const out = method === "POST" ? await install(env, user.id, id) : method === "DELETE" ? await uninstall(env, user.id, id) : undefined;
+      if (out === undefined) return json({ error: "method not allowed" }, 405);
+      return out ? json(out) : json({ error: "not found" }, 404);
+    }
+
     if (sub) {
       // POST   collections/<id>/shares             {username, role} → share it, or change their role
       // DELETE collections/<id>/shares/<username>  → stop sharing (or leave, if it's you)
@@ -95,6 +109,18 @@ async function todo(request, env, user, pathname) {
     const out = await update(env, as, id, changes);
     return out ? json(out) : json({ error: "not found" }, 404);
   });
+}
+
+// Store plugins run inside this page, in a sandboxed frame with no access to
+// the site. Its policy also stops plugin code from sending anything anywhere.
+async function sandbox(request, env) {
+  if (request.method !== "GET" && request.method !== "HEAD") return new Response("method not allowed", { status: 405 });
+  const asset = await env.ASSETS.fetch(request);
+  const res = new Response(asset.body, asset);
+  res.headers.set("Content-Security-Policy", SANDBOX_CSP);
+  res.headers.set("X-Content-Type-Options", "nosniff");
+  res.headers.set("Cache-Control", "no-cache");
+  return res;
 }
 
 const json = (obj, status = 200) =>

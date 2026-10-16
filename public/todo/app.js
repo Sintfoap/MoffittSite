@@ -3,7 +3,11 @@
 // tabs, the composer, the item dialog) and hands each view to its plugin.
 
 import { esc, icon, today, parseQuick, niceDay, niceTime, dayOf } from "./lib.js";
-import { PLUGINS, BY_ID } from "./plugins/index.js";
+import { PLUGINS as BUILT_IN } from "./plugins/index.js";
+import { StorePlugins } from "./plugin-host.js";
+
+// Drift's own plugins plus any from the plugin store (see plugin-host.js).
+let PLUGINS = [...BUILT_IN], BY_ID = Object.fromEntries(PLUGINS.map(p => [p.id, p]));
 
 const $ = (s, el = document) => el.querySelector(s);
 const store = {
@@ -37,6 +41,8 @@ function refresh() {
     try {
       const s = await req("GET", "state");
       Object.assign(state, { user: s.user, collections: s.collections, items: s.items, version: s.version });
+      const extra = await storePlugins.load(s.store || []);
+      PLUGINS = [...BUILT_IN, ...extra]; BY_ID = Object.fromEntries(PLUGINS.map(p => [p.id, p]));
     } catch (e) { if (e.message !== "signed out") toast("Couldn’t reach the server"); }
     loading = null;
     if (!$("#itemDlg").open && !$("#colDlg").open) render();
@@ -56,7 +62,8 @@ async function update(id, changes) {
 async function setMeta(id, pid, value, { celebrate = false } = {}) {
   const it = state.items.find(x => x.id === id); if (!it || !canEdit(it)) return;
   const apply = async () => {
-    try { if (value === null) delete it.meta[pid]; else it.meta[pid] = BY_ID[pid].clean(value, fail); }
+    // Store plugins check their data in the sandbox, so clean() may be a promise.
+    try { if (value === null) delete it.meta[pid]; else it.meta[pid] = await (BY_ID[pid] || fail("that plugin isn't loaded")).clean(value, fail); }
     catch (e) { return toast(e.message); }
     render();
     try { replaceItem(await req("PATCH", "items/" + id, { meta: { [pid]: value } })); }
@@ -187,6 +194,7 @@ function render() {
   if (view) showView(view, c);
   else { unmountView(); el.innerHTML = body; }
   $("#who").textContent = state.user?.name || "";
+  storePlugins.sync();
 }
 
 // A plugin view either returns HTML from render(), redrawn on every change, or
@@ -228,7 +236,7 @@ function renderNav() {
 function setView(v) { state.view = v; state.sel = null; store.set("view", v); render(); window.scrollTo({ top: 0 }); }
 
 /* ── item dialog ───────────────────────────────── */
-function openItem(id) { state.editing = id; state.sel = id; renderItemDialog(); $("#itemDlg").showModal(); }
+function openItem(id) { state.editing = id; state.sel = id; renderItemDialog(); $("#itemDlg").showModal(); storePlugins.sync(); }
 function renderItemDialog() {
   const it = state.items.find(x => x.id === state.editing);
   if (!it) { $("#itemDlg").close(); return; }
@@ -263,7 +271,10 @@ function readFieldset(fs) {
 $("#itemForm").addEventListener("change", e => {
   const it = state.items.find(x => x.id === state.editing); if (!it) return;
   const fs = e.target.closest("fieldset[data-plugin]");
-  if (fs) { const p = BY_ID[fs.dataset.plugin]; return setMeta(it.id, p.id, p.read(readFieldset(fs), it)); }
+  if (fs) {
+    const p = BY_ID[fs.dataset.plugin];
+    return Promise.resolve(p.read(readFieldset(fs), it)).then(v => setMeta(it.id, p.id, v)).catch(err => toast(err.message));
+  }
   const { name, value } = e.target;
   if (name === "title") { if (value.trim()) update(it.id, { title: value }); }
   else if (name === "notes") update(it.id, { notes: value });
@@ -278,7 +289,11 @@ $("#itemForm").addEventListener("click", e => {
     input.value = v; input.dispatchEvent(new Event("change", { bubbles: true })); return;
   }
   const at = e.target.closest("[data-attach]");
-  if (at) { const p = BY_ID[at.dataset.attach]; return setMeta(it.id, p.id, p.fresh?.({}, { tab: p.id, viewState: {} }) ?? p.read({}, it)); }
+  if (at) {
+    const p = BY_ID[at.dataset.attach];
+    return Promise.resolve(p.fresh?.({}, { tab: p.id, viewState: {} }, it) ?? p.read({}, it))
+      .then(v => setMeta(it.id, p.id, v ?? {})).catch(err => toast(err.message));
+  }
   const de = e.target.closest("[data-detach]");
   if (de) return setMeta(it.id, de.dataset.detach, null);
   if (e.target.closest("[data-del]")) { $("#itemDlg").close(); removeItem(it.id); }
@@ -308,8 +323,9 @@ function openCollection(col) {
     <h2>${col ? "Collection settings" : "New collection"}</h2>
     <label>Name<input type="text" name="name" value="${esc(col?.name || "")}" required maxlength="100" placeholder="e.g. Home, Work, Reading"></label>
     <div><p>Plugins decide what you can add to items here and how you can see them.</p>
-      <div style="display:grid;gap:8px">${PLUGINS.map(p => `<label class="plug"><input type="checkbox" name="plugin" value="${p.id}" ${(col ? col.plugins.includes(p.id) : true) ? "checked" : ""}>
-        <b>${esc(p.name)}</b><span>${esc(p.description)}</span></label>`).join("")}</div></div>
+      <div style="display:grid;gap:8px">${PLUGINS.filter(p => !p.store || p.installed || col?.plugins.includes(p.id)).map(p => `<label class="plug"><input type="checkbox" name="plugin" value="${p.id}" ${(col ? col.plugins.includes(p.id) : !p.store) ? "checked" : ""}>
+        <b>${esc(p.name)}</b><span>${esc(p.description)}${p.store ? ` <small>From the plugin store, by ${esc(p.author || "a removed account")}</small>` : ""}</span></label>`).join("")}</div>
+      <p class="hint"><a href="/plugins/">Find more plugins in the plugin store</a></p></div>
     ${col ? `<div class="sharing"><p>Sharing. People you add see this collection in their Drift. Editors can add and change items; viewers can only look.</p>
       <ul class="people">${(col.shares || []).map(x => `<li><span>${esc(x.name)} <small>@${esc(x.username)}</small></span>
         <select data-role="${esc(x.username)}" aria-label="Role for ${esc(x.username)}"><option value="edit" ${x.role === "edit" ? "selected" : ""}>Can edit</option><option value="view" ${x.role === "view" ? "selected" : ""}>Can view</option></select>
@@ -431,8 +447,10 @@ $("#composer").addEventListener("submit", async e => {
   const meta = {};
   for (const p of PLUGINS) {
     if (!col.plugins.includes(p.id) && !(p.id === "event" && cur.kind !== "col")) continue;
-    const m = p.fresh?.(quick, c);
-    if (m !== undefined) meta[p.id] = m;
+    try {
+      const m = await p.fresh?.(quick, c);
+      if (m !== undefined) meta[p.id] = m;
+    } catch (err) { toast(`${p.name}: ${err.message}`); }
   }
   add.value = ""; add.dispatchEvent(new Event("input"));
   try {
@@ -515,6 +533,30 @@ $("#themeBtn").onclick = () => {
 { const th = store.get("theme", null); if (th) document.documentElement.dataset.theme = th; }
 
 /* ── boot ──────────────────────────────────────── */
+// What store plugins see and may change. They only ever get plain data, and
+// may only change their own slice of an item.
+const storePlugins = new StorePlugins({
+  snapshot() {
+    const c = ctx(), plain = ({ id, name, plugins, view, role }) => ({ id, name, plugins, view, role });
+    return {
+      collection: c.collection && plain(c.collection), tab: c.tab, items: c.items, scopeItems: c.scopeItems, filtered: c.filtered,
+      pending: [...state.pending], viewState: c.viewState, all: state.items, selected: state.sel, editing: state.editing,
+    };
+  },
+  redraw({ editor }) {
+    if (editor && $("#itemDlg").open) renderItemDialog();
+    if (!$("#colDlg").open) render();
+  },
+  apply(effects, pid) {
+    for (const [kind, ...a] of effects) {
+      if (kind === "setMeta") { if (a[1] === pid) setMeta(a[0], pid, a[2], a[3]); else toast(`A plugin can only change its own data`); }
+      else if (kind === "open") { if (state.items.some(x => x.id === a[0])) openItem(a[0]); }
+      else if (kind === "render") render();
+    }
+  },
+  row: (it, opts) => row(it, opts),
+  toast,
+});
 // No push channel: every 5s while the tab is visible, ask whether anything
 // changed and reload only if it did. Also re-sync on return to the tab.
 const poll = () => { if (!document.hidden) refresh(); };

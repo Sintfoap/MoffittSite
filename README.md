@@ -9,8 +9,10 @@ public/          the website, served as static files
   todo/            Drift (signed-in users only)
     app.js           the page: collections, views, item dialog
     lib.js           dates and quick-add parsing
+    plugin-host.js   runs store plugins in the sandbox and cleans what they draw
     plugins/         Checklist, Events, List, Graph; one file each
   plugins/         the plugin store page (signed-in Drift users)
+  sandbox/         the frame store plugins run in
 src/             the Worker: runs only for the paths in run_worker_first
   worker.js        routing: sign-in pages, then /todo behind protect()
   account.js       /login /signup /logout /dashboard /account /admin, and protect()
@@ -152,7 +154,21 @@ The first time someone opens Drift, their old tasks (`todo_tasks`) move over: ea
 - **Writing:** "My plugins" has an editor in the browser. A new plugin starts from a small working example. Saving keeps a private draft.
 - **Review:** "Submit for review" sends the draft to the queue. Admins see a Review tab with each submission's code, compared line by line with the version that's live. Approving puts it in the store; rejecting needs a note, which the author sees.
 - **Versions:** edits after approval stay private until the next approval, so the store always serves code an admin has read. Deleting a plugin, or its author's account, takes it out of the store.
-- **Safety:** plugin code is stored and shown only as text. Nothing runs it yet. The page has a strict Content-Security-Policy (no inline scripts) because it shows other people's code.
+- **Trying a plugin:** "Try it" in the editor runs the code in the sandbox (below) against three sample items and shows its rows, item editor and view, plus any errors.
+- **Adding to Drift:** "Add to Drift" on an approved plugin adds it to your Drift. Turn it on for a collection in that collection's settings. People you share the collection with get the plugin for it too.
+
+### How store plugins are kept apart
+
+Store plugins never run in Drift's page or in the Worker.
+
+- **The sandbox:** they run in `/sandbox/`, a hidden frame loaded with `sandbox="allow-scripts"`, so it has no origin and can't use your session. Its Content-Security-Policy allows no network at all, so plugin code can't send your data anywhere. Each plugin gets its own worker inside it, and one that takes more than 2 seconds to answer is stopped until the page reloads.
+- **What they can see:** a copy of the items on screen, as plain data.
+- **What they can change:** only their own slice of an item's metadata, through Drift. They can't change titles, notes or tags, or other plugins' data.
+- **What they can draw:** Drift cleans the HTML they return (`public/todo/plugin-host.js`). Scripts, styles, links, images, ids and event handlers are removed.
+- **On the server:** Drift accepts metadata for approved store plugins as plain JSON, up to 8 KB per plugin per item.
+- **For now:** store plugins can't have `mount()` views (canvases and graphs) yet, only views drawn with `render()`.
+
+The store page and its "Try it" are served with a strict Content-Security-Policy too, since they show other people's code.
 
 | Method | Path | Body |
 |---|---|---|
@@ -165,3 +181,6 @@ The first time someone opens Drift, their old tasks (`todo_tasks`) move over: ea
 | POST | `/plugins/api/mine/<id>/withdraw` | |
 | GET | `/plugins/api/review` | admins only |
 | POST | `/plugins/api/review/<id>/<version>` | admins only: `{decision: "approve" \| "reject", note}` |
+| GET | `/todo/api/installs` | the store plugins you've added to Drift |
+| POST | `/todo/api/installs/<id>` | add an approved plugin |
+| DELETE | `/todo/api/installs/<id>` | remove it (collections using it keep their data) |

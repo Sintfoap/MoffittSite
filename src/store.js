@@ -87,6 +87,53 @@ export async function storeGet(env, id) {
     WHERE p.id = ? AND v.status = 'approved' ORDER BY v.version DESC LIMIT 1`).bind(id).first();
 }
 
+// ── Drift's side: which store plugins it may use, and installing them ─────
+
+// Ids of every plugin with an approved version. Drift accepts these as well as its own.
+export async function approvedIds(env) {
+  const d = await db(env);
+  const { results } = await d.prepare("SELECT DISTINCT plugin_id FROM store_versions WHERE status = 'approved'").all();
+  return new Set(results.map(r => r.plugin_id));
+}
+
+// The newest approved version of each of these plugins, code included.
+export async function approvedPlugins(env, ids) {
+  ids = [...new Set(ids)].filter(id => PLUGIN_ID.test(id));
+  if (!ids.length) return [];
+  const d = await db(env);
+  const { results } = await d.prepare(`
+    SELECT p.id, ${AUTHOR} AS author, v.version, v.name, v.description, v.code
+    FROM store_plugins p JOIN store_versions v ON v.plugin_id = p.id
+    WHERE p.id IN (${ids.map(() => "?").join(",")}) AND v.status = 'approved'
+      AND v.version = (SELECT MAX(version) FROM store_versions WHERE plugin_id = p.id AND status = 'approved')
+    ORDER BY v.name COLLATE NOCASE`).bind(...ids).all();
+  return results;
+}
+
+const MAX_INSTALLS = 50;
+
+export async function installed(env, owner) {
+  const d = await db(env);
+  const { results } = await d.prepare("SELECT plugin_id FROM drift_installs WHERE owner = ? ORDER BY installed_at").bind(owner).all();
+  return results.map(r => r.plugin_id);
+}
+
+export async function install(env, owner, id) {
+  if (!PLUGIN_ID.test(id) || !(await storeGet(env, id))) return null;
+  const d = await db(env);
+  const { n } = await d.prepare("SELECT COUNT(*) AS n FROM drift_installs WHERE owner = ?").bind(owner).first();
+  if (n >= MAX_INSTALLS) fail(`install limit reached (${MAX_INSTALLS})`);
+  await d.prepare("INSERT OR IGNORE INTO drift_installs (owner, plugin_id, installed_at) VALUES (?, ?, ?)").bind(owner, id, now()).run();
+  return { installed: await installed(env, owner) };
+}
+
+// Collections that use it keep its data; the plugin just stops being offered.
+export async function uninstall(env, owner, id) {
+  const d = await db(env);
+  await d.prepare("DELETE FROM drift_installs WHERE owner = ? AND plugin_id = ?").bind(owner, id).run();
+  return { installed: await installed(env, owner) };
+}
+
 // The signed-in user's own plugins, with the version they're working on.
 export async function mine(env, owner) {
   const d = await db(env);
@@ -243,10 +290,18 @@ export async function review(env, reviewer, id, version, body) {
 
 const ROUTE = /^\/plugins\/api\/(state|store|mine|review)(?:\/([^/]+))?(?:\/([^/]+))?\/?$/;
 
+// The frame Drift and the store page run plugins in (public/sandbox/). It's
+// loaded with sandbox="allow-scripts", so it has no origin and no cookies; this
+// policy also takes away the network, so plugin code can't send data anywhere.
+export const SANDBOX_CSP = [
+  "default-src 'none'", "script-src 'self' blob:", "worker-src blob:", "connect-src 'none'",
+  "frame-ancestors 'self'", "base-uri 'none'", "form-action 'none'",
+].join("; ");
+
 // The page shows other people's code, so it gets a strict policy: no inline
 // scripts, nothing loaded from elsewhere except fonts.
 const PAGE_CSP = [
-  "default-src 'none'", "script-src 'self'", "connect-src 'self'", "style-src 'unsafe-inline' https://fonts.googleapis.com",
+  "default-src 'none'", "script-src 'self'", "connect-src 'self'", "frame-src 'self'", "style-src 'unsafe-inline' https://fonts.googleapis.com",
   "font-src https://fonts.gstatic.com", "img-src 'self' data:", "form-action 'self'", "frame-ancestors 'none'", "base-uri 'none'",
 ].join("; ");
 

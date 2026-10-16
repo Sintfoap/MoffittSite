@@ -11,7 +11,7 @@
     // Only these paths run src/worker.js (sign-in check + todo API);
     // everything else is served straight from public/.
     "run_worker_first": [
-      "/todo", "/todo/*", "/plugins", "/plugins/*",
+      "/todo", "/todo/*", "/plugins", "/plugins/*", "/sandbox/*",
       "/login", "/login/*", "/signup", "/logout",
       "/dashboard", "/dashboard/*", "/account", "/account/*", "/admin", "/admin/*"
     ]

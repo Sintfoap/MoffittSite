@@ -8,6 +8,7 @@
 
 import { db, now } from "./db.js";
 import { PLUGINS, BY_ID } from "../public/todo/plugins/index.js";
+import { approvedIds, approvedPlugins, installed } from "./store.js";
 
 export class BadRequest extends Error {}
 const fail = msg => { throw new BadRequest(msg); };
@@ -50,19 +51,40 @@ function cleanTags(v) {
   return out;
 }
 
+// Plugins from the store run only in the browser's sandbox, never here, so
+// their metadata is checked only for being plain JSON of a sensible size.
+const STORE_META = 8 * 1024;
+function cleanStoreMeta(id, m) {
+  const text = JSON.stringify(m);
+  if (text === undefined) fail(`${id} must be JSON`);
+  if (text.length > STORE_META) fail(`${id} is larger than ${STORE_META} bytes`);
+  return JSON.parse(text);
+}
+
 // meta: { pluginId: value | null }. null means "take this item off that plugin".
-function cleanMeta(v) {
+// `store` is the set of approved store plugin ids.
+function cleanMeta(v, store) {
   if (!isObj(v)) fail("meta must be an object");
   const out = {};
   for (const [id, m] of Object.entries(v)) {
     const p = BY_ID[id];
-    if (!p) fail(`unknown plugin ${JSON.stringify(id)}`);
-    out[id] = m === null ? null : p.clean(m, fail);
+    if (!p && !store.has(id)) fail(`unknown plugin ${JSON.stringify(id)}`);
+    out[id] = m === null ? null : p ? p.clean(m, fail) : cleanStoreMeta(id, m);
   }
   return out;
 }
 
-function cleanItem(changes) {
+// The approved store plugin ids, looked up only when a body names a plugin Drift doesn't have.
+async function storeIdsFor(env, ids) {
+  return ids.some(id => !BY_ID[id]) ? approvedIds(env) : new Set();
+}
+const pluginIds = changes => isObj(changes) ? [
+  ...(isObj(changes.meta) ? Object.keys(changes.meta) : []),
+  ...(Array.isArray(changes.plugins) ? changes.plugins.map(String) : []),
+  ...(changes.view ? [String(changes.view)] : []),
+] : [];
+
+function cleanItem(changes, store) {
   if (!isObj(changes)) fail("body must be a JSON object");
   const out = {};
   for (const [f, v] of Object.entries(changes)) {
@@ -72,14 +94,14 @@ function cleanItem(changes) {
       case "tags": out.tags = cleanTags(v); break;
       case "collection": if (!ID.test(String(v))) fail("collection must be a collection id"); out.collection = String(v); break;
       case "deleted": out.deleted = Boolean(v); break;
-      case "meta": out.meta = cleanMeta(v); break;
+      case "meta": out.meta = cleanMeta(v, store); break;
       default: fail(`unknown field ${JSON.stringify(f)}`);
     }
   }
   return out;
 }
 
-function cleanCollection(changes) {
+function cleanCollection(changes, store) {
   if (!isObj(changes)) fail("body must be a JSON object");
   const out = {};
   for (const [f, v] of Object.entries(changes)) {
@@ -88,11 +110,11 @@ function cleanCollection(changes) {
       case "plugins": {
         if (!Array.isArray(v)) fail("plugins must be a list");
         const ids = [...new Set(v.map(String))];
-        for (const id of ids) if (!BY_ID[id]) fail(`unknown plugin ${JSON.stringify(id)}`);
+        for (const id of ids) if (!BY_ID[id] && !store.has(id)) fail(`unknown plugin ${JSON.stringify(id)}`);
         out.plugins = ids;
         break;
       }
-      case "view": out.view = v == null || v === "" ? "" : String(v); if (out.view && !BY_ID[out.view]) fail("view must be a plugin id"); break;
+      case "view": out.view = v == null || v === "" ? "" : String(v); if (out.view && !BY_ID[out.view] && !store.has(out.view)) fail("view must be a plugin id"); break;
       case "order": { const n = Number(v); if (!Number.isFinite(n)) fail("order must be a number"); out.order = n; break; }
       case "deleted": out.deleted = Boolean(v); break;
       default: fail(`unknown field ${JSON.stringify(f)}`);
@@ -165,11 +187,15 @@ export async function state(env, user) {
     JOIN drift_shares s ON s.owner = i.owner AND s.collection = json_extract(i.data, '$.collection')
     JOIN users u ON u.id = i.owner WHERE s.user_id = ? AND u.disabled = 0`).bind(user.id).all();
   const items = [...await rows(d, "drift_items", user.id), ...sharedItems].map(toItem).filter(it => !it.deleted && live.has(it.collection));
+  // Store plugins: the ones you installed, plus any a collection you can see uses.
+  const mine = await installed(env, user.id);
+  const store = (await approvedPlugins(env, [...mine, ...collections.flatMap(c => c.plugins).filter(id => !BY_ID[id])]))
+    .map(p => ({ ...p, installed: mine.includes(p.id) }));
   return {
     version: await version(env, user.id),
     user: { id: user.id, username: user.username, name: user.display_name || user.username },
     plugins: PLUGINS.map(({ id, name, description }) => ({ id, name, description })),
-    collections, items,
+    store, collections, items,
   };
 }
 
@@ -200,7 +226,7 @@ async function getRow(d, table, owner, id, to) {
 
 export async function createItem(env, user, fields) {
   const d = await db(env);
-  const data = cleanItem(fields);
+  const data = cleanItem(fields, await storeIdsFor(env, pluginIds(fields)));
   if (!data.title) fail("title is required");
   const acc = data.collection && await collectionAccess(d, user, data.collection);
   if (!acc) fail("collection not found");
@@ -220,7 +246,7 @@ export async function createItem(env, user, fields) {
 // their change. Each plugin's slice is replaced as a whole.
 export async function updateItem(env, user, id, changes) {
   const d = await db(env);
-  const { meta, ...core } = cleanItem(changes);
+  const { meta, ...core } = cleanItem(changes, await storeIdsFor(env, pluginIds(changes)));
   const acc = await itemAccess(d, user, id);
   if (!acc) return null;
   if (!canWrite(acc.role)) fail("that collection is view-only for you");
@@ -285,7 +311,7 @@ export async function createCollection(env, owner, fields) {
   const d = await db(env);
   const { n } = await d.prepare("SELECT COUNT(*) AS n FROM drift_collections WHERE owner = ?").bind(owner).first();
   if (n >= LIMITS.collections) fail(`collection limit reached (${LIMITS.collections})`);
-  const data = cleanCollection({ plugins: STARTER, ...fields });
+  const data = cleanCollection({ plugins: STARTER, ...fields }, await storeIdsFor(env, pluginIds(fields)));
   if (!data.name) fail("name is required");
   const c = { ...COLLECTION, order: Date.now() / 1000, ...data, created: nowStamp(), deleted: false };
   const id = newId("c"), updated = updatedNow();
@@ -296,7 +322,7 @@ export async function createCollection(env, owner, fields) {
 
 export async function updateCollection(env, owner, id, changes) {
   const d = await db(env);
-  const patch = cleanCollection(changes);
+  const patch = cleanCollection(changes, await storeIdsFor(env, pluginIds(changes)));
   if (patch.deleted) {
     const { n } = await d.prepare("SELECT COUNT(*) AS n FROM drift_collections WHERE owner = ? AND id != ? AND json_extract(data, '$.deleted') IS NOT 1")
       .bind(owner, id).first();

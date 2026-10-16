@@ -139,6 +139,21 @@ label input, label textarea {
 .diff .same::before { content: "  "; }
 .diff .gap { color: var(--faint); font-style: italic; }
 
+/* ── try it ─────────────────────────────────────── */
+.try { display: flex; flex-direction: column; gap: 12px; padding: 18px; background: var(--raise); border: 1px solid var(--line); border-radius: var(--radius-m); box-shadow: var(--shadow); }
+.try h3 { margin: 0; font-size: 16px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+.try h4 { margin: 0 0 6px; font-size: 13px; font-weight: 600; color: var(--muted); }
+.try-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.try .rows { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.try .rows li { display: flex; gap: 10px; align-items: flex-start; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--radius-s); background: var(--surface); }
+.try .rows .chips { display: flex; flex-wrap: wrap; gap: 6px; font-size: 12.5px; color: var(--muted); }
+.try .preview { padding: 10px 12px; border: 1px dashed var(--line-2); border-radius: var(--radius-s); background: var(--surface); }
+.try .preview label { margin-bottom: 8px; }
+.try pre { margin: 6px 0 0; font: 12.5px/1.5 var(--mono); white-space: pre-wrap; }
+.try kbd { font: 12px var(--mono); padding: 0 5px; border: 1px solid var(--line-2); border-radius: 4px; }
+.try summary { cursor: pointer; font-size: 13px; color: var(--muted); }
+a.btn { text-decoration: none; color: var(--ink); }
+
 dialog { border: 1px solid var(--line); border-radius: var(--radius-l); background: var(--raise); color: var(--ink); padding: 0; width: min(760px, calc(100vw - 32px)); box-shadow: var(--shadow); }
 dialog::backdrop { background: rgba(20, 20, 32, .45); }
 dialog form, dialog .body { padding: 22px; display: flex; flex-direction: column; gap: 12px; }
@@ -149,6 +164,7 @@ dialog h2 { margin: 0; font: 500 24px/1.2 var(--serif); }
 @media (max-width: 760px) {
   .workshop { grid-template-columns: 1fr; }
   .fields { grid-template-columns: 1fr; }
+  .try-grid { grid-template-columns: 1fr; }
   .code textarea { min-height: 320px; }
 }
 </style>
@@ -157,7 +173,7 @@ dialog h2 { margin: 0; font: 500 24px/1.2 var(--serif); }
 <main>
   <div class="top"><a href="/dashboard">← Dashboard</a><span id="who"></span></div>
   <h1>Plugin store</h1>
-  <p class="sub">Plugins add new kinds of data and new views to Drift. Write one here, send it for review, and once it's approved anyone can find it in the store.</p>
+  <p class="sub">Plugins add new kinds of data and new views to Drift. Add one to your Drift from the store, or write your own, try it, and send it for review. Once it's approved anyone can use it.</p>
 
   <nav class="tabs" role="tablist">
     <button role="tab" data-tab="store" aria-selected="true">Store</button>

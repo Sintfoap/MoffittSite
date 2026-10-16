@@ -166,3 +166,72 @@ test("deleting a plugin or its author removes it from the store", async () => {
   assert.deepEqual((await api(admin, "GET", "/state")).json.store, []);
   assert.equal(sqlOne(env, "SELECT COUNT(*) AS n FROM store_versions").n, 0);
 });
+
+// ── store plugins in Drift ─────────────────────────────────────────────────
+
+async function approved(env, admin, author, id) {
+  await api(author, "POST", "/mine", { id, name: id[0].toUpperCase() + id.slice(1), code: `export default { id: "${id}", clean: v => v };` });
+  await api(author, "POST", `/mine/${id}/submit`, {});
+  await api(admin, "POST", `/review/${id}/1`, { decision: "approve" });
+}
+const drift = (b, method, path, json) => b.req(method, "/todo/api/" + path, json === undefined ? {} : { json });
+
+test("only approved store plugins can be added to Drift", async () => {
+  const env = makeEnv();
+  const admin = await reviewer(env), josh = await signedIn(env, "josh");
+  await api(josh, "POST", "/mine", { id: "mood", name: "Mood", code: CODE });
+  assert.equal((await drift(josh, "POST", "installs/mood")).status, 404, "a draft can't be installed");
+  await api(josh, "POST", "/mine/mood/submit", {});
+  assert.equal((await drift(josh, "POST", "installs/mood")).status, 404, "nor can one waiting for review");
+  await api(admin, "POST", "/review/mood/1", { decision: "approve" });
+
+  assert.deepEqual((await drift(josh, "POST", "installs/mood")).json.installed, ["mood"]);
+  assert.deepEqual((await drift(josh, "POST", "installs/mood")).json.installed, ["mood"], "adding twice is fine");
+  assert.deepEqual((await drift(josh, "GET", "installs")).json.installed, ["mood"]);
+  const s = (await drift(josh, "GET", "state")).json;
+  assert.deepEqual(s.store.map(p => [p.id, p.version, p.installed, p.author, p.code]), [["mood", 1, true, "josh", CODE]]);
+  assert.deepEqual((await drift(admin, "GET", "state")).json.store, [], "only for the account that added it");
+
+  assert.deepEqual((await drift(josh, "DELETE", "installs/mood")).json.installed, []);
+  assert.equal((await drift(josh, "POST", "installs/nope")).status, 404);
+  assert.equal((await drift(josh, "POST", "installs/Bad1")).status, 404);
+  assert.equal((await josh.req("POST", "/todo/api/installs/mood", { origin: "https://evil.test" })).status, 403);
+});
+
+test("collections and items accept approved store plugins, with plain JSON data", async () => {
+  const env = makeEnv();
+  const admin = await reviewer(env), josh = await signedIn(env, "josh"), sam = await signedIn(env, "sam");
+  await approved(env, admin, josh, "mood");
+  await api(josh, "POST", "/mine", { id: "draft", name: "Draft", code: CODE });
+  const col = (await drift(josh, "GET", "state")).json.collections[0];
+
+  assert.equal((await drift(josh, "PATCH", `collections/${col.id}`, { plugins: ["checklist", "draft"] })).status, 400, "not approved");
+  const on = await drift(josh, "PATCH", `collections/${col.id}`, { plugins: ["checklist", "mood"], view: "mood" });
+  assert.equal(on.status, 200);
+  assert.deepEqual(on.json.plugins, ["checklist", "mood"]);
+
+  const it = (await drift(josh, "POST", "items", { title: "Walk", collection: col.id, meta: { mood: { stars: 4 } } })).json;
+  assert.deepEqual(it.meta.mood, { stars: 4 });
+  const changed = await drift(josh, "PATCH", `items/${it.id}`, { meta: { mood: { stars: 5, note: "great" } } });
+  assert.deepEqual(changed.json.meta.mood, { stars: 5, note: "great" });
+  const big = await drift(josh, "PATCH", `items/${it.id}`, { meta: { mood: { text: "x".repeat(9000) } } });
+  assert.equal(big.status, 400);
+  assert.match(big.json.error, /larger than/);
+  assert.equal((await drift(josh, "PATCH", `items/${it.id}`, { meta: { draft: {} } })).status, 400);
+  assert.equal((await drift(josh, "PATCH", `items/${it.id}`, { meta: { mood: null } })).json.meta.mood, undefined);
+
+  // Someone the collection is shared with gets the plugin too, without adding it.
+  await drift(josh, "POST", `collections/${col.id}/shares`, { username: "sam", role: "view" });
+  const s = (await drift(sam, "GET", "state")).json;
+  assert.deepEqual(s.store.map(p => [p.id, p.installed]), [["mood", false]]);
+});
+
+test("the sandbox page needs no sign-in and gets a policy with no network", async () => {
+  const env = makeEnv();
+  const r = await new Browser(env).get("/sandbox/");
+  assert.equal(r.status, 200);
+  const csp = r.headers.get("Content-Security-Policy");
+  assert.match(csp, /connect-src 'none'/);
+  assert.match(csp, /frame-ancestors 'self'/);
+  assert.equal((await new Browser(env).req("POST", "/sandbox/")).status, 405);
+});
