@@ -225,3 +225,29 @@ def test_terminal_dashboard_shows_today_and_the_account_checks(fake):
         await pilot.pause()
         assert type(app.screen).__name__ == "SettingsPage"
     run_tui(t)
+
+
+def test_the_g_menu_is_the_sites_menu(fake, monkeypatch):
+    """g offers what the dashboard's nav lists, and a letter it doesn't list does nothing."""
+    FakeSite.state["dashboard"] = {**dashboard_data(fake), "nav": [
+        {"id": "home", "label": "Home", "url": fake + "/dashboard", "key": "h", "group": "site"},
+        {"id": "wiki", "label": "Wiki", "url": fake + "/wiki/", "key": "w", "group": "site"},
+        {"id": "account", "label": "Settings", "url": fake + "/account", "key": "s", "group": "account"},
+    ]}
+    sign_in(fake)
+    opened = []
+    monkeypatch.setattr("webbrowser.open", opened.append)
+
+    async def t(app, pilot):
+        from sintfoap.look import GoTo
+        await pilot.press("g")
+        await pilot.pause()
+        assert isinstance(app.screen, GoTo)
+        assert list(app.screen.keys) == ["h", "w", "s", "o"], "only the site's menu, plus sign out"
+        await pilot.press("w")
+        await pilot.pause()
+        app.go("d")  # not on this site's menu
+        await pilot.pause()
+        assert len(app.screen_stack) == 1
+    run_tui(t)
+    assert opened == [fake + "/wiki/"], "an app the terminal doesn't have opens in the browser"

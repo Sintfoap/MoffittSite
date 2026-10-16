@@ -27,6 +27,7 @@ import { createSession, currentSession, clientIp, getUser, recoveryCodesLeft, en
 import { mailReady } from "./mail.js";
 import { sameOrigin } from "./account.js";
 import { agenda, visitorNow } from "./drift.js";
+import { siteNav } from "./nav.js";
 import { installed } from "./store.js";
 import { html, page, esc, messagePage } from "./pages.js";
 
@@ -155,6 +156,9 @@ async function dashboard(request, env) {
     site: origin,
     user: { username: user.username, display_name: user.display_name, admin: user.areas.has("admin") },
     apps: setup ? [] : APPS.filter(a => user.areas.has(a.area)).map(a => ({ name: a.name, blurb: a.blurb, url: origin + a.href })),
+    // The site's menu, the same one the web rail shows (src/nav.js): what the
+    // terminal offers and which "g" letters work, in order.
+    nav: siteNav(user).map(n => ({ id: n.id, label: n.label, url: origin + n.href, key: n.key, group: n.group })),
     account: {
       two_factor: !!user.totp_secret, sessions, recovery_codes_left: await recoveryCodesLeft(env, user.id),
       email: user.email || null, email_confirmed: !!user.email_verified, setup_needed: setup, url: origin + "/account",

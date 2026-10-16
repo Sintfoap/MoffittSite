@@ -9,6 +9,7 @@
 // deleted one) takes the room's next `seq`, so "what changed since seq N" is
 // one indexed query and catches deletions as well as new messages.
 
+import { withRail } from "./pages.js";
 import { db, now } from "./db.js";
 import { sameOrigin } from "./account.js";
 import { randomBytes, hex } from "./crypto.js";
@@ -258,7 +259,7 @@ const int = v => /^\d{1,15}$/.test(v ?? "") ? Number(v) : undefined;
 
 export async function chat(request, env, user, pathname) {
   if (!pathname.startsWith("/chat/api/")) {
-    const asset = await env.ASSETS.fetch(request);
+    const asset = await withRail(await env.ASSETS.fetch(request), user, "chat");
     const res = new Response(asset.body, asset);
     if ((res.headers.get("Content-Type") || "").startsWith("text/html")) {
       res.headers.set("Content-Security-Policy", PAGE_CSP);

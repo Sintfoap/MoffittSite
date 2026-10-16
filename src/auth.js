@@ -22,11 +22,14 @@ export const DEFAULT_AREAS = ["todo"];   // what a new account can use
 export const AREAS = ["todo", "admin"];  // every area the site knows about
 
 // What the dashboard shows for each area, in this order.
+// Every app on the site, in menu order. This is the one list the dashboard,
+// the side rail on every page (src/nav.js) and the terminal UI all read.
+// `key` is the letter for its "g" shortcut; `icon` names a drawing in src/pages.js.
 export const APPS = [
-  { area: "todo", name: "Drift", href: "/todo/", blurb: "Your items as checklists, calendars and lists." },
-  { area: "admin", name: "Admin", href: "/admin", blurb: "Accounts, access and resets." },
-  { area: "todo", name: "Plugin store", href: "/plugins/", blurb: "Find, write and share plugins for Drift." },
-  { area: "todo", name: "Chat", href: "/chat/", blurb: "Rooms to talk in with everyone else here." },
+  { id: "drift", area: "todo", name: "Drift", href: "/todo/", icon: "todo", key: "d", blurb: "Your items as checklists, calendars and lists." },
+  { id: "admin", area: "admin", name: "Admin", href: "/admin", icon: "admin", key: "a", blurb: "Accounts, access and resets." },
+  { id: "plugins", area: "todo", name: "Plugin store", href: "/plugins/", icon: "plugins", key: "p", blurb: "Find, write and share plugins for Drift." },
+  { id: "chat", area: "todo", name: "Chat", href: "/chat/", icon: "chat", key: "c", blurb: "Rooms to talk in with everyone else here." },
 ];
 
 const RESERVED = new Set(["admin", "administrator", "root", "system", "support", "help", "login", "logout",

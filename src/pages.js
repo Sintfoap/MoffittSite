@@ -1,7 +1,7 @@
 // Server-rendered pages for signing in and managing accounts. Every action is
 // a plain form post; the only script is /keys.js, the site's shortcut keys.
 
-import { APPS } from "./auth.js";
+import { siteNav } from "./nav.js";
 
 export const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
@@ -29,9 +29,60 @@ const ICON = {
   plugins: `<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M17.5 14v7M14 17.5h7"/>`,
   account: `<circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/>`,
   admin: `<path d="M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6z"/><path d="m9 12 2 2 4-4"/>`,
+  chat: `<path d="M4 5h16v11H9l-5 4z"/><path d="M8 9.5h8M8 12.5h5"/>`,
   out: `<path d="M15 4h4v16h-4M10 8l-4 4 4 4M6 12h10"/>`,
 };
 const icon = name => `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON[name]}</svg>`;
+
+// The rail's own styles. Server pages include them in STYLE; withRail() sends
+// them with the rail into static pages, which name their colours differently.
+const RAIL_CSS = `
+  .rail { position: sticky; top: 0; height: calc(100vh - 38px); overflow-y: auto; display: flex; flex-direction: column; gap: 1px;
+          padding: 20px 12px 16px; background: var(--rail); border-right: 1px solid var(--line); font-family: var(--mono); font-size: 14px; }
+  .rail .brand { display: flex; align-items: center; gap: 10px; padding: 0 10px 20px; color: var(--gold); text-decoration: none; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; }
+  .rail .brand svg { width: 22px; height: 22px; flex: none; }
+  .rail h3 { margin: 16px 10px 4px; font: 400 11px var(--mono); letter-spacing: 3px; text-transform: uppercase; color: var(--faint); }
+  .rail a.go { display: flex; align-items: center; gap: 10px; padding: 6px 10px; border-left: 2px solid transparent; color: var(--muted); text-decoration: none; }
+  .rail a.go svg { color: var(--faint); flex: none; width: 16px; height: 16px; }
+  .rail a.go kbd { margin-left: auto; font: 700 11px var(--mono); color: var(--gold); border: 0; background: none; padding: 0; }
+  .rail a.go:hover { background: var(--gold-soft); color: var(--ink); }
+  .rail a.go[aria-current="page"] { background: var(--gold-soft); border-left-color: var(--gold); color: var(--ink); font-weight: 700; }
+  .rail a.go[aria-current="page"] svg { color: var(--gold); }
+  .rail .me { margin-top: auto; padding: 14px 10px 0; border-top: 1px solid var(--line); font-size: 12.5px; color: var(--muted); display: grid; gap: 2px; }
+  .rail .me b, .rail .me .mono { color: var(--ink); font-weight: 700; overflow-wrap: anywhere; }
+  .rail .me a { color: var(--gold); text-decoration: none; justify-self: start; margin-top: 6px; }
+  @media (max-width: 820px) {
+    .rail { position: static; height: auto; flex-direction: row; align-items: center; gap: 2px; padding: 8px 10px; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--line); }
+    .rail .brand { padding: 0 8px 0 4px; }
+    .rail .brand span, .rail h3, .rail .me b, .rail .me span, .rail a.go kbd, .rail a.go span { display: none; }
+    .rail a.go[aria-current="page"] span { display: inline; }
+    .rail a.go { white-space: nowrap; padding: 6px 9px; border-left: 0; border-bottom: 2px solid transparent; }
+    .rail a.go[aria-current="page"] { border-bottom-color: var(--gold); }
+    .rail .me { margin: 0 0 0 auto; padding: 0; border: 0; }
+    .rail .me a { margin: 0; white-space: nowrap; }
+  }
+`;
+
+// The server pages' frame: the rail beside the page, the key bar under both.
+const SHELL_CSS = `
+  .shell { display: grid; grid-template-columns: 232px minmax(0, 1fr); min-height: 100vh; padding-bottom: 38px; }
+  .page { padding: 34px clamp(16px, 4vw, 48px) 56px; min-width: 0; }
+  .page > * { max-width: 600px; }
+  .page.wide > * { max-width: 1080px; }
+  kbd { font: 700 11px var(--mono); color: var(--gold); }
+  .keybar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 5; height: 38px; display: flex; align-items: center; gap: 22px; overflow-x: auto;
+            padding: 0 max(16px, env(safe-area-inset-right, 0px)) 0 max(16px, env(safe-area-inset-left, 0px)); white-space: nowrap;
+            background: var(--rail); border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; scrollbar-width: none; }
+  .keybar a { color: var(--muted); text-decoration: none; }
+  .keybar a:hover { color: var(--ink); }
+  .keybar kbd { font-size: 13px; margin-right: 6px; }
+  .keybar .end { margin-left: auto; }
+  @media (max-width: 820px) {
+    .shell { grid-template-columns: 1fr; padding-bottom: 0; }
+    .page { padding-top: 26px; }
+    .keybar { display: none; }
+  }
+${RAIL_CSS}`;
 
 // Console: the terminal dashboard's look in the browser. Monospace type,
 // square double-ruled panels, gold on green-black, and a key bar along the
@@ -58,47 +109,7 @@ const STYLE = `
   .solo .crest { display: flex; align-items: center; gap: 10px; margin-bottom: 40px; color: var(--gold); text-decoration: none; font-weight: 700; letter-spacing: 1px; }
   .solo .crest svg { width: 30px; height: 30px; }
 
-  /* signed in: the rail beside the page, the key bar under both */
-  .shell { display: grid; grid-template-columns: 232px minmax(0, 1fr); min-height: 100vh; padding-bottom: 38px; }
-  .rail { position: sticky; top: 0; height: calc(100vh - 38px); overflow-y: auto; display: flex; flex-direction: column; gap: 1px;
-          padding: 20px 12px 16px; background: var(--rail); border-right: 1px solid var(--line); }
-  .rail .brand { display: flex; align-items: center; gap: 10px; padding: 0 10px 20px; color: var(--gold); text-decoration: none; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; }
-  .rail .brand svg { width: 22px; height: 22px; flex: none; }
-  .rail h3 { margin: 16px 10px 4px; font: 400 11px var(--mono); letter-spacing: 3px; text-transform: uppercase; color: var(--faint); }
-  .rail a.go { display: flex; align-items: center; gap: 10px; padding: 6px 10px; border-left: 2px solid transparent; color: var(--muted); text-decoration: none; }
-  .rail a.go svg { color: var(--faint); flex: none; width: 16px; height: 16px; }
-  .rail a.go kbd { margin-left: auto; }
-  .rail a.go:hover { background: var(--gold-soft); color: var(--ink); }
-  .rail a.go[aria-current="page"] { background: var(--gold-soft); border-left-color: var(--gold); color: var(--ink); font-weight: 700; }
-  .rail a.go[aria-current="page"] svg { color: var(--gold); }
-  .rail .me { margin-top: auto; padding: 14px 10px 0; border-top: 1px solid var(--line); font-size: 12.5px; color: var(--muted); display: grid; gap: 2px; }
-  .rail .me b { color: var(--ink); font-weight: 700; overflow-wrap: anywhere; }
-  .rail .me a { color: var(--gold); text-decoration: none; justify-self: start; margin-top: 6px; }
-  .page { padding: 34px clamp(16px, 4vw, 48px) 56px; min-width: 0; }
-  .page > * { max-width: 600px; }
-  .page.wide > * { max-width: 1080px; }
-  kbd { font: 700 11px var(--mono); color: var(--gold); }
-  .keybar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 5; height: 38px; display: flex; align-items: center; gap: 22px; overflow-x: auto;
-            padding: 0 max(16px, env(safe-area-inset-right, 0px)) 0 max(16px, env(safe-area-inset-left, 0px)); white-space: nowrap;
-            background: var(--rail); border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; scrollbar-width: none; }
-  .keybar a { color: var(--muted); text-decoration: none; }
-  .keybar a:hover { color: var(--ink); }
-  .keybar kbd { font-size: 13px; margin-right: 6px; }
-  .keybar .end { margin-left: auto; }
-  @media (max-width: 820px) {
-    .shell { grid-template-columns: 1fr; padding-bottom: 0; }
-    .rail { position: static; height: auto; flex-direction: row; align-items: center; gap: 2px; padding: 8px 10px; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--line); }
-    .rail .brand { padding: 0 8px 0 4px; }
-    .rail .brand span, .rail h3, .rail .me b, .rail .me span, .rail a.go kbd, .rail a.go span { display: none; }
-    .rail a.go[aria-current="page"] span { display: inline; }
-    .rail a.go { white-space: nowrap; padding: 6px 9px; border-left: 0; border-bottom: 2px solid transparent; }
-    .rail a.go[aria-current="page"] { border-bottom-color: var(--gold); }
-    .rail .me { margin: 0 0 0 auto; padding: 0; border: 0; }
-    .rail .me a { margin: 0; white-space: nowrap; }
-    .page { padding-top: 26px; }
-    .keybar { display: none; }
-  }
-
+${SHELL_CSS}
   .kicker { font: 700 13px var(--mono); letter-spacing: .55em; color: var(--gold); text-transform: uppercase; }
   h1 { font: 700 clamp(22px, 4vw, 30px)/1.25 var(--mono); margin: 10px 0 20px; text-wrap: balance; overflow-wrap: anywhere; }
   h2 { font: 700 15px/1.4 var(--mono); margin: 0 0 10px; color: var(--ink); }
@@ -192,21 +203,32 @@ const STYLE = `
 
 const FONTS = `<link rel="preconnect" href="https://fonts.googleapis.com"><link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">`;
 
-// The rail: home, the apps this account's areas give it, then account pages.
-// `here` marks the current page: "home", "account", "admin" or an app's href.
-function rail(user, here) {
-  const link = (href, label, ico, key, k) => `<a class="go" href="${href}" data-key="${k}" aria-label="${esc(label)}"${here === key ? ` aria-current="page"` : ""}>${icon(ico)}<span>${esc(label)}</span><kbd aria-hidden="true">g ${k}</kbd></a>`;
-  const ready = !user.must_change_pw && !(user.areas.has("admin") && !user.totp_secret);
-  const apps = ready ? APPS.filter(a => a.area !== "admin" && user.areas.has(a.area)) : [];
+// The rail, from siteNav(): the same on every signed-in page. `here` is the
+// id of the current page's entry ("home", "drift", "plugins", "chat",
+// "account", "admin").
+export function rail(user, here) {
+  const nav = siteNav(user);
+  const link = n => `<a class="go" href="${esc(n.href)}" data-key="${n.key}" aria-label="${esc(n.label)}"${here === n.id ? ` aria-current="page"` : ""}>${icon(n.icon)}<span>${esc(n.label)}</span><kbd aria-hidden="true">g ${n.key}</kbd></a>`;
   return `<nav class="rail" aria-label="Site">
     <a class="brand" href="/" aria-label="sintfoap.xyz home">${CREST}<span>sintfoap</span></a>
-    ${ready ? link("/dashboard", "Home", "home", "home", "h") : ""}
-    ${apps.map(a => link(esc(a.href), a.name, a.href.startsWith("/todo") ? "todo" : "plugins", a.href, a.href.startsWith("/todo") ? "d" : "p")).join("")}
+    ${nav.filter(n => n.group === "site").map(link).join("")}
     <h3>Account</h3>
-    ${link("/account", "Settings", "account", "account", "s")}
-    ${ready && user.areas.has("admin") ? link("/admin", "Admin", "admin", "admin", "a") : ""}
+    ${nav.filter(n => n.group === "account").map(link).join("")}
     <div class="me"><b>${esc(user.display_name)}</b><span class="mono">${esc(user.username)}</span><a href="/logout">Sign out</a></div>
   </nav>`;
+}
+
+// Puts the rail into a static page (Drift, the plugin store, chat) at its
+// <!--site-rail--> marker, with the rail's styles mapped onto that page's own
+// colour names so it follows the page's theme toggle too.
+export async function withRail(res, user, here) {
+  if (!(res.headers.get("Content-Type") || "").startsWith("text/html")) return res;
+  const text = await res.text();
+  const headers = new Headers(res.headers);
+  for (const h of ["Content-Length", "ETag", "Last-Modified"]) headers.delete(h);
+  headers.set("Cache-Control", "no-store");
+  const style = `<style>.rail { --rail: var(--surface); --gold: var(--accent); --gold-soft: var(--accent-soft); --mono: var(--sans); }${RAIL_CSS}</style>`;
+  return new Response(text.replace("<!--site-rail-->", style + rail(user, here)), { status: res.status, headers });
 }
 
 export function page(title, body, { user, wide = false, here = "" } = {}) {
@@ -326,7 +348,7 @@ const plural = (n, one, many = one + "s") => `${n} ${n === 1 ? one : many}`;
 export function dashboardPage({ user, apps, sessionCount, recoveryLeft, agenda, installs, mail, greeting, dateLabel }) {
   const first = String(user.display_name).split(/\s+/)[0];
   const appCards = apps.length
-    ? `<div class="apps">${apps.map(a => `<a class="app" href="${esc(a.href)}"><span class="name">${icon(a.area === "admin" ? "admin" : a.href.startsWith("/todo") ? "todo" : "plugins")}${esc(a.name)}</span><p>${esc(a.blurb)}</p><span class="open">Open →</span></a>`).join("")}</div>`
+    ? `<div class="apps">${apps.map(a => `<a class="app" href="${esc(a.href)}"><span class="name">${icon(a.icon)}${esc(a.name)}</span><p>${esc(a.blurb)}</p><span class="open">Open →</span></a>`).join("")}</div>`
     : `<section class="card"><p>Your account doesn't have any apps yet. Ask the site's admin for access.</p></section>`;
 
   let summary = "", today = "";
