@@ -55,7 +55,7 @@ On every page `esc` goes back, `w` opens the same page in your browser and `q` q
 
 ## Drift
 
-Your collections down the left (`tab` to move between them, the composer and the items), with Today and Calendar on top. Calendar shows the picked day by the hour, under a "No set time" list for items with a date but no time. A collection shows its plugins' views: Checklist, Calendar and List, and Graph as a list of links. Changes made in the browser or by people you share with show up within a few seconds.
+Your collections down the left (`tab` to move between them, the composer and the items), with Today and Calendar on top. Calendar shows the picked day by the hour, under a "No set time" list for items with a date but no time. A collection shows its plugins' views: Checklist, Calendar and List, and Graph as a list of links with their types and each item's kind. Changes made in the browser or by people you share with show up within a few seconds.
 
 The composer takes the same quick-add as the web page: `Call Sam #family +home !2 ^fri @3pm`.
 

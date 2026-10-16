@@ -402,3 +402,22 @@ def test_drift_calendar_shows_the_day_by_the_hour(real_site):
         assert any(l.lstrip().startswith("9am") and "Standup" in l for l in lines)
         assert any(l.lstrip().startswith("12pm") and "Lunch" in l for l in lines)
     run_app("drift", calendar_day)
+
+
+def test_drift_graph_lists_link_types_and_kinds(real_site):
+    col = site.drift_state()["collections"][0]
+    site.update_collection(col["id"], {"plugins": col["plugins"] + ["graph"]})
+    a = site.add_item({"title": "Write copy", "collection": col["id"], "meta": {"graph": {"links": []}}})
+    site.add_item({"title": "Launch", "collection": col["id"],
+                   "meta": {"graph": {"links": [a["id"]], "rel": {a["id"]: "depends on"}, "kind": "milestone"}}})
+
+    async def graph_tab(app, pilot):
+        page = app.screen
+        page.view = "c:" + col["id"]
+        page.tabs[col["id"]] = "graph"
+        page.render_all()
+        await settle(pilot)
+        lst = page.query_one("#items")
+        line = next(str(lst.get_option_at_index(i).prompt) for i in range(lst.option_count) if "Launch" in str(lst.get_option_at_index(i).prompt))
+        assert "milestone" in line and "→ depends on Write copy" in line
+    run_app("drift", graph_tab)
