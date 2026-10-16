@@ -3,6 +3,7 @@
 import { DatabaseSync } from "node:sqlite";
 import worker from "../src/worker.js";
 import { totpCode, TOTP_PERIOD } from "../src/crypto.js";
+import { APPS } from "../src/auth.js";
 
 export const ORIGIN = "https://sintfoap.test";
 
@@ -71,6 +72,13 @@ export class Browser {
 export const sql = (env, q, ...args) => env.TODO_DB.raw.prepare(q).all(...args);
 export const sqlOne = (env, q, ...args) => env.TODO_DB.raw.prepare(q).get(...args);
 export const run = (env, q, ...args) => env.TODO_DB.raw.prepare(q).run(...args);
+
+// Turns apps on for an account, as the admin page's toggles do. New accounts
+// only get the apps marked onForNew (Drift), so tests of other apps use this.
+export function grantApps(env, username, ...apps) {
+  const { id } = sqlOne(env, "SELECT id FROM users WHERE username = ?", username);
+  for (const a of apps) run(env, "INSERT OR IGNORE INTO user_areas (user_id, area) VALUES (?, ?)", id, APPS.find(x => x.id === a).area);
+}
 
 export const stepNow = () => Math.floor(Date.now() / 1000 / TOTP_PERIOD);
 export const codeAt = (secret, step) => totpCode(secret, step);

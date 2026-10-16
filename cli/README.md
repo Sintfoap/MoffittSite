@@ -14,6 +14,7 @@ sintfoap                    # signs you in the first time, then opens your dashb
 | `sintfoap store` | the plugin store |
 | `sintfoap settings` | account settings |
 | `sintfoap chat [ROOM]` | chat rooms, opening ROOM if you name one |
+| `sintfoap admin` | which apps each account can use (admins) |
 | `sintfoap login` | shows a code and opens the site; approve it there |
 | `sintfoap dashboard --plain` | the dashboard as text, for scripts and pipes |
 | `sintfoap whoami` | which account this terminal is signed in as |
@@ -38,7 +39,7 @@ nix develop                                  # a shell with Python, Textual and 
 
 ## The dashboard
 
-The same panels as `/dashboard`, in the site's colours: Today (overdue Drift items in red, then what's due today), your account with its checks (two-factor, recovery codes, email), and a card per app your account can use. It refreshes every 30 seconds. Drift, the plugin store and account settings open here in the terminal; anything else (like Admin) opens in your browser.
+The same panels as `/dashboard`, in the site's colours: Today (overdue Drift items in red, then what's due today), your account with its checks (two-factor, recovery codes, email), and a card per app your account can use. It refreshes every 30 seconds. Drift, the plugin store, chat, account settings and Admin open here in the terminal; anything else opens in your browser.
 
 | Key | |
 |---|---|
@@ -50,7 +51,7 @@ The same panels as `/dashboard`, in the site's colours: Today (overdue Drift ite
 | `o` | sign out this terminal |
 | `q` | quit |
 
-On every page `esc` goes back, `w` opens the same page in your browser and `q` quits. `g` then a letter jumps around, as on the website: `g h` home, `g d` Drift, `g p` plugin store, `g c` chat, `g s` settings, `g a` admin (in the browser), `g o` sign out.
+On every page `esc` goes back, `w` opens the same page in your browser and `q` quits. `g` then a letter jumps around, as on the website: `g h` home, `g d` Drift, `g p` plugin store, `g c` chat, `g s` settings, `g a` admin, `g o` sign out.
 
 ## Drift
 
@@ -118,3 +119,7 @@ tests/devsite.mjs          the site's real Worker on localhost, for tests/test_p
 ```
 
 The site's side is `src/cli.js` (signing in, the dashboard and settings) and the same `/todo/api/` and `/plugins/api/` the web pages use.
+
+## Admin
+
+For admins: every account, with a switch for each app on the site (the same list as the website's menu, so a new app shows up here by itself, off for everyone). `tab` moves between switches and `space` turns one on or off; your own Admin switch stays on. Passwords, two-factor and disabling or deleting accounts are on the website: `w` opens `/admin`.

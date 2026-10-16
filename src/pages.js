@@ -198,6 +198,18 @@ ${SHELL_CSS}
   .settings .group { font-size: 11px; letter-spacing: 3px; text-transform: uppercase; color: var(--faint); margin: 8px 0 10px; }
   @media (max-width: 820px) { .settings { grid-template-columns: 1fr; gap: 12px; } .subnav { position: static; display: flex; flex-wrap: wrap; gap: 6px; }
     .subnav a { border: 1px solid var(--line); padding: 3px 10px; } }
+  /* admin: one switch per app per account */
+  .toggles { display: grid; gap: 4px; min-width: 170px; }
+  .toggles form { margin: 0; }
+  button.toggle { margin: 0; padding: 2px 8px 2px 4px; display: flex; align-items: center; gap: 8px; width: 100%; background: transparent; border: 0;
+          color: var(--muted); font: 400 13px var(--mono); letter-spacing: 0; text-transform: none; text-align: left; white-space: nowrap; }
+  button.toggle::before { content: ""; flex: none; width: 26px; height: 14px; border: 1px solid var(--line-2); border-radius: 8px;
+          background: radial-gradient(circle at 6px 50%, var(--faint) 4px, transparent 5px); }
+  button.toggle::after { content: "off"; margin-left: auto; font-size: 11px; color: var(--faint); }
+  button.toggle[aria-pressed="true"] { color: var(--ink); }
+  button.toggle[aria-pressed="true"]::before { border-color: var(--gold); background: var(--gold-soft) radial-gradient(circle at 18px 50%, var(--gold) 4px, transparent 5px); }
+  button.toggle[aria-pressed="true"]::after { content: "on"; color: var(--gold); }
+  button.toggle:disabled { cursor: default; filter: none; opacity: .7; }
   .admin-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 12px; margin-bottom: 18px; }
 `;
 
@@ -472,15 +484,17 @@ export function accountPage({ user, error, notice, recoveryLeft, sessionCount, s
 
 const date = t => new Date(t * 1000).toISOString().slice(0, 10);
 
-export function adminPage({ user, users, orphans, areas, error, notice, tempPassword }) {
+export function adminPage({ user, users, orphans, apps, error, notice, tempPassword }) {
   const post = (action, label, fields, cls = "quiet small", confirm = "") =>
     `<form method="post" action="/admin/${action}">${Object.entries(fields).map(([k, v]) => `<input type="hidden" name="${k}" value="${esc(v)}">`).join("")}${confirm}<button class="${cls}" type="submit">${label}</button></form>`;
   const rows = users.map(u => {
     const self = u.id === user.id;
     return `<tr><td><strong>${esc(u.display_name)}</strong><br><span class="mono">${esc(u.username)}</span><br><span class="hint">since ${date(u.created_at)}</span></td>
-      <td>${areas.map(a => u.areas.includes(a)
-        ? (self && a === "admin" ? `<span class="tag">${a}</span>` : post("area", `${a} ✕`, { user_id: u.id, area: a, op: "revoke" }, "quiet small"))
-        : post("area", `+ ${a}`, { user_id: u.id, area: a, op: "grant" }, "quiet small")).join("")}</td>
+      <td><div class="toggles">${apps.map(a => {
+        const on = u.areas.includes(a.area), locked = self && a.area === "admin";
+        return `<form method="post" action="/admin/access"><input type="hidden" name="user_id" value="${esc(u.id)}"><input type="hidden" name="app" value="${esc(a.id)}"><input type="hidden" name="on" value="${on ? 0 : 1}">` +
+          `<button class="toggle" type="submit" aria-pressed="${on}"${locked ? ` disabled title="You can't remove your own admin access."` : ""} aria-label="${esc(a.name)} for ${esc(u.username)}">${esc(a.name)}</button></form>`;
+      }).join("")}</div></td>
       <td>${u.disabled ? `<span class="tag off">disabled</span>` : ""}${u.totp ? `<span class="tag on">2FA</span>` : ""}${u.must_change_pw ? `<span class="tag warn">must change pw</span>` : ""}<br><span class="hint">${u.sessions} session${u.sessions === 1 ? "" : "s"} · ${u.tasks} Drift item${u.tasks === 1 ? "" : "s"}</span></td>
       <td>${self ? `<span class="tag">you</span>` : [
         post(u.disabled ? "enable" : "disable", u.disabled ? "Enable" : "Disable", { user_id: u.id }, u.disabled ? "quiet small" : "danger small"),
@@ -506,7 +520,7 @@ export function adminPage({ user, users, orphans, areas, error, notice, tempPass
       <div class="stat"><b>${users.filter(u => u.disabled).length}</b><span>disabled</span></div>
     </div>
     ${tempPassword ? `<div class="msg good">Temporary password for <strong>${esc(tempPassword.username)}</strong>: <span class="mono">${esc(tempPassword.password)}</span><br>Send it to them privately. They'll have to change it when they sign in, and it won't be shown again.</div>` : ""}
-    <section class="card scroll"><table><tr><th>Account</th><th>Areas</th><th>Status</th><th>Actions</th></tr>${rows}</table></section>
+    <section class="card scroll"><table><tr><th>Account</th><th>Apps</th><th>Status</th><th>Actions</th></tr>${rows}</table></section>
     ${orphanRows}`, { user, wide: true, here: "admin" });
 }
 

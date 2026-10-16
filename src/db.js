@@ -56,8 +56,13 @@ const SCHEMA = [
    )`,
   `CREATE TABLE IF NOT EXISTS user_areas (
      user_id TEXT NOT NULL,
-     area    TEXT NOT NULL,                        -- e.g. "todo", "admin"
+     area    TEXT NOT NULL,                        -- an app's area (APPS in src/auth.js), e.g. "todo", "chat", "admin"
      PRIMARY KEY (user_id, area)
+   )`,
+  // Areas split off from an older one, recorded once their accounts were copied over.
+  `CREATE TABLE IF NOT EXISTS area_splits (
+     area     TEXT PRIMARY KEY,
+     split_at INTEGER NOT NULL
    )`,
   `CREATE TABLE IF NOT EXISTS sessions (
      id_hash    TEXT PRIMARY KEY,                  -- SHA-256 of the cookie value
@@ -178,13 +183,28 @@ async function addMissingColumns(d) {
   }
 }
 
+// The plugin store and chat used to come with Drift's "todo" area. Now each is
+// its own app with its own toggle on the admin page, so once (per database)
+// everyone who had "todo" is given them, and nobody loses access. Admins can
+// then turn them off; this never runs again for that area, so it won't undo that.
+// Apps added from now on start off for everyone and need nothing here.
+const SPLIT_FROM_TODO = ["plugins", "chat"];
+
+async function splitAreas(d) {
+  await d.batch(SPLIT_FROM_TODO.flatMap(area => [
+    d.prepare(`INSERT OR IGNORE INTO user_areas (user_id, area)
+      SELECT user_id, ? FROM user_areas WHERE area = 'todo' AND NOT EXISTS (SELECT 1 FROM area_splits WHERE area = ?)`).bind(area, area),
+    d.prepare("INSERT OR IGNORE INTO area_splits (area, split_at) VALUES (?, ?)").bind(area, now()),
+  ]));
+}
+
 const ready = new WeakMap();   // per database binding, once per Worker instance
 
 export function db(env) {
   const d = env.TODO_DB;
   if (!d) throw new Error("D1 binding TODO_DB is not configured");
   if (!ready.has(d)) {
-    ready.set(d, d.batch(SCHEMA.map(s => d.prepare(s))).then(() => addMissingColumns(d)).catch(e => { ready.delete(d); throw e; }));
+    ready.set(d, d.batch(SCHEMA.map(s => d.prepare(s))).then(() => addMissingColumns(d)).then(() => splitAreas(d)).catch(e => { ready.delete(d); throw e; }));
   }
   return ready.get(d).then(() => d);
 }

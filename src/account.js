@@ -6,7 +6,7 @@ import { db, now } from "./db.js";
 import { randomToken, safeEqual } from "./crypto.js";
 import { renderSVG } from "./vendor/uqr.mjs";
 import {
-  AuthError, AREAS, APPS, getUser, createUser, setPassword, checkLogin, checkSignupAllowed, recordSignup,
+  AuthError, APPS, getUser, createUser, setPassword, checkLogin, checkSignupAllowed, recordSignup,
   createSession, currentSession, endSession, endUserSessions, sessionCookie, clearCookie,
   startTotp, otpauthUri, confirmTotp, replaceRecoveryCodes, disableTotp, checkSecondFactor, recoveryCodesLeft, resetWithRecoveryCode,
   adminExists, cleanDisplayName, clientIp,
@@ -399,8 +399,47 @@ async function adminClaim(request, env, method) {
 }
 
 // ── admin ──────────────────────────────────────────────────────────────────
+// Every app in APPS gets a toggle per account on the admin page (and in the
+// terminal's admin page, through /admin/api/access), so a new app needs
+// nothing here: it shows up switched off for everyone.
+async function setAccess(d, me, target, app, on) {
+  if (target.id === me.id && app.area === "admin" && !on) throw new AuthError("You can't remove your own admin access.");
+  if (on) await d.prepare("INSERT OR IGNORE INTO user_areas (user_id, area) VALUES (?, ?)").bind(target.id, app.area).run();
+  else await d.prepare("DELETE FROM user_areas WHERE user_id = ? AND area = ?").bind(target.id, app.area).run();
+}
+
+// GET  /admin/api/access → {apps: [{id, name}], users: [{id, username, display_name, disabled, you, apps: [id]}]}
+// POST /admin/api/access {user_id, app, on} → the same, after the change
+async function adminAccessApi(request, env, d, me, method) {
+  const list = async () => {
+    const { results } = await d.prepare(`
+      SELECT u.id, u.username, u.display_name, u.disabled, (SELECT group_concat(area) FROM user_areas a WHERE a.user_id = u.id) AS areas
+      FROM users u ORDER BY u.created_at`).all();
+    return json({
+      apps: APPS.map(a => ({ id: a.id, name: a.name })),
+      users: results.map(u => {
+        const areas = new Set(u.areas ? u.areas.split(",") : []);
+        return { id: u.id, username: u.username, display_name: u.display_name, disabled: !!u.disabled, you: u.id === me.id,
+          apps: APPS.filter(a => areas.has(a.area)).map(a => a.id) };
+      }),
+    });
+  };
+  if (method === "GET") return list();
+  if (method !== "POST") return json({ error: "method not allowed" }, 405);
+  let body;
+  try { body = await request.json(); } catch { return json({ error: "send JSON" }, 400); }
+  const target = await getUser(env, { id: String(body?.user_id ?? "") });
+  if (!target) return json({ error: "that account doesn't exist" }, 404);
+  const app = APPS.find(a => a.id === String(body.app));
+  if (!app) return json({ error: "unknown app" }, 400);
+  try { await setAccess(d, me, target, app, body.on === true); }
+  catch (e) { if (e instanceof AuthError) return json({ error: e.message }, e.status); throw e; }
+  return list();
+}
+
 async function admin(request, env, me, pathname, method) {
   const d = await db(env);
+  if (pathname === "/admin/api/access") return adminAccessApi(request, env, d, me, method);
   const show = async (extra = {}, status = 200) => {
     const { results: users } = await d.prepare(`
       SELECT u.id, u.username, u.display_name, u.created_at, u.disabled, u.must_change_pw, u.totp_secret IS NOT NULL AS totp,
@@ -411,7 +450,7 @@ async function admin(request, env, me, pathname, method) {
     const { results: orphans } = await d.prepare(`
       SELECT owner, COUNT(*) AS n FROM todo_tasks WHERE owner NOT IN (SELECT id FROM users) GROUP BY owner`).all();
     return html(adminPage({
-      user: me, areas: AREAS, orphans,
+      user: me, apps: APPS, orphans,
       users: users.map(u => ({ ...u, areas: u.areas ? u.areas.split(",") : [] })), ...extra,
     }), { status });
   };
@@ -425,14 +464,16 @@ async function admin(request, env, me, pathname, method) {
   };
   try {
     switch (pathname) {
+      // Turns one app on or off for an account: /admin/access {user_id, app, on}
+      // from the toggles, or /admin/area {user_id, area, op: grant|revoke}.
+      case "/admin/access":
       case "/admin/area": {
         if (!target) throw new AuthError("That account doesn't exist.", { status: 404 });
-        const area = String(f.area);
-        if (!AREAS.includes(area)) throw new AuthError("Unknown area.");
-        if (target.id === me.id && area === "admin") throw new AuthError("You can't remove your own admin access.");
-        if (f.op === "grant") await d.prepare("INSERT OR IGNORE INTO user_areas (user_id, area) VALUES (?, ?)").bind(target.id, area).run();
-        else await d.prepare("DELETE FROM user_areas WHERE user_id = ? AND area = ?").bind(target.id, area).run();
-        return show({ notice: `${f.op === "grant" ? "Gave" : "Removed"} ${area} ${f.op === "grant" ? "to" : "from"} ${target.username}.` });
+        const app = pathname === "/admin/access" ? APPS.find(a => a.id === String(f.app)) : APPS.find(a => a.area === String(f.area));
+        if (!app) throw new AuthError("Unknown app.");
+        const on = pathname === "/admin/access" ? f.on === "1" : f.op === "grant";
+        await setAccess(d, me, target, app, on);
+        return show({ notice: `${app.name} is ${on ? "on" : "off"} for ${target.username}.` });
       }
       case "/admin/disable":
         needTarget();
