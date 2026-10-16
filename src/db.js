@@ -88,6 +88,26 @@ const SCHEMA = [
      window_start INTEGER NOT NULL,
      locked_until INTEGER NOT NULL DEFAULT 0
    )`,
+  // The plugin store (src/store.js): shared Drift plugins and their reviewed versions.
+  `CREATE TABLE IF NOT EXISTS store_plugins (
+     id         TEXT PRIMARY KEY,                  -- lowercase letters; also its key in Drift's item.meta
+     owner      TEXT NOT NULL,                     -- user id of the author
+     created_at INTEGER NOT NULL
+   )`,
+  `CREATE TABLE IF NOT EXISTS store_versions (
+     plugin_id   TEXT NOT NULL,
+     version     INTEGER NOT NULL,                 -- 1, 2, 3, …
+     status      TEXT NOT NULL,                    -- "draft", "pending", "approved" or "rejected"
+     name        TEXT NOT NULL,
+     description TEXT NOT NULL,
+     code        TEXT NOT NULL,
+     note        TEXT,                             -- the author's note to the reviewer
+     review_note TEXT,                             -- the reviewer's reason
+     reviewed_by TEXT,                             -- user id
+     created_at  INTEGER NOT NULL,                 -- saved, or submitted once pending
+     reviewed_at INTEGER,
+     PRIMARY KEY (plugin_id, version)
+   )`,
 ];
 
 // Columns added after a table first shipped. CREATE TABLE IF NOT EXISTS

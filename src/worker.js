@@ -4,7 +4,9 @@
 // this code. Paths listed in "run_worker_first" in wrangler.jsonc come
 // through here: the sign-in pages (src/account.js), /login/status for the
 // homepage's sign-in link, and /todo, which needs a signed-in account with the
-// "todo" area before the page or API is served.
+// "todo" area before the page or API is served. /plugins (the plugin store,
+// src/store.js) is open to the same accounts.
+import { plugins } from "./store.js";
 import { protect, handleAuth, AUTH_PATHS, sameOrigin } from "./account.js";
 import { currentSession } from "./auth.js";
 import { state, version, createItem, updateItem, createCollection, updateCollection, shareCollection, unshareCollection, readJson, BadRequest, ID } from "./drift.js";
@@ -24,6 +26,13 @@ export default {
     }
     if (pathname.startsWith("/todo/")) {
       return protect(request, env, "todo", user => todo(request, env, user, pathname));
+    }
+    if (pathname === "/plugins") {
+      url.pathname = "/plugins/";
+      return Response.redirect(url.toString(), 308);
+    }
+    if (pathname.startsWith("/plugins/")) {
+      return protect(request, env, "todo", user => plugins(request, env, user, pathname));
     }
     if (pathname === "/login/status") return loginStatus(request, env);
     if (AUTH_PATHS.test(pathname)) return handleAuth(request, env);
