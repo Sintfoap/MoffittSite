@@ -145,3 +145,29 @@ test("one address can only have a few codes waiting", async () => {
   assert.equal((await new Terminal(env, { ip }).start()).status, 429);
   assert.equal((await new Terminal(env).start()).status, 200, "other addresses are unaffected");
 });
+
+test("the terminal dashboard shows what /dashboard does", async () => {
+  const env = makeEnv(), b = new Browser(env), term = new Terminal(env);
+  await b.signup("ryan", undefined, "Ryan M");
+  assert.equal((await term.get("/login/cli/dashboard")).status, 401);
+  const s = await term.start();
+  await approve(b, s.json.user_code);
+  term.cookie = (await term.poll(s.json.device_code)).json.token;
+
+  const d = (await term.get("/login/cli/dashboard")).json;
+  assert.equal(d.site, "https://sintfoap.test");
+  assert.deepEqual(d.user, { username: "ryan", display_name: "Ryan M", admin: false });
+  assert.deepEqual(d.apps.map(a => [a.name, a.url]), [["Drift", "https://sintfoap.test/todo/"]]);
+  assert.equal(d.account.two_factor, false);
+  assert.equal(d.account.sessions, 2, "the browser and the terminal");
+  assert.equal(d.account.recovery_codes_left, 0);
+  assert.equal(d.account.setup_needed, null);
+  assert.equal(d.account.url, "https://sintfoap.test/account");
+
+  // Same rule as the web dashboard: an admin without two-factor only gets account settings.
+  run(env, "INSERT INTO user_areas (user_id, area) SELECT id, 'admin' FROM users");
+  const admin = (await term.get("/login/cli/dashboard")).json;
+  assert.equal(admin.user.admin, true);
+  assert.deepEqual(admin.apps, []);
+  assert.equal(admin.account.setup_needed, "set up two-factor");
+});

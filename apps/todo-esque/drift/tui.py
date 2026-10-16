@@ -1,7 +1,6 @@
 """Drift terminal UI (Textual). Talks to the Store directly; no server needed."""
 from __future__ import annotations
 
-import functools
 from datetime import date
 
 from rich.text import Text
@@ -14,7 +13,6 @@ from textual.widgets import Footer, Input, Label, OptionList, Static, TextArea
 from textual.widgets.option_list import Option
 
 from .core import Store, Task, bucket, parse_date
-from .site import SiteError
 
 # palette — warm dusk
 BG, PANEL, LINE = "#16161e", "#1c1c26", "#2a2a38"
@@ -27,17 +25,6 @@ VIEWS = [("today", "◉", "Today"), ("upcoming", "◷", "Upcoming"),
          ("inbox", "▢", "Inbox"), ("all", "≡", "All open"), ("done", "✓", "Done")]
 BUCKET_LABEL = {"overdue": "Overdue", "today": "Today", "upcoming": "Upcoming",
                 "someday": "No date", "done": "Completed"}
-
-
-def guarded(fn):
-    """When the list is on the website, a failed save shows a message instead of crashing."""
-    @functools.wraps(fn)
-    def wrapper(self, *a, **k):
-        try:
-            return fn(self, *a, **k)
-        except SiteError as e:
-            self.notify(str(e), severity="error", timeout=6)
-    return wrapper
 
 
 def nice_due(d: str | None) -> str:
@@ -343,12 +330,6 @@ class DriftApp(App):
         self.query_one("#viewtitle", Static).update(
             Text.assemble((name, f"bold {FG}"), ("   " + sub, MUTED)))
         s = self.store.stats()
-        if "site" in s:     # signed in to the website (drift/site.py)
-            err = getattr(self.store, "error", None)
-            self.query_one("#status", Static).update(Text.assemble(
-                ("● ", RED if err else GRN), (f"{s['user']}", MUTED), (f"   {s['site']}", FAINT),
-                (f"   {'offline' if err else str(s['open']) + ' open'}", RED if err else FAINT)))
-            return
         self.query_one("#status", Static).update(Text.assemble(
             ("● ", GRN), (f"{s['node']}", MUTED), (f"   {len(s['nodes'])} node", FAINT),
             ("s" if len(s["nodes"]) != 1 else "", FAINT),
@@ -377,7 +358,6 @@ class DriftApp(App):
         self.action_edit()
 
     @on(Input.Submitted, "#add")
-    @guarded
     def _add(self, ev: Input.Submitted):
         text = ev.value.strip()
         if not text:
@@ -403,7 +383,6 @@ class DriftApp(App):
     def _search_done(self, ev):
         self.query_one("#tasks").focus()
 
-    @guarded
     def on_key(self, ev):
         if isinstance(self.focused, Input) or isinstance(self.screen, EditScreen):
             return
@@ -421,7 +400,6 @@ class DriftApp(App):
     def action_focus_add(self):
         self.query_one("#add").focus()
 
-    @guarded
     def action_toggle(self):
         if self._typing():
             return
@@ -430,14 +408,12 @@ class DriftApp(App):
             if t.done:
                 self.notify(f"✓  {t.title}", timeout=2)
 
-    @guarded
     def action_edit(self):
         if self._typing() or not (tid := self.current_id()):
             return
         t = self.store.get(tid)
 
-        @guarded
-        def done(_self, changes):
+        def done(changes):
             if changes:
                 cur = self.store.get(tid)
                 diff = {k: v for k, v in changes.items()
@@ -445,9 +421,8 @@ class DriftApp(App):
                                                sorted(set(v.lower().replace("#", "").split())))}
                 if diff:
                     self.store.update(tid, **diff)
-        self.push_screen(EditScreen(t), functools.partial(done, self))
+        self.push_screen(EditScreen(t), done)
 
-    @guarded
     def action_delete(self):
         if self._typing() or not (tid := self.current_id()):
             return
@@ -456,13 +431,11 @@ class DriftApp(App):
         self.undo_stack.append(tid)
         self.notify(f"Deleted  {t.title}  —  press u to undo", timeout=4)
 
-    @guarded
     def action_undo(self):
         if self._typing() or not self.undo_stack:
             return
         self.store.update(self.undo_stack.pop(), deleted=False)
 
-    @guarded
     def action_due_today(self):
         if self._typing() or not (tid := self.current_id()):
             return

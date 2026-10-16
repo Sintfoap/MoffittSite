@@ -19,16 +19,16 @@ jobs:
           node-version: 22
       - run: node --no-warnings --test tests/*.test.mjs
 
-  drift:
-    # The terminal Drift app in apps/todo-esque (engine, site login, terminal UI).
+  cli:
+    # The sintfoap command in cli/ (terminal sign-in and dashboard).
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: apps/todo-esque
+        working-directory: cli
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
-      - run: pip install pytest textual
+          python-version: "3.10"
+      - run: pip install pytest .
       - run: python -m pytest -q tests

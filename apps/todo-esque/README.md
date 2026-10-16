@@ -111,23 +111,6 @@ python -m drift rm 4d9d84
 python -m drift info               # vault path, this device's id, devices seen
 ```
 
-## Your list on sintfoap.xyz
-
-The CLI and terminal UI can use your todo list on the website instead of a local vault.
-
-```bash
-python -m drift login              # shows a code and opens the site; approve it there
-python -m drift                    # the terminal UI, now on your site list
-python -m drift ls                 # add, ls, done, rm too
-python -m drift whoami
-python -m drift --local ls         # the local vault, while still signed in
-python -m drift logout             # ends that session on the site, back to the vault
-```
-
-You approve the sign-in in a browser where you're already signed in, two-factor included, so the terminal never asks for your password. It keeps the session in `~/.config/drift/site.json` (only you can read it). It's a normal site session: it ends after 7 days unused or 30 days, or when you sign out everywhere or change your password, and then `drift` tells you to run `drift login` again.
-
-The terminal UI re-fetches every 5 seconds, so changes made on the website show up on their own. If the site can't be reached, the status bar turns red and saving shows an error instead of quitting. `drift web` always serves the local vault. `--site URL` or `DRIFT_SITE` signs in somewhere else (it must be https).
-
 ## HTTP API
 
 | Method | Path | Body | |
@@ -146,10 +129,9 @@ Auth: `?token=…` or `Authorization: Bearer …` when started with `--token` (o
 drift/core.py      the engine: HLC, op log, merge, quick-add parser   (stdlib)
 drift/server.py    REST + SSE bridge for browsers                     (stdlib)
 drift/tui.py       terminal UI                                        (Textual)
-drift/site.py      drift login/logout, and RemoteStore for your list on the site (stdlib)
 drift/__main__.py  CLI entry point
 web/index.html     web UI, single file, no build step
-tests/             convergence and site-login tests, seed data, TUI smoke test
+tests/             convergence tests, seed data, TUI smoke test
 ```
 
 ## Where to take it next

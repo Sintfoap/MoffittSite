@@ -1,4 +1,4 @@
-// Signing in from a terminal (the Drift CLI and terminal UI), without typing a
+// Signing in from a terminal (the sintfoap command in cli/), without typing a
 // password into it. It works like a TV signing in to a streaming service:
 //
 //   1. The terminal asks for a code:   POST /login/cli/start   {name}
@@ -13,11 +13,12 @@
 // __Host-sid cookie. So it expires like any session, shows up in the session
 // count, and "Sign out everywhere" or a password change ends it too.
 //
-//   GET /login/cli/me   → {username, display_name, areas} for whoever the token belongs to.
+//   GET /login/cli/me          → {username, display_name, areas} for whoever the token belongs to.
+//   GET /login/cli/dashboard   → what /dashboard shows, for the terminal dashboard (cli/).
 
 import { db, now } from "./db.js";
 import { randomBytes, randomToken, sha256 } from "./crypto.js";
-import { createSession, currentSession, clientIp, getUser } from "./auth.js";
+import { createSession, currentSession, clientIp, getUser, recoveryCodesLeft, APPS } from "./auth.js";
 import { sameOrigin } from "./account.js";
 import { html, page, esc, messagePage } from "./pages.js";
 
@@ -66,6 +67,7 @@ export async function handleCli(request, env) {
     if (pathname === "/login/cli/start") return method === "POST" ? await start(request, env) : json({ error: "method not allowed" }, 405);
     if (pathname === "/login/cli/token") return method === "POST" ? await token(request, env) : json({ error: "method not allowed" }, 405);
     if (pathname === "/login/cli/me") return method === "GET" ? await me(request, env) : json({ error: "method not allowed" }, 405);
+    if (pathname === "/login/cli/dashboard") return method === "GET" ? await dashboard(request, env) : json({ error: "method not allowed" }, 405);
     if (pathname === "/login/cli" || pathname === "/login/cli/") return await approvePage(request, env, method);
     return json({ error: "not found" }, 404);
   } catch (e) {
@@ -121,6 +123,27 @@ async function me(request, env) {
   return json({ username: user.username, display_name: user.display_name, areas: [...user.areas].sort() });
 }
 
+// The same things /dashboard shows: the apps this account's areas give it and
+// the account summary, plus what the account page would nag about.
+async function dashboard(request, env) {
+  const s = await currentSession(env, request);
+  if (!s) return json({ error: "not signed in" }, 401);
+  const { user } = s, origin = new URL(request.url).origin;
+  const d = await db(env);
+  const sessions = (await d.prepare("SELECT COUNT(*) AS n FROM sessions WHERE user_id = ? AND stage = 'full'").bind(user.id).first()).n;
+  // Same rule as protect(): until setup is finished, the site only offers /account.
+  const setup = user.must_change_pw ? "choose a new password" : user.areas.has("admin") && !user.totp_secret ? "set up two-factor" : null;
+  return json({
+    site: origin,
+    user: { username: user.username, display_name: user.display_name, admin: user.areas.has("admin") },
+    apps: setup ? [] : APPS.filter(a => user.areas.has(a.area)).map(a => ({ name: a.name, blurb: a.blurb, url: origin + a.href })),
+    account: {
+      two_factor: !!user.totp_secret, sessions, recovery_codes_left: await recoveryCodesLeft(env, user.id),
+      email: user.email || null, email_confirmed: !!user.email_verified, setup_needed: setup, url: origin + "/account",
+    },
+  });
+}
+
 // ── the browser's side ─────────────────────────────────────────────────────
 async function approvePage(request, env, method) {
   const url = new URL(request.url);
@@ -140,7 +163,7 @@ async function approvePage(request, env, method) {
   const f = await body(request);
   const code = normalizeCode(f?.code);
   const row = code ? await pendingRow(env, code) : null;
-  if (!row) return html(approveHtml({ user, code: "", error: "That code didn't match a terminal waiting to sign in. Codes work for 10 minutes; run drift login again for a new one." }), { status: 400 });
+  if (!row) return html(approveHtml({ user, code: "", error: "That code didn't match a terminal waiting to sign in. Codes work for 10 minutes; run sintfoap login again for a new one." }), { status: 400 });
 
   const d = await db(env);
   if (f.action === "deny") {
@@ -165,7 +188,7 @@ function approveHtml({ user, code, row, error }) {
   if (!row) {
     return page("Sign in a terminal", `
   <div class="kicker">Terminal</div><h1>Sign in a terminal</h1>
-  <p>Run <span class="mono">python -m drift login</span>, then type the code it shows.</p>
+  <p>Run <span class="mono">sintfoap login</span>, then type the code it shows.</p>
   <form method="post" action="/login/cli" class="card">${err}
     <label for="c">Code</label><input id="c" type="text" name="code" value="${esc(code)}" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="ABCD-EFGH" required autofocus>
     <button type="submit">Continue</button>
@@ -177,7 +200,7 @@ function approveHtml({ user, code, row, error }) {
   <div class="card">
     <p><strong>${esc(row.name)}</strong> is asking to sign in as <span class="mono">${esc(user.username)}</span> with code</p>
     <p class="codes" style="font-size:28px;letter-spacing:3px">${esc(code)}</p>
-    <p class="hint">Only approve this if you just ran <span class="mono">drift login</span> yourself and this matches the code it shows. That terminal will be able to read and change your todo list. The code expires in ${mins} minute${mins === 1 ? "" : "s"}.</p>
+    <p class="hint">Only approve this if you just ran <span class="mono">sintfoap login</span> yourself and this matches the code it shows. That terminal will be signed in to your account, like another browser. The code expires in ${mins} minute${mins === 1 ? "" : "s"}.</p>
     <form method="post" action="/login/cli" style="display:inline">
       <input type="hidden" name="code" value="${esc(code)}"><input type="hidden" name="confirm" value="yes">
       <button type="submit">Approve</button>
