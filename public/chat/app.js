@@ -37,7 +37,6 @@ function toast(text) {
 async function loadRooms() {
   const s = await api("GET", "/state");
   me = s.user; rooms = s.rooms;
-  $("#who").textContent = me.name;
   renderRooms();
   const shown = open && rooms.find(r => r.id === open.id), count = $("#show-members");
   if (shown && count) count.textContent = `${shown.members} member${shown.members === 1 ? "" : "s"}`;
