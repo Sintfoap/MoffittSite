@@ -9,11 +9,12 @@
 import { plugins } from "./store.js";
 import { protect, handleAuth, AUTH_PATHS, sameOrigin } from "./account.js";
 import { currentSession } from "./auth.js";
-import { list, create, update, readJson, BadRequest } from "./tasks.js";
+import { state, version, createItem, updateItem, createCollection, updateCollection, shareCollection, unshareCollection, readJson, BadRequest, ID } from "./drift.js";
 
-const TASKS = /^\/todo\/api\/tasks\/?$/;
-const TASK = /^\/todo\/api\/tasks\/([^/]+)$/;
-const ID = /^t_[0-9a-z]{1,32}$/;
+// /todo/api/state, /todo/api/version, /todo/api/items[/<id>],
+// /todo/api/collections[/<id>[/shares[/<username>]]]
+const API = /^\/todo\/api\/(state|version|items|collections)(?:\/([^/]+)(?:\/(shares)(?:\/([^/]+))?)?)?\/?$/;
+const USERNAME = /^[a-z0-9_.-]{1,64}$/;
 
 export default {
   async fetch(request, env) {
@@ -56,29 +57,43 @@ async function todo(request, env, user, pathname) {
   const method = request.method;
   return handle(async () => {
     if (method !== "GET" && !sameOrigin(request)) return json({ error: "cross-origin request refused" }, 403);
+    const m = pathname.match(API);
+    if (!m) return json({ error: "not found" }, 404);
+    const [, kind, id, sub, who] = m;
 
-    if (TASKS.test(pathname)) {
-      // GET  → the user's tasks, projects, tags, stats
-      // POST → create a task from explicit fields ({title, due, ...})
-      if (method === "GET") return json(await list(env, user.id, user.display_name));
-      if (method === "POST") return json(await create(env, user.id, await readJson(request)), 201);
+    // GET → the user's collections, items and the plugins there are
+    if (kind === "state") return method === "GET" && !id ? json(await state(env, user)) : json({ error: "not found" }, 404);
+    // GET → a fingerprint that changes whenever any of the user's data does
+    if (kind === "version") return method === "GET" && !id ? json({ version: await version(env, user.id) }) : json({ error: "not found" }, 404);
+
+    if (sub) {
+      // POST   collections/<id>/shares             {username, role} → share it, or change their role
+      // DELETE collections/<id>/shares/<username>  → stop sharing (or leave, if it's you)
+      if (kind !== "collections" || !ID.test(id)) return json({ error: "not found" }, 404);
+      let out;
+      if (!who && method === "POST") out = await shareCollection(env, user, id, await readJson(request));
+      else if (who && method === "DELETE") out = USERNAME.test(decodeURIComponent(who)) ? await unshareCollection(env, user, id, decodeURIComponent(who)) : null;
+      else return json({ error: "method not allowed" }, 405);
+      return out ? json(out, method === "POST" ? 201 : 200) : json({ error: "not found" }, 404);
+    }
+
+    // Items act as `user` (they may be in someone else's shared collection);
+    // collections can only be created and changed by their owner.
+    const [create, update, as] = kind === "items" ? [createItem, updateItem, user] : [createCollection, updateCollection, user.id];
+    if (!id) {
+      // POST → create from explicit fields ({title, collection, meta, ...} or {name, plugins, ...})
+      if (method === "POST") return json(await create(env, as, await readJson(request)), 201);
       return json({ error: "method not allowed" }, 405);
     }
-
-    const m = pathname.match(TASK);
-    if (m) {
-      // PATCH  → change any of title notes done priority due project tags order deleted
-      // DELETE → soft delete (PATCH {deleted:false} undoes it)
-      if (!ID.test(m[1])) return json({ error: "not found" }, 404);
-      let changes;
-      if (method === "PATCH") changes = await readJson(request);
-      else if (method === "DELETE") changes = { deleted: true };
-      else return json({ error: "method not allowed" }, 405);
-      const t = await update(env, user.id, m[1], changes);
-      return t ? json(t) : json({ error: "not found" }, 404);
-    }
-
-    return json({ error: "not found" }, 404);
+    // PATCH  → change the fields sent; meta: {plugin: value | null}
+    // DELETE → soft delete (PATCH {deleted:false} undoes it)
+    if (!ID.test(id)) return json({ error: "not found" }, 404);
+    let changes;
+    if (method === "PATCH") changes = await readJson(request);
+    else if (method === "DELETE") changes = { deleted: true };
+    else return json({ error: "method not allowed" }, 405);
+    const out = await update(env, as, id, changes);
+    return out ? json(out) : json({ error: "not found" }, 404);
   });
 }
 
@@ -90,7 +105,7 @@ async function handle(fn) {
   try { return await fn(); }
   catch (e) {
     if (e instanceof BadRequest) return json({ error: e.message }, 400);
-    console.error("todo api error:", e);
+    console.error("drift api error:", e);
     return json({ error: "server error" }, 500);
   }
 }

@@ -392,7 +392,7 @@ async function admin(request, env, me, pathname, method) {
       SELECT u.id, u.username, u.display_name, u.created_at, u.disabled, u.must_change_pw, u.totp_secret IS NOT NULL AS totp,
         (SELECT group_concat(area) FROM user_areas a WHERE a.user_id = u.id) AS areas,
         (SELECT COUNT(*) FROM sessions s WHERE s.user_id = u.id AND s.stage = 'full') AS sessions,
-        (SELECT COUNT(*) FROM todo_tasks t WHERE t.owner = u.id) AS tasks
+        (SELECT COUNT(*) FROM drift_items t WHERE t.owner = u.id) + (SELECT COUNT(*) FROM todo_tasks t WHERE t.owner = u.id) AS tasks
       FROM users u ORDER BY u.created_at`).all();
     const { results: orphans } = await d.prepare(`
       SELECT owner, COUNT(*) AS n FROM todo_tasks WHERE owner NOT IN (SELECT id FROM users) GROUP BY owner`).all();
@@ -458,6 +458,9 @@ async function admin(request, env, me, pathname, method) {
           d.prepare("DELETE FROM email_tokens WHERE user_id = ?").bind(target.id),
           d.prepare("DELETE FROM user_areas WHERE user_id = ?").bind(target.id),
           d.prepare("DELETE FROM todo_tasks WHERE owner = ?").bind(target.id),
+          d.prepare("DELETE FROM drift_items WHERE owner = ?").bind(target.id),
+          d.prepare("DELETE FROM drift_collections WHERE owner = ?").bind(target.id),
+          d.prepare("DELETE FROM drift_shares WHERE owner = ? OR user_id = ?").bind(target.id, target.id),
           d.prepare("DELETE FROM users WHERE id = ?").bind(target.id),
         ]);
         return show({ notice: `${target.username} and their tasks are deleted.` });

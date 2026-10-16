@@ -6,8 +6,10 @@ Ryan Moffitt's portfolio, hosted on Cloudflare Workers.
 public/          the website, served as static files
   index.html       homepage
   friends/         Friends & Associates page
-  todo/            Drift todo app (signed-in users only)
-  plugins/         the plugin store page (signed-in Drift users)
+  todo/            Drift (signed-in users only)
+    app.js           the page: collections, views, item dialog
+    lib.js           dates and quick-add parsing
+    plugins/         Checklist, Events, List, Graph; one file each
 src/             the Worker: runs only for the paths in run_worker_first
   worker.js        routing: sign-in pages, then /todo behind protect()
   account.js       /login /signup /logout /dashboard /account /admin, and protect()
@@ -16,8 +18,7 @@ src/             the Worker: runs only for the paths in run_worker_first
   mail.js          sending email through Resend (address checks, reset links)
   pages.js         the sign-in, dashboard and account pages
   db.js            D1 tables (created on first use)
-  tasks.js         todo storage, one list per account
-  store.js         the plugin store: drafts, review queue, approved plugins
+  drift.js         Drift storage: collections and items per account
   vendor/uqr.mjs   QR codes for two-factor setup (MIT)
 apps/todo-esque/ the original Drift app (Python engine, terminal UI, CLI)
 tests/           node --no-warnings --test tests/*.test.mjs
@@ -96,36 +97,48 @@ If adding an email fails, the account page shows Resend's reason, and the Worker
 3. In `src/worker.js`, route those paths through `protect(request, env, "<area>", user => ...)`, the same way `/todo` is.
 4. Give people the area from `/admin`.
 
-## Todo API
+## Drift
 
-All endpoints act only on the signed-in user's own tasks.
+Drift lives at `/todo/`. Everything in it is an **item**: a title, notes, tags and the collection it's in. **Plugins** add their own metadata to items and their own ways of seeing them:
+
+| Plugin | Adds to an item (`meta.<id>`) | View |
+|---|---|---|
+| Checklist (`checklist`) | `{done, done_at, priority}` | open and done items, tick boxes |
+| Events (`event`) | `{start, end}`, as `YYYY-MM-DD` or `YYYY-MM-DDTHH:MM` | month calendar and agenda |
+| List (`list`) | `{order, parent}` | an outline you reorder and nest |
+| Graph (`graph`) | `{links, x, y}`: linked item ids, and where you pinned it | a network you drag, pan and zoom; "Link items" links or unlinks two items |
+
+Each **collection** picks which plugins are on, and shows a tab for each one's view. One item can carry several plugins' metadata at once, so a dated checklist item is also on the calendar. **Today** and **Calendar** in the sidebar show events from every collection.
+
+Quick-add: `Dentist #health +Home !2 ^fri @3pm` (tag, collection, priority, date, time).
+
+### Sharing
+
+The owner of a collection can share it from its settings with anyone who has a Drift account, as **Can edit** (add, change and delete items) or **Can view** (read only). It shows up under "Shared with you" in their sidebar, and its dated items appear in their Today and Calendar. Items stay stored under the owner, whoever added them, so they count toward the owner's limit and go away if the owner deletes the collection. Only the owner can rename it, change its plugins, share it or delete it; people it's shared with can leave it. Items can't be moved between a shared collection and one with a different owner.
+
+### Adding a plugin
+
+Write `public/todo/plugins/<name>.js` (the comment in `plugins/index.js` lists what a plugin can define) and add it to `PLUGINS` there. A simple view returns HTML from `render(ctx)` and is redrawn on every change. An interactive one (a zoomable graph, a canvas) defines `mount(el, ctx)` to build itself once, `update(ctx)` for changes, and `unmount()`, so it keeps its own state. Its `clean()` runs in the Worker too, so the API checks its metadata with no other server change. New plugins start switched off in existing collections.
+
+### API
+
+All endpoints act only on the signed-in user's own data.
 
 | Method | Path | Body |
 |---|---|---|
-| GET | `/todo/api/tasks` | |
-| POST | `/todo/api/tasks` | `{title, notes, done, priority, due, project, tags, order}` |
-| PATCH | `/todo/api/tasks/<id>` | any of the fields above, or `deleted` |
-| DELETE | `/todo/api/tasks/<id>` | |
+| GET | `/todo/api/state` | → `{version, user, plugins, collections, items}` |
+| GET | `/todo/api/version` | → `{version}`, which changes whenever any of your data does. The page checks it every 5 seconds and reloads only when it changes, so edits from other devices appear within a few seconds |
+| POST | `/todo/api/items` | `{title, collection, notes, tags, meta}` |
+| PATCH | `/todo/api/items/<id>` | any of those, or `deleted`. Each `meta.<plugin>` is replaced whole; `null` removes it |
+| DELETE | `/todo/api/items/<id>` | |
+| POST | `/todo/api/collections` | `{name, plugins, view, order}` |
+| PATCH | `/todo/api/collections/<id>` | any of those, or `deleted` |
+| DELETE | `/todo/api/collections/<id>` | hides its items too; you can't delete your last one |
+| POST | `/todo/api/collections/<id>/shares` | `{username, role}`, role `edit` or `view`. Owner only; sending it again changes the role |
+| DELETE | `/todo/api/collections/<id>/shares/<username>` | the owner removes someone, or you leave a collection shared with you |
 
-Quick-add text (`#tag +project !2 ^fri`) is parsed by the client, so dates follow the user's own time zone.
+### Tasks from the old todo list
 
-## Plugin store
+The first time someone opens Drift, their old tasks (`todo_tasks`) move over: each project becomes a collection (no project goes to Inbox), done and priority become Checklist metadata, and a due date becomes an all-day event. Tasks an admin moves to an account later move over the same way.
 
-`/plugins/` is where people share Drift plugins. Anyone with the `todo` area can use it.
-
-- **Writing:** "My plugins" has an editor in the browser. A new plugin starts from a small working example. Saving keeps a private draft.
-- **Review:** "Submit for review" sends the draft to the queue. Admins see a Review tab with each submission's code, compared line by line with the version that's live. Approving puts it in the store; rejecting needs a note, which the author sees.
-- **Versions:** edits after approval stay private until the next approval, so the store always serves code an admin has read. Deleting a plugin, or its author's account, takes it out of the store.
-- **Safety:** plugin code is stored and shown only as text. Nothing runs it yet. The page has a strict Content-Security-Policy (no inline scripts) because it shows other people's code.
-
-| Method | Path | Body |
-|---|---|---|
-| GET | `/plugins/api/state` | |
-| GET | `/plugins/api/store/<id>` | (the approved version, with code) |
-| POST | `/plugins/api/mine` | `{id, name, description, code}` |
-| PATCH | `/plugins/api/mine/<id>` | any of `{name, description, code}` |
-| DELETE | `/plugins/api/mine/<id>` | |
-| POST | `/plugins/api/mine/<id>/submit` | `{note}` |
-| POST | `/plugins/api/mine/<id>/withdraw` | |
-| GET | `/plugins/api/review` | admins only |
-| POST | `/plugins/api/review/<id>/<version>` | admins only: `{decision: "approve" \| "reject", note}` |
+`apps/todo-esque/` is the original standalone Drift (Python, terminal UI, sync folder). It isn't deployed and doesn't share data with the site.

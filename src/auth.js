@@ -23,7 +23,7 @@ export const AREAS = ["todo", "admin"];  // every area the site knows about
 
 // What the dashboard shows for each area, in this order.
 export const APPS = [
-  { area: "todo", name: "Drift", href: "/todo/", blurb: "Your tasks, projects and due dates." },
+  { area: "todo", name: "Drift", href: "/todo/", blurb: "Your items as checklists, calendars and lists." },
   { area: "admin", name: "Admin", href: "/admin", blurb: "Accounts, access and resets." },
   { area: "todo", name: "Plugin store", href: "/plugins/", blurb: "Find, write and share plugins for Drift." },
 ];
