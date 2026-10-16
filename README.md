@@ -9,7 +9,7 @@ public/          the website, served as static files
   todo/            Drift (signed-in users only)
     app.js           the page: collections, views, item dialog
     lib.js           dates and quick-add parsing
-    plugins/         Checklist, Events, List; one file each
+    plugins/         Checklist, Events, List, Graph; one file each
 src/             the Worker: runs only for the paths in run_worker_first
   worker.js        routing: sign-in pages, then /todo behind protect()
   account.js       /login /signup /logout /dashboard /account /admin, and protect()
@@ -104,6 +104,7 @@ Drift lives at `/todo/`. Everything in it is an **item**: a title, notes, tags a
 | Checklist (`checklist`) | `{done, done_at, priority}` | open and done items, tick boxes |
 | Events (`event`) | `{start, end}`, as `YYYY-MM-DD` or `YYYY-MM-DDTHH:MM` | month calendar and agenda |
 | List (`list`) | `{order, parent}` | an outline you reorder and nest |
+| Graph (`graph`) | `{links, x, y}`: linked item ids, and where you pinned it | a network you drag, pan and zoom; "Link items" links or unlinks two items |
 
 Each **collection** picks which plugins are on, and shows a tab for each one's view. One item can carry several plugins' metadata at once, so a dated checklist item is also on the calendar. **Today** and **Calendar** in the sidebar show events from every collection.
 

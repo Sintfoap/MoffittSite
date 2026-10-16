@@ -131,6 +131,7 @@ function ctx() {
   return {
     collection: cur.col, tab: cur.tab, items: all.filter(matches), scopeItems: all, filtered: Boolean(state.q),
     pending: state.pending, viewState: (state.viewState[key] ||= {}),
+    all: state.items, selected: state.sel, open: openItem,
     row, group, empty, render, setMeta, update,
   };
 }
@@ -235,7 +236,11 @@ function renderItemDialog() {
 }
 function readFieldset(fs) {
   const out = {};
-  for (const el of fs.querySelectorAll("[name]")) out[el.name] = el.type === "checkbox" ? el.checked : el.value;
+  for (const el of fs.querySelectorAll("[name]")) {
+    // A tick box with its own value is one of a list: collect the ticked values.
+    if (el.type === "checkbox" && el.hasAttribute("value")) { (out[el.name] ||= []); if (el.checked) out[el.name].push(el.value); }
+    else out[el.name] = el.type === "checkbox" ? el.checked : el.value;
+  }
   return out;
 }
 $("#itemForm").addEventListener("change", e => {

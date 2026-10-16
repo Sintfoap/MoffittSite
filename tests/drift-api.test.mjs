@@ -22,7 +22,7 @@ test("serves the page to a signed-in user and marks it uncacheable", async () =>
 test("a new account starts with an Inbox and the built-in plugins", async () => {
   const b = await signedIn(makeEnv(), "ryan");
   const s = (await api(b, "GET", "state")).json;
-  assert.deepEqual(s.plugins.map(p => p.id), ["checklist", "event", "list"]);
+  assert.deepEqual(s.plugins.map(p => p.id), ["checklist", "event", "list", "graph"]);
   assert.equal(s.collections.length, 1);
   assert.equal(s.collections[0].name, "Inbox");
   assert.deepEqual(s.collections[0].plugins, ["checklist", "event", "list"]);
@@ -79,6 +79,16 @@ test("plugin metadata merges per plugin; null takes an item off a plugin", async
   assert.equal(undone.json.meta.checklist.done_at, null);
 });
 
+test("graph links are stored on one item and survive other plugins' edits", async () => {
+  const b = await signedIn(makeEnv(), "ryan");
+  const col = await inbox(b);
+  const { json: a } = await api(b, "POST", "items", { title: "A", collection: col.id });
+  const { json: c } = await api(b, "POST", "items", { title: "C", collection: col.id, meta: { graph: { links: [a.id, a.id], x: 10.4, y: "20" } } });
+  assert.deepEqual(c.meta.graph, { links: [a.id], x: 10, y: 20 }, "duplicates dropped, positions rounded");
+  await api(b, "PATCH", `items/${c.id}`, { meta: { checklist: { done: true } } });
+  assert.deepEqual((await api(b, "GET", "state")).json.items.find(i => i.id === c.id).meta.graph.links, [a.id]);
+});
+
 test("deletes are undoable, and a deleted collection hides its items", async () => {
   const b = await signedIn(makeEnv(), "ryan");
   const first = await inbox(b);
@@ -127,7 +137,9 @@ test("rejects bad input", async () => {
   const post = body => api(b, "POST", "items", { collection: col.id, ...body });
   assert.equal((await post({ title: "" })).status, 400);
   assert.equal((await post({ title: "x", owner: "someone_else" })).status, 400, "unknown fields refused");
-  assert.equal((await post({ title: "x", meta: { graph: {} } })).status, 400, "unknown plugin refused");
+  assert.equal((await post({ title: "x", meta: { timeline: {} } })).status, 400, "unknown plugin refused");
+  assert.equal((await post({ title: "x", meta: { graph: { links: ["../x"] } } })).status, 400);
+  assert.equal((await post({ title: "x", meta: { graph: { links: [], x: "left" } } })).status, 400);
   assert.equal((await post({ title: "x", meta: { event: { start: "next tuesday" } } })).status, 400);
   assert.equal((await post({ title: "x", meta: { event: { start: "2026-10-20T10:00", end: "2026-10-20T09:00" } } })).status, 400);
   assert.equal((await post({ title: "x", meta: { event: { start: "2026-10-20", end: "2026-10-21T09:00" } } })).status, 400);

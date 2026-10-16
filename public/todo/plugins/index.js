@@ -28,6 +28,7 @@
 import checklist from "./checklist.js";
 import events from "./events.js";
 import list from "./list.js";
+import graph from "./graph.js";
 
-export const PLUGINS = [checklist, events, list];
+export const PLUGINS = [checklist, events, list, graph];
 export const BY_ID = Object.fromEntries(PLUGINS.map(p => [p.id, p]));
