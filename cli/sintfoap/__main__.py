@@ -4,6 +4,7 @@ sintfoap — sintfoap.xyz from the terminal.
   sintfoap                    your dashboard (signs in first if needed)
   sintfoap login [--site URL] sign in: shows a code to approve in your browser
   sintfoap dashboard [--plain]
+  sintfoap chat [ROOM]        chat rooms in the terminal
   sintfoap whoami
   sintfoap logout             ends this terminal's session on the site
 """
@@ -50,6 +51,8 @@ def main(argv=None):
     lg.add_argument("--no-browser", action="store_true", help="just print the link")
     d = sub.add_parser("dashboard", help="your dashboard")
     d.add_argument("--plain", action="store_true", help="print it instead of opening the terminal UI")
+    ch = sub.add_parser("chat", help="chat rooms in the terminal")
+    ch.add_argument("room", nargs="?", help="a room to open, by name")
     sub.add_parser("whoami")
     sub.add_parser("logout")
     args = ap.parse_args(argv)
@@ -62,6 +65,11 @@ def main(argv=None):
         elif cmd == "logout":
             where = site.logout()
             print(f"  signed out of {where}" if where else "  wasn't signed in")
+        elif cmd == "chat":
+            if not site.load_login():
+                site.login()
+            from .chat import run as chat
+            chat(args.room)
         elif cmd == "whoami":
             me = site.whoami()
             print(f"  {me['username']} ({me['display_name']}) on {me['site']}")

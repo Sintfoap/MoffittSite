@@ -12,6 +12,7 @@ sintfoap                    # signs you in the first time, then opens your dashb
 | `sintfoap` | your dashboard (signs in first if needed) |
 | `sintfoap login` | shows a code and opens the site; approve it there |
 | `sintfoap dashboard --plain` | the dashboard as text, for scripts and pipes |
+| `sintfoap chat [ROOM]` | the chat rooms from `/chat/`, in the terminal |
 | `sintfoap whoami` | which account this terminal is signed in as |
 | `sintfoap logout` | ends this terminal's session on the site |
 
@@ -45,11 +46,29 @@ The same cards as `/dashboard`, in the site's colours: one per app your account 
 | `o` | sign out this terminal |
 | `q` | quit |
 
+## Chat
+
+`sintfoap chat` shows the same rooms as `/chat/` on the site: the list on the left, the open room on the right, and a line to type in. It opens the room you name, or your first room, and checks for new messages every few seconds, like the web page.
+
+| | |
+|---|---|
+| `enter` | send what you typed (only in rooms you've joined) |
+| `tab` / `esc` | move to the room list; `enter` on a room opens it |
+| `/join` `/leave` | join or leave the open room |
+| `/new NAME \| TOPIC` | make a room (`ctrl+n` starts this for you) |
+| `/rename NAME` `/topic TEXT` | change the open room (its owner, or an admin) |
+| `/delete` | delete your last message in the open room |
+| `/older` | load older messages (`ctrl+u`) |
+| `/help` `/quit` | |
+
+Start a message with `//` to send one that begins with `/`.
+
 ## Files
 
 ```
-sintfoap/site.py      signing in and out, reading the dashboard (stdlib)
+sintfoap/site.py      signing in and out, reading the dashboard, the chat API (stdlib)
 sintfoap/tui.py       the dashboard (Textual)
+sintfoap/chat.py      chat (Textual)
 sintfoap/__main__.py  the command
 tests/                python -m pytest tests
 ```

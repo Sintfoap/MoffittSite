@@ -184,3 +184,52 @@ def whoami() -> dict:
 def dashboard() -> dict:
     """{site, user, apps, account}: what /dashboard shows. See src/cli.js."""
     return _get("/login/cli/dashboard")
+
+
+# ──────────────────────────────── chat ──────────────────────────────────────
+# The same API the /chat/ page uses (src/chat.js). The terminal sends no Origin
+# header, which the site counts as same-site, like a form post from the page.
+
+def _chat(method: str, path: str, body: Any = None) -> Any:
+    info = load_login()
+    if not info:
+        raise SignedOut()
+    status, data = call(info["site"], method, "/chat/api" + path, body, token=info["token"])
+    if status not in (200, 201):
+        raise _error(status, data)
+    return data
+
+
+def chat_state() -> dict:
+    """{user, rooms}: every room, with joined, unread and manage for this account."""
+    return _chat("GET", "/state")
+
+
+def chat_messages(room: str, since: int | None = None, before: int | None = None) -> dict:
+    """{seq, more, joined, messages}: the newest page, older ones (before), or changes (since)."""
+    q = f"?since={since}" if since is not None else f"?before={before}" if before is not None else ""
+    return _chat("GET", f"/rooms/{room}/messages{q}")
+
+
+def chat_post(room: str, text: str) -> dict:
+    return _chat("POST", f"/rooms/{room}/messages", {"body": text})
+
+
+def chat_delete(room: str, message_id: int) -> dict:
+    return _chat("DELETE", f"/rooms/{room}/messages/{message_id}")
+
+
+def chat_create(name: str, topic: str = "") -> dict:
+    return _chat("POST", "/rooms", {"name": name, "topic": topic})
+
+
+def chat_update(room: str, **fields: str) -> dict:
+    return _chat("PATCH", f"/rooms/{room}", fields)
+
+
+def chat_join(room: str) -> dict:
+    return _chat("POST", f"/rooms/{room}/join")
+
+
+def chat_leave(room: str) -> dict:
+    return _chat("POST", f"/rooms/{room}/leave")
