@@ -452,6 +452,8 @@ async function admin(request, env, me, pathname, method) {
         if (String(f.confirm ?? "").trim().toLowerCase() !== target.username) throw new AuthError(`Type ${target.username} in the box to delete that account.`);
         await d.batch([
           d.prepare("DELETE FROM sessions WHERE user_id = ?").bind(target.id),
+          d.prepare("DELETE FROM store_versions WHERE plugin_id IN (SELECT id FROM store_plugins WHERE owner = ?)").bind(target.id),
+          d.prepare("DELETE FROM store_plugins WHERE owner = ?").bind(target.id),
           d.prepare("DELETE FROM recovery_codes WHERE user_id = ?").bind(target.id),
           d.prepare("DELETE FROM email_tokens WHERE user_id = ?").bind(target.id),
           d.prepare("DELETE FROM user_areas WHERE user_id = ?").bind(target.id),

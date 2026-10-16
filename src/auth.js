@@ -25,6 +25,7 @@ export const AREAS = ["todo", "admin"];  // every area the site knows about
 export const APPS = [
   { area: "todo", name: "Drift", href: "/todo/", blurb: "Your tasks, projects and due dates." },
   { area: "admin", name: "Admin", href: "/admin", blurb: "Accounts, access and resets." },
+  { area: "todo", name: "Plugin store", href: "/plugins/", blurb: "Find, write and share plugins for Drift." },
 ];
 
 const RESERVED = new Set(["admin", "administrator", "root", "system", "support", "help", "login", "logout",
