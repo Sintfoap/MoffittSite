@@ -60,6 +60,8 @@ button.link:hover { color: var(--gold); }
 
 /* room list */
 .side { display: flex; flex-direction: column; gap: 12px; min-height: 0; }
+.side-buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.side-buttons .btn { padding: 8px 6px; }
 .side .panel { flex: 1; overflow-y: auto; padding: 14px 12px; }
 .side h2 { margin: 0 6px 6px; font: 400 11px var(--mono); letter-spacing: 3px; text-transform: uppercase; color: var(--faint); }
 .side section + section { margin-top: 16px; }
@@ -70,7 +72,12 @@ button.link:hover { color: var(--gold); }
 .rooms button[aria-current="true"] { background: var(--gold-soft); border-left-color: var(--gold); color: var(--ink); font-weight: 700; }
 .rooms .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rooms .name::before { content: "# "; color: var(--faint); font-weight: 400; }
+.rooms .private .name::before { content: "🔒 "; font-size: 11px; }
+.rooms .dm .name::before { content: none; }
+.dot { display: inline-block; width: 7px; height: 7px; flex: none; border: 1px solid var(--faint); border-radius: 50%; margin-right: 8px; vertical-align: 1px; }
+.dot.on { background: var(--good); border-color: var(--good); }
 .rooms .n { font-size: 11.5px; font-weight: 700; padding: 0 6px; background: var(--gold); color: var(--on-gold); }
+.rooms .n.at { background: var(--bad); color: var(--on-gold); }
 .rooms .count { font-size: 12px; color: var(--faint); }
 .side .none { margin: 0 8px; font-size: 12.5px; color: var(--faint); }
 
@@ -80,25 +87,69 @@ button.link:hover { color: var(--gold); }
 .room-head .title { flex: 1; min-width: 0; }
 .room-head h2 { margin: 0; font: 700 15px/1.4 var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .room-head h2::before { content: "# "; color: var(--gold); }
+.room-head h2.private::before { content: "🔒 "; font-size: 12px; }
+.room-head h2.dm::before { content: "@ "; }
 .room-head p { margin: 0; font-size: 12.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .room-head .back { display: none; }
 .log { flex: 1; overflow-y: auto; padding: 8px 18px 12px; display: flex; flex-direction: column; scrollbar-color: var(--line) transparent; }
 .log .older { align-self: center; margin: 6px 0; }
 .log .day { display: flex; align-items: center; gap: 10px; margin: 14px 0 4px; font-size: 11px; letter-spacing: 3px; text-transform: uppercase; color: var(--faint); }
 .log .day::before, .log .day::after { content: ""; flex: 1; border-top: 1px dashed var(--line); }
-.msg { position: relative; padding: 1px 70px 1px 0; }
+.msg { position: relative; padding: 1px 170px 1px 0; }
+.msg.ping { margin-left: -10px; padding-left: 8px; border-left: 2px solid var(--gold); background: var(--gold-soft); }
 .msg.first { margin-top: 10px; }
 .msg .who { font-weight: 700; color: var(--ink); }
 .msg .who .at { margin-left: 10px; font-weight: 400; font-size: 12px; color: var(--faint); font-variant-numeric: tabular-nums; }
 .msg .text { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--muted); }
 .msg.mine .who { color: var(--gold); }
-.msg .del { position: absolute; right: 0; top: 0; visibility: hidden; }
-.msg:hover .del, .msg:focus-within .del { visibility: visible; }
+.msg .acts { position: absolute; right: 0; top: 0; display: flex; visibility: hidden; }
+.msg:hover .acts, .msg:focus-within .acts { visibility: visible; }
+.msg .del:hover { color: var(--bad); }
+.msg .edited { font-size: 11.5px; color: var(--faint); }
+.mention { color: var(--gold); font-weight: 700; }
+.mention.you { background: var(--gold); color: var(--on-gold); padding: 0 3px; }
+.reacts { display: flex; flex-wrap: wrap; gap: 4px; margin: 3px 0 2px; }
+.chip { border: 1px solid var(--line); background: var(--field); padding: 0 7px; font-size: 13px; line-height: 22px; cursor: pointer; color: var(--muted); }
+.chip b { font-size: 11.5px; }
+.chip[aria-pressed="true"] { border-color: var(--gold); background: var(--gold-soft); color: var(--ink); }
+.chip:hover { border-color: var(--gold); }
+.picker { display: flex; gap: 0; border: 1px solid var(--line-2); background: var(--panel); }
+.picker button.link { font-size: 16px; padding: 0 6px; line-height: 24px; }
+.picker button.link:hover { background: var(--gold-soft); }
+.edit { margin: 2px 0 4px; }
+.edit textarea { width: 100%; resize: none; padding: 6px 9px; line-height: 1.5; background: var(--field); border: 1px solid var(--gold); border-radius: 0; color: var(--ink); }
+.edit-actions { display: flex; gap: 8px; align-items: center; justify-content: flex-end; font-size: 12px; color: var(--faint); }
+.edit-actions span { margin-right: auto; }
+.edit-actions .btn { padding: 4px 12px; }
 .msg.pending { opacity: .5; }
 .log .empty, .welcome { margin: auto; text-align: center; color: var(--muted); padding: 24px; max-width: 420px; }
 .log .empty b, .welcome b { display: block; color: var(--ink); margin-bottom: 4px; }
 
-.composer { display: flex; gap: 8px; align-items: flex-end; padding: 12px 18px 16px; border-top: 1px dashed var(--line); }
+.presence { min-height: 22px; padding: 2px 18px 0; font-size: 12px; color: var(--faint); border-top: 1px dashed var(--line); }
+.presence:empty { border-top-color: transparent; }
+.typing { display: inline-flex; gap: 3px; margin-right: 8px; vertical-align: 2px; }
+.typing i { width: 4px; height: 4px; background: var(--gold); animation: blink 1.2s infinite; }
+.typing i:nth-child(2) { animation-delay: .2s; } .typing i:nth-child(3) { animation-delay: .4s; }
+@keyframes blink { 0%, 80%, 100% { opacity: .2; } 40% { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .typing i { animation: none; } }
+.searchbar { display: flex; gap: 8px; align-items: center; padding: 10px 18px; border-bottom: 1px dashed var(--line); }
+.searchbar input { flex: 1; min-width: 0; padding: 6px 10px; background: var(--field); border: 1px solid var(--line-2); border-radius: 0; color: var(--ink); }
+.searchbar input:focus { outline: 2px solid var(--gold); outline-offset: 1px; }
+.searchbar .btn { padding: 6px 12px; }
+.results-head { margin: 10px 0 6px; font-size: 12px; letter-spacing: 1px; color: var(--faint); }
+.result { display: block; width: 100%; text-align: left; padding: 8px 10px; margin: 0 -10px; border: 0; border-left: 2px solid transparent; background: none; cursor: pointer; }
+.result:hover, .result:focus-visible { background: var(--gold-soft); border-left-color: var(--gold); }
+.result .who { display: block; font-weight: 700; }
+.result .who .at { margin-left: 10px; font-weight: 400; font-size: 12px; color: var(--faint); }
+.result .text { display: block; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--muted); }
+mark { background: var(--gold); color: var(--on-gold); }
+.msg.found { background: var(--gold-soft); outline: 1px solid var(--gold); transition: background .4s; }
+.composer { position: relative; display: flex; gap: 8px; align-items: flex-end; padding: 12px 18px 16px; border-top: 1px dashed var(--line); }
+.suggest { position: absolute; left: 34px; bottom: calc(100% - 8px); margin: 0; padding: 4px 0; list-style: none; min-width: 240px; z-index: 3;
+  background: var(--panel); border: 1px solid var(--line-2); }
+.suggest li { padding: 3px 12px; cursor: pointer; color: var(--muted); }
+.suggest li span { margin-left: 8px; color: var(--faint); font-size: 12.5px; }
+.suggest li[aria-selected="true"] { background: var(--gold-soft); color: var(--ink); border-left: 2px solid var(--gold); padding-left: 10px; }
 .composer .prompt { align-self: center; color: var(--gold); font-weight: 700; }
 .composer textarea { flex: 1; min-width: 0; resize: none; max-height: 160px; padding: 8px 11px; line-height: 1.5;
   background: var(--field); border: 1px solid var(--line-2); border-radius: 0; color: var(--ink); }
@@ -116,6 +167,17 @@ dialog input:focus { outline: 2px solid var(--gold); outline-offset: 1px; }
 dialog ul { margin: 0; padding: 0; list-style: none; max-height: 50vh; overflow-y: auto; }
 dialog li { padding: 7px 0; border-top: 1px dashed var(--line); }
 dialog li span { color: var(--faint); font-size: 12.5px; margin-left: 8px; }
+dialog li { display: flex; align-items: center; }
+dialog li .remove { margin-left: auto; }
+dialog li .remove:hover { color: var(--bad); }
+dialog li.none { color: var(--faint); }
+#people { margin-top: 10px; }
+#people li { padding: 0; }
+.person { display: flex; align-items: center; width: 100%; text-align: left; border: 0; background: none; padding: 7px 6px; cursor: pointer; }
+.person:hover, .person:focus-visible { background: var(--gold-soft); }
+.check { display: flex; gap: 10px; align-items: flex-start; margin-top: 14px; font-size: 13px; color: var(--muted); cursor: pointer; }
+.check input { width: auto; margin-top: 4px; accent-color: var(--gold); }
+.check b { color: var(--ink); }
 .actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 18px; }
 .actions .spacer { flex: 1; }
 .error { color: var(--bad); font-size: 13px; margin: 8px 0 0; }
@@ -134,7 +196,8 @@ dialog li span { color: var(--faint); font-size: 12.5px; margin-left: 8px; }
   body:not(.in-room) .room { display: none; }
   .room-head .back { display: inline-block; }
   .msg { padding-right: 0; }
-  .msg .del { visibility: visible; position: static; }
+  .msg .acts { visibility: visible; position: static; justify-content: flex-end; }
+  .msg.ping { margin-left: -6px; padding-left: 4px; }
   .toast { bottom: 18px; }
 }
 </style>
@@ -147,9 +210,10 @@ dialog li span { color: var(--faint); font-size: 12.5px; margin-left: 8px; }
   <h1>Rooms</h1>
   <div class="layout">
     <aside class="side">
-      <button class="btn" id="new">+ New room</button>
+      <div class="side-buttons"><button class="btn" id="new">+ Room</button><button class="btn quiet" id="dm">+ Message</button></div>
       <div class="panel">
         <section><h2>Your rooms</h2><div class="rooms" id="joined"></div></section>
+        <section><h2>Direct messages</h2><div class="rooms" id="dms"></div></section>
         <section><h2>Other rooms</h2><div class="rooms" id="others"></div></section>
       </div>
     </aside>
@@ -165,6 +229,7 @@ dialog li span { color: var(--faint); font-size: 12.5px; margin-left: 8px; }
     <h2 id="room-dialog-title">New room</h2>
     <label for="room-name">Name</label><input id="room-name" name="name" maxlength="60" required autocomplete="off">
     <label for="room-topic">Topic</label><input id="room-topic" name="topic" maxlength="200" autocomplete="off" placeholder="optional">
+    <label class="check" id="private-row"><input type="checkbox" name="private"><span><b>Private</b><br>Only people you add can see it. Otherwise anyone here can find and join it.</span></label>
     <p class="error" id="room-error" hidden></p>
     <div class="actions">
       <button type="button" class="btn danger" id="room-delete" hidden>Delete room</button>
@@ -183,8 +248,17 @@ dialog li span { color: var(--faint); font-size: 12.5px; margin-left: 8px; }
   </form>
 </dialog>
 
+<dialog id="people-dialog">
+  <form method="dialog">
+    <h2 id="people-title">Message someone</h2>
+    <input id="people-q" type="search" placeholder="Name or @username" aria-label="Find someone" autocomplete="off">
+    <ul id="people"></ul>
+    <div class="actions"><span class="spacer"></span><button class="btn quiet">Close</button></div>
+  </form>
+</dialog>
+
 <div class="toast" id="toast" role="status" hidden></div>
-<footer class="keybar" aria-label="Keyboard shortcuts"><span><kbd>n</kbd>New room</span><span><kbd>/</kbd>Message</span><span><kbd>↵</kbd>Send</span><span><kbd>⇧↵</kbd>New line</span><span><kbd>esc</kbd>Rooms</span><span><kbd>g</kbd>then a key from the menu to jump</span><a class="end" href="/logout" data-key="o"><kbd>g o</kbd>Sign out</a></footer>
+<footer class="keybar" aria-label="Keyboard shortcuts"><span><kbd>n</kbd>New room</span><span><kbd>m</kbd>Message someone</span><span><kbd>f</kbd>Search</span><span><kbd>/</kbd>Message</span><span><kbd>↵</kbd>Send</span><span><kbd>⇧↵</kbd>New line</span><span><kbd>↑</kbd>Edit last</span><span><kbd>@</kbd>Mention</span><span><kbd>esc</kbd>Rooms</span><span><kbd>g</kbd>then a key from the menu to jump</span><a class="end" href="/logout" data-key="o"><kbd>g o</kbd>Sign out</a></footer>
 <script src="/keys.js" defer></script>
 <script type="module" src="/chat/app.js"></script>
 </body>

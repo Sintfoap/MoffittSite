@@ -131,8 +131,9 @@ const SCHEMA = [
      installed_at INTEGER NOT NULL,
      PRIMARY KEY (owner, plugin_id)
    )`,
-  // Chat (src/chat.js). Every change in a room (a new or deleted message)
-  // takes the room's next seq, so a client asking "since N" sees both.
+  // Chat (src/chat.js). Every change in a room (a new, edited or deleted
+  // message, or a reaction) takes the room's next seq, so a client asking
+  // "since N" sees all of them.
   `CREATE TABLE IF NOT EXISTS chat_rooms (
      id         TEXT PRIMARY KEY,                  -- "r_" + random hex
      name       TEXT NOT NULL,
@@ -140,7 +141,8 @@ const SCHEMA = [
      owner      TEXT NOT NULL,                     -- user id of whoever made it
      seq        INTEGER NOT NULL DEFAULT 0,        -- last change number in this room
      created_at INTEGER NOT NULL,
-     last_at    INTEGER NOT NULL                   -- newest message (or creation), for sorting
+     last_at    INTEGER NOT NULL,                  -- newest message (or creation), for sorting
+     kind       TEXT NOT NULL DEFAULT 'open'       -- open (anyone), private (members only) or dm (two people)
    )`,
   `CREATE TABLE IF NOT EXISTS chat_members (
      room      TEXT NOT NULL,
@@ -157,17 +159,45 @@ const SCHEMA = [
      body       TEXT NOT NULL,                     -- '' once deleted
      deleted    INTEGER NOT NULL DEFAULT 0,
      seq        INTEGER NOT NULL,                  -- the room's seq when this row last changed
-     created_at INTEGER NOT NULL
+     created_at INTEGER NOT NULL,
+     posted_seq INTEGER,                           -- the room's seq when it was posted, for unread counts
+     edited_at  INTEGER
    )`,
   `CREATE INDEX IF NOT EXISTS chat_messages_room ON chat_messages (room, id)`,
   `CREATE INDEX IF NOT EXISTS chat_messages_seq ON chat_messages (room, seq)`,
   `CREATE INDEX IF NOT EXISTS chat_messages_user ON chat_messages (user_id, created_at)`,
+  `CREATE TABLE IF NOT EXISTS chat_reactions (
+     message    INTEGER NOT NULL,
+     user_id    TEXT NOT NULL,
+     emoji      TEXT NOT NULL,
+     created_at INTEGER NOT NULL,
+     PRIMARY KEY (message, user_id, emoji)
+   )`,
+  `CREATE INDEX IF NOT EXISTS chat_reactions_user ON chat_reactions (user_id)`,
+  // Who a message @mentions, so a room can say "you were mentioned".
+  `CREATE TABLE IF NOT EXISTS chat_mentions (
+     message INTEGER NOT NULL,
+     user_id TEXT NOT NULL,
+     PRIMARY KEY (message, user_id)
+   )`,
+  `CREATE INDEX IF NOT EXISTS chat_mentions_user ON chat_mentions (user_id, message)`,
+  // When someone last had a room open, and last typed in it: "who's here" and "typing…".
+  `CREATE TABLE IF NOT EXISTS chat_presence (
+     room      TEXT NOT NULL,
+     user_id   TEXT NOT NULL,
+     seen_at   INTEGER NOT NULL DEFAULT 0,
+     typing_at INTEGER NOT NULL DEFAULT 0,
+     PRIMARY KEY (room, user_id)
+   )`,
+  `CREATE INDEX IF NOT EXISTS chat_presence_user ON chat_presence (user_id, seen_at)`,
 ];
 
 // Columns added after a table first shipped. CREATE TABLE IF NOT EXISTS
 // leaves an existing table alone, so older databases get them here.
 const ADDED_COLUMNS = {
   users: ["email TEXT", "email_verified INTEGER NOT NULL DEFAULT 0"],
+  chat_messages: ["posted_seq INTEGER", "edited_at INTEGER"],
+  chat_rooms: ["kind TEXT NOT NULL DEFAULT 'open'"],
 };
 
 async function addMissingColumns(d) {

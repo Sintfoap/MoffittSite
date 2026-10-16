@@ -340,14 +340,16 @@ def test_chat_makes_a_room_and_posts_to_the_real_site(real_site):
         page = app.screen
         assert page.room()["name"] == "general" and page.room()["topic"] == "hello all"
         assert "first post" in str(page.query_one("#messages").render())
-        await type_(pilot, "/delete")
-        await pilot.press("enter")
-        await settle(pilot, 0.5)
+        for line in ("/edit first post, edited", "/react tada", "second post", "/delete"):
+            await type_(pilot, line)
+            await pilot.press("enter")
+            await settle(pilot, 0.5)
     run_app("chat", chat)
     [room] = site.chat_state()["rooms"]
     assert room["name"] == "general" and room["joined"]
-    msgs = site.chat_messages(room["id"])["messages"]
-    assert msgs == [], "the post was deleted"
+    [m] = site.chat_messages(room["id"])["messages"]
+    assert m["body"] == "first post, edited" and m["edited_at"], "edited, and the second post deleted"
+    assert [(r["emoji"], r["count"], r["mine"]) for r in m["reactions"]] == [("🎉", 1, True)]
 
 
 # ── the rules, without a site ──────────────────────────────────────────────
