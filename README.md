@@ -200,13 +200,15 @@ The store page and its "Try it" are served with a strict Content-Security-Policy
 
 - **Rooms:** anyone can make a room (up to 20 each) and every room is listed for everyone. Names are unique. Whoever made a room can rename it, change its topic or delete it; admins can too.
 - **Joining:** anyone can open a room and read it. Joining lets you post and puts the room under "Your rooms" with an unread count.
-- **Messages:** plain text up to 2,000 characters, shown with web links clickable and nothing else formatted. You can delete your own; a room's owner and admins can delete anyone's. Ten messages per ten seconds per person, at most.
-- **Updates:** the page asks for new messages every 2.5 seconds while it's visible and refreshes the room list every 15. Every change in a room takes the room's next `seq` number, so asking for what changed since a number catches deletions too. Rooms and messages are in D1 like everything else, so no extra Cloudflare setup is needed.
-- **Deleting an account** removes its messages and memberships. Rooms it made stay, for admins to manage.
+- **Messages:** plain text up to 2,000 characters, shown with web links clickable and nothing else formatted. You can edit and delete your own (an edited message says so); a room's owner and admins can delete anyone's. Ten messages per ten seconds per person, at most. On the page, `↑` in an empty message box edits your last message.
+- **Mentions:** `@username` in a message mentions that person. It's highlighted for them, and the room shows `@` in their room list until they read it. Typing `@` offers the room's members to pick from.
+- **Reactions:** members react to a message with one of 👍 ❤️ 😂 🎉 😮 😢 👀 🙏; each shows a count, and hovering shows who.
+- **Updates:** the page asks for new messages every 2.5 seconds while it's visible and refreshes the room list every 15. Every change in a room (a new, edited or deleted message, or a reaction) takes the room's next `seq` number, so asking for what changed since a number catches all of them. Rooms and messages are in D1 like everything else, so no extra Cloudflare setup is needed.
+- **Deleting an account** removes its messages, reactions and memberships. Rooms it made stay, for admins to manage.
 
 | Method | Path | Body |
 |---|---|---|
-| GET | `/chat/api/state` | |
+| GET | `/chat/api/state` | (you, every room, and the reactions on offer) |
 | POST | `/chat/api/rooms` | `{name, topic}` |
 | PATCH | `/chat/api/rooms/<id>` | any of `{name, topic}` (owner or admin) |
 | DELETE | `/chat/api/rooms/<id>` | (owner or admin) |
@@ -215,4 +217,6 @@ The store page and its "Try it" are served with a strict Content-Security-Policy
 | GET | `/chat/api/rooms/<id>/members` | |
 | GET | `/chat/api/rooms/<id>/messages` | `?since=<seq>` for changes, `?before=<message id>` for older pages |
 | POST | `/chat/api/rooms/<id>/messages` | `{body}` (members) |
+| PATCH | `/chat/api/rooms/<id>/messages/<message id>` | `{body}` (author) |
 | DELETE | `/chat/api/rooms/<id>/messages/<message id>` | (author, room owner or admin) |
+| POST | `/chat/api/rooms/<id>/messages/<message id>/reactions` | `{emoji, on}`: add (`true`) or take back (`false`) a reaction (members) |

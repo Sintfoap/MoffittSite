@@ -2,12 +2,14 @@
 //
 // Rooms are open: everyone can browse the list and read a room, and joining
 // one lets you post and puts it in your list with an unread count. Whoever
-// made a room can rename or delete it; admins can too. People delete their own
-// messages; a room's owner and admins can delete anyone's.
+// made a room can rename or delete it; admins can too. People edit and delete
+// their own messages; a room's owner and admins can delete anyone's. Members
+// react to messages from a short list of emoji, and "@username" in a message
+// mentions that person, which their room list counts until they read it.
 //
-// The page polls for new messages. Every change in a room (a new message or a
-// deleted one) takes the room's next `seq`, so "what changed since seq N" is
-// one indexed query and catches deletions as well as new messages.
+// The page polls for new messages. Every change in a room (a new, edited or
+// deleted message, or a reaction) takes the room's next `seq`, so "what
+// changed since seq N" is one indexed query and catches all of them.
 
 import { withRail } from "./pages.js";
 import { db, now } from "./db.js";
@@ -21,6 +23,16 @@ const LIMITS = { name: 60, topic: 200, body: 2000, request: 16 * 1024, page: 50,
 // At most this many messages from one person in RATE_WINDOW seconds.
 const RATE = 10, RATE_WINDOW = 10;
 const ROOM_ID = /^r_[0-9a-f]{16}$/;
+export const REACTIONS = ["👍", "❤️", "😂", "🎉", "😮", "😢", "👀", "🙏"];
+// "@name" where name is a username (see auth.js), not part of an email address.
+const MENTION = /(^|[^\w@.])@([a-z0-9][a-z0-9_-]{2,31})(?![\w-])/gi;
+const MAX_MENTIONS = 10;
+
+export function mentioned(text) {
+  const names = new Set();
+  for (const m of text.matchAll(MENTION)) names.add(m[2].toLowerCase());
+  return [...names].slice(0, MAX_MENTIONS);
+}
 
 export async function readJson(request) {
   const text = await request.text();
@@ -69,9 +81,12 @@ export async function listRooms(env, user) {
            (SELECT COUNT(*) FROM chat_members m WHERE m.room = r.id) AS members,
            me.read_seq,
            (SELECT COUNT(*) FROM chat_messages x WHERE me.read_seq IS NOT NULL AND x.room = r.id
-              AND x.seq > me.read_seq AND x.deleted = 0 AND x.user_id != ?) AS unread
+              AND COALESCE(x.posted_seq, x.seq) > me.read_seq AND x.deleted = 0 AND x.user_id != ?) AS unread,
+           (SELECT COUNT(*) FROM chat_mentions mm JOIN chat_messages x ON x.id = mm.message
+              WHERE me.read_seq IS NOT NULL AND mm.user_id = ? AND x.room = r.id
+              AND COALESCE(x.posted_seq, x.seq) > me.read_seq AND x.deleted = 0) AS mentions
     FROM chat_rooms r LEFT JOIN chat_members me ON me.room = r.id AND me.user_id = ?
-    ORDER BY r.last_at DESC, r.id`).bind(user.id, user.id).all();
+    ORDER BY r.last_at DESC, r.id`).bind(user.id, user.id, user.id).all();
   return results.map(r => roomOut(r, user, r.read_seq != null));
 }
 
@@ -79,20 +94,55 @@ function roomOut(r, user, joined) {
   return {
     id: r.id, name: r.name, topic: r.topic, owner_name: r.owner_name ?? null, members: r.members ?? 0,
     created_at: r.created_at, last_at: r.last_at, seq: r.seq,
-    joined, unread: joined ? r.unread ?? 0 : 0, manage: canManage(r, user),
+    joined, unread: joined ? r.unread ?? 0 : 0, mentions: joined ? r.mentions ?? 0 : 0, manage: canManage(r, user),
   };
 }
 
-const MESSAGE = `SELECT m.id, m.body, m.deleted, m.seq, m.created_at, m.user_id, u.username, u.display_name
+const MESSAGE = `SELECT m.id, m.body, m.deleted, m.seq, m.created_at, m.edited_at, m.user_id, u.username, u.display_name
   FROM chat_messages m LEFT JOIN users u ON u.id = m.user_id`;
 
-function messageOut(m, user, room) {
+function messageOut(m, user, room, reactions = []) {
   const mine = m.user_id === user.id;
   return {
-    id: m.id, seq: m.seq, created_at: m.created_at, deleted: !!m.deleted, body: m.deleted ? "" : m.body,
+    id: m.id, seq: m.seq, created_at: m.created_at, edited_at: m.deleted ? null : m.edited_at ?? null,
+    deleted: !!m.deleted, body: m.deleted ? "" : m.body,
     author: m.username ?? null, author_name: m.display_name ?? "Deleted account",
-    mine, can_delete: !m.deleted && (mine || canManage(room, user)),
+    mine, can_edit: !m.deleted && mine, can_delete: !m.deleted && (mine || canManage(room, user)),
+    mentions_me: !m.deleted && !mine && mentioned(m.body).includes(user.username),
+    reactions: m.deleted ? [] : reactions,
   };
+}
+
+// Reactions on messages lo..hi of a room: {message id: [{emoji, count, mine, names}]}.
+async function reactionsFor(d, user, room, lo, hi) {
+  const out = {};
+  if (lo == null) return out;
+  const { results } = await d.prepare(`
+    SELECT message, emoji, COUNT(*) AS n, MAX(user_id = ?) AS mine, GROUP_CONCAT(name, ', ') AS names
+    FROM (SELECT r.rowid AS k, r.message, r.emoji, r.user_id, COALESCE(u.display_name, 'Deleted account') AS name
+          FROM chat_reactions r JOIN chat_messages m ON m.id = r.message LEFT JOIN users u ON u.id = r.user_id
+          WHERE m.room = ? AND r.message BETWEEN ? AND ? ORDER BY r.rowid)
+    GROUP BY message, emoji ORDER BY message, MIN(k)`).bind(user.id, room.id, lo, hi).all();
+  for (const r of results) (out[r.message] ??= []).push({ emoji: r.emoji, count: r.n, mine: !!r.mine, names: r.names });
+  return out;
+}
+
+async function withReactions(d, user, room, rows) {
+  const ids = rows.map(m => m.id);
+  const reactions = await reactionsFor(d, user, room, ids.length ? Math.min(...ids) : null, Math.max(...ids));
+  return rows.map(m => messageOut(m, user, room, reactions[m.id]));
+}
+
+const oneMessage = async (d, user, room, id) =>
+  (await withReactions(d, user, room, [await d.prepare(`${MESSAGE} WHERE m.id = ?`).bind(id).first()]))[0];
+
+// Records who a message mentions, as part of the batch that writes it.
+// Mentioning yourself doesn't count.
+function mentionStatements(d, user, messageIdSql, binds, text) {
+  const names = mentioned(text).filter(n => n !== user.username);
+  if (!names.length) return [];
+  return [d.prepare(`INSERT OR IGNORE INTO chat_mentions (message, user_id)
+    SELECT (${messageIdSql}), id FROM users WHERE username IN (${names.map(() => "?").join(", ")})`).bind(...binds, ...names)];
 }
 
 // One room's messages, oldest first:
@@ -120,7 +170,7 @@ export async function messages(env, user, roomId, { since, before } = {}) {
     await d.prepare("UPDATE chat_members SET read_seq = ? WHERE room = ? AND user_id = ? AND read_seq < ?")
       .bind(room.seq, room.id, user.id, room.seq).run();
   }
-  return { seq: room.seq, more, joined: !!member, messages: rows.map(m => messageOut(m, user, room)) };
+  return { seq: room.seq, more, joined: !!member, messages: await withReactions(d, user, room, rows) };
 }
 
 export async function members(env, roomId) {
@@ -169,6 +219,8 @@ export async function deleteRoom(env, user, roomId) {
   if (!room) return null;
   if (!canManage(room, user)) return { forbidden: "only the room's owner can delete it" };
   await d.batch([
+    d.prepare("DELETE FROM chat_reactions WHERE message IN (SELECT id FROM chat_messages WHERE room = ?)").bind(room.id),
+    d.prepare("DELETE FROM chat_mentions WHERE message IN (SELECT id FROM chat_messages WHERE room = ?)").bind(room.id),
     d.prepare("DELETE FROM chat_messages WHERE room = ?").bind(room.id),
     d.prepare("DELETE FROM chat_members WHERE room = ?").bind(room.id),
     d.prepare("DELETE FROM chat_rooms WHERE id = ?").bind(room.id),
@@ -194,10 +246,14 @@ export async function leave(env, user, roomId) {
   return { joined: false };
 }
 
-export async function post(env, user, roomId, body) {
+function messageText(body) {
   if (!isObj(body)) fail("body must be a JSON object");
   for (const k of Object.keys(body)) if (k !== "body") fail(`unknown field ${JSON.stringify(k)}`);
-  const text = str("message", body.body, LIMITS.body, { required: true });
+  return str("message", body.body, LIMITS.body, { required: true });
+}
+
+export async function post(env, user, roomId, body) {
+  const text = messageText(body);
   const d = await db(env);
   const room = await getRoom(d, roomId);
   if (!room) return null;
@@ -206,15 +262,63 @@ export async function post(env, user, roomId, body) {
   const { n } = await d.prepare("SELECT COUNT(*) AS n FROM chat_messages WHERE user_id = ? AND created_at > ?").bind(user.id, t - RATE_WINDOW).first();
   if (n >= RATE) return { slow: "you're sending messages too quickly; wait a few seconds" };
   // One transaction: take the room's next seq and give it to the new message.
+  const newest = "SELECT id FROM chat_messages WHERE room = ? AND seq = (SELECT seq FROM chat_rooms WHERE id = ?)";
   await d.batch([
     d.prepare("UPDATE chat_rooms SET seq = seq + 1, last_at = ? WHERE id = ?").bind(t, room.id),
-    d.prepare("INSERT INTO chat_messages (room, user_id, body, seq, created_at) SELECT id, ?, ?, seq, ? FROM chat_rooms WHERE id = ?")
+    d.prepare("INSERT INTO chat_messages (room, user_id, body, seq, posted_seq, created_at) SELECT id, ?, ?, seq, seq, ? FROM chat_rooms WHERE id = ?")
       .bind(user.id, text, t, room.id),
+    ...mentionStatements(d, user, newest, [room.id, room.id], text),
     d.prepare("UPDATE chat_members SET read_seq = (SELECT seq FROM chat_rooms WHERE id = ?) WHERE room = ? AND user_id = ?")
       .bind(room.id, room.id, user.id),
   ]);
   const m = await d.prepare(`${MESSAGE} WHERE m.room = ? AND m.user_id = ? ORDER BY m.id DESC LIMIT 1`).bind(room.id, user.id).first();
   return messageOut(m, user, room);
+}
+
+// Only the author edits a message. Mentions follow the new text.
+export async function editMessage(env, user, roomId, messageId, body) {
+  const text = messageText(body);
+  const d = await db(env);
+  const room = await getRoom(d, roomId);
+  if (!room) return null;
+  const m = await d.prepare("SELECT user_id, deleted, body FROM chat_messages WHERE id = ? AND room = ?").bind(messageId, room.id).first();
+  if (!m || m.deleted) return null;
+  if (m.user_id !== user.id) return { forbidden: "you can only edit your own messages" };
+  if (m.body !== text) {
+    await d.batch([
+      d.prepare("UPDATE chat_rooms SET seq = seq + 1 WHERE id = ?").bind(room.id),
+      d.prepare("UPDATE chat_messages SET body = ?, edited_at = ?, seq = (SELECT seq FROM chat_rooms WHERE id = ?) WHERE id = ?")
+        .bind(text, now(), room.id, messageId),
+      d.prepare("DELETE FROM chat_mentions WHERE message = ?").bind(messageId),
+      ...mentionStatements(d, user, "?", [messageId], text),
+    ]);
+  }
+  return oneMessage(d, user, room, messageId);
+}
+
+// Members add or take back a reaction: {emoji, on: true|false}.
+export async function react(env, user, roomId, messageId, body) {
+  if (!isObj(body)) fail("body must be a JSON object");
+  for (const k of Object.keys(body)) if (!["emoji", "on"].includes(k)) fail(`unknown field ${JSON.stringify(k)}`);
+  if (!REACTIONS.includes(body.emoji)) fail(`emoji must be one of ${REACTIONS.join(" ")}`);
+  if (typeof body.on !== "boolean") fail("on must be true or false");
+  const d = await db(env);
+  const room = await getRoom(d, roomId);
+  if (!room) return null;
+  const m = await d.prepare("SELECT deleted FROM chat_messages WHERE id = ? AND room = ?").bind(messageId, room.id).first();
+  if (!m || m.deleted) return null;
+  if (!(await membership(d, room.id, user.id))) return { forbidden: "join the room to react in it" };
+  const had = await d.prepare("SELECT 1 AS x FROM chat_reactions WHERE message = ? AND user_id = ? AND emoji = ?").bind(messageId, user.id, body.emoji).first();
+  if (!!had !== body.on) {
+    await d.batch([
+      d.prepare("UPDATE chat_rooms SET seq = seq + 1 WHERE id = ?").bind(room.id),
+      body.on
+        ? d.prepare("INSERT OR IGNORE INTO chat_reactions (message, user_id, emoji, created_at) VALUES (?, ?, ?, ?)").bind(messageId, user.id, body.emoji, now())
+        : d.prepare("DELETE FROM chat_reactions WHERE message = ? AND user_id = ? AND emoji = ?").bind(messageId, user.id, body.emoji),
+      d.prepare("UPDATE chat_messages SET seq = (SELECT seq FROM chat_rooms WHERE id = ?) WHERE id = ?").bind(room.id, messageId),
+    ]);
+  }
+  return oneMessage(d, user, room, messageId);
 }
 
 export async function deleteMessage(env, user, roomId, messageId) {
@@ -227,13 +331,15 @@ export async function deleteMessage(env, user, roomId, messageId) {
   await d.batch([
     d.prepare("UPDATE chat_rooms SET seq = seq + 1 WHERE id = ?").bind(room.id),
     d.prepare("UPDATE chat_messages SET deleted = 1, body = '', seq = (SELECT seq FROM chat_rooms WHERE id = ?) WHERE id = ?").bind(room.id, messageId),
+    d.prepare("DELETE FROM chat_reactions WHERE message = ?").bind(messageId),
+    d.prepare("DELETE FROM chat_mentions WHERE message = ?").bind(messageId),
   ]);
   return { deleted: true };
 }
 
 // ── routes ─────────────────────────────────────────────────────────────────
 //
-//   GET    /chat/api/state                          you, and every room
+//   GET    /chat/api/state                          you, every room, and the reactions on offer
 //   POST   /chat/api/rooms                          {name, topic} → a new room; you join it
 //   PATCH  /chat/api/rooms/<id>                     {name, topic}   (owner or admin)
 //   DELETE /chat/api/rooms/<id>                     the room and its messages   (owner or admin)
@@ -241,9 +347,11 @@ export async function deleteMessage(env, user, roomId, messageId) {
 //   GET    /chat/api/rooms/<id>/members
 //   GET    /chat/api/rooms/<id>/messages[?since=<seq> | ?before=<message id>]
 //   POST   /chat/api/rooms/<id>/messages            {body}   (members)
+//   PATCH  /chat/api/rooms/<id>/messages/<message id>   {body}   (its author)
 //   DELETE /chat/api/rooms/<id>/messages/<message id>
+//   POST   /chat/api/rooms/<id>/messages/<message id>/reactions   {emoji, on}   (members)
 
-const ROUTE = /^\/chat\/api\/(state|rooms)(?:\/([^/]+)(?:\/(join|leave|members|messages)(?:\/([^/]+))?)?)?\/?$/;
+const ROUTE = /^\/chat\/api\/(state|rooms)(?:\/([^/]+)(?:\/(join|leave|members|messages)(?:\/([^/]+)(?:\/(reactions))?)?)?)?\/?$/;
 
 // Messages are shown as text, never as HTML, and the page loads nothing from
 // elsewhere except fonts.
@@ -272,7 +380,7 @@ export async function chat(request, env, user, pathname) {
     if (method !== "GET" && !sameOrigin(request)) return json({ error: "cross-origin request refused" }, 403);
     const m = pathname.match(ROUTE);
     if (!m) return json({ error: "not found" }, 404);
-    const [, kind, id, sub, extra] = m;
+    const [, kind, id, sub, extra, action] = m;
     const notFound = () => json({ error: "not found" }, 404);
     const notAllowed = () => json({ error: "method not allowed" }, 405);
     // Turns a result from the functions above into a response.
@@ -288,6 +396,7 @@ export async function chat(request, env, user, pathname) {
       return json({
         user: { username: user.username, name: user.display_name, admin: user.areas.has("admin") },
         rooms: await listRooms(env, user),
+        reactions: REACTIONS,
       });
     }
 
@@ -299,6 +408,7 @@ export async function chat(request, env, user, pathname) {
       if (method === "DELETE") return reply(await deleteRoom(env, user, id));
       return notAllowed();
     }
+    if (action && sub !== "messages") return notFound();
     if (sub === "join" || sub === "leave") {
       if (extra) return notFound();
       if (method !== "POST") return notAllowed();
@@ -312,6 +422,8 @@ export async function chat(request, env, user, pathname) {
     if (extra) {
       const mid = int(extra);
       if (mid === undefined) return notFound();
+      if (action) return method === "POST" ? reply(await react(env, user, id, mid, await readJson(request))) : notAllowed();
+      if (method === "PATCH") return reply(await editMessage(env, user, id, mid, await readJson(request)));
       return method === "DELETE" ? reply(await deleteMessage(env, user, id, mid)) : notAllowed();
     }
     if (method === "GET") {

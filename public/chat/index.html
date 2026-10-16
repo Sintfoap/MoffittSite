@@ -71,6 +71,7 @@ button.link:hover { color: var(--gold); }
 .rooms .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rooms .name::before { content: "# "; color: var(--faint); font-weight: 400; }
 .rooms .n { font-size: 11.5px; font-weight: 700; padding: 0 6px; background: var(--gold); color: var(--on-gold); }
+.rooms .n.at { background: var(--bad); color: var(--on-gold); }
 .rooms .count { font-size: 12px; color: var(--faint); }
 .side .none { margin: 0 8px; font-size: 12.5px; color: var(--faint); }
 
@@ -86,19 +87,42 @@ button.link:hover { color: var(--gold); }
 .log .older { align-self: center; margin: 6px 0; }
 .log .day { display: flex; align-items: center; gap: 10px; margin: 14px 0 4px; font-size: 11px; letter-spacing: 3px; text-transform: uppercase; color: var(--faint); }
 .log .day::before, .log .day::after { content: ""; flex: 1; border-top: 1px dashed var(--line); }
-.msg { position: relative; padding: 1px 70px 1px 0; }
+.msg { position: relative; padding: 1px 170px 1px 0; }
+.msg.ping { margin-left: -10px; padding-left: 8px; border-left: 2px solid var(--gold); background: var(--gold-soft); }
 .msg.first { margin-top: 10px; }
 .msg .who { font-weight: 700; color: var(--ink); }
 .msg .who .at { margin-left: 10px; font-weight: 400; font-size: 12px; color: var(--faint); font-variant-numeric: tabular-nums; }
 .msg .text { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--muted); }
 .msg.mine .who { color: var(--gold); }
-.msg .del { position: absolute; right: 0; top: 0; visibility: hidden; }
-.msg:hover .del, .msg:focus-within .del { visibility: visible; }
+.msg .acts { position: absolute; right: 0; top: 0; display: flex; visibility: hidden; }
+.msg:hover .acts, .msg:focus-within .acts { visibility: visible; }
+.msg .del:hover { color: var(--bad); }
+.msg .edited { font-size: 11.5px; color: var(--faint); }
+.mention { color: var(--gold); font-weight: 700; }
+.mention.you { background: var(--gold); color: var(--on-gold); padding: 0 3px; }
+.reacts { display: flex; flex-wrap: wrap; gap: 4px; margin: 3px 0 2px; }
+.chip { border: 1px solid var(--line); background: var(--field); padding: 0 7px; font-size: 13px; line-height: 22px; cursor: pointer; color: var(--muted); }
+.chip b { font-size: 11.5px; }
+.chip[aria-pressed="true"] { border-color: var(--gold); background: var(--gold-soft); color: var(--ink); }
+.chip:hover { border-color: var(--gold); }
+.picker { display: flex; gap: 0; border: 1px solid var(--line-2); background: var(--panel); }
+.picker button.link { font-size: 16px; padding: 0 6px; line-height: 24px; }
+.picker button.link:hover { background: var(--gold-soft); }
+.edit { margin: 2px 0 4px; }
+.edit textarea { width: 100%; resize: none; padding: 6px 9px; line-height: 1.5; background: var(--field); border: 1px solid var(--gold); border-radius: 0; color: var(--ink); }
+.edit-actions { display: flex; gap: 8px; align-items: center; justify-content: flex-end; font-size: 12px; color: var(--faint); }
+.edit-actions span { margin-right: auto; }
+.edit-actions .btn { padding: 4px 12px; }
 .msg.pending { opacity: .5; }
 .log .empty, .welcome { margin: auto; text-align: center; color: var(--muted); padding: 24px; max-width: 420px; }
 .log .empty b, .welcome b { display: block; color: var(--ink); margin-bottom: 4px; }
 
-.composer { display: flex; gap: 8px; align-items: flex-end; padding: 12px 18px 16px; border-top: 1px dashed var(--line); }
+.composer { position: relative; display: flex; gap: 8px; align-items: flex-end; padding: 12px 18px 16px; border-top: 1px dashed var(--line); }
+.suggest { position: absolute; left: 34px; bottom: calc(100% - 8px); margin: 0; padding: 4px 0; list-style: none; min-width: 240px; z-index: 3;
+  background: var(--panel); border: 1px solid var(--line-2); }
+.suggest li { padding: 3px 12px; cursor: pointer; color: var(--muted); }
+.suggest li span { margin-left: 8px; color: var(--faint); font-size: 12.5px; }
+.suggest li[aria-selected="true"] { background: var(--gold-soft); color: var(--ink); border-left: 2px solid var(--gold); padding-left: 10px; }
 .composer .prompt { align-self: center; color: var(--gold); font-weight: 700; }
 .composer textarea { flex: 1; min-width: 0; resize: none; max-height: 160px; padding: 8px 11px; line-height: 1.5;
   background: var(--field); border: 1px solid var(--line-2); border-radius: 0; color: var(--ink); }
@@ -134,7 +158,8 @@ dialog li span { color: var(--faint); font-size: 12.5px; margin-left: 8px; }
   body:not(.in-room) .room { display: none; }
   .room-head .back { display: inline-block; }
   .msg { padding-right: 0; }
-  .msg .del { visibility: visible; position: static; }
+  .msg .acts { visibility: visible; position: static; justify-content: flex-end; }
+  .msg.ping { margin-left: -6px; padding-left: 4px; }
   .toast { bottom: 18px; }
 }
 </style>
@@ -184,7 +209,7 @@ dialog li span { color: var(--faint); font-size: 12.5px; margin-left: 8px; }
 </dialog>
 
 <div class="toast" id="toast" role="status" hidden></div>
-<footer class="keybar" aria-label="Keyboard shortcuts"><span><kbd>n</kbd>New room</span><span><kbd>/</kbd>Message</span><span><kbd>↵</kbd>Send</span><span><kbd>⇧↵</kbd>New line</span><span><kbd>esc</kbd>Rooms</span><span><kbd>g</kbd>then a key from the menu to jump</span><a class="end" href="/logout" data-key="o"><kbd>g o</kbd>Sign out</a></footer>
+<footer class="keybar" aria-label="Keyboard shortcuts"><span><kbd>n</kbd>New room</span><span><kbd>/</kbd>Message</span><span><kbd>↵</kbd>Send</span><span><kbd>⇧↵</kbd>New line</span><span><kbd>↑</kbd>Edit last</span><span><kbd>@</kbd>Mention</span><span><kbd>esc</kbd>Rooms</span><span><kbd>g</kbd>then a key from the menu to jump</span><a class="end" href="/logout" data-key="o"><kbd>g o</kbd>Sign out</a></footer>
 <script src="/keys.js" defer></script>
 <script type="module" src="/chat/app.js"></script>
 </body>

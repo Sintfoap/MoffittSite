@@ -1,10 +1,12 @@
 """Chat in the terminal, like /chat/: rooms on the left, the open room on the
 right, a line to type in at the bottom. Like the web page it asks the site for
 changes every few seconds. Anything that isn't a message starts with a slash:
-/join, /leave, /new, /help…
+/join, /leave, /new, /edit, /react, /help…
 """
 from __future__ import annotations
 
+import asyncio
+import re
 import time
 from datetime import datetime
 
@@ -20,14 +22,29 @@ from .look import BAD, BG, GOLD, GOLD_DIM, INK, LINE, MUTED, PANEL, Failed, Page
 ROOM_EVERY, LIST_EVERY = 2.5, 15     # seconds, the same as the web page
 GROUP_SECONDS = 5 * 60               # messages this close from one person share a heading
 
-HELP = """Type a message and press enter to send it (members only).
+HELP = """Type a message and press enter to send it (members only). @name mentions
+someone; tab after @ completes a name from the room.
   /join  /leave              join or leave the open room
   /new NAME | TOPIC          make a room (the topic is optional)
   /rename NAME  /topic TEXT  change the open room (its owner, or an admin)
+  /edit [TEXT]               change your last message (↑ on an empty line too)
+  /react NAME                react to the last message from someone else, or
+                             take it back: +1 heart laugh tada wow sad eyes pray
   /delete                    delete your last message in this room
   /older                     load older messages
 tab or esc moves to the room list; enter on a room opens it. Start a message
 with // to send one that begins with /."""
+
+# Names for the site's reactions, since emoji are hard to type in a terminal.
+REACTION_NAMES = {
+    "+1": "👍", "thumbsup": "👍", "like": "👍", "yes": "👍",
+    "heart": "❤️", "love": "❤️", "<3": "❤️",
+    "laugh": "😂", "lol": "😂", "haha": "😂",
+    "tada": "🎉", "party": "🎉", "yay": "🎉",
+    "wow": "😮", "sad": "😢", "eyes": "👀", "look": "👀", "pray": "🙏", "thanks": "🙏",
+}
+# The same @name rule as the site's (src/chat.js).
+MENTION = re.compile(r"(^|[^\w@./])@([a-z0-9][a-z0-9_-]{2,31})(?![\w-])", re.IGNORECASE)
 
 
 def clock(t: int) -> str:
@@ -43,7 +60,20 @@ def day(t: int) -> str:
     return f"{d:%A} {d.day} {d:%B}" + ("" if d.year == today.year else f" {d.year}")
 
 
-def render_log(messages: list[dict], more: bool) -> Text:
+def body_text(body: str, me: str | None, style: str) -> Text:
+    """A message's text with @names picked out, and @you stronger still."""
+    t, at = Text(), 0
+    for m in MENTION.finditer(body):
+        start = m.start(2) - 1
+        t.append(body[at:start], style=style)
+        you = me and m.group(2).lower() == me
+        t.append("@" + m.group(2), style=f"bold {BG} on {GOLD}" if you else f"bold {GOLD}")
+        at = m.end()
+    t.append(body[at:], style=style)
+    return t
+
+
+def render_log(messages: list[dict], more: bool, me: str | None = None) -> Text:
     """The open room's messages as styled text, oldest first."""
     t = Text()
     if more:
@@ -59,7 +89,17 @@ def render_log(messages: list[dict], more: bool) -> Text:
             t.append("\n")
             t.append(m["author_name"], style=f"bold {GOLD if m['mine'] else INK}")
             t.append(f"  {clock(m['created_at'])}\n", style=MUTED)
-        t.append(m["body"] + "\n", style=MUTED if m.get("pending") else INK)
+        if m.get("mentions_me"):
+            t.append("▌", style=GOLD)
+        t.append_text(body_text(m["body"], me, MUTED if m.get("pending") else INK))
+        if m.get("edited_at"):
+            t.append(" (edited)", style=MUTED)
+        t.append("\n")
+        if m.get("reactions"):
+            t.append("  ")
+            for r in m["reactions"]:
+                t.append(f" {r['emoji']} {r['count']} ", style=f"bold {GOLD}" if r["mine"] else MUTED)
+            t.append("\n")
         prev = m
     if not messages:
         t.append("\nNo messages yet.\n", style=MUTED)
@@ -79,11 +119,50 @@ class RoomItem(ListItem):
     def label(room: dict, is_open: bool) -> Text:
         name = Text("# ", style=MUTED)
         name.append(room["name"], style=f"bold {INK}" if room["joined"] else MUTED)
+        if room.get("mentions") and not is_open:
+            name.append("  @", style=f"bold {BAD}")
         if room["unread"] and not is_open:
             name.append(f"  {min(room['unread'], 99)}", style=f"bold {GOLD}")
         if not room["joined"]:
             name.append(f"  {room['members']}", style=MUTED)
         return name
+
+
+class MessageInput(Input):
+    """The message line. Tab after an @ completes a name from the room; ↑ on
+    an empty line starts editing your last message."""
+    BINDINGS = [
+        Binding("tab", "complete", "Complete", show=False),
+        Binding("up", "edit_last", "Edit last", show=False),
+    ]
+
+    def action_complete(self) -> None:
+        head = self.value[:self.cursor_position]
+        m = re.search(r"(?:^|[^\w@./])@([a-z0-9_-]*)$", head, re.IGNORECASE)
+        names = self.screen.mention_names(m.group(1).lower()) if m else []
+        if not names:
+            self.screen.focus_next()
+            return
+        # One match fills it in; several fill in what they share.
+        common = names[0] if len(names) == 1 else _shared_start(names)
+        done = len(names) == 1
+        new_head = head[:len(head) - len(m.group(1))] + common + (" " if done else "")
+        self.value = new_head + self.value[self.cursor_position:]
+        self.cursor_position = len(new_head)
+        if not done:
+            self.screen.status("@" + "  @".join(names))
+
+    def action_edit_last(self) -> None:
+        if not self.value:
+            self.screen.start_edit()
+
+
+def _shared_start(words: list[str]) -> str:
+    out = words[0]
+    for w in words[1:]:
+        while not w.startswith(out):
+            out = out[:-1]
+    return out
 
 
 class ChatPage(Page):
@@ -115,7 +194,8 @@ class ChatPage(Page):
         self.want = room                 # a room name or id from the command line
         self.me: dict = {}
         self.rooms: list[dict] = []
-        self.open: dict | None = None    # {id, seq, more, joined, messages: {id: message}}
+        self.open: dict | None = None    # {id, seq, more, joined, messages: {id: message}, members: [...]}
+        self.reactions: list[str] = list(dict.fromkeys(REACTION_NAMES.values()))
         self._busy = False
 
     def compose(self) -> ComposeResult:
@@ -128,7 +208,7 @@ class ChatPage(Page):
                 yield Static(Text("Pick a room on the left, or /new NAME to make one. /help lists commands.", style=MUTED), id="head")
                 with VerticalScroll(id="log"):
                     yield Static(id="messages")
-                yield Input(placeholder="Message, or /help", id="input")
+                yield MessageInput(placeholder="Message, or /help", id="input")
         yield Static(id="status")
         yield Footer()
 
@@ -163,6 +243,7 @@ class ChatPage(Page):
         if s is None:
             return
         self.me, self.rooms = s["user"], sorted(s["rooms"], key=lambda r: not r["joined"])
+        self.reactions = s.get("reactions") or self.reactions
         if self.open and not any(r["id"] == self.open["id"] for r in self.rooms):
             self.open = None
             self.query_one("#head", Static).update(Text("That room was deleted.", style=MUTED))
@@ -194,15 +275,31 @@ class ChatPage(Page):
         if data is None:
             return
         self.open = {"id": room_id, "seq": data["seq"], "more": data["more"], "joined": data["joined"],
-                     "messages": {m["id"]: m for m in data["messages"]}}
+                     "messages": {m["id"]: m for m in data["messages"]}, "members": []}
         r = self.room()
         if r:
-            r["unread"] = 0
+            r["unread"] = r["mentions"] = 0
+        self.run_worker(self.load_members(room_id), exclusive=True, group="members")
         self.status("")
         self.render_head()
         self.render_messages(to_bottom=True)
         await self.render_rooms()
         self.query_one("#input", Input).focus()
+
+    async def load_members(self, room_id: str) -> None:
+        """Who's in the room, for completing @names."""
+        try:
+            members = await asyncio.to_thread(self.api.chat_members, room_id)
+        except site.SiteError:
+            return      # only completion misses out; the next room open tries again
+        if self.open and self.open["id"] == room_id:
+            self.open["members"] = members
+
+    def mention_names(self, start: str) -> list[str]:
+        mine = self.me.get("username")
+        people = (self.open or {}).get("members") or []
+        return sorted(p["username"] for p in people
+                      if p["username"] != mine and (p["username"].startswith(start) or p["name"].lower().startswith(start)))
 
     def render_head(self) -> None:
         r, o = self.room(), self.open
@@ -223,7 +320,7 @@ class ChatPage(Page):
         log = self.query_one("#log", VerticalScroll)
         near_bottom = log.max_scroll_y - log.scroll_y < 3
         shown = sorted((m for m in self.open["messages"].values() if not m["deleted"]), key=lambda m: m["id"])
-        self.query_one("#messages", Static).update(render_log(shown, self.open["more"]))
+        self.query_one("#messages", Static).update(render_log(shown, self.open["more"], self.me.get("username")))
         if to_bottom or near_bottom:
             self.call_after_refresh(log.scroll_end, animate=False)
 
@@ -309,11 +406,23 @@ class ChatPage(Page):
                 await self.load_rooms()
                 self.render_head()
                 self.status("saved")
+        elif word == "edit":
+            last = self.last_mine()
+            if not last:
+                return self.status("You have no messages here to edit.", bad=True)
+            if not rest:
+                return self.start_edit()
+            m = await self.call(self.api.chat_edit, o["id"], last["id"], rest)
+            if m and self.open is o:
+                o["messages"][m["id"]] = m
+                self.render_messages()
+                self.status("edited your last message")
+        elif word == "react":
+            await self.react(rest)
         elif word == "delete":
-            mine = [m for m in o["messages"].values() if m["mine"] and not m["deleted"] and not m.get("pending")]
-            if not mine:
+            last = self.last_mine()
+            if not last:
                 return self.status("You have no messages here to delete.", bad=True)
-            last = max(mine, key=lambda m: m["id"])
             if await self.call(self.api.chat_delete, o["id"], last["id"]) is not None:
                 last["deleted"] = True
                 self.render_messages()
@@ -322,6 +431,40 @@ class ChatPage(Page):
             await self.action_older()
         else:
             self.status(f"No command /{word}. /help lists them.", bad=True)
+
+    def last_mine(self) -> dict | None:
+        mine = [m for m in (self.open or {}).get("messages", {}).values()
+                if m["mine"] and not m["deleted"] and not m.get("pending")]
+        return max(mine, key=lambda m: m["id"]) if mine else None
+
+    def start_edit(self) -> None:
+        """Puts your last message on the line as /edit TEXT, ready to change."""
+        last = self.last_mine()
+        if not last:
+            return self.status("You have no messages here to edit.", bad=True)
+        box = self.query_one("#input", Input)
+        box.value = "/edit " + last["body"].replace("\n", " ")
+        box.cursor_position = len(box.value)
+        box.focus()
+        self.status("change it and press enter; esc to leave it as it was")
+
+    async def react(self, name: str) -> None:
+        o = self.open
+        emoji = REACTION_NAMES.get(name.lower(), name)
+        if emoji not in self.reactions:
+            return self.status("Usage: /react NAME, one of +1 heart laugh tada wow sad eyes pray", bad=True)
+        if not o["joined"]:
+            return self.status("Join the room to react: /join", bad=True)
+        shown = sorted((m for m in o["messages"].values() if not m["deleted"] and not m.get("pending")), key=lambda m: m["id"])
+        target = next((m for m in reversed(shown) if not m["mine"]), None) or (shown[-1] if shown else None)
+        if not target:
+            return self.status("There's nothing here to react to yet.", bad=True)
+        on = not any(r["emoji"] == emoji and r["mine"] for r in target.get("reactions", []))
+        m = await self.call(self.api.chat_react, o["id"], target["id"], emoji, on)
+        if m and self.open is o:
+            o["messages"][m["id"]] = m
+            self.render_messages()
+            self.status(f"{'reacted' if on else 'took back'} {emoji} to {target['author_name']}")
 
     # ── keys ───────────────────────────────────────────────────────────
     def leave_field(self) -> bool:

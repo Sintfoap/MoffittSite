@@ -167,3 +167,87 @@ test("deleting an account removes its messages but keeps its rooms", async () =>
   assert.deepEqual(rooms.map(r => [r.name, r.members, r.manage]), [["Keep", 0, true]]);
   assert.deepEqual((await api(boss, "GET", `/rooms/${room}/messages`)).json.messages, []);
 });
+
+test("people edit their own messages, and polling sees the edit", async () => {
+  const env = makeEnv();
+  const josh = await signedIn(env, "josh"), sam = await signedIn(env, "sam");
+  const room = (await api(josh, "POST", "/rooms", { name: "Edits" })).json.id;
+  await api(sam, "POST", `/rooms/${room}/join`);
+  const m = (await say(josh, room, "helo")).json;
+  assert.deepEqual([m.can_edit, m.edited_at], [true, null]);
+  const { seq } = (await api(sam, "GET", `/rooms/${room}/messages`)).json;
+  assert.equal((await say(sam, room, "hi")).status, 201);
+
+  assert.equal((await api(sam, "PATCH", `/rooms/${room}/messages/${m.id}`, { body: "mine now" })).status, 403);
+  assert.equal((await api(josh, "PATCH", `/rooms/${room}/messages/${m.id}`, { body: "  " })).status, 400);
+  const edited = await api(josh, "PATCH", `/rooms/${room}/messages/${m.id}`, { body: "hello" });
+  assert.equal(edited.status, 200);
+  assert.equal(edited.json.body, "hello");
+  assert.ok(edited.json.edited_at);
+
+  const changed = (await api(sam, "GET", `/rooms/${room}/messages?since=${seq}`)).json.messages;
+  assert.deepEqual(changed.map(x => [x.id, x.body, !!x.edited_at, x.can_edit]), [[m.id, "hello", true, false], [m.id + 1, "hi", false, true]].sort((a, b) => a[0] - b[0]));
+  // An edit isn't a new message, so it doesn't count as unread.
+  assert.equal((await api(sam, "GET", "/state")).json.rooms[0].unread, 0);
+
+  await api(josh, "DELETE", `/rooms/${room}/messages/${m.id}`);
+  assert.equal((await api(josh, "PATCH", `/rooms/${room}/messages/${m.id}`, { body: "back" })).status, 404);
+});
+
+test("@mentions are flagged for the person mentioned and counted until read", async () => {
+  const env = makeEnv();
+  const josh = await signedIn(env, "josh"), sam = await signedIn(env, "sam");
+  const room = (await api(josh, "POST", "/rooms", { name: "Pings" })).json.id;
+  await api(sam, "POST", `/rooms/${room}/join`);
+
+  await say(josh, room, "hey @Sam, and @josh and @nobody");
+  await say(josh, room, "mail sam@sam.test is not a mention");
+  await say(josh, room, "@sam again");
+  const state = (await api(sam, "GET", "/state")).json;
+  assert.deepEqual([state.rooms[0].unread, state.rooms[0].mentions], [3, 2]);
+  assert.ok(state.reactions.includes("👍"));
+  assert.equal((await api(josh, "GET", "/state")).json.rooms[0].mentions, 0, "mentioning yourself doesn't count");
+
+  const msgs = (await api(sam, "GET", `/rooms/${room}/messages`)).json.messages;
+  assert.deepEqual(msgs.map(x => x.mentions_me), [true, false, true]);
+  assert.deepEqual((await api(josh, "GET", `/rooms/${room}/messages`)).json.messages.map(x => x.mentions_me), [false, false, false]);
+  assert.equal((await api(sam, "GET", "/state")).json.rooms[0].mentions, 0, "reading clears it");
+
+  // Editing the mention away (or in) changes who's mentioned.
+  const m = (await say(josh, room, "no one")).json;
+  await api(josh, "PATCH", `/rooms/${room}/messages/${m.id}`, { body: "now @sam" });
+  assert.equal((await api(sam, "GET", "/state")).json.rooms[0].mentions, 1);
+  await api(josh, "PATCH", `/rooms/${room}/messages/${m.id}`, { body: "never mind" });
+  assert.equal((await api(sam, "GET", "/state")).json.rooms[0].mentions, 0);
+});
+
+test("members react to messages from a short list", async () => {
+  const env = makeEnv();
+  const josh = await signedIn(env, "josh"), sam = await signedIn(env, "sam"), kim = await signedIn(env, "kim");
+  const room = (await api(josh, "POST", "/rooms", { name: "Reacts" })).json.id;
+  await api(sam, "POST", `/rooms/${room}/join`);
+  const m = (await say(josh, room, "pizza tonight?")).json;
+  const react = (b, emoji, on = true) => api(b, "POST", `/rooms/${room}/messages/${m.id}/reactions`, { emoji, on });
+  const { seq } = (await api(josh, "GET", `/rooms/${room}/messages`)).json;
+
+  assert.equal((await react(kim, "👍")).status, 403, "join first");
+  assert.equal((await react(sam, "🍕")).status, 400);
+  assert.equal((await api(sam, "POST", `/rooms/${room}/messages/${m.id}/reactions`, { emoji: "👍" })).status, 400);
+  assert.equal((await react(sam, "👍")).status, 200);
+  await react(sam, "👍");   // twice is still once
+  await react(sam, "🎉");
+  const r = (await react(josh, "👍")).json.reactions;
+  assert.deepEqual(r.map(x => [x.emoji, x.count, x.mine, x.names]), [["👍", 2, true, "sam, josh"], ["🎉", 1, false, "sam"]]);
+
+  const polled = (await api(josh, "GET", `/rooms/${room}/messages?since=${seq}`)).json.messages;
+  assert.deepEqual(polled.map(x => x.reactions.length), [2]);
+  assert.equal((await api(josh, "GET", "/state")).json.rooms[0].unread, 0, "reactions aren't unread messages");
+
+  assert.deepEqual((await react(sam, "🎉", false)).json.reactions.map(x => x.emoji), ["👍"]);
+  assert.equal((await api(sam, "POST", `/rooms/${room}/messages/${m.id}/reactions`, undefined)).status, 400);
+  assert.equal((await api(sam, "GET", `/rooms/${room}/members/1/reactions`)).status, 404);
+
+  await api(josh, "DELETE", `/rooms/${room}/messages/${m.id}`);
+  assert.equal((await react(sam, "👍")).status, 404);
+  assert.equal(sqlOne(env, "SELECT COUNT(*) AS n FROM chat_reactions").n, 0);
+});

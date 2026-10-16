@@ -86,8 +86,11 @@ The same rooms as `/chat/`: the list on the left, the open room on the right, an
 
 | | |
 |---|---|
-| `enter` | send what you typed (only in rooms you've joined) |
-| `tab` / `esc` | move to the room list; `enter` on a room opens it (`esc` there goes back) |
+| `enter` | send what you typed (only in rooms you've joined); `@name` mentions someone |
+| `tab` | after an `@`, complete a name from the room; otherwise move to the room list |
+| `esc` | move to the room list; `enter` on a room opens it (`esc` there goes back) |
+| `/edit [TEXT]` | change your last message; on its own (or `↑` on an empty line) it puts the message on the line to change |
+| `/react NAME` | react to the last message from someone else, or take it back: `+1` `heart` `laugh` `tada` `wow` `sad` `eyes` `pray` |
 | `/join` `/leave` | join or leave the open room |
 | `/new NAME \| TOPIC` | make a room (`ctrl+n` starts this for you) |
 | `/rename NAME` `/topic TEXT` | change the open room (its owner, or an admin) |
@@ -95,7 +98,7 @@ The same rooms as `/chat/`: the list on the left, the open room on the right, an
 | `/older` | load older messages (`ctrl+u`) |
 | `/help` | these commands |
 
-Start a message with `//` to send one that begins with `/`.
+Start a message with `//` to send one that begins with `/`. Messages that mention you are marked with a bar, reactions show under a message, and a room where you were mentioned shows `@` in the list.
 
 ## Account settings
 

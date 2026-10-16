@@ -318,7 +318,7 @@ def review(plugin_id: str, version: int, decision: str, note: str = "") -> dict:
 # /chat/api/ (src/chat.js)
 
 def chat_state() -> dict:
-    """{user, rooms}: every room, with joined, unread and manage for this account."""
+    """{user, rooms, reactions}: every room, with joined, unread, mentions and manage for this account."""
     return _get("/chat/api/state")
 
 
@@ -334,6 +334,21 @@ def chat_post(room: str, text: str) -> dict:
 
 def chat_delete(room: str, message_id: int) -> dict:
     return api("DELETE", f"/chat/api/rooms/{_q(room)}/messages/{int(message_id)}")
+
+
+def chat_edit(room: str, message_id: int, text: str) -> dict:
+    """Change one of your own messages; returns it as it now is."""
+    return api("PATCH", f"/chat/api/rooms/{_q(room)}/messages/{int(message_id)}", {"body": text})
+
+
+def chat_react(room: str, message_id: int, emoji: str, on: bool = True) -> dict:
+    """Add (or with on=False take back) a reaction; returns the message."""
+    return api("POST", f"/chat/api/rooms/{_q(room)}/messages/{int(message_id)}/reactions", {"emoji": emoji, "on": on})
+
+
+def chat_members(room: str) -> list:
+    """[{username, name, joined_at, owner}] for a room."""
+    return _get(f"/chat/api/rooms/{_q(room)}/members")
 
 
 def chat_create(name: str, topic: str = "") -> dict:

@@ -1,6 +1,7 @@
 // The chat page: a list of rooms on the left, the open room on the right.
 // It asks the server for changes every few seconds while the tab is visible:
 // the open room often, the room list (for unread counts) less often.
+// Messages can be edited by their author, reacted to, and can @mention people.
 
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -11,8 +12,11 @@ const GROUP_SECONDS = 5 * 60;
 
 let me = {};
 let rooms = [];
-let open = null;          // { id, seq, more, joined, messages: Map(id → message) }
+let reactions = [];       // the emoji the site accepts
+let open = null;          // { id, seq, more, joined, messages: Map(id → message), members: [] }
 let busy = false;         // a poll is in flight
+let editingId = null, editDraft = "";   // the message being edited in place
+let pickerFor = null;     // the message whose reaction picker is open
 
 async function api(method, path, body) {
   const res = await fetch("/chat/api" + path, {
@@ -36,7 +40,7 @@ function toast(text) {
 
 async function loadRooms() {
   const s = await api("GET", "/state");
-  me = s.user; rooms = s.rooms;
+  me = s.user; rooms = s.rooms; reactions = s.reactions || [];
   renderRooms();
   const shown = open && rooms.find(r => r.id === open.id), count = $("#show-members");
   if (shown && count) count.textContent = `${shown.members} member${shown.members === 1 ? "" : "s"}`;
@@ -46,13 +50,14 @@ async function loadRooms() {
 
 function renderRooms() {
   const row = r => `<button data-room="${esc(r.id)}" aria-current="${open?.id === r.id}" title="${esc(r.topic || r.name)}">
-    <span class="name">${esc(r.name)}</span>${r.unread && open?.id !== r.id ? `<span class="n">${r.unread > 99 ? "99+" : r.unread}</span>` : ""}
+    <span class="name">${esc(r.name)}</span>${r.mentions && open?.id !== r.id ? `<span class="n at" title="You were mentioned">@${r.mentions > 1 ? r.mentions : ""}</span>` : ""}${r.unread && open?.id !== r.id ? `<span class="n">${r.unread > 99 ? "99+" : r.unread}</span>` : ""}
     ${r.joined ? "" : `<span class="count">${r.members}</span>`}</button>`;
   const joined = rooms.filter(r => r.joined), others = rooms.filter(r => !r.joined);
   $("#joined").innerHTML = joined.map(row).join("") || `<p class="none">You haven't joined any rooms yet.</p>`;
   $("#others").innerHTML = others.map(row).join("") || `<p class="none">${rooms.length ? "You're in every room." : "No rooms yet. Make the first one."}</p>`;
   const total = joined.reduce((n, r) => n + (open?.id === r.id ? 0 : r.unread), 0);
-  document.title = total ? `(${total}) Chat` : "Chat";
+  const pings = joined.reduce((n, r) => n + (open?.id === r.id ? 0 : r.mentions), 0);
+  document.title = (pings ? "@ " : "") + (total ? `(${total}) Chat` : "Chat");
 }
 
 document.querySelector(".side").addEventListener("click", e => {
@@ -63,7 +68,7 @@ document.querySelector(".side").addEventListener("click", e => {
 // ── the open room ────────────────────────────────────────────────────────
 
 function closeRoom() {
-  open = null;
+  open = null; editingId = pickerFor = null; hideSuggest();
   document.body.classList.remove("in-room");
   $("#room").innerHTML = `<div class="welcome"><b>Pick a room</b>Choose one from the list, or make a new one. Anyone signed in here can find and join your rooms.</div>`;
   if (location.hash) history.replaceState(null, "", location.pathname);
@@ -74,8 +79,11 @@ async function openRoom(id) {
   const room = rooms.find(r => r.id === id);
   if (!room) { closeRoom(); return; }
   const data = await api("GET", `/rooms/${id}/messages`);
-  open = { id, seq: data.seq, more: data.more, joined: data.joined, messages: new Map(data.messages.map(m => [m.id, m])) };
-  room.unread = 0;
+  open = { id, seq: data.seq, more: data.more, joined: data.joined, messages: new Map(data.messages.map(m => [m.id, m])), members: [] };
+  editingId = pickerFor = null; hideSuggest();
+  room.unread = 0; room.mentions = 0;
+  // For completing @names as you type.
+  api("GET", `/rooms/${id}/members`).then(list => { if (open?.id === id) open.members = list; }).catch(() => {});
   document.body.classList.add("in-room");
   renderRoomShell(room);
   renderLog({ toBottom: true });
@@ -96,8 +104,9 @@ function renderRoomShell(room) {
     ${open.joined
       ? `<form class="composer" id="composer">
           <span class="prompt" aria-hidden="true">&gt;</span>
-          <textarea id="text" rows="1" maxlength="2000" placeholder="Message # ${esc(room.name)}" aria-label="Message"></textarea>
+          <textarea id="text" rows="1" maxlength="2000" placeholder="Message # ${esc(room.name)}" aria-label="Message" autocomplete="off"></textarea>
           <button class="btn" type="submit">Send</button>
+          <ul class="suggest" id="suggest" role="listbox" aria-label="People to mention" hidden></ul>
         </form>`
       : `<div class="joinbar">You're looking at this room. Join it to post. <button class="btn" id="join">Join room</button></div>`}`;
 }
@@ -110,8 +119,29 @@ const day = t => {
   if (d.toDateString() === y.toDateString()) return "Yesterday";
   return d.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric", year: d.getFullYear() === today.getFullYear() ? undefined : "numeric" });
 };
-// Plain text with web links made clickable. Everything is escaped first.
-const linkify = s => esc(s).replace(/\bhttps?:\/\/[^\s<]+[^\s<.,;:!?)"'\]]/g, u => `<a href="${u}" target="_blank" rel="noopener noreferrer">${u}</a>`);
+// Plain text with web links made clickable and @names picked out. Everything
+// is escaped first. (The same @name rule as the site's, in src/chat.js.)
+const linkify = s => esc(s)
+  .replace(/\bhttps?:\/\/[^\s<]+[^\s<.,;:!?)"'\]]/g, u => `<a href="${u}" target="_blank" rel="noopener noreferrer">${u}</a>`)
+  .replace(/(^|[^\w@.\/])@([a-z0-9][a-z0-9_-]{2,31})(?![\w-])/gi, (all, pre, name) =>
+    `${pre}<span class="mention${name.toLowerCase() === me.username ? " you" : ""}">@${name}</span>`);
+
+function messageHtml(m) {
+  if (m.id === editingId) {
+    return `<form class="edit" data-edit="${m.id}">
+      <textarea rows="1" maxlength="2000" aria-label="Edit message">${esc(editDraft)}</textarea>
+      <div class="edit-actions"><span>↵ save · esc cancel</span><button type="button" class="link" data-cancel>Cancel</button><button class="btn">Save</button></div>
+    </form>`;
+  }
+  const chips = (m.reactions || []).map(r =>
+    `<button class="chip" data-react="${esc(r.emoji)}" data-mid="${m.id}" aria-pressed="${r.mine}" title="${esc(r.names)}">${esc(r.emoji)} <b>${r.count}</b></button>`).join("");
+  const canReact = open.joined && !m.pending;
+  const picker = pickerFor === m.id
+    ? `<div class="picker" role="menu">${reactions.map(e => `<button class="link" data-react="${esc(e)}" data-mid="${m.id}" role="menuitem">${esc(e)}</button>`).join("")}</div>` : "";
+  return `<div class="text" title="${esc(time(m.created_at))}">${linkify(m.body)}${m.edited_at ? `<span class="edited" title="Edited ${esc(time(m.edited_at))}"> (edited)</span>` : ""}</div>
+    ${chips || picker ? `<div class="reacts">${chips}${picker}</div>` : ""}
+    <div class="acts">${canReact ? `<button class="link" data-pick="${m.id}" aria-label="React">React</button>` : ""}${m.can_edit && !m.pending ? `<button class="link" data-editmsg="${m.id}">Edit</button>` : ""}${m.can_delete ? `<button class="link del" data-del="${m.id}" aria-label="Delete message">Delete</button>` : ""}</div>`;
+}
 
 function renderLog({ toBottom = false, keepFrom = null } = {}) {
   const log = $("#log");
@@ -124,16 +154,20 @@ function renderLog({ toBottom = false, keepFrom = null } = {}) {
     const d = day(m.created_at);
     if (d !== lastDay) { html += `<div class="day">${esc(d)}</div>`; lastDay = d; prev = null; }
     const first = !prev || prev.author !== m.author || m.created_at - prev.created_at > GROUP_SECONDS;
-    html += `<div class="msg${first ? " first" : ""}${m.mine ? " mine" : ""}${m.pending ? " pending" : ""}" data-id="${m.id}">
+    html += `<div class="msg${first ? " first" : ""}${m.mine ? " mine" : ""}${m.pending ? " pending" : ""}${m.mentions_me ? " ping" : ""}" data-id="${m.id}">
       ${first ? `<div class="who">${esc(m.author_name)}<span class="at">${time(m.created_at)}</span></div>` : ""}
-      <div class="text" title="${esc(time(m.created_at))}">${linkify(m.body)}</div>
-      ${m.can_delete ? `<button class="link del" data-del="${m.id}" aria-label="Delete message">Delete</button>` : ""}
+      ${messageHtml(m)}
     </div>`;
     prev = m;
   }
   if (!list.length) html += `<div class="empty"><b>No messages yet</b>${open.joined ? "Say hello." : "Join to start the conversation."}</div>`;
   const before = log.scrollHeight;
+  // Keep the cursor in a message being edited when the log redraws under it.
+  const editing = log.querySelector(".edit textarea"), focused = editing && document.activeElement === editing;
+  const caret = focused ? [editing.selectionStart, editing.selectionEnd] : null;
   log.innerHTML = html;
+  const box = log.querySelector(".edit textarea");
+  if (box) { grow(box); if (caret) { box.focus(); box.setSelectionRange(...caret); } }
   if (keepFrom != null) log.scrollTop = log.scrollHeight - before + keepFrom;
   else if (toBottom || nearBottom) log.scrollTop = log.scrollHeight;
 }
@@ -147,6 +181,7 @@ async function pollRoom() {
     const data = await api("GET", `/rooms/${id}/messages?since=${open.seq}`);
     if (open?.id !== id || !data.messages.length) return;
     for (const m of data.messages) open.messages.set(m.id, m);
+    if (editingId && open.messages.get(editingId)?.deleted) editingId = null;
     open.seq = Math.max(open.seq, data.seq);
     renderLog();
   } catch (e) {
@@ -172,6 +207,17 @@ $("#room").addEventListener("click", async e => {
       open.more = data.more;
       renderLog({ keepFrom: $("#log").scrollTop });
     }
+    else if (t.closest("[data-react]")) {
+      const b = t.closest("[data-react]"), mid = Number(b.dataset.mid), emoji = b.dataset.react;
+      const has = open.messages.get(mid)?.reactions?.some(r => r.emoji === emoji && r.mine);
+      pickerFor = null;
+      const m = await api("POST", `/rooms/${open.id}/messages/${mid}/reactions`, { emoji, on: !has });
+      open.messages.set(m.id, m);
+      renderLog();
+    }
+    else if (t.dataset.pick) { pickerFor = pickerFor === Number(t.dataset.pick) ? null : Number(t.dataset.pick); renderLog(); }
+    else if (t.dataset.editmsg) startEdit(Number(t.dataset.editmsg));
+    else if (t.closest("[data-cancel]")) stopEdit();
     else if (t.dataset.del) {
       if (!confirm("Delete this message for everyone?")) return;
       await api("DELETE", `/rooms/${open.id}/messages/${t.dataset.del}`);
@@ -181,8 +227,34 @@ $("#room").addEventListener("click", async e => {
   } catch (err) { toast(err.message); }
 });
 
+// ── editing your own messages ────────────────────────────────────────────
+
+function startEdit(id) {
+  const m = open?.messages.get(id);
+  if (!m?.can_edit) return;
+  editingId = id; editDraft = m.body; pickerFor = null;
+  renderLog();
+  const box = $("#log .edit textarea");
+  if (box) { box.focus(); box.setSelectionRange(box.value.length, box.value.length); box.scrollIntoView({ block: "nearest" }); }
+}
+function stopEdit() {
+  editingId = null;
+  renderLog();
+  $("#text")?.focus();
+}
+async function saveEdit(form) {
+  const id = Number(form.dataset.edit), body = form.querySelector("textarea").value.trim();
+  if (!body) return toast("A message can't be empty. Delete it instead.");
+  try {
+    const m = await api("PATCH", `/rooms/${open.id}/messages/${id}`, { body });
+    open.messages.set(m.id, m);
+    stopEdit();
+  } catch (err) { toast(err.message); }
+}
+
 let tempId = -1;
 $("#room").addEventListener("submit", async e => {
+  if (e.target.matches(".edit")) { e.preventDefault(); return saveEdit(e.target); }
   if (e.target.id !== "composer") return;
   e.preventDefault();
   const box = $("#text"), body = box.value.trim();
@@ -205,15 +277,66 @@ $("#room").addEventListener("submit", async e => {
   }
 });
 
-// Enter sends; Shift+Enter starts a new line.
+// Enter sends; Shift+Enter starts a new line; ↑ in an empty box edits your
+// last message. While an @name is being typed, ↑/↓ pick and Tab or Enter fills it in.
 $("#room").addEventListener("keydown", e => {
-  if (e.target.id === "text" && e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+  const box = e.target;
+  if (box.id === "text" && !$("#suggest").hidden) {
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); moveSuggest(e.key === "ArrowDown" ? 1 : -1); return; }
+    if ((e.key === "Tab" || e.key === "Enter") && !e.shiftKey && !e.isComposing) { e.preventDefault(); pickSuggest(); return; }
+    if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); hideSuggest(); return; }
+  }
+  if (box.id === "text" && e.key === "Enter" && !e.shiftKey && !e.isComposing) {
     e.preventDefault();
     $("#composer").requestSubmit();
-  }
+  } else if (box.id === "text" && e.key === "ArrowUp" && !box.value) {
+    const last = [...open.messages.values()].filter(m => m.can_edit && !m.pending).sort((a, b) => b.id - a.id)[0];
+    if (last) { e.preventDefault(); startEdit(last.id); }
+  } else if (box.closest?.(".edit")) {
+    if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); box.form.requestSubmit(); }
+    else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); stopEdit(); }
+  } else if (e.key === "Escape" && pickerFor != null) { e.stopPropagation(); pickerFor = null; renderLog(); }
 });
 const grow = box => { box.style.height = "auto"; box.style.height = Math.min(box.scrollHeight + 2, 160) + "px"; };
-$("#room").addEventListener("input", e => { if (e.target.id === "text") grow(e.target); });
+$("#room").addEventListener("input", e => {
+  if (e.target.id === "text") { grow(e.target); suggest(e.target); }
+  else if (e.target.closest(".edit")) { editDraft = e.target.value; grow(e.target); }
+});
+
+// ── completing @names ────────────────────────────────────────────────────
+
+let matches = [], chosen = 0;
+function suggest(box) {
+  const m = box.value.slice(0, box.selectionStart).match(/(?:^|[^\w@.\/])@([a-z0-9_-]{0,31})$/i);
+  if (!m || !open?.members.length) return hideSuggest();
+  const q = m[1].toLowerCase();
+  matches = open.members.filter(p => p.username !== me.username && (p.username.startsWith(q) || p.name.toLowerCase().startsWith(q))).slice(0, 6);
+  if (!matches.length) return hideSuggest();
+  chosen = 0;
+  drawSuggest();
+}
+function drawSuggest() {
+  const list = $("#suggest");
+  list.innerHTML = matches.map((p, i) => `<li role="option" aria-selected="${i === chosen}" data-i="${i}">${esc(p.name)}<span>@${esc(p.username)}</span></li>`).join("");
+  list.hidden = false;
+}
+function moveSuggest(by) { chosen = (chosen + by + matches.length) % matches.length; drawSuggest(); }
+function hideSuggest() { const list = $("#suggest"); if (list) list.hidden = true; matches = []; }
+function pickSuggest(i = chosen) {
+  const box = $("#text"), p = matches[i];
+  if (!box || !p) return hideSuggest();
+  const head = box.value.slice(0, box.selectionStart).replace(/@[a-z0-9_-]*$/i, `@${p.username} `);
+  box.value = head + box.value.slice(box.selectionStart);
+  box.setSelectionRange(head.length, head.length);
+  hideSuggest(); grow(box); box.focus();
+}
+$("#room").addEventListener("mousedown", e => {
+  const li = e.target.closest("#suggest li");
+  if (li) { e.preventDefault(); pickSuggest(Number(li.dataset.i)); }
+});
+document.addEventListener("click", e => {
+  if (pickerFor != null && !e.target.closest(".picker, [data-pick]")) { pickerFor = null; renderLog(); }
+});
 
 // ── making and editing rooms ─────────────────────────────────────────────
 
@@ -235,6 +358,7 @@ $("#new").addEventListener("click", () => editRoom());
 document.addEventListener("keydown", e => {
   if (e.metaKey || e.ctrlKey || e.altKey || document.querySelector("dialog[open]")) return;
   const typing = e.target.matches?.("input, textarea");
+  if (e.defaultPrevented) return;
   if (e.key === "Escape" && typing) { e.target.blur(); document.querySelector(".rooms button[aria-current='true'], .rooms button")?.focus(); return; }
   if (typing) return;
   if (e.key === "n") { e.preventDefault(); editRoom(); }
