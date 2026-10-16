@@ -20,6 +20,8 @@ import { db, now } from "./db.js";
 import { randomBytes, randomToken, sha256 } from "./crypto.js";
 import { createSession, currentSession, clientIp, getUser, recoveryCodesLeft, APPS } from "./auth.js";
 import { sameOrigin } from "./account.js";
+import { agenda, visitorNow } from "./drift.js";
+import { installed } from "./store.js";
 import { html, page, esc, messagePage } from "./pages.js";
 
 export const CLI_PATHS = /^\/login\/cli(\/|$)/;
@@ -133,6 +135,15 @@ async function dashboard(request, env) {
   const sessions = (await d.prepare("SELECT COUNT(*) AS n FROM sessions WHERE user_id = ? AND stage = 'full'").bind(user.id).first()).n;
   // Same rule as protect(): until setup is finished, the site only offers /account.
   const setup = user.must_change_pw ? "choose a new password" : user.areas.has("admin") && !user.totp_secret ? "set up two-factor" : null;
+  const drift = !setup && user.areas.has("todo"), clock = visitorNow(request);
+  let today = null;
+  if (drift) {
+    try {
+      const a = await agenda(env, user, clock.day);
+      const out = it => ({ title: it.title, collection: it.collection, when: it.when, start: it.start });
+      today = { late: a.late.map(out), due: a.due.map(out), url: origin + "/todo/" };
+    } catch (e) { console.error("dashboard agenda failed:", e); }
+  }
   return json({
     site: origin,
     user: { username: user.username, display_name: user.display_name, admin: user.areas.has("admin") },
@@ -140,7 +151,12 @@ async function dashboard(request, env) {
     account: {
       two_factor: !!user.totp_secret, sessions, recovery_codes_left: await recoveryCodesLeft(env, user.id),
       email: user.email || null, email_confirmed: !!user.email_verified, setup_needed: setup, url: origin + "/account",
+      plugins_installed: drift ? (await installed(env, user.id)).length : null,
     },
+    // The web dashboard's Today card: open Drift items due today and overdue.
+    // null for accounts without Drift (or while setup is needed).
+    date: clock.label,
+    today,
   });
 }
 

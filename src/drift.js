@@ -382,6 +382,19 @@ async function migrateTasks(d, owner) {
 }
 
 // ── the dashboard's "Today" ────────────────────────────────────────────────
+// The visitor's own date, hour and a "Friday, October 16" label, from
+// Cloudflare's guess at their time zone (UTC when there's none).
+export function visitorNow(request, at = new Date()) {
+  let tz = request.cf?.timezone || "UTC";
+  try { new Intl.DateTimeFormat("en", { timeZone: tz }); } catch { tz = "UTC"; }
+  const part = o => new Intl.DateTimeFormat("en-CA", { timeZone: tz, ...o }).format(at);
+  return {
+    day: part({ year: "numeric", month: "2-digit", day: "2-digit" }),
+    hour: Number(part({ hour: "numeric", hourCycle: "h23" })),
+    label: new Intl.DateTimeFormat("en-US", { timeZone: tz, weekday: "long", month: "long", day: "numeric" }).format(at),
+  };
+}
+
 // Open dated items across every collection you can see: the ones due on `day`
 // (YYYY-MM-DD, the visitor's own date) and the ones whose day has passed.
 // Same rules as Drift's Today view.

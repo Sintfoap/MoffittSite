@@ -13,7 +13,7 @@ import {
   setEmail, confirmEmail, startEmailReset, emailResetUser, resetWithEmailToken,
 } from "./auth.js";
 import { mailReady, sendMail, MailError } from "./mail.js";
-import { agenda } from "./drift.js";
+import { agenda, visitorNow } from "./drift.js";
 import { installed } from "./store.js";
 import {
   html, loginPage, signupPage, mfaPage, forgotPage, forgotDonePage, forgotEmailSentPage, resetPage, dashboardPage, accountPage, changePasswordRequiredPage, adminPage, adminClaimPage, messagePage,
@@ -254,11 +254,7 @@ async function dashboard(request, env) {
   if (user.must_change_pw || (user.areas.has("admin") && !user.totp_secret)) return redirect("/account");
   const d = await db(env);
   const sessionCount = (await d.prepare("SELECT COUNT(*) AS n FROM sessions WHERE user_id = ? AND stage = 'full'").bind(user.id).first()).n;
-  // The visitor's own date and time of day, from Cloudflare's guess at their time zone.
-  let tz = request.cf?.timezone || "UTC";
-  try { new Intl.DateTimeFormat("en", { timeZone: tz }); } catch { tz = "UTC"; }
-  const at = new Date(), part = o => new Intl.DateTimeFormat("en-CA", { timeZone: tz, ...o }).format(at);
-  const day = part({ year: "numeric", month: "2-digit", day: "2-digit" }), hour = Number(part({ hour: "numeric", hourCycle: "h23" }));
+  const { day, hour, label } = visitorNow(request);
   const drift = user.areas.has("todo");
   let agendaData = null;
   if (drift) {
@@ -269,7 +265,7 @@ async function dashboard(request, env) {
     user, apps: APPS.filter(a => user.areas.has(a.area)), sessionCount, recoveryLeft: await recoveryCodesLeft(env, user.id),
     agenda: agendaData, installs: drift ? (await installed(env, user.id)).length : null, mail: mailReady(env),
     greeting: hour < 5 ? "Good evening" : hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening",
-    dateLabel: new Intl.DateTimeFormat("en-US", { timeZone: tz, weekday: "long", month: "long", day: "numeric" }).format(at),
+    dateLabel: label,
   }));
 }
 
