@@ -188,3 +188,38 @@ test("the terminal dashboard shows what /dashboard does", async () => {
   assert.equal(admin.account.setup_needed, "set up two-factor");
   assert.equal(admin.today, null, "nothing but setup until it's done");
 });
+
+test("the terminal's settings page reads and changes what doesn't need the password", async () => {
+  const env = makeEnv(), b = new Browser(env), term = new Terminal(env), other = new Browser(env);
+  await b.signup("ryan", undefined, "Ryan M");
+  await other.login("ryan");
+  assert.equal((await term.get("/login/cli/account")).status, 401);
+  const s = await term.start();
+  await approve(b, s.json.user_code);
+  term.cookie = (await term.poll(s.json.device_code)).json.token;
+
+  const a = (await term.get("/login/cli/account")).json;
+  assert.equal(a.username, "ryan");
+  assert.equal(a.display_name, "Ryan M");
+  assert.equal(a.sessions, 3, "two browsers and the terminal");
+  assert.equal(a.two_factor, false);
+  assert.equal(a.mail, false);
+  assert.equal(a.url, "https://sintfoap.test/account");
+
+  const named = await term.req("POST", "/login/cli/account", { json: { display_name: "  Ryan Moffitt " }, origin: null });
+  assert.equal(named.status, 200);
+  assert.equal(named.json.display_name, "Ryan Moffitt");
+  assert.equal(sqlOne(env, "SELECT display_name FROM users").display_name, "Ryan Moffitt");
+  const bad = await term.req("POST", "/login/cli/account", { json: { display_name: "" }, origin: null });
+  assert.equal(bad.status, 400);
+  assert.match(bad.json.error, /1–50 characters/);
+
+  // Another website can't use a browser's session to change it.
+  const csrf = await b.req("POST", "/login/cli/account", { json: { display_name: "pwned" }, origin: "https://evil.example" });
+  assert.equal(csrf.status, 403);
+
+  const out = await term.req("POST", "/login/cli/account/sessions", { origin: null });
+  assert.equal(out.json.sessions, 1, "only the terminal is left");
+  assert.equal((await b.get("/dashboard")).status, 303, "the browser was signed out");
+  assert.equal((await term.get("/login/cli/dashboard")).status, 200);
+});

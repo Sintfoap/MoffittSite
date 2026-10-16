@@ -17,7 +17,7 @@ public/          the website, served as static files
 src/             the Worker: runs only for the paths in run_worker_first
   worker.js        routing: sign-in pages, then /todo behind protect()
   account.js       /login /signup /logout /dashboard /account /admin, and protect()
-  cli.js           /login/cli: signing in from a terminal, and the dashboard for it
+  cli.js           /login/cli: signing in from a terminal, and its dashboard and settings
   auth.js          accounts, sessions, login throttling, two-factor
   crypto.js        password hashing (PBKDF2) and authenticator codes (TOTP)
   mail.js          sending email through Resend (address checks, reset links)
@@ -26,7 +26,7 @@ src/             the Worker: runs only for the paths in run_worker_first
   drift.js         Drift storage: collections and items per account
   store.js         the plugin store: drafts, review queue, approved plugins
   vendor/uqr.mjs   QR codes for two-factor setup (MIT)
-cli/             the `sintfoap` command: sign in from a terminal, dashboard as a terminal UI
+cli/             the `sintfoap` command: sign in from a terminal; dashboard, Drift, plugin store and settings as a terminal UI
 apps/todo-esque/ the original Drift app (Python engine, terminal UI, CLI)
 tests/           node --no-warnings --test tests/*.test.mjs  (the CLI's: cd cli && python -m pytest tests)
 wrangler.jsonc   Worker configuration (name, static files, variables, database)
@@ -65,7 +65,7 @@ The site has its own login. There's no Cloudflare Access.
 - **Dashboard:** `/dashboard` is where people land after signing in. It shows what's due today and overdue in Drift (by the visitor's time zone, from Cloudflare), an account check (two-factor, recovery codes, email) and a card for each app their areas give them (from `APPS` in `src/auth.js`).
 - **Look:** every signed-in page (dashboard, settings, admin, Drift, plugin store) uses the terminal dashboard's look: monospace type, square double-ruled panels, gold on green-black (or on paper in light mode, following the system), one shared side rail and a key bar along the bottom. `g` then a letter jumps between apps (`public/keys.js`; the rail shows each letter). The server pages' styles are in `src/pages.js`; Drift and the store carry the same colours in their own `<style>` blocks.
 - **Areas** (`user_areas` table) decide who can use which part of the site. `protect(request, env, "<area>", inner)` in `src/account.js` lets only signed-in accounts with that area through. Pages redirect to `/login`; API calls get 401 or 403.
-- **Terminal sign-in** (`/login/cli`): `sintfoap login` (see `cli/`) shows a short code; you open `/login/cli` in a browser where you're signed in (two-factor included) and approve it. The terminal never sees your password. What it gets is an ordinary session, so it expires the same way, counts in your sessions, and ends with "Sign out everywhere" or a password change. Codes work once, for 10 minutes, and one address can have 5 waiting. Approving always needs a button press on the site, so a link with someone else's code in it can't sign them in as you without you clicking Approve. Once signed in, `sintfoap` shows the dashboard in the terminal, from `GET /login/cli/dashboard`. That gives the terminal the same things the web dashboard shows, including the Today items (`today`) and the date label (`date`).
+- **Terminal sign-in** (`/login/cli`): `sintfoap login` (see `cli/`) shows a short code; you open `/login/cli` in a browser where you're signed in (two-factor included) and approve it. The terminal never sees your password. What it gets is an ordinary session, so it expires the same way, counts in your sessions, and ends with "Sign out everywhere" or a password change. Codes work once, for 10 minutes, and one address can have 5 waiting. Approving always needs a button press on the site, so a link with someone else's code in it can't sign them in as you without you clicking Approve. Once signed in, `sintfoap` shows the dashboard in the terminal, from `GET /login/cli/dashboard`. That gives the terminal the same things the web dashboard shows, including the Today items (`today`) and the date label (`date`), and Drift and the plugin store through the same APIs as their web pages. Its settings page uses `GET`/`POST /login/cli/account` (display name) and `POST /login/cli/account/sessions` (sign out everywhere else); everything on `/account` that needs the password stays on the website.
 - **Forms and API writes** sent from another website are refused, based on the `Origin` and `Sec-Fetch-Site` headers.
 
 ### Admin
