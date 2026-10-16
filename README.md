@@ -37,7 +37,7 @@ The site is a Cloudflare **Worker** with static assets, deployed by Workers Buil
 
 `wrangler.jsonc` holds everything else. The `name` in it must match the Worker's name in the dashboard. Only the paths in `run_worker_first` (sign-in pages, `/dashboard`, `/account`, `/admin`, `/todo`) run any code; everything else is served straight from `public/`.
 
-Settings in `wrangler.jsonc` replace dashboard settings on every deploy. Change variables and bindings there, not in the dashboard.
+Settings in `wrangler.jsonc` replace dashboard settings on every deploy. Change variables and bindings there, not in the dashboard. Secrets added in the dashboard are kept, and so are dashboard Text variables that `wrangler.jsonc` doesn't name (`keep_vars`).
 
 Branch builds run `npx wrangler preview`, which uses the `previews` section of `wrangler.jsonc` instead of the production settings. It must list every variable. Previews get no database, so signing in fails closed on preview URLs while the rest of the site previews normally.
 
@@ -85,7 +85,7 @@ Email goes out through [Resend](https://resend.com) (free for up to 3,000 emails
 
 1. **Create a Resend account** and add the domain `sintfoap.xyz` under **Domains**. Resend shows a few DNS records; add them in Cloudflare under **sintfoap.xyz → DNS → Records** and wait for Resend to say the domain is verified.
 2. **Create an API key** in Resend under **API Keys**, with "Sending access" for that domain.
-3. **Add it to the Worker** in the Cloudflare dashboard: **Workers & Pages → moffittsite → Settings → Variables and Secrets → Add**, type **Secret**, name `RESEND_API_KEY`, value the key.
+3. **Add it to the Worker** in the Cloudflare dashboard: **Workers & Pages → moffittsite → Settings → Variables and Secrets → Add**, type **Secret**, name `RESEND_API_KEY`, value the key. Pick type **Secret**, not **Text**: secrets stay hidden and every deploy keeps them.
 4. The sender address is `MAIL_FROM` in `wrangler.jsonc` (`Sintfoap <no-reply@sintfoap.xyz>`). Change it there if you want a different one; it must be on the verified domain.
 
 If adding an email fails, the account page shows Resend's reason, and the Worker's logs (**moffittsite → Observability**) have the full error. The usual one is that the domain isn't verified yet: until it is, Resend refuses every send from `sintfoap.xyz`.

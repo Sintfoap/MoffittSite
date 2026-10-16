@@ -17,6 +17,11 @@
     ]
   },
 
+  // Keep variables added in the dashboard when Workers Builds deploys. Without
+  // this, every deploy deletes any dashboard variable of type "Text" that
+  // isn't listed below (secrets are always kept).
+  "keep_vars": true,
+
   "vars": {
     // "open" shows "Create an account"; "closed" stops new sign-ups.
     "SIGNUPS": "open",
