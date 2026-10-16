@@ -1,12 +1,12 @@
-// Server-rendered pages for signing in and managing accounts, in the
-// portfolio's style. No scripts: every action is a plain form post.
+// Server-rendered pages for signing in and managing accounts. Every action is
+// a plain form post; the only script is /keys.js, the site's shortcut keys.
 
 import { APPS } from "./auth.js";
 
 export const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
 const CSP = [
-  "default-src 'none'", "style-src 'unsafe-inline' https://fonts.googleapis.com", "font-src https://fonts.gstatic.com",
+  "default-src 'none'", "script-src 'self'", "style-src 'unsafe-inline' https://fonts.googleapis.com", "font-src https://fonts.gstatic.com",
   "img-src 'self' data:", "form-action 'self'", "frame-ancestors 'none'", "base-uri 'none'",
 ].join("; ");
 
@@ -33,98 +33,113 @@ const ICON = {
 };
 const icon = name => `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON[name]}</svg>`;
 
-// Crest: the portfolio's green, gold and Garamond. Dark follows the homepage;
-// light is the same house by day. No scripts, so the theme follows the system.
+// Console: the terminal dashboard's look in the browser. Monospace type,
+// square double-ruled panels, gold on green-black, and a key bar along the
+// bottom. Dark follows the terminal; light is the same screen on paper.
 const STYLE = `
   :root { color-scheme: light;
-          --bg:#eef0e7; --bg-glow:#e3e9d9; --rail:#e6e9de; --panel:#f8f9f3; --field:#ffffff; --line:oklch(0.55 0.08 85 / 0.28); --line-2:oklch(0.55 0.08 85 / 0.5);
-          --gold:oklch(0.52 0.1 80); --gold-dim:oklch(0.5 0.06 85); --gold-soft:oklch(0.62 0.11 85 / 0.16); --on-gold:#fbf7ea; --btn:oklch(0.5 0.1 80);
-          --ink:#1c2419; --muted:#4f5a4a; --faint:#7d8676; --bad:oklch(0.55 0.17 30); --good:oklch(0.52 0.12 150); --warn:oklch(0.62 0.13 70);
-          --display:'EB Garamond', Georgia, serif; --ui:'Jost', ui-sans-serif, system-ui, sans-serif; --mono:ui-monospace, Menlo, Consolas, monospace; }
+          --bg:#f2f0e6; --rail:#ebe8dc; --panel:#fbfaf4; --field:#ffffff; --line:#cfc9b0; --line-2:#a9a283;
+          --gold:#8a6510; --gold-soft:#e9e1c2; --on-gold:#fbf7ea; --ink:#1c1d16; --muted:#4d4c3f; --faint:#7a7764;
+          --bad:#b4412f; --good:#2f7a52; --warn:#946c0c; --mono:'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace; }
   @media (prefers-color-scheme: dark) { :root { color-scheme: dark;
-          --bg:#0b0f0a; --bg-glow:#16261a; --rail:#0d130c; --panel:#121a12; --field:#0b0f0a; --line:oklch(0.78 0.11 85 / 0.2); --line-2:oklch(0.78 0.11 85 / 0.45);
-          --gold:oklch(0.78 0.11 85); --gold-dim:oklch(0.62 0.08 85); --gold-soft:oklch(0.78 0.11 85 / 0.12); --on-gold:#1a1206; --btn:oklch(0.78 0.11 85);
-          --ink:oklch(0.95 0.02 80); --muted:oklch(0.8 0.03 80); --faint:oklch(0.6 0.04 85); --bad:oklch(0.72 0.15 30); --good:oklch(0.78 0.12 150); --warn:oklch(0.82 0.12 80); } }
+          --bg:#0d100c; --rail:#0f130e; --panel:#121611; --field:#0b0e0a; --line:#3a3a26; --line-2:#57553a;
+          --gold:#e2b552; --gold-soft:#24251a; --on-gold:#14110a; --ink:#f1ecdf; --muted:#c9c2ae; --faint:#8a8670;
+          --bad:#ff8a65; --good:#7fd6a3; --warn:#f2c14e; } }
   * { box-sizing: border-box; }
   html, body { margin: 0; }
-  body { min-height: 100vh; color: var(--ink); font: 400 15px/1.55 var(--ui); -webkit-font-smoothing: antialiased;
-         background: radial-gradient(circle at 60% 0%, var(--bg-glow) 0%, var(--bg) 60%) fixed var(--bg); }
+  body { min-height: 100vh; background: var(--bg); color: var(--ink); font: 400 14px/1.6 var(--mono); -webkit-font-smoothing: antialiased; }
   a { color: var(--gold); }
   :focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+  ::selection { background: var(--gold); color: var(--on-gold); }
 
-  /* signed out: one centred column under the crest */
-  .solo { max-width: 460px; margin: 0 auto; padding: 32px 16px 64px; }
-  .solo .crest { display: block; width: 54px; margin-bottom: 36px; color: var(--gold); }
+  /* signed out: one centred column */
+  .solo { max-width: 480px; margin: 0 auto; padding: 32px 16px 64px; }
+  .solo .crest { display: flex; align-items: center; gap: 10px; margin-bottom: 40px; color: var(--gold); text-decoration: none; font-weight: 700; letter-spacing: 1px; }
+  .solo .crest svg { width: 30px; height: 30px; }
 
-  /* signed in: the rail beside the page */
-  .shell { display: grid; grid-template-columns: 232px minmax(0, 1fr); min-height: 100vh; }
-  .rail { position: sticky; top: 0; height: 100vh; overflow-y: auto; display: flex; flex-direction: column; gap: 2px;
-          padding: 22px 14px 18px; background: var(--rail); border-right: 1px solid var(--line); }
-  .rail .brand { display: flex; align-items: center; gap: 10px; padding: 0 10px 20px; color: var(--ink); text-decoration: none; font: 500 20px var(--display); }
-  .rail .brand svg { width: 30px; height: 30px; color: var(--gold); flex: none; }
-  .rail h3 { margin: 16px 10px 4px; font: 500 11px var(--ui); letter-spacing: 2.5px; text-transform: uppercase; color: var(--faint); }
-  .rail a.go { display: flex; align-items: center; gap: 11px; padding: 8px 10px; border-radius: 5px; color: var(--muted); text-decoration: none; font-size: 15px; }
-  .rail a.go svg { color: var(--faint); flex: none; }
+  /* signed in: the rail beside the page, the key bar under both */
+  .shell { display: grid; grid-template-columns: 232px minmax(0, 1fr); min-height: 100vh; padding-bottom: 38px; }
+  .rail { position: sticky; top: 0; height: calc(100vh - 38px); overflow-y: auto; display: flex; flex-direction: column; gap: 1px;
+          padding: 20px 12px 16px; background: var(--rail); border-right: 1px solid var(--line); }
+  .rail .brand { display: flex; align-items: center; gap: 10px; padding: 0 10px 20px; color: var(--gold); text-decoration: none; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; }
+  .rail .brand svg { width: 22px; height: 22px; flex: none; }
+  .rail h3 { margin: 16px 10px 4px; font: 400 11px var(--mono); letter-spacing: 3px; text-transform: uppercase; color: var(--faint); }
+  .rail a.go { display: flex; align-items: center; gap: 10px; padding: 6px 10px; border-left: 2px solid transparent; color: var(--muted); text-decoration: none; }
+  .rail a.go svg { color: var(--faint); flex: none; width: 16px; height: 16px; }
+  .rail a.go kbd { margin-left: auto; }
   .rail a.go:hover { background: var(--gold-soft); color: var(--ink); }
-  .rail a.go[aria-current="page"] { background: var(--gold-soft); color: var(--ink); font-weight: 500; }
+  .rail a.go[aria-current="page"] { background: var(--gold-soft); border-left-color: var(--gold); color: var(--ink); font-weight: 700; }
   .rail a.go[aria-current="page"] svg { color: var(--gold); }
-  .rail .me { margin-top: auto; padding: 14px 10px 0; border-top: 1px solid var(--line); font-size: 13px; color: var(--muted); display: grid; gap: 2px; }
-  .rail .me b { color: var(--ink); font-weight: 500; font-size: 14px; overflow-wrap: anywhere; }
+  .rail .me { margin-top: auto; padding: 14px 10px 0; border-top: 1px solid var(--line); font-size: 12.5px; color: var(--muted); display: grid; gap: 2px; }
+  .rail .me b { color: var(--ink); font-weight: 700; overflow-wrap: anywhere; }
   .rail .me a { color: var(--gold); text-decoration: none; justify-self: start; margin-top: 6px; }
-  .page { padding: 40px clamp(16px, 4vw, 56px) 72px; min-width: 0; }
-  .page > * { max-width: 560px; }
-  .page.wide > * { max-width: 1040px; }
+  .page { padding: 34px clamp(16px, 4vw, 48px) 56px; min-width: 0; }
+  .page > * { max-width: 600px; }
+  .page.wide > * { max-width: 1080px; }
+  kbd { font: 700 11px var(--mono); color: var(--gold); }
+  .keybar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 5; height: 38px; display: flex; align-items: center; gap: 22px; overflow-x: auto;
+            padding: 0 max(16px, env(safe-area-inset-right, 0px)) 0 max(16px, env(safe-area-inset-left, 0px)); white-space: nowrap;
+            background: var(--rail); border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; scrollbar-width: none; }
+  .keybar a { color: var(--muted); text-decoration: none; }
+  .keybar a:hover { color: var(--ink); }
+  .keybar kbd { font-size: 13px; margin-right: 6px; }
+  .keybar .end { margin-left: auto; }
   @media (max-width: 820px) {
-    .shell { grid-template-columns: 1fr; }
-    .rail { position: static; height: auto; flex-direction: row; align-items: center; gap: 4px; padding: 10px 12px; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--line); }
-    .rail .brand { padding: 0 8px 0 4px; font-size: 0; }
-    .rail h3, .rail .me b, .rail .me span { display: none; }
-    .rail a.go { white-space: nowrap; padding: 7px 10px; font-size: 14px; }
-    .rail a.go span { display: none; }
+    .shell { grid-template-columns: 1fr; padding-bottom: 0; }
+    .rail { position: static; height: auto; flex-direction: row; align-items: center; gap: 2px; padding: 8px 10px; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--line); }
+    .rail .brand { padding: 0 8px 0 4px; }
+    .rail .brand span, .rail h3, .rail .me b, .rail .me span, .rail a.go kbd, .rail a.go span { display: none; }
     .rail a.go[aria-current="page"] span { display: inline; }
+    .rail a.go { white-space: nowrap; padding: 6px 9px; border-left: 0; border-bottom: 2px solid transparent; }
+    .rail a.go[aria-current="page"] { border-bottom-color: var(--gold); }
     .rail .me { margin: 0 0 0 auto; padding: 0; border: 0; }
     .rail .me a { margin: 0; white-space: nowrap; }
-    .page { padding-top: 28px; }
+    .page { padding-top: 26px; }
+    .keybar { display: none; }
   }
 
-  .kicker { font: 500 12px var(--ui); letter-spacing: 4px; color: var(--gold); text-transform: uppercase; }
-  h1 { font: 500 clamp(32px, 5.5vw, 46px)/1.1 var(--display); margin: 8px 0 22px; text-wrap: balance; }
-  h2 { font: 500 23px/1.2 var(--display); margin: 0 0 10px; }
-  p { color: var(--muted); font-size: 16px; line-height: 1.55; margin: 0 0 12px; }
-  .lede { font-size: 17px; margin: -10px 0 26px; }
-  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 22px 24px; margin-bottom: 18px; }
+  .kicker { font: 700 13px var(--mono); letter-spacing: .55em; color: var(--gold); text-transform: uppercase; }
+  h1 { font: 700 clamp(22px, 4vw, 30px)/1.25 var(--mono); margin: 10px 0 20px; text-wrap: balance; overflow-wrap: anywhere; }
+  h2 { font: 700 15px/1.4 var(--mono); margin: 0 0 10px; color: var(--ink); }
+  p { color: var(--muted); margin: 0 0 12px; }
+  .lede { margin: -8px 0 24px; }
+  .card { position: relative; background: var(--panel); border: 1px solid var(--line); padding: 22px 24px; margin-bottom: 18px; }
+  .card::before { content: ""; position: absolute; inset: 4px; border: 1px solid var(--line); pointer-events: none; }
+  .card > * { position: relative; }
   .card > :last-child { margin-bottom: 0; }
-  .card-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-bottom: 8px; }
+  .card-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-bottom: 10px; }
   .card-head h2 { margin: 0; }
-  .card-head a { font: 500 11px var(--ui); letter-spacing: 2px; text-transform: uppercase; text-decoration: none; white-space: nowrap; }
-  label { display: block; font: 500 12px var(--ui); letter-spacing: 1.5px; color: var(--muted); text-transform: uppercase; margin: 14px 0 6px; }
-  input[type=text], input[type=password], input[type=email], select { width: 100%; padding: 10px 12px; font: 17px var(--ui); color: var(--ink);
-          background: var(--field); border: 1px solid var(--line-2); border-radius: 4px; }
+  .card-head a { font-size: 12px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; text-decoration: none; white-space: nowrap; }
+  label { display: block; font: 400 12px var(--mono); letter-spacing: 1.5px; color: var(--muted); text-transform: uppercase; margin: 14px 0 6px; }
+  input[type=text], input[type=password], input[type=email], select { width: 100%; padding: 9px 11px; font: 15px var(--mono); color: var(--ink);
+          background: var(--field); border: 1px solid var(--line-2); border-radius: 0; }
   input:focus, select:focus { outline: 2px solid var(--gold); outline-offset: 1px; }
-  .hint { font-size: 14px; color: var(--faint); margin: 6px 0 0; }
-  button, .btn { display: inline-block; margin-top: 18px; padding: 10px 20px; font: 500 13px var(--ui); letter-spacing: 2px; text-transform: uppercase;
-          color: var(--on-gold); background: var(--btn); border: 1px solid var(--btn); border-radius: 4px; cursor: pointer; text-decoration: none; }
+  .hint { font-size: 12.5px; color: var(--faint); margin: 6px 0 0; }
+  button, .btn { display: inline-block; margin-top: 18px; padding: 8px 16px; font: 700 12.5px var(--mono); letter-spacing: 1.5px; text-transform: uppercase;
+          color: var(--on-gold); background: var(--gold); border: 1px solid var(--gold); border-radius: 0; cursor: pointer; text-decoration: none; }
+  button::before, .btn::before { content: "[ "; } button::after, .btn::after { content: " ]"; }
   button:hover, .btn:hover { filter: brightness(1.08); }
   button.quiet, .btn.quiet { background: transparent; color: var(--gold); border-color: var(--line-2); }
-  button.danger { background: transparent; color: var(--bad); border-color: color-mix(in oklch, var(--bad) 45%, transparent); }
-  button.small { margin-top: 0; padding: 5px 10px; font-size: 11px; letter-spacing: 1px; }
-  .msg { padding: 12px 14px; border-radius: 4px; margin-bottom: 18px; font-size: 16px; }
-  .msg.bad { background: color-mix(in oklch, var(--bad) 12%, transparent); border: 1px solid color-mix(in oklch, var(--bad) 40%, transparent); color: var(--bad); }
-  .msg.good { background: color-mix(in oklch, var(--good) 10%, transparent); border: 1px solid color-mix(in oklch, var(--good) 35%, transparent); color: var(--ink); }
-  .alt { margin-top: 22px; font-size: 16px; color: var(--muted); }
-  .qr { background: #fff; padding: 12px; width: 220px; border-radius: 4px; }
+  button.danger { background: transparent; color: var(--bad); border-color: color-mix(in oklch, var(--bad) 50%, transparent); }
+  button.small { margin-top: 0; padding: 3px 8px; font-size: 11px; letter-spacing: .5px; }
+  button.small::before, button.small::after { content: none; }
+  .msg { padding: 10px 14px; margin-bottom: 18px; border-left: 3px solid; }
+  .msg.bad { background: color-mix(in oklch, var(--bad) 10%, transparent); border-color: var(--bad); color: var(--bad); }
+  .msg.good { background: color-mix(in oklch, var(--good) 10%, transparent); border-color: var(--good); color: var(--ink); }
+  .alt { margin-top: 22px; color: var(--muted); }
+  .qr { background: #fff; padding: 12px; width: 220px; }
   .qr svg { display: block; width: 100%; height: auto; }
-  code, .mono { font-family: var(--mono); font-size: 14px; word-break: break-all; color: var(--ink); }
-  .codes { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px 18px; font-family: var(--mono); font-size: 16px; color: var(--ink); }
-  table { width: 100%; border-collapse: collapse; font-size: 15px; }
-  th, td { text-align: left; padding: 11px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  code, .mono { font-family: var(--mono); word-break: break-all; color: var(--ink); font-weight: 700; }
+  .codes { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px 18px; font-size: 15px; color: var(--ink); }
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  th, td { text-align: left; padding: 10px 8px; border-bottom: 1px dashed var(--line); vertical-align: top; }
   tr:last-child td { border-bottom: 0; }
-  th { font: 500 11px var(--ui); letter-spacing: 1.5px; text-transform: uppercase; color: var(--faint); }
+  th { font: 400 11px var(--mono); letter-spacing: 1.5px; text-transform: uppercase; color: var(--faint); border-bottom-style: solid; }
   td form { display: inline-block; margin: 0 6px 6px 0; }
-  .tag { display: inline-block; padding: 1px 9px; border: 1px solid var(--line-2); border-radius: 99px; font: 500 12px var(--ui); margin: 0 4px 4px 0; color: var(--muted); }
-  .tag.off { color: var(--bad); border-color: color-mix(in oklch, var(--bad) 45%, transparent); }
-  .tag.on { color: var(--good); border-color: color-mix(in oklch, var(--good) 45%, transparent); }
-  .tag.warn { color: var(--warn); border-color: color-mix(in oklch, var(--warn) 50%, transparent); }
+  .tag { display: inline-block; padding: 0 6px; border: 1px solid var(--line-2); font-size: 11.5px; margin: 0 4px 4px 0; color: var(--muted); }
+  .tag.off { color: var(--bad); border-color: currentColor; }
+  .tag.on { color: var(--good); border-color: currentColor; }
+  .tag.warn { color: var(--warn); border-color: currentColor; }
   .row { display: flex; gap: 10px; align-items: end; flex-wrap: wrap; }
   .row > * { flex: 1; min-width: 140px; }
   .row button { flex: 0; }
@@ -134,59 +149,61 @@ const STYLE = `
   .home { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); gap: 18px; align-items: start; }
   @media (max-width: 1000px) { .home { grid-template-columns: 1fr; } }
   .agenda { list-style: none; margin: 0; padding: 0; }
-  .agenda li { display: grid; grid-template-columns: 14px minmax(0, 1fr) auto; gap: 12px; align-items: baseline; padding: 9px 0; border-top: 1px solid var(--line); }
+  .agenda li { display: grid; grid-template-columns: 3ch minmax(0, 1fr) auto; gap: 10px; align-items: baseline; padding: 7px 0; border-top: 1px dashed var(--line); }
   .agenda li:first-child { border-top: 0; }
-  .agenda .box { width: 12px; height: 12px; border: 1.5px solid var(--faint); border-radius: 3px; align-self: center; }
+  .agenda .box::before { content: "[ ]"; color: var(--faint); }
   .agenda .t { color: var(--ink); overflow-wrap: anywhere; }
-  .agenda .when { font-size: 13px; color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .agenda .when { font-size: 12.5px; color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
   .agenda .late .when { color: var(--bad); }
-  .agenda .more { color: var(--faint); font-size: 14px; display: block; }
+  .agenda .more { color: var(--faint); font-size: 12.5px; display: block; }
   .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(90px, 1fr)); gap: 10px; margin-bottom: 14px; }
-  .stat { border: 1px solid var(--line); border-radius: 5px; padding: 10px 12px; }
-  .stat b { display: block; font: 500 28px/1.1 var(--display); color: var(--ink); font-variant-numeric: tabular-nums; }
-  .stat span { display: block; font-size: 12.5px; line-height: 1.3; color: var(--muted); }
-  .checks { list-style: none; margin: 0 0 4px; padding: 0; display: grid; gap: 8px; }
-  .checks li { display: flex; gap: 10px; align-items: baseline; font-size: 15px; color: var(--muted); }
-  .checks li::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--good); flex: none; transform: translateY(-1px); }
-  .checks li.warn::before { background: var(--warn); }
-  .checks li a { margin-left: auto; font-size: 13px; white-space: nowrap; }
-  .apps { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 16px; margin-top: 8px; }
-  a.app { display: flex; flex-direction: column; gap: 4px; text-decoration: none; color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 18px 20px; }
-  a.app:hover, a.app:focus-visible { border-color: var(--gold); outline: none; }
-  a.app .name { display: flex; align-items: center; gap: 10px; font: 500 21px var(--display); }
-  a.app .name svg { color: var(--gold); }
-  a.app p { margin: 0; font-size: 15px; }
-  a.app .open { margin-top: 10px; font: 500 11px var(--ui); letter-spacing: 2px; text-transform: uppercase; color: var(--gold); }
-  .section-title { font: 500 11px var(--ui); letter-spacing: 2.5px; text-transform: uppercase; color: var(--faint); margin: 26px 0 0; }
+  .stat { border: 1px solid var(--line); padding: 8px 12px; }
+  .stat b { display: block; font: 700 24px/1.2 var(--mono); color: var(--gold); font-variant-numeric: tabular-nums; }
+  .stat span { display: block; font-size: 12px; line-height: 1.3; color: var(--muted); }
+  .checks { list-style: none; margin: 0 0 4px; padding: 0; display: grid; gap: 6px; }
+  .checks li { display: flex; gap: 10px; align-items: baseline; color: var(--muted); }
+  .checks li::before { content: "✓"; color: var(--good); font-weight: 700; flex: none; }
+  .checks li.warn::before { content: "!"; color: var(--warn); }
+  .checks li a { margin-left: auto; font-size: 12.5px; white-space: nowrap; }
+  .apps { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 16px; margin-top: 8px; }
+  a.app { position: relative; display: flex; flex-direction: column; gap: 6px; text-decoration: none; color: var(--ink); background: var(--panel); border: 1px solid var(--line); padding: 18px 20px; }
+  a.app::before { content: ""; position: absolute; inset: 4px; border: 1px solid var(--line); pointer-events: none; }
+  a.app:hover, a.app:focus-visible { outline: none; border-color: var(--gold); }
+  a.app:hover::before, a.app:focus-visible::before { border-color: var(--gold); }
+  a.app .name { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 15px; }
+  a.app .name svg { color: var(--gold); width: 16px; height: 16px; }
+  a.app p { margin: 0; font-size: 13.5px; }
+  a.app .open { margin-top: 8px; font-size: 12px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; color: var(--gold); }
+  .section-title { font-size: 11px; letter-spacing: 3px; text-transform: uppercase; color: var(--faint); margin: 26px 0 0; }
 
   /* settings: sections with their own sub-nav */
-  .settings { display: grid; grid-template-columns: 170px minmax(0, 1fr); gap: 32px; align-items: start; }
+  .settings { display: grid; grid-template-columns: 180px minmax(0, 1fr); gap: 32px; align-items: start; }
   .settings > * { min-width: 0; }
-  .subnav { position: sticky; top: 24px; display: grid; gap: 2px; }
-  .subnav a { padding: 6px 10px; border-left: 2px solid var(--line); color: var(--muted); text-decoration: none; font-size: 14px; }
+  .subnav { position: sticky; top: 24px; display: grid; gap: 1px; }
+  .subnav a { padding: 5px 10px; border-left: 2px solid var(--line); color: var(--muted); text-decoration: none; font-size: 13px; }
   .subnav a:hover { color: var(--ink); border-left-color: var(--gold); }
   .settings section { scroll-margin-top: 24px; }
-  .settings .group { font: 500 11px var(--ui); letter-spacing: 2.5px; text-transform: uppercase; color: var(--faint); margin: 8px 0 10px; }
+  .settings .group { font-size: 11px; letter-spacing: 3px; text-transform: uppercase; color: var(--faint); margin: 8px 0 10px; }
   @media (max-width: 820px) { .settings { grid-template-columns: 1fr; gap: 12px; } .subnav { position: static; display: flex; flex-wrap: wrap; gap: 6px; }
-    .subnav a { border: 1px solid var(--line); border-radius: 99px; padding: 4px 12px; } }
+    .subnav a { border: 1px solid var(--line); padding: 3px 10px; } }
   .admin-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 12px; margin-bottom: 18px; }
 `;
 
-const FONTS = `<link rel="preconnect" href="https://fonts.googleapis.com"><link href="https://fonts.googleapis.com/css2?family=EB+Garamond:wght@400;500&family=Jost:wght@400;500&display=swap" rel="stylesheet">`;
+const FONTS = `<link rel="preconnect" href="https://fonts.googleapis.com"><link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">`;
 
 // The rail: home, the apps this account's areas give it, then account pages.
 // `here` marks the current page: "home", "account", "admin" or an app's href.
 function rail(user, here) {
-  const link = (href, label, ico, key) => `<a class="go" href="${href}" aria-label="${esc(label)}"${here === key ? ` aria-current="page"` : ""}>${icon(ico)}<span>${esc(label)}</span></a>`;
+  const link = (href, label, ico, key, k) => `<a class="go" href="${href}" data-key="${k}" aria-label="${esc(label)}"${here === key ? ` aria-current="page"` : ""}>${icon(ico)}<span>${esc(label)}</span><kbd aria-hidden="true">g ${k}</kbd></a>`;
   const ready = !user.must_change_pw && !(user.areas.has("admin") && !user.totp_secret);
   const apps = ready ? APPS.filter(a => a.area !== "admin" && user.areas.has(a.area)) : [];
   return `<nav class="rail" aria-label="Site">
     <a class="brand" href="/" aria-label="sintfoap.xyz home">${CREST}<span>sintfoap</span></a>
-    ${ready ? link("/dashboard", "Home", "home", "home") : ""}
-    ${apps.map(a => link(esc(a.href), a.name, a.href.startsWith("/todo") ? "todo" : "plugins", a.href)).join("")}
+    ${ready ? link("/dashboard", "Home", "home", "home", "h") : ""}
+    ${apps.map(a => link(esc(a.href), a.name, a.href.startsWith("/todo") ? "todo" : "plugins", a.href, a.href.startsWith("/todo") ? "d" : "p")).join("")}
     <h3>Account</h3>
-    ${link("/account", "Settings", "account", "account")}
-    ${ready && user.areas.has("admin") ? link("/admin", "Admin", "admin", "admin") : ""}
+    ${link("/account", "Settings", "account", "account", "s")}
+    ${ready && user.areas.has("admin") ? link("/admin", "Admin", "admin", "admin", "a") : ""}
     <div class="me"><b>${esc(user.display_name)}</b><span class="mono">${esc(user.username)}</span><a href="/logout">Sign out</a></div>
   </nav>`;
 }
@@ -195,8 +212,10 @@ export function page(title, body, { user, wide = false, here = "" } = {}) {
   const head = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${esc(title)} · sintfoap.xyz</title><meta name="robots" content="noindex">${FONTS}
 <style>${STYLE}</style></head><body>`;
-  if (!user) return `${head}<div class="solo"><a class="crest" href="/" aria-label="Home">${CREST}</a><main>${body}</main></div></body></html>`;
-  return `${head}<div class="shell">${rail(user, here)}<main class="page${wide ? " wide" : ""}">${body}</main></div></body></html>`;
+  if (!user) return `${head}<div class="solo"><a class="crest" href="/" aria-label="sintfoap.xyz home">${CREST}<span>SINTFOAP.XYZ</span></a><main>${body}</main></div></body></html>`;
+  return `${head}<div class="shell">${rail(user, here)}<main class="page${wide ? " wide" : ""}">${body}</main></div>
+<footer class="keybar" aria-label="Keyboard shortcuts"><span><kbd>g</kbd>then a key from the menu to jump</span><span><kbd>tab</kbd>move</span><span><kbd>↵</kbd>open</span><a class="end" href="/logout" data-key="o"><kbd>g o</kbd>Sign out</a></footer>
+<script src="/keys.js" defer></script></body></html>`;
 }
 
 const msg = (text, kind = "bad") => text ? `<div class="msg ${kind}" role="${kind === "bad" ? "alert" : "status"}">${esc(text)}</div>` : "";

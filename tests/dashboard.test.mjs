@@ -24,6 +24,8 @@ test("the dashboard shows today's and overdue Drift items, not done or later one
   assert.match(page, /1 thing today in Drift, and 1 overdue/);
   assert.match(page, /Two-factor is off/);
   assert.match(page, /aria-current="page"[^>]*>[\s\S]{0,400}Home/, "the rail marks the dashboard");
+  assert.match(page, /<script src="\/keys.js" defer><\/script>/, "the shortcut keys load");
+  assert.match(page, /data-key="d"/, "g d jumps to Drift");
 });
 
 test("accounts without Drift get no Today card", async () => {
