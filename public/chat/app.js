@@ -87,19 +87,20 @@ async function openRoom(id) {
 function renderRoomShell(room) {
   $("#room").innerHTML = `
     <header class="room-head">
-      <button class="ghost back" id="back" aria-label="Back to rooms">←</button>
-      <div class="title"><h2># ${esc(room.name)}</h2>${room.topic ? `<p>${esc(room.topic)}</p>` : ""}</div>
-      <button class="ghost" id="show-members">${room.members} member${room.members === 1 ? "" : "s"}</button>
-      ${room.manage ? `<button class="ghost" id="edit-room">Edit</button>` : ""}
-      ${open.joined ? `<button class="ghost" id="leave">Leave</button>` : ""}
+      <button class="link back" id="back" aria-label="Back to rooms">←</button>
+      <div class="title"><h2>${esc(room.name)}</h2>${room.topic ? `<p>${esc(room.topic)}</p>` : ""}</div>
+      <button class="link" id="show-members">${room.members} member${room.members === 1 ? "" : "s"}</button>
+      ${room.manage ? `<button class="link" id="edit-room">Edit</button>` : ""}
+      ${open.joined ? `<button class="link" id="leave">Leave</button>` : ""}
     </header>
     <div class="log" id="log"></div>
     ${open.joined
       ? `<form class="composer" id="composer">
+          <span class="prompt" aria-hidden="true">&gt;</span>
           <textarea id="text" rows="1" maxlength="2000" placeholder="Message # ${esc(room.name)}" aria-label="Message"></textarea>
-          <button class="btn primary" type="submit">Send</button>
+          <button class="btn" type="submit">Send</button>
         </form>`
-      : `<div class="joinbar">You're looking at this room. Join it to post. <button class="btn primary" id="join">Join room</button></div>`}`;
+      : `<div class="joinbar">You're looking at this room. Join it to post. <button class="btn" id="join">Join room</button></div>`}`;
 }
 
 const time = t => new Date(t * 1000).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
@@ -118,7 +119,7 @@ function renderLog({ toBottom = false, keepFrom = null } = {}) {
   if (!log) return;
   const nearBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 80;
   const list = [...open.messages.values()].filter(m => !m.deleted).sort((a, b) => a.id - b.id);
-  let html = open.more ? `<button class="ghost older" id="older">Show older messages</button>` : "";
+  let html = open.more ? `<button class="link older" id="older">Show older messages</button>` : "";
   let prev = null, lastDay = null;
   for (const m of list) {
     const d = day(m.created_at);
@@ -127,7 +128,7 @@ function renderLog({ toBottom = false, keepFrom = null } = {}) {
     html += `<div class="msg${first ? " first" : ""}${m.mine ? " mine" : ""}${m.pending ? " pending" : ""}" data-id="${m.id}">
       ${first ? `<div class="who">${esc(m.author_name)}<span class="at">${time(m.created_at)}</span></div>` : ""}
       <div class="text" title="${esc(time(m.created_at))}">${linkify(m.body)}</div>
-      ${m.can_delete ? `<button class="ghost del" data-del="${m.id}" aria-label="Delete message">Delete</button>` : ""}
+      ${m.can_delete ? `<button class="link del" data-del="${m.id}" aria-label="Delete message">Delete</button>` : ""}
     </div>`;
     prev = m;
   }
@@ -230,6 +231,16 @@ function editRoom(room = null) {
   f.name.focus();
 }
 $("#new").addEventListener("click", () => editRoom());
+
+// The key bar's keys: n new room, / the message line, esc back to the room list.
+document.addEventListener("keydown", e => {
+  if (e.metaKey || e.ctrlKey || e.altKey || document.querySelector("dialog[open]")) return;
+  const typing = e.target.matches?.("input, textarea");
+  if (e.key === "Escape" && typing) { e.target.blur(); document.querySelector(".rooms button[aria-current='true'], .rooms button")?.focus(); return; }
+  if (typing) return;
+  if (e.key === "n") { e.preventDefault(); editRoom(); }
+  else if (e.key === "/" && $("#text")) { e.preventDefault(); $("#text").focus(); }
+});
 $("#room-cancel").addEventListener("click", () => $("#room-dialog").close());
 $("#room-form").addEventListener("submit", async e => {
   e.preventDefault();
