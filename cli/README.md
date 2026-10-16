@@ -20,6 +20,15 @@ sintfoap                    # signs you in the first time, then opens your dashb
 
 Without installing: `cd cli && python -m sintfoap`.
 
+With Nix (flakes), from the repo root or straight from GitHub:
+
+```bash
+nix run github:Sintfoap/MoffittSite          # run it without installing
+nix profile install github:Sintfoap/MoffittSite
+nix build                                    # ./result/bin/sintfoap, runs the tests too
+nix develop                                  # a shell with Python, Textual and pytest
+```
+
 ## Signing in
 
 `sintfoap login` never asks for your password. It shows a short code and opens `sintfoap.xyz/login/cli`; you approve it there in a browser where you're signed in, so two-factor works the same as always. The terminal then gets an ordinary site session, kept in `~/.config/sintfoap/login.json` (only you can read it). It ends after 7 days unused or 30 days, or when you sign out everywhere or change your password, and then `sintfoap` asks you to sign in again.

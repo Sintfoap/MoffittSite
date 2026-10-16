@@ -380,3 +380,42 @@ async function migrateTasks(d, owner) {
   // D1 runs each batch as one transaction; keep batches a sensible size.
   for (let i = 0; i < stmts.length; i += 200) await d.batch(stmts.slice(i, i + 200));
 }
+
+// ── the dashboard's "Today" ────────────────────────────────────────────────
+// The visitor's own date, hour and a "Friday, October 16" label, from
+// Cloudflare's guess at their time zone (UTC when there's none).
+export function visitorNow(request, at = new Date()) {
+  let tz = request.cf?.timezone || "UTC";
+  try { new Intl.DateTimeFormat("en", { timeZone: tz }); } catch { tz = "UTC"; }
+  const part = o => new Intl.DateTimeFormat("en-CA", { timeZone: tz, ...o }).format(at);
+  return {
+    day: part({ year: "numeric", month: "2-digit", day: "2-digit" }),
+    hour: Number(part({ hour: "numeric", hourCycle: "h23" })),
+    label: new Intl.DateTimeFormat("en-US", { timeZone: tz, weekday: "long", month: "long", day: "numeric" }).format(at),
+  };
+}
+
+// Open dated items across every collection you can see: the ones due on `day`
+// (YYYY-MM-DD, the visitor's own date) and the ones whose day has passed.
+// Same rules as Drift's Today view.
+export async function agenda(env, user, day) {
+  const { collections, items } = await state(env, user);
+  const names = new Map(collections.map(c => [c.id, c.name]));
+  const dayOf = s => String(s || "").slice(0, 10);
+  const open = items.filter(it => it.meta?.event?.start && !it.meta.checklist?.done);
+  const pick = it => {
+    const { start, end } = it.meta.event, d = dayOf(start);
+    const time = start.includes("T") ? start.slice(11, 16) : "";
+    return { title: it.title, collection: names.get(it.collection) || "", start, day: d, time, last: dayOf(end || start) };
+  };
+  const all = open.map(pick);
+  const late = all.filter(it => it.last < day).sort((a, b) => b.last.localeCompare(a.last));
+  const due = all.filter(it => it.day <= day && day <= it.last)
+    .sort((a, b) => (a.start.length - b.start.length) || a.start.localeCompare(b.start));
+  const daysLate = it => Math.round((Date.parse(day) - Date.parse(it.last)) / 864e5);
+  const clock = t => { const [h, m] = t.split(":").map(Number); return `${h % 12 || 12}${m ? ":" + String(m).padStart(2, "0") : ""} ${h < 12 ? "am" : "pm"}`; };
+  return {
+    late: late.map(it => ({ ...it, when: daysLate(it) === 1 ? "yesterday" : `${daysLate(it)} days late` })),
+    due: due.map(it => ({ ...it, when: it.time ? clock(it.time) : "today" })),
+  };
+}
