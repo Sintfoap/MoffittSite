@@ -151,20 +151,27 @@ test("sending, editing and deleting go to Matrix", async () => {
   assert.equal((await api(ryan, "DELETE", `/rooms/${room.id}`)).status, 403);
 });
 
-test("encrypted rooms show that they can't be read, and refuse sending", async () => {
+test("encrypted rooms come in as they are; a pasted token can't hold keys, so they stay read-only", async () => {
   const { env } = setup();
   hs.room("!secret:matrix.test", { encrypted: true, members: { "@ryan:matrix.test": "Ryan", "@kim:matrix.test": "Kim" } });
   hs.encrypted("!secret:matrix.test", "@kim:matrix.test");
   const ryan = await person(env, "ryan", "chat-bridges");
-  await connect(ryan);
+  const conn = (await connect(ryan)).json;
+  assert.equal(conn.can_encrypt, false);
   const room = (await api(ryan, "GET", "/state")).json.rooms.find(r => r.encrypted);
   assert.equal(room.name, "Kim", "a room without a name is named for who's in it");
+  assert.equal(room.ext_room, "!secret:matrix.test");
+  assert.equal(room.can_encrypt, false);
   const [m] = (await api(ryan, "GET", `/rooms/${room.id}/messages`)).json.messages;
   assert.equal(m.encrypted, true);
-  assert.match(m.body, /can't read end-to-end encrypted/);
+  assert.match(m.body, /Encrypted message/);
+  assert.equal(JSON.parse(m.raw).content.algorithm, "m.megolm.v1.aes-sha2", "kept as it came, for a browser to decrypt");
   const r = await api(ryan, "POST", `/rooms/${room.id}/messages`, { body: "hi" });
   assert.equal(r.status, 403);
   assert.match(r.json.error, /encrypted/);
+  const claim = await api(ryan, "POST", `/connections/${conn.id}/crypto/claim`, { key: "a".repeat(64) });
+  assert.equal(claim.status, 403);
+  assert.match(claim.json.error, /username and password/);
 });
 
 test("only the owner sees a connection's rooms, and they go with it", async () => {

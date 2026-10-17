@@ -521,6 +521,7 @@ async function admin(request, env, me, pathname, method) {
           ...["chat_messages", "chat_members", "chat_presence"].map(t =>
             d.prepare(`DELETE FROM ${t} WHERE room IN (SELECT id FROM chat_rooms WHERE kind = 'bridge' AND owner = ?)`).bind(target.id)),
           d.prepare("DELETE FROM chat_rooms WHERE kind = 'bridge' AND owner = ?").bind(target.id),
+          d.prepare("DELETE FROM chat_crypto_inbox WHERE connection IN (SELECT id FROM chat_connections WHERE user_id = ?)").bind(target.id),
           d.prepare("DELETE FROM chat_connections WHERE user_id = ?").bind(target.id),
           // Their chat messages go; rooms they made stay, for admins to manage.
           d.prepare("DELETE FROM chat_reactions WHERE user_id = ? OR message IN (SELECT id FROM chat_messages WHERE user_id = ?)").bind(target.id, target.id),

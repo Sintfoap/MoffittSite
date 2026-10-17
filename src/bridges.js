@@ -9,7 +9,11 @@
 //     send(creds, room, text) → message id
 //     edit(creds, room, message id, text)
 //     remove(creds, room, message id)
-//     disconnect(creds) }                   undo whatever connect made there
+//     disconnect(creds)                     undo whatever connect made there
+//     and, for end-to-end encryption (optional):
+//     canEncrypt(creds), device(creds) → {user_id, device_id},
+//     sendEncrypted(creds, room, content) → message id,
+//     cryptoRequest(creds, method, path, body) → the platform's answer }
 // Adding a platform means writing one of those and listing it in PROVIDERS;
 // the API, the web page and the terminal build their forms from `fields`.
 //
@@ -21,12 +25,17 @@
 // owner, so unread counts, history, search and polling work as they do for
 // any room. Syncing happens while chat is open: the room list and the open
 // room ask for one, at most every few seconds per connection.
+//
+// End-to-end encryption happens in the browser, never here: one browser
+// claims a connection's keys (proving itself after with a key only it has),
+// takes what each sync brought for them from an inbox, and has its key
+// requests passed on. Encrypted messages are kept as they came.
 
 import { db, now } from "./db.js";
 import { randomBytes, hex, sha256, seal, unseal } from "./crypto.js";
-import { matrix, ProviderError } from "./matrix.js";
+import { matrix, ProviderError, ENCRYPTED_NOTE } from "./matrix.js";
 
-export { ProviderError };
+export { ProviderError, ENCRYPTED_NOTE };
 export const PROVIDERS = { matrix };
 export const BRIDGE_AREA = "chat-bridges";
 
@@ -34,6 +43,8 @@ const MAX_CONNECTIONS = 5;
 // Seconds between syncs of one connection.
 const SYNC_EVERY = 2;
 const CONNECTION_ID = /^k_[0-9a-f]{16}$/;
+// Sync results kept for the browser with a connection's keys, at most.
+const MAX_INBOX = 1000;
 
 export const canBridge = user => user.areas.has(BRIDGE_AREA);
 export const bridgeReady = env => typeof env.CHAT_BRIDGE_KEY === "string" && env.CHAT_BRIDGE_KEY.length >= 16;
@@ -53,6 +64,8 @@ function connectionOut(c) {
   return {
     id: c.id, provider: c.provider, network: PROVIDERS[c.provider]?.name ?? c.provider, label: c.label,
     status: c.status, error: c.error ?? null, created_at: c.created_at, synced_at: c.synced_at || null, rooms: c.rooms ?? 0,
+    // Whether encrypted rooms can be used through it, and whether a browser already holds its keys.
+    can_encrypt: !!c.can_encrypt, keys_held: !!c.crypto_owner,
   };
 }
 
@@ -96,8 +109,9 @@ export async function addConnection(env, user, body, fail) {
     fail(`${made.label} is already connected`);
   }
   const conn = { id: "k_" + hex(randomBytes(8)), user_id: user.id, provider: provider.id, label: made.label };
-  await d.prepare(`INSERT INTO chat_connections (id, user_id, provider, label, secret, created_at) VALUES (?, ?, ?, ?, ?, ?)`)
-    .bind(conn.id, user.id, provider.id, made.label, await seal(env.CHAT_BRIDGE_KEY, context(conn), JSON.stringify(made.creds)), now()).run();
+  await d.prepare(`INSERT INTO chat_connections (id, user_id, provider, label, secret, created_at, can_encrypt) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+    .bind(conn.id, user.id, provider.id, made.label, await seal(env.CHAT_BRIDGE_KEY, context(conn), JSON.stringify(made.creds)), now(),
+      provider.canEncrypt?.(made.creds) ? 1 : 0).run();
   await syncConnection(env, d, await getConnection(d, user, conn.id), { force: true });
   return (await listConnections(env, user)).find(c => c.id === conn.id);
 }
@@ -112,7 +126,10 @@ export async function removeConnection(env, user, id, deleteRoom) {
   if (creds) await PROVIDERS[conn.provider]?.disconnect(creds).catch(() => {});
   const { results } = await d.prepare("SELECT id FROM chat_rooms WHERE connection = ?").bind(conn.id).all();
   for (const r of results) await deleteRoom(env, user, r.id, { force: true });
-  await d.prepare("DELETE FROM chat_connections WHERE id = ?").bind(conn.id).run();
+  await d.batch([
+    d.prepare("DELETE FROM chat_crypto_inbox WHERE connection = ?").bind(conn.id),
+    d.prepare("DELETE FROM chat_connections WHERE id = ?").bind(conn.id),
+  ]);
   return { deleted: true };
 }
 
@@ -140,6 +157,8 @@ export async function syncConnection(env, d, conn, { force = false } = {}) {
   const provider = PROVIDERS[conn.provider];
   const creds = await credsOf(env, conn);
   if (!provider || !creds) return setError(d, conn, "its sign-in can't be read here any more; connect it again");
+  // (Connections made before encryption came in.)
+  if (!conn.can_encrypt && provider.canEncrypt?.(creds)) await d.prepare("UPDATE chat_connections SET can_encrypt = 1 WHERE id = ?").bind(conn.id).run();
   let out;
   try { out = await provider.sync(creds, conn.cursor); }
   catch (e) {
@@ -150,6 +169,19 @@ export async function syncConnection(env, d, conn, { force = false } = {}) {
     return;
   }
   for (const r of out.rooms) await applyRoom(env, d, conn, r, !conn.cursor);
+  // Only a browser holding the keys can use what came for them.
+  if (out.crypto && conn.crypto_owner) {
+    const { to_device, changed, left, otk_counts, fallback } = out.crypto;
+    const stmts = [];
+    if (to_device.length || changed.length || left.length) {
+      stmts.push(d.prepare("INSERT INTO chat_crypto_inbox (connection, data, created_at) VALUES (?, ?, ?)")
+        .bind(conn.id, JSON.stringify({ to_device, changed, left }), now()));
+      stmts.push(d.prepare(`DELETE FROM chat_crypto_inbox WHERE connection = ? AND id <=
+        (SELECT id FROM chat_crypto_inbox WHERE connection = ? ORDER BY id DESC LIMIT 1 OFFSET ?)`).bind(conn.id, conn.id, MAX_INBOX));
+    }
+    if (otk_counts) stmts.push(d.prepare("UPDATE chat_connections SET crypto_counts = ? WHERE id = ?").bind(JSON.stringify({ otk_counts, fallback }), conn.id));
+    if (stmts.length) await d.batch(stmts);
+  }
   await d.prepare("UPDATE chat_connections SET cursor = ?, status = 'ok', error = NULL, synced_at = ? WHERE id = ?")
     .bind(out.cursor ?? conn.cursor, now(), conn.id).run();
 }
@@ -192,10 +224,14 @@ async function applyRoom(env, d, conn, r, initial) {
     if (e.type === "message") {
       stmts.push(
         d.prepare("UPDATE chat_rooms SET seq = seq + 1, last_at = MAX(last_at, ?) WHERE id = ?").bind(e.at, id),
-        d.prepare(`INSERT OR IGNORE INTO chat_messages (room, user_id, body, seq, posted_seq, created_at, ext_id, ext_sender, ext_name, encrypted)
-          SELECT id, ?, ?, seq, seq, ?, ?, ?, ?, ? FROM chat_rooms WHERE id = ?`)
-          .bind(e.mine ? conn.user_id : "", e.body, e.at, e.id, e.sender, e.sender_name, e.encrypted ? 1 : 0, id),
+        d.prepare(`INSERT OR IGNORE INTO chat_messages (room, user_id, body, seq, posted_seq, created_at, ext_id, ext_sender, ext_name, encrypted, ext_raw)
+          SELECT id, ?, ?, seq, seq, ?, ?, ?, ?, ?, ? FROM chat_rooms WHERE id = ?`)
+          .bind(e.mine ? conn.user_id : "", e.body, e.at, e.id, e.sender, e.sender_name, e.encrypted ? 1 : 0, e.raw ?? null, id),
       );
+    } else if (e.type === "edit" && e.raw) {
+      // An encrypted edit replaces what the browser decrypts.
+      stmts.push(bump, d.prepare(`UPDATE chat_messages SET ext_raw = ?, edited_at = ?, seq = (SELECT seq FROM chat_rooms WHERE id = ?)
+        WHERE room = ? AND ext_id = ? AND ext_sender = ? AND deleted = 0 AND encrypted = 1`).bind(e.raw, e.at, id, id, e.target, e.sender));
     } else if (e.type === "edit") {
       // Only the person who wrote a message can edit it, as Matrix has it.
       stmts.push(bump, d.prepare(`UPDATE chat_messages SET body = ?, edited_at = ?, seq = (SELECT seq FROM chat_rooms WHERE id = ?)
@@ -242,4 +278,57 @@ export async function onPlatform(env, d, user, room, fn) {
     if (e.auth) await setError(d, c.conn, e.message);
     return { error: e.message };
   }
+}
+
+// ── end-to-end encryption (chat.js passes the crypto routes here) ──────────
+
+// The browser holding a connection's keys proves itself with a key of its
+// own making, which only its hash is kept of.
+const KEY = /^[0-9a-f]{64}$/;
+
+// {op: "claim" | "inbox" | "request", key, ...}. claim makes the browser
+// asking the one that holds the keys, if no browser does yet.
+export async function cryptoOp(env, user, id, op, body, fail) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) fail("body must be a JSON object");
+  if (typeof body.key !== "string" || !KEY.test(body.key)) fail("key must be 64 hex characters");
+  const d = await db(env);
+  const conn = await getConnection(d, user, id);
+  if (!conn) return null;
+  const c = await forRoom(env, d, user, { connection: conn.id });
+  if (c.error) return { failed: c.error };
+  if (!c.provider.canEncrypt?.(c.creds)) {
+    return { forbidden: "encryption needs a connection signed in with a username and password, so it has a session of its own; remove this one and connect it that way" };
+  }
+  const hash = await sha256("crypto-owner:" + body.key);
+  if (op === "claim" && !conn.crypto_owner) {
+    const won = await d.prepare("UPDATE chat_connections SET crypto_owner = ? WHERE id = ? AND crypto_owner IS NULL").bind(hash, conn.id).run();
+    if (won.meta.changes) await d.prepare("DELETE FROM chat_crypto_inbox WHERE connection = ?").bind(conn.id).run();
+    conn.crypto_owner = (await d.prepare("SELECT crypto_owner FROM chat_connections WHERE id = ?").bind(conn.id).first()).crypto_owner;
+  }
+  if (conn.crypto_owner !== hash) {
+    return { forbidden: conn.crypto_owner
+      ? "another browser holds this connection's encryption keys; to move them here, remove the connection and connect it again"
+      : "turn encryption on for this connection first" };
+  }
+  if (op === "claim") return { device: c.provider.device(c.creds) };
+  if (op === "inbox") {
+    // Takes back what an earlier call handed over, then hands over the rest.
+    const ack = body.ack ?? 0;
+    if (!Number.isSafeInteger(ack) || ack < 0) fail("ack must be a message number");
+    if (ack) await d.prepare("DELETE FROM chat_crypto_inbox WHERE connection = ? AND id <= ?").bind(conn.id, ack).run();
+    const { results } = await d.prepare("SELECT id, data FROM chat_crypto_inbox WHERE connection = ? ORDER BY id LIMIT 50").bind(conn.id).all();
+    const counts = JSON.parse((await d.prepare("SELECT crypto_counts FROM chat_connections WHERE id = ?").bind(conn.id).first()).crypto_counts || "null");
+    return { items: results.map(r => ({ id: r.id, ...JSON.parse(r.data) })), counts };
+  }
+  if (op === "request") {
+    if (!["GET", "POST", "PUT"].includes(body.method)) fail("method must be GET, POST or PUT");
+    if (typeof body.path !== "string" || body.path.length > 500) fail("path must be text");
+    try { return { response: await c.provider.cryptoRequest(c.creds, body.method, body.path, body.body) }; }
+    catch (e) {
+      if (!(e instanceof ProviderError)) throw e;
+      if (e.auth) await setError(d, conn, e.message);
+      return e.refused ? { forbidden: e.message } : { failed: e.message };
+    }
+  }
+  return null;
 }

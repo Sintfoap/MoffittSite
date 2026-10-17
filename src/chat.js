@@ -25,12 +25,12 @@ import { withRail } from "./pages.js";
 import { db, now } from "./db.js";
 import { sameOrigin } from "./account.js";
 import { randomBytes, hex, sha256 } from "./crypto.js";
-import { canBridge, bridgeInfo, listConnections, addConnection, removeConnection, syncConnection, syncAll, syncRoom, onPlatform } from "./bridges.js";
+import { canBridge, bridgeInfo, listConnections, addConnection, removeConnection, syncConnection, syncAll, syncRoom, onPlatform, cryptoOp, ENCRYPTED_NOTE } from "./bridges.js";
 
 export class BadRequest extends Error {}
 const fail = msg => { throw new BadRequest(msg); };
 
-const LIMITS = { name: 60, topic: 200, body: 2000, request: 16 * 1024, page: 50, rooms: 20, search: 100, results: 50 };
+const LIMITS = { name: 60, topic: 200, body: 2000, request: 16 * 1024, crypto: 512 * 1024, encrypted: 64 * 1024, page: 50, rooms: 20, search: 100, results: 50 };
 // Seconds: how long after a poll someone still counts as here (or online
 // anywhere), and how long "typing…" lasts after a keypress was reported.
 const HERE = 30, ONLINE = 60, TYPING = 6;
@@ -48,9 +48,9 @@ export function mentioned(text) {
   return [...names].slice(0, MAX_MENTIONS);
 }
 
-export async function readJson(request) {
+export async function readJson(request, limit = LIMITS.request) {
   const text = await request.text();
-  if (text.length > LIMITS.request) fail("request too large");
+  if (text.length > limit) fail("request too large");
   if (!text) return {};
   try { return JSON.parse(text); } catch { fail("invalid JSON"); }
 }
@@ -109,11 +109,11 @@ const bridged = room => room.kind === "bridge";
 export async function listRooms(env, user) {
   const d = await db(env);
   const { results } = await d.prepare(`
-    SELECT r.id, r.name, r.topic, r.owner, r.seq, r.created_at, r.last_at, r.kind, r.connection, r.encrypted,
+    SELECT r.id, r.name, r.topic, r.owner, r.seq, r.created_at, r.last_at, r.kind, r.connection, r.encrypted, r.ext_id,
            (SELECT u.display_name || char(31) || u.username FROM chat_members o JOIN users u ON u.id = o.user_id
               WHERE r.kind = 'dm' AND o.room = r.id AND o.user_id != ?) AS dm_with,
            (SELECT display_name FROM users WHERE users.id = r.owner) AS owner_name,
-           c.provider, c.label AS via,
+           c.provider, c.label AS via, c.can_encrypt, c.crypto_owner,
            (SELECT COUNT(*) FROM chat_members m WHERE m.room = r.id) AS members,
            me.read_seq,
            (SELECT COUNT(*) FROM chat_messages x WHERE me.read_seq IS NOT NULL AND x.room = r.id
@@ -139,6 +139,8 @@ function roomOut(r, user, joined) {
     manage: kind !== "dm" && canManage({ ...r, kind }, user),
     // Which connection a bridge room comes through, and whether it can be written to.
     ...(kind === "bridge" ? { provider: r.provider, connection: r.connection, via: r.via, encrypted: !!r.encrypted } : {}),
+    // For the browser with the connection's keys: the room there, and whether keys can be or are held.
+    ...(kind === "bridge" && r.encrypted ? { ext_room: r.ext_id, can_encrypt: !!r.can_encrypt, keys_held: !!r.crypto_owner } : {}),
   };
 }
 
@@ -147,7 +149,7 @@ async function oneRoom(env, user, id) {
 }
 
 const MESSAGE = `SELECT m.id, m.body, m.deleted, m.seq, m.created_at, m.edited_at, m.user_id, u.username, u.display_name,
-    m.ext_id, m.ext_sender, m.ext_name, m.encrypted
+    m.ext_id, m.ext_sender, m.ext_name, m.encrypted, m.ext_raw
   FROM chat_messages m LEFT JOIN users u ON u.id = m.user_id`;
 
 function messageOut(m, user, room, reactions = []) {
@@ -159,10 +161,14 @@ function messageOut(m, user, room, reactions = []) {
     id: m.id, seq: m.seq, created_at: m.created_at, edited_at: m.deleted ? null : m.edited_at ?? null,
     deleted: !!m.deleted, body: m.deleted ? "" : m.body,
     author: outside ? m.ext_sender : m.username ?? null, author_name: outside ? m.ext_name || m.ext_sender : m.display_name ?? "Deleted account",
-    mine, can_edit: !m.deleted && mine && !locked, can_delete: !m.deleted && (mine || canManage(room, user)),
+    // An encrypted message can be edited only from the browser with the keys.
+    mine, can_edit: !m.deleted && mine && (!locked || !!m.ext_raw), can_delete: !m.deleted && (mine || canManage(room, user)),
     mentions_me: !m.deleted && !mine && !bridged(room) && mentioned(m.body).includes(user.username),
     reactions: m.deleted ? [] : reactions,
     ...(bridged(room) ? { external: !!outside, encrypted: locked } : {}),
+    // As it came, for the browser to decrypt; body is only a note.
+    // (After an edit, raw is the edit; ext_id is still the message's own id there.)
+    ...(locked && m.ext_raw && !m.deleted ? { raw: m.ext_raw, ext_id: m.ext_id } : {}),
   };
 }
 
@@ -444,8 +450,20 @@ function messageText(body) {
   return str("message", body.body, LIMITS.body, { required: true });
 }
 
+// {encrypted: content}: a message the browser already encrypted, for an
+// encrypted room. The site never sees what it says.
+function encryptedContent(body) {
+  if (!isObj(body) || !isObj(body.encrypted)) return null;
+  for (const k of Object.keys(body)) if (k !== "encrypted") fail(`unknown field ${JSON.stringify(k)}`);
+  const c = body.encrypted;
+  if (typeof c.algorithm !== "string" || typeof c.ciphertext !== "string") fail("encrypted must be encrypted content");
+  if (JSON.stringify(c).length > LIMITS.encrypted) fail("message too large");
+  return c;
+}
+
 export async function post(env, user, roomId, body) {
-  const text = messageText(body);
+  const content = encryptedContent(body);
+  const text = content ? "" : messageText(body);
   const d = await db(env);
   const { room, member } = await load(d, user, roomId);
   if (!room) return null;
@@ -453,7 +471,8 @@ export async function post(env, user, roomId, body) {
   const t = now();
   const { n } = await d.prepare("SELECT COUNT(*) AS n FROM chat_messages WHERE user_id = ? AND created_at > ?").bind(user.id, t - RATE_WINDOW).first();
   if (n >= RATE) return { slow: "you're sending messages too quickly; wait a few seconds" };
-  if (bridged(room)) return postBridged(env, d, user, room, text);
+  if (bridged(room)) return content ? postEncrypted(env, d, user, room, content) : postBridged(env, d, user, room, text);
+  if (content) fail("only end-to-end encrypted rooms take encrypted messages");
   // One transaction: take the room's next seq and give it to the new message.
   const newest = "SELECT id FROM chat_messages WHERE room = ? AND seq = (SELECT seq FROM chat_rooms WHERE id = ?)";
   await d.batch([
@@ -473,7 +492,7 @@ export async function post(env, user, roomId, body) {
 // Sends to the platform, then keeps the message here under the id it got
 // there, so the sync that brings it back finds it already in place.
 async function postBridged(env, d, user, room, text) {
-  if (room.encrypted) return { forbidden: "this room is end-to-end encrypted, and the site can't send encrypted messages yet" };
+  if (room.encrypted) return { forbidden: "this room is end-to-end encrypted: send to it from the chat page in the browser that holds its keys" };
   const sent = await onPlatform(env, d, user, room, async (p, creds) => ({ id: await p.send(creds, room.ext_id, text), sender: creds.user_id }));
   if (sent.error) return { failed: sent.error };
   const t = now();
@@ -487,17 +506,56 @@ async function postBridged(env, d, user, room, text) {
   return messageOut(m, user, room);
 }
 
+// The same, encrypted by the browser: kept as it went, for it to decrypt.
+async function postEncrypted(env, d, user, room, content) {
+  if (!room.encrypted) fail("this room isn't end-to-end encrypted");
+  const sent = await onPlatform(env, d, user, room, async (p, creds) => {
+    if (!p.sendEncrypted) return null;
+    return { id: await p.sendEncrypted(creds, room.ext_id, content), sender: creds.user_id };
+  });
+  if (sent.error) return { failed: sent.error };
+  if (!sent.ok) return { forbidden: "this platform can't take encrypted messages from here" };
+  const t = now();
+  const raw = JSON.stringify({ type: "m.room.encrypted", content, sender: sent.ok.sender, event_id: sent.ok.id, origin_server_ts: t * 1000, room_id: room.ext_id });
+  await d.batch([
+    d.prepare("UPDATE chat_rooms SET seq = seq + 1, last_at = ? WHERE id = ?").bind(t, room.id),
+    d.prepare(`INSERT OR IGNORE INTO chat_messages (room, user_id, body, seq, posted_seq, created_at, ext_id, ext_sender, ext_name, encrypted, ext_raw)
+      SELECT id, ?, ?, seq, seq, ?, ?, ?, ?, 1, ? FROM chat_rooms WHERE id = ?`).bind(user.id, ENCRYPTED_NOTE, t, sent.ok.id, sent.ok.sender, user.display_name, raw, room.id),
+    d.prepare("UPDATE chat_members SET read_seq = (SELECT seq FROM chat_rooms WHERE id = ?) WHERE room = ? AND user_id = ?").bind(room.id, room.id, user.id),
+  ]);
+  const m = await d.prepare(`${MESSAGE} WHERE m.room = ? AND m.ext_id = ?`).bind(room.id, sent.ok.id).first();
+  return messageOut(m, user, room);
+}
+
 // Only the author edits a message. Mentions follow the new text.
 export async function editMessage(env, user, roomId, messageId, body) {
-  const text = messageText(body);
+  const content = encryptedContent(body);
+  const text = content ? "" : messageText(body);
   const d = await db(env);
   const { room } = await load(d, user, roomId);
   if (!room) return null;
   const m = await d.prepare("SELECT user_id, deleted, body, ext_id, encrypted FROM chat_messages WHERE id = ? AND room = ?").bind(messageId, room.id).first();
   if (!m || m.deleted) return null;
   if (m.user_id !== user.id) return { forbidden: "you can only edit your own messages" };
+  if (content) {
+    // An encrypted edit says which message it replaces outside the encryption.
+    const rel = content["m.relates_to"];
+    if (!bridged(room) || !m.encrypted || !m.ext_id) fail("only encrypted messages take encrypted edits");
+    if (rel?.rel_type !== "m.replace" || rel.event_id !== m.ext_id) fail("the edit must say it replaces this message");
+    const done = await onPlatform(env, d, user, room, async (p, creds) => ({ id: await p.sendEncrypted(creds, room.ext_id, content), sender: creds.user_id }));
+    if (done.error) return { failed: done.error };
+    const t = now();
+    const raw = JSON.stringify({ type: "m.room.encrypted", content, sender: done.ok.sender, event_id: done.ok.id, origin_server_ts: t * 1000, room_id: room.ext_id });
+    await d.batch([
+      d.prepare("UPDATE chat_rooms SET seq = seq + 1 WHERE id = ?").bind(room.id),
+      d.prepare("UPDATE chat_messages SET ext_raw = ?, edited_at = ?, seq = (SELECT seq FROM chat_rooms WHERE id = ?) WHERE id = ?")
+        .bind(raw, t, room.id, messageId),
+    ]);
+    return oneMessage(d, user, room, messageId);
+  }
+  if (bridged(room) && m.encrypted) return { forbidden: "this message is end-to-end encrypted: edit it from the chat page in the browser that holds its keys" };
   if (bridged(room) && m.body !== text) {
-    if (m.encrypted || !m.ext_id) return { forbidden: "this message can't be edited from here" };
+    if (!m.ext_id) return { forbidden: "this message can't be edited from here" };
     const done = await onPlatform(env, d, user, room, (p, creds) => p.edit(creds, room.ext_id, m.ext_id, text));
     if (done.error) return { failed: done.error };
     await d.batch([
@@ -586,13 +644,16 @@ export async function deleteMessage(env, user, roomId, messageId) {
 //   POST   /chat/api/connections                    {provider, ...its fields} → a new connection, synced once
 //   DELETE /chat/api/connections/<id>               the connection and its rooms
 //   POST   /chat/api/connections/<id>/sync          sync it now, and try again if it had stopped working
+//   POST   /chat/api/connections/<id>/crypto/claim    {key}   this browser holds the encryption keys → {device}
+//   POST   /chat/api/connections/<id>/crypto/inbox    {key, ack?}   what syncs brought for the keys → {items, counts}
+//   POST   /chat/api/connections/<id>/crypto/request  {key, method, path, body?}   a key request, passed on → {response}
 
-const ROUTE = /^\/chat\/api\/(state|people|dms|rooms|connections)(?:\/([^/]+)(?:\/(join|leave|members|messages|search|typing|sync)(?:\/([^/]+)(?:\/(reactions))?)?)?)?\/?$/;
+const ROUTE = /^\/chat\/api\/(state|people|dms|rooms|connections)(?:\/([^/]+)(?:\/(join|leave|members|messages|search|typing|sync|crypto)(?:\/([^/]+)(?:\/(reactions))?)?)?)?\/?$/;
 
 // Messages are shown as text, never as HTML, and the page loads nothing from
-// elsewhere except fonts.
+// elsewhere except fonts. (WebAssembly is for the encryption library.)
 const PAGE_CSP = [
-  "default-src 'none'", "script-src 'self'", "connect-src 'self'", "style-src 'unsafe-inline' https://fonts.googleapis.com",
+  "default-src 'none'", "script-src 'self' 'wasm-unsafe-eval'", "connect-src 'self'", "style-src 'unsafe-inline' https://fonts.googleapis.com",
   "font-src https://fonts.gstatic.com", "img-src 'self' data:", "form-action 'self'", "frame-ancestors 'none'", "base-uri 'none'",
 ].join("; ");
 
@@ -647,6 +708,11 @@ export async function chat(request, env, user, pathname) {
         if (method === "GET") return json(await listConnections(env, user));
         return method === "POST" ? reply(await addConnection(env, user, await readJson(request), fail), 201) : notAllowed();
       }
+      if (sub === "crypto" && extra && !action) {
+        if (!["claim", "inbox", "request"].includes(extra)) return notFound();
+        if (method !== "POST") return notAllowed();
+        return reply(await cryptoOp(env, user, id, extra, await readJson(request, LIMITS.crypto), fail));
+      }
       if (action || extra || (sub && sub !== "sync")) return notFound();
       if (sub) {
         if (method !== "POST") return notAllowed();
@@ -675,7 +741,7 @@ export async function chat(request, env, user, pathname) {
       if (method === "DELETE") return reply(await deleteRoom(env, user, id));
       return notAllowed();
     }
-    if ((action && sub !== "messages") || sub === "sync") return notFound();
+    if ((action && sub !== "messages") || sub === "sync" || sub === "crypto") return notFound();
     if (sub === "join" || sub === "leave" || sub === "typing") {
       if (extra) return notFound();
       if (method !== "POST") return notAllowed();

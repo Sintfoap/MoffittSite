@@ -444,7 +444,7 @@ class ChatPage(Page):
         if kind == "bridge":
             t.append(f"   on {NETWORK.get(r.get('provider'), r.get('provider'))} as {r.get('via')}", style=MUTED)
             if r.get("encrypted"):
-                t.append("   end-to-end encrypted: read only here", style=GOLD_DIM)
+                t.append("   end-to-end encrypted: read and send it on the web chat page, where its keys are", style=GOLD_DIM)
         elif kind == "dm":
             t.append(f"   direct message with @{r.get('with') or '?'}", style=MUTED)
             if r.get("with") in self.online:
@@ -533,7 +533,7 @@ class ChatPage(Page):
         if not self.open["joined"]:
             return self.status("Join the room to post: /join", bad=True)
         if (self.room() or {}).get("encrypted"):
-            return self.status("This room is end-to-end encrypted, which the site can't send to yet.", bad=True)
+            return self.status("This room is end-to-end encrypted, and its keys stay in your browser: send to it from the web chat page.", bad=True)
         room_id = self.open["id"]
         self._typed = 0.0
         temp = {"id": float("inf"), "body": text, "created_at": int(time.time()), "author": self.me.get("username"),
