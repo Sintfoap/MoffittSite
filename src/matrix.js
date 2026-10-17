@@ -130,7 +130,10 @@ const CRYPTO_PATHS = [
   ["GET", new RegExp(`^rooms/${SEG}/joined_members$`)],
   ["GET", new RegExp(`^room_keys/version$`)],
   ["GET", new RegExp(`^room_keys/keys\\?version=${SEG}$`)],
+  ["GET", new RegExp(`^room_keys/keys/${SEG}/${SEG}\\?version=${SEG}$`)],   // one session's key, from the backup
   ["PUT", new RegExp(`^room_keys/keys\\?version=${SEG}$`)],
+  // The secrets a Security Key unlocks (cross-signing keys, the backup key), still encrypted.
+  ["GET", new RegExp(`^user/(${SEG})/account_data/(m\\.secret_storage\\.default_key|m\\.secret_storage\\.key\\.${SEG}|m\\.cross_signing\\.(master|self_signing|user_signing)|m\\.megolm_backup\\.v1)$`)],
 ];
 const room = id => encodeURIComponent(id);
 
@@ -208,7 +211,9 @@ export const matrix = {
   // One of the requests the browser's crypto library makes, passed on with
   // the token. Only the key and to-device endpoints it needs are allowed.
   async cryptoRequest(creds, method, path, body) {
-    const ok = CRYPTO_PATHS.some(([m, re]) => m === method && re.test(path));
+    const ok = CRYPTO_PATHS.some(([m, re]) => m === method && re.test(path))
+      // Only your own account data.
+      && (!path.startsWith("user/") || path.split("/")[1] === encodeURIComponent(creds.user_id));
     if (!ok) throw new ProviderError("that request isn't one the encryption needs", { refused: true });
     const [p, q] = path.split("?");
     return call(creds.base, method, "/_matrix/client/v3/" + p, {

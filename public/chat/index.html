@@ -160,6 +160,11 @@ mark { background: var(--gold); color: var(--on-gold); }
   background: var(--field); border: 1px solid var(--line-2); border-radius: 0; color: var(--ink); }
 .composer textarea:focus { outline: 2px solid var(--gold); outline-offset: 1px; }
 .joinbar { display: flex; gap: 14px; align-items: center; justify-content: center; flex-wrap: wrap; padding: 14px 18px 16px; border-top: 1px dashed var(--line); color: var(--muted); font-size: 13px; }
+.verifybar { padding-top: 10px; padding-bottom: 10px; }
+.verify-form { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; justify-content: center; width: 100%; }
+.verify-form input { flex: 1 1 260px; max-width: 420px; padding: 6px 10px; background: var(--field); border: 1px solid var(--line-2); border-radius: 0; color: var(--ink); }
+.verify-form input:focus { outline: 2px solid var(--gold); outline-offset: 1px; }
+.verify-note { width: 100%; text-align: center; margin: 0; color: var(--faint); font-size: 12px; }
 
 /* dialogs */
 dialog { border: 1px solid var(--line-2); border-radius: 0; background: var(--panel); color: var(--ink); padding: 0; width: min(480px, calc(100vw - 32px)); }

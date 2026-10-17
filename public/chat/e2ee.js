@@ -9,6 +9,12 @@
 // Encrypted messages come with `raw`, the event as it came, to decrypt here;
 // sending encrypts here first and gives the site only the result.
 //
+// With the account's Security Key (or Security Phrase), unlock() does what
+// Element's "Verify with Security Key" does: it opens the account's secret
+// storage, signs this session with the account's cross-signing key (so
+// other apps see it as verified), and takes the key backup's key, so keys
+// for older messages come from the backup and new ones go into it.
+//
 // It takes the library and a post(op, body) function rather than reaching
 // for them, so the tests run it in Node against a stand-in homeserver.
 
@@ -26,8 +32,80 @@ export class Vault {
     const machine = await lib.OlmMachine.initialize(new lib.UserId(device.user_id), new lib.DeviceId(device.device_id), store, passphrase);
     const vault = new Vault(lib, machine, post, key);
     vault.device = device;
+    // A backup key from an earlier unlock, kept in the library's store.
+    const kept = await machine.getBackupKeys();
+    if (kept?.decryptionKey && kept.backupVersion) vault.backup = { key: kept.decryptionKey, version: kept.backupVersion };
+    vault.tried = new Set();   // sessions already asked of the backup
     await vault.pump();
     return vault;
+  }
+
+  // {verified, backup}: whether this session is signed by the account's
+  // cross-signing key, and whether it has the key backup's key.
+  async status() {
+    const s = await this.machine.crossSigningStatus();
+    return { verified: !!s.hasSelfSigning, backup: !!this.backup };
+  }
+
+  // The account's Security Key or Phrase → this session verified, and the
+  // backup's key taken. Throws, saying why, if it can't.
+  unlock(secret) {
+    return this.lock(async () => {
+      const { lib } = this, me = this.device.user_id;
+      const data = async type => {
+        try { return (await this.ask("request", { method: "GET", path: `user/${encodeURIComponent(me)}/account_data/${type}` })).response; }
+        catch { return null; }
+      };
+      const id = (await data("m.secret_storage.default_key"))?.key;
+      const desc = id && await data(`m.secret_storage.key.${id}`);
+      if (!desc) throw new Error("this Matrix account has no Security Key set up yet; Element sets one up in Settings, Security & Privacy, Secure Backup");
+      const ssss = await storageKey(secret, desc);
+      const open = async name => {
+        const enc = (await data(name))?.encrypted?.[id];
+        return enc ? decryptSecret(ssss, name, enc) : null;
+      };
+      // Our own keys first, so the cross-signing keys can be checked against them.
+      await this.machine.updateTrackedUsers([new lib.UserId(me)]);
+      await this.flush();
+      const status = await this.machine.importCrossSigningKeys(
+        await open("m.cross_signing.master"), await open("m.cross_signing.self_signing"), await open("m.cross_signing.user_signing"));
+      if (status.hasSelfSigning) {
+        const device = await this.machine.getDevice(new lib.UserId(me), new lib.DeviceId(this.device.device_id));
+        if (device) await this.send(await device.verify());
+        const identity = await this.machine.getIdentity(new lib.UserId(me));
+        if (identity && !identity.isVerified()) await this.send(await identity.verify());
+      }
+      const backupKey = await open("m.megolm_backup.v1");
+      if (backupKey) {
+        const key = lib.BackupDecryptionKey.fromBase64(backupKey);
+        let info = null;
+        try { info = (await this.ask("request", { method: "GET", path: "room_keys/version" })).response; } catch { /* no backup */ }
+        if (info?.auth_data?.public_key === key.megolmV1PublicKey.publicKeyBase64) {
+          await this.machine.saveBackupDecryptionKey(key, info.version);
+          await this.machine.enableBackupV1(info.auth_data.public_key, info.version);
+          this.backup = { key, version: info.version };
+        }
+      }
+      this.cache.clear(); this.tried.clear();
+      await this.flush();
+      return { verified: !!status.hasSelfSigning, backup: !!this.backup };
+    });
+  }
+
+  // A room key from the backup, for one message this session missed.
+  async fromBackup(event) {
+    const { lib } = this, sid = event.content?.session_id;
+    if (!this.backup || !sid || this.tried.has(sid)) return false;
+    this.tried.add(sid);
+    const { version, key } = this.backup, enc = encodeURIComponent;
+    let got;
+    try { got = (await this.ask("request", { method: "GET", path: `room_keys/keys/${enc(event.room_id)}/${enc(sid)}?version=${enc(version)}` })).response; }
+    catch { return false; }
+    const d = got?.session_data;
+    if (!d) return false;
+    const session = JSON.parse(key.decryptV1(d.ephemeral, d.mac, d.ciphertext));
+    await this.machine.importBackedUpRoomKeys(new Map([[new lib.RoomId(event.room_id), new Map([[sid, session]])]]), () => {}, version);
+    return true;
   }
 
   // One thing at a time: the library's requests have to be answered in order.
@@ -67,6 +145,9 @@ export class Vault {
   async flush() {
     for (let round = 0; round < 10; round++) {
       const reqs = await this.machine.outgoingRequests();
+      // Room keys go into the backup too, once this session has its key.
+      const backup = this.backup && await this.machine.backupRoomKeys();
+      if (backup) reqs.push(backup);
       if (!reqs.length) return;
       for (const r of reqs) await this.send(r);
     }
@@ -95,12 +176,15 @@ export class Vault {
     if (this.cache.has(raw)) return this.cache.get(raw);
     const { lib } = this;
     let content = null;
-    try {
-      const event = JSON.parse(raw);
-      const out = await this.lock(() => this.machine.decryptRoomEvent(raw, new lib.RoomId(event.room_id),
-        new lib.DecryptionSettings(lib.TrustRequirement.Untrusted)));
-      content = JSON.parse(out.event).content ?? null;
-    } catch { content = null; }
+    const event = JSON.parse(raw);
+    const attempt = () => this.lock(async () => {
+      try {
+        const out = await this.machine.decryptRoomEvent(raw, new lib.RoomId(event.room_id), new lib.DecryptionSettings(lib.TrustRequirement.Untrusted));
+        return JSON.parse(out.event).content ?? null;
+      } catch { return null; }
+    });
+    content = await attempt();
+    if (!content && await this.lock(() => this.fromBackup(event).catch(() => false))) content = await attempt();
     this.cache.set(raw, content);
     return content;
   }
@@ -143,3 +227,92 @@ export const editContent = (eventId, text) => ({
   msgtype: "m.text", body: "* " + text, "m.new_content": { msgtype: "m.text", body: text },
   "m.relates_to": { rel_type: "m.replace", event_id: eventId },
 });
+
+// ── secret storage (what a Security Key opens) ────────────────────────────
+// As the Matrix spec has it: m.secret_storage.v1.aes-hmac-sha2. Each secret
+// is AES-CTR encrypted and HMAC-SHA-256 signed with keys derived (HKDF) from
+// the storage key and the secret's name. A Security Key is that storage key
+// written in base58; a Security Phrase makes it with PBKDF2.
+
+const subtle = () => globalThis.crypto.subtle;
+const b64 = s => Uint8Array.from(atob(String(s).replace(/-/g, "+").replace(/_/g, "/").padEnd(Math.ceil(String(s).length / 4) * 4, "=")), c => c.charCodeAt(0));
+const unb64 = bytes => btoa(String.fromCharCode(...new Uint8Array(bytes))).replace(/=+$/, "");
+const B58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+
+function fromBase58(text) {
+  let n = 0n;
+  for (const c of text) {
+    const v = B58.indexOf(c);
+    if (v < 0) return null;
+    n = n * 58n + BigInt(v);
+  }
+  const out = [];
+  while (n > 0n) { out.unshift(Number(n % 256n)); n /= 256n; }
+  for (const c of text) { if (c !== "1") break; out.unshift(0); }
+  return Uint8Array.from(out);
+}
+function toBase58(bytes) {
+  let n = 0n;
+  for (const b of bytes) n = n * 256n + BigInt(b);
+  let out = "";
+  while (n > 0n) { out = B58[Number(n % 58n)] + out; n /= 58n; }
+  for (const b of bytes) { if (b !== 0) break; out = "1" + out; }
+  return out;
+}
+
+// A storage key (32 bytes) → the Security Key Element shows: "EsT…" in groups of four.
+export function encodeRecoveryKey(key) {
+  const bytes = [0x8b, 0x01, ...key];
+  bytes.push(bytes.reduce((a, b) => a ^ b, 0));
+  return toBase58(Uint8Array.from(bytes)).match(/.{1,4}/g).join(" ");
+}
+function decodeRecoveryKey(text) {
+  const bytes = fromBase58(text.replace(/\s+/g, ""));
+  if (!bytes || bytes.length !== 35 || bytes[0] !== 0x8b || bytes[1] !== 0x01) return null;
+  if (bytes.reduce((a, b) => a ^ b, 0) !== 0) return null;
+  return bytes.slice(2, 34);
+}
+
+async function derive(key, name) {
+  const ikm = await subtle().importKey("raw", key, "HKDF", false, ["deriveBits"]);
+  const bits = new Uint8Array(await subtle().deriveBits({ name: "HKDF", hash: "SHA-256", salt: new Uint8Array(32), info: new TextEncoder().encode(name) }, ikm, 512));
+  return {
+    aes: await subtle().importKey("raw", bits.slice(0, 32), "AES-CTR", false, ["encrypt", "decrypt"]),
+    hmac: await subtle().importKey("raw", bits.slice(32), { name: "HMAC", hash: "SHA-256" }, false, ["sign", "verify"]),
+  };
+}
+
+// plaintext (bytes) → {iv, ciphertext, mac}, as secret storage keeps them.
+export async function encryptSecret(key, name, plaintext, iv = crypto.getRandomValues(new Uint8Array(16))) {
+  iv = Uint8Array.from(iv); iv[8] &= 0x7f;
+  const k = await derive(key, name);
+  const data = typeof plaintext === "string" ? new TextEncoder().encode(plaintext) : plaintext;
+  const ciphertext = new Uint8Array(await subtle().encrypt({ name: "AES-CTR", counter: iv, length: 64 }, k.aes, data));
+  const mac = await subtle().sign("HMAC", k.hmac, ciphertext);
+  return { iv: unb64(iv), ciphertext: unb64(ciphertext), mac: unb64(mac) };
+}
+
+async function decryptSecret(key, name, { iv, ciphertext, mac }) {
+  const k = await derive(key, name);
+  if (!await subtle().verify("HMAC", k.hmac, b64(mac), b64(ciphertext))) throw new Error(`${name} couldn't be opened with that key`);
+  return new TextDecoder().decode(await subtle().decrypt({ name: "AES-CTR", counter: b64(iv), length: 64 }, k.aes, b64(ciphertext)));
+}
+
+// A Security Key or Phrase, and the storage key's description → the
+// storage key, checked against the description.
+async function storageKey(secret, desc) {
+  if (desc.algorithm !== "m.secret_storage.v1.aes-hmac-sha2") throw new Error("this account's secret storage uses a kind of key the site doesn't know");
+  let key = decodeRecoveryKey(String(secret));
+  if (!key && desc.passphrase?.algorithm === "m.pbkdf2") {
+    const p = desc.passphrase;
+    const base = await subtle().importKey("raw", new TextEncoder().encode(String(secret)), "PBKDF2", false, ["deriveBits"]);
+    key = new Uint8Array(await subtle().deriveBits({ name: "PBKDF2", hash: "SHA-512", salt: new TextEncoder().encode(p.salt), iterations: p.iterations },
+      base, p.bits ?? 256));
+  }
+  if (!key) throw new Error("that isn't a Security Key (it's 48 letters and numbers, in groups of four)");
+  if (desc.iv && desc.mac) {
+    const check = await encryptSecret(key, "", new Uint8Array(32), b64(desc.iv));
+    if (check.mac.replace(/=+$/, "") !== String(desc.mac).replace(/=+$/, "")) throw new Error("that Security Key or Phrase isn't the right one for this account");
+  }
+  return key;
+}
