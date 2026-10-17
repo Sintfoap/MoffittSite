@@ -22,7 +22,13 @@ export class FakeMatrix {
     this.inbox = new Map();    // "user|device" → [to-device events]
     this.changed = new Map();  // "user|device" → Set(users whose keys changed)
     this.cursors = new Map();  // token → how far that session's syncs got (for person())
+    this.signing = new Map();  // user → {master_key, self_signing_key, user_signing_key}
+    this.accountData = new Map();   // "user|type" → content
+    this.backups = [];         // [{version, algorithm, auth_data, rooms: {room: {session: data}}}]
+    this.signatures = [];      // every keys/signatures/upload body, to check what was signed
   }
+
+  setAccountData(user, type, content) { this.accountData.set(`${user}|${type}`, content); }
 
   // Another account, signed in on one device: {token, user, device}.
   person(user, device, token) {
@@ -90,6 +96,18 @@ export class FakeMatrix {
     if (path === "/_matrix/client/v3/logout") { this.loggedOut.push(auth); return json({}); }
     if (path === "/_matrix/client/v3/sync") return json(this.sync(url.searchParams.get("since"), who));
     if (path.startsWith("/_matrix/client/v3/keys/") || path.startsWith("/_matrix/client/v3/sendToDevice/")) return json(this.crypto(req.method, path, body, who));
+    let a = path.match(/^\/_matrix\/client\/v3\/user\/([^/]+)\/account_data\/([^/]+)$/);
+    if (a) {
+      const user = decodeURIComponent(a[1]), type = decodeURIComponent(a[2]);
+      if (user !== who.user) return json({ errcode: "M_FORBIDDEN", error: "not yours" }, 403);
+      if (req.method === "PUT") { this.setAccountData(user, type, body); return json({}); }
+      const content = this.accountData.get(`${user}|${type}`);
+      return content ? json(content) : json({ errcode: "M_NOT_FOUND", error: "Account data not found" }, 404);
+    }
+    if (path.startsWith("/_matrix/client/v3/room_keys/")) {
+      const out = this.roomKeys(req.method, path.slice("/_matrix/client/v3/room_keys/".length), url.searchParams.get("version"), body);
+      return out ? json(out) : json({ errcode: "M_NOT_FOUND", error: "No backup found" }, 404);
+    }
     let m = path.match(/^\/_matrix\/client\/v3\/rooms\/([^/]+)\/joined_members$/);
     if (m && req.method === "GET") {
       const r = this.rooms.get(decodeURIComponent(m[1]));
@@ -137,7 +155,23 @@ export class FakeMatrix {
         device_keys[user] = {};
         for (const [id, k] of this.keys) if (id.startsWith(user + "|") && k.device_keys) device_keys[user][id.split("|")[1]] = k.device_keys;
       }
-      return { device_keys, failures: {} };
+      const out = { device_keys, failures: {}, master_keys: {}, self_signing_keys: {}, user_signing_keys: {} };
+      for (const user of Object.keys(body.device_keys ?? {})) {
+        const sk = this.signing.get(user);
+        if (!sk) continue;
+        if (sk.master_key) out.master_keys[user] = sk.master_key;
+        if (sk.self_signing_key) out.self_signing_keys[user] = sk.self_signing_key;
+        if (sk.user_signing_key && user === who.user) out.user_signing_keys[user] = sk.user_signing_key;
+      }
+      return out;
+    }
+    if (p === "keys/device_signing/upload") {
+      this.signing.set(who.user, { ...this.signing.get(who.user), ...body });
+      for (const other of this.tokens.values()) {
+        const id = `${other.user}|${other.device}`;
+        if (id !== me) (this.changed.get(id) ?? this.changed.set(id, new Set()).get(id)).add(who.user);
+      }
+      return {};
     }
     if (p === "keys/claim") {
       const one_time_keys = {};
@@ -153,7 +187,24 @@ export class FakeMatrix {
       }
       return { one_time_keys, failures: {} };
     }
-    if (p === "keys/signatures/upload") return { failures: {} };
+    if (p === "keys/signatures/upload") {
+      // Adds each signature to the device or cross-signing key it's for.
+      this.signatures.push(body);
+      for (const [user, objs] of Object.entries(body)) {
+        for (const other of this.tokens.values()) {
+          const id = `${other.user}|${other.device}`;
+          if (id !== me) (this.changed.get(id) ?? this.changed.set(id, new Set()).get(id)).add(user);
+        }
+        for (const [keyId, signed] of Object.entries(objs)) {
+          const device = this.keys.get(`${user}|${keyId}`)?.device_keys;
+          const sk = this.signing.get(user);
+          const target = device ?? Object.values(sk ?? {}).find(k => Object.keys(k.keys ?? {}).some(id => id.endsWith(":" + keyId)));
+          if (!target) continue;
+          for (const [signer, sigs] of Object.entries(signed.signatures ?? {})) target.signatures = { ...target.signatures, [signer]: { ...target.signatures?.[signer], ...sigs } };
+        }
+      }
+      return { failures: {} };
+    }
     const m = p.match(/^sendToDevice\/([^/]+)\/[^/]+$/);
     if (m && method === "PUT") {
       for (const [user, devices] of Object.entries(body.messages ?? {})) {
@@ -168,6 +219,26 @@ export class FakeMatrix {
       return {};
     }
     return { errcode: "M_UNRECOGNIZED" };
+  }
+
+  // The key backup: version, and room keys by room and session.
+  roomKeys(method, p, version, body) {
+    if (p === "version" && method === "POST") {
+      const b = { version: String(this.backups.length + 1), algorithm: body.algorithm, auth_data: body.auth_data, rooms: {} };
+      this.backups.push(b);
+      return { version: b.version };
+    }
+    const latest = this.backups.at(-1);
+    if (p === "version") return latest ? { version: latest.version, algorithm: latest.algorithm, auth_data: latest.auth_data, count: 0, etag: "1" } : null;
+    const b = this.backups.find(b => b.version === version);
+    if (!b) return null;
+    if (p === "keys" && method === "PUT") {
+      for (const [room, r] of Object.entries(body.rooms ?? {})) Object.assign((b.rooms[room] ??= {}), r.sessions);
+      return { count: Object.values(b.rooms).reduce((n, r) => n + Object.keys(r).length, 0), etag: "2" };
+    }
+    const m = p.match(/^keys\/([^/]+)\/([^/]+)$/);
+    if (m && method === "GET") return b.rooms[decodeURIComponent(m[1])]?.[decodeURIComponent(m[2])] ?? null;
+    return null;
   }
 
   otkCounts(id) {

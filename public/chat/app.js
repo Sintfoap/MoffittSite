@@ -67,12 +67,15 @@ async function decryptOpen() {
   if (!room?.encrypted || keysHere(room) !== "ready") return;
   const id = open.id, vault = await vaultFor(room.connection);
   await vault.pump();
+  showVerify(await vault.status());
   let changed = false;
   for (const m of open?.id === id ? open.messages.values() : []) {
     if (!m.raw || m.shownRaw === m.raw && m.decrypted) continue;
     const c = await vault.decrypt(m.raw);
     if (open?.id !== id) return;
-    const note = "🔒 Can't decrypt this one: it was sent before encryption was on here, or its key hasn't arrived yet.";
+    const note = (await vault.status()).backup
+      ? "🔒 Can't decrypt this one: its key isn't in your key backup, or hasn't arrived yet."
+      : "🔒 Can't decrypt this one yet. Verify with your Security Key to unlock older messages.";
     const body = c ? textOf(c, m.author_name) : note;
     if (m.body !== body || m.shownRaw !== m.raw) { m.body = body; changed = true; }
     m.decrypted = !!c; m.shownRaw = m.raw;
@@ -189,6 +192,13 @@ function renderRoomShell(room) {
     </form>
     <div class="log" id="log"></div>
     <div class="presence" id="presence" aria-live="polite"></div>
+    ${room.encrypted && keysHere(room) === "ready" ? `<div class="joinbar verifybar" id="verifybar" hidden>
+        <span id="verify-why"></span><button class="btn quiet" type="button" id="verify-open">Verify with Security Key</button>
+        <form id="verify-form" class="verify-form" hidden>
+          <input id="verify-key" type="password" autocomplete="off" spellcheck="false" placeholder="Security Key or Security Phrase" aria-label="Security Key or Security Phrase">
+          <button class="btn" type="submit">Verify</button><button class="link" type="button" id="verify-cancel">Cancel</button>
+          <p class="verify-note">It's used here in your browser to open your account's secret storage, and never sent to the site.</p>
+        </form></div>` : ""}
     ${room.encrypted && keysHere(room) !== "ready" ? encryptionBar(room)
       : open.joined
       ? `<form class="composer" id="composer">
@@ -198,6 +208,18 @@ function renderRoomShell(room) {
           <ul class="suggest" id="suggest" role="listbox" aria-label="People to mention" hidden></ul>
         </form>`
       : `<div class="joinbar">You're looking at this room. Join it to post. <button class="btn" id="join">Join room</button></div>`}`;
+}
+
+// The bar offering to verify this session with the account's Security Key,
+// which also unlocks older messages from the key backup.
+function showVerify({ verified, backup }) {
+  const bar = $("#verifybar");
+  if (!bar) return;
+  bar.hidden = verified && backup;
+  $("#verify-why").textContent = verified
+    ? "This session is verified, but your account has no key backup to unlock older messages from."
+    : "This session isn't verified yet, so Matrix apps flag it and older messages stay locked.";
+  $("#verify-open").hidden = verified || !$("#verify-form").hidden;
 }
 
 function encryptionBar(room) {
@@ -312,6 +334,8 @@ $("#room").addEventListener("click", async e => {
       toast("Encryption is on in this browser. Messages sent from now on can be read here.");
       await loadRooms(); open = null; await openRoom(room.id);
     }
+    else if (t.id === "verify-open") { $("#verify-form").hidden = false; t.hidden = true; $("#verify-key").focus(); }
+    else if (t.id === "verify-cancel") { $("#verify-form").hidden = true; $("#verify-open").hidden = false; $("#verify-key").value = ""; }
     else if (t.id === "edit-room") editRoom(rooms.find(r => r.id === open.id));
     else if (t.id === "show-members") showMembers();
     else if (t.id === "add-people") pickPerson("add");
@@ -374,10 +398,26 @@ async function saveEdit(form) {
   } catch (err) { toast(err.message); }
 }
 
+async function verifySession(form) {
+  const input = $("#verify-key"), secret = input.value.trim(), button = form.querySelector("[type=submit]");
+  const room = rooms.find(r => r.id === open?.id);
+  if (!secret || !room) return;
+  button.disabled = true; button.textContent = "Verifying…";
+  try {
+    const out = await (await vaultFor(room.connection)).unlock(secret);
+    input.value = ""; form.hidden = true;
+    for (const m of open.messages.values()) m.decrypted = false;   // try them all again
+    toast(out.backup ? "Verified. Older messages are coming in from your key backup." : "Verified. Your account has no key backup, so older messages stay locked.");
+    await decryptOpen();
+  } catch (err) { toast(err.message); }
+  finally { button.disabled = false; button.textContent = "Verify"; }
+}
+
 let tempId = -1;
 $("#room").addEventListener("submit", async e => {
   if (e.target.matches(".edit")) { e.preventDefault(); return saveEdit(e.target); }
   if (e.target.id === "searchbar") { e.preventDefault(); return runSearch(); }
+  if (e.target.id === "verify-form") { e.preventDefault(); return verifySession(e.target); }
   if (e.target.id !== "composer") return;
   e.preventDefault();
   const box = $("#text"), body = box.value.trim();
