@@ -172,7 +172,8 @@ const SCHEMA = [
      ext_id     TEXT,                              -- the message's id there
      ext_sender TEXT,
      ext_name   TEXT,
-     encrypted  INTEGER NOT NULL DEFAULT 0         -- arrived encrypted, so body is only a note saying so
+     encrypted  INTEGER NOT NULL DEFAULT 0,        -- arrived encrypted, so body is only a note saying so
+     ext_raw    TEXT                               -- an encrypted message as it came (its latest edit), for the browser with the keys
    )`,
   `CREATE INDEX IF NOT EXISTS chat_messages_room ON chat_messages (room, id)`,
   `CREATE INDEX IF NOT EXISTS chat_messages_seq ON chat_messages (room, seq)`,
@@ -213,9 +214,22 @@ const SCHEMA = [
      error      TEXT,
      created_at INTEGER NOT NULL,
      synced_at  INTEGER NOT NULL DEFAULT 0,        -- last sync that worked
-     tried_at   INTEGER NOT NULL DEFAULT 0         -- last sync started, so they don't pile up
+     tried_at   INTEGER NOT NULL DEFAULT 0,        -- last sync started, so they don't pile up
+     -- End-to-end encryption, whose keys only a browser holds (public/chat/e2ee.js).
+     can_encrypt   INTEGER NOT NULL DEFAULT 0,     -- the connection has a session of its own to hold keys
+     crypto_owner  TEXT,                           -- sha256 of the key the browser holding them proves itself with
+     crypto_counts TEXT                            -- JSON: the latest one-time key counts, for that browser
    )`,
   `CREATE INDEX IF NOT EXISTS chat_connections_user ON chat_connections (user_id)`,
+  // What each sync brought for the browser holding a connection's keys
+  // (to-device messages, changed device lists), until it has taken them.
+  `CREATE TABLE IF NOT EXISTS chat_crypto_inbox (
+     id         INTEGER PRIMARY KEY AUTOINCREMENT,
+     connection TEXT NOT NULL,
+     data       TEXT NOT NULL,                     -- JSON {to_device, changed, left}
+     created_at INTEGER NOT NULL
+   )`,
+  `CREATE INDEX IF NOT EXISTS chat_crypto_inbox_conn ON chat_crypto_inbox (connection, id)`,
 ];
 
 // Indexes on columns that ADDED_COLUMNS may have only just added.
@@ -228,7 +242,8 @@ const AFTER_COLUMNS = [
 // leaves an existing table alone, so older databases get them here.
 const ADDED_COLUMNS = {
   users: ["email TEXT", "email_verified INTEGER NOT NULL DEFAULT 0"],
-  chat_messages: ["posted_seq INTEGER", "edited_at INTEGER", "ext_id TEXT", "ext_sender TEXT", "ext_name TEXT", "encrypted INTEGER NOT NULL DEFAULT 0"],
+  chat_messages: ["posted_seq INTEGER", "edited_at INTEGER", "ext_id TEXT", "ext_sender TEXT", "ext_name TEXT", "encrypted INTEGER NOT NULL DEFAULT 0", "ext_raw TEXT"],
+  chat_connections: ["can_encrypt INTEGER NOT NULL DEFAULT 0", "crypto_owner TEXT", "crypto_counts TEXT"],
   chat_rooms: ["kind TEXT NOT NULL DEFAULT 'open'", "connection TEXT", "ext_id TEXT", "encrypted INTEGER NOT NULL DEFAULT 0"],
 };
 

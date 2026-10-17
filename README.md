@@ -243,14 +243,17 @@ A store plugin's view can return HTML from `render(ctx)`, or be interactive like
 | GET | `/chat/api/rooms/<id>/search` | `?q=<text>` |
 | POST | `/chat/api/rooms/<id>/typing` | (members) |
 | GET | `/chat/api/rooms/<id>/messages` | `?since=<seq>` for changes, `?before=<message id>` for older pages; also says who's `here` and `typing` |
-| POST | `/chat/api/rooms/<id>/messages` | `{body}` (members) |
-| PATCH | `/chat/api/rooms/<id>/messages/<message id>` | `{body}` (author) |
+| POST | `/chat/api/rooms/<id>/messages` | `{body}` (members), or `{encrypted}` in an encrypted bridge room: content the browser encrypted |
+| PATCH | `/chat/api/rooms/<id>/messages/<message id>` | `{body}` (author), or `{encrypted}` as above, an `m.replace` edit of that message |
 | DELETE | `/chat/api/rooms/<id>/messages/<message id>` | (author, room owner or admin) |
 | POST | `/chat/api/rooms/<id>/messages/<message id>/reactions` | `{emoji, on}`: add (`true`) or take back (`false`) a reaction (members) |
 | GET | `/chat/api/connections` | (your connections to other platforms; needs Chat connections) |
 | POST | `/chat/api/connections` | `{provider, ...its fields}`, e.g. `{provider: "matrix", homeserver, token}`: connect, and sync once |
 | DELETE | `/chat/api/connections/<id>` | remove it and its rooms |
 | POST | `/chat/api/connections/<id>/sync` | sync now, and try again if it had stopped working |
+| POST | `/chat/api/connections/<id>/crypto/claim` | `{key}`: this browser holds the connection's encryption keys (only if no other does) → `{device}` |
+| POST | `/chat/api/connections/<id>/crypto/inbox` | `{key, ack}`: what syncs brought for the keys, after taking back up to `ack` → `{items, counts}` |
+| POST | `/chat/api/connections/<id>/crypto/request` | `{key, method, path, body}`: one of the key requests encryption needs, passed on to Matrix → `{response}` |
 
 ### Connections to other platforms
 
@@ -259,9 +262,13 @@ Chat can also bring in your rooms from other chat platforms, so you read and ans
 - **Connecting Matrix:** your homeserver (`matrix.org`, or your own; `.well-known` is followed the way Element does) and either an access token (Element: *Settings → Help & About → Access token*) or your Matrix username and password. A password is used once, to sign in a new session called `sintfoap.xyz`, and is never stored; that session is signed out when you remove the connection. A token you paste is left alone when you remove it, since it's probably Element's own.
 - **Rooms** you're in there show up under a heading for the platform, marked `~`. Only you see them, admins included. Messages from people there are shown with their names there; yours, sent from here or from Element, are yours. Unread counts, history and search work as in any room.
 - **Sending, editing and deleting** your messages go to Matrix (edits as Matrix edits, deletions as redactions), and edits and deletions made there show up here. Reactions, renaming, leaving and adding people stay on the platform for now.
-- **End-to-end encrypted rooms** (Element's default for direct messages) are listed, but their messages show as "Encrypted message" and sending to them is refused: reading them needs the session's encryption keys, which the site doesn't have yet.
+- **End-to-end encrypted rooms** (Element's default for direct messages) work on the chat page, with the keys kept in your browser and never on the site. Open one and choose **Turn on encryption here**: the browser makes keys for the connection's session with Matrix's own crypto library (the one Element uses, vendored in `public/chat/vendor/matrix-crypto`), and from then on decrypts what comes in and encrypts what you send or edit before the site sees it. The site only passes things along: encrypted messages as they came, the to-device messages each sync brings (other people's devices sharing room keys), and the key requests the browser makes (`public/chat/e2ee.js`, `cryptoOp` in `src/bridges.js`). Some limits:
+  - It needs a connection made with your **username and password**, so the site has a session of its own to hold keys. A pasted access token belongs to another app's session, whose keys are in that app, so its encrypted rooms stay read-only.
+  - **One browser** holds a connection's keys: the one that turned encryption on. Others say where the keys are. To move them, remove the connection and connect it again. Clearing the browser's site data loses them the same way.
+  - Messages from **before** encryption was turned on can't be read here (that would need Matrix key backup, which isn't supported yet). Element may also show the `sintfoap.xyz` session as unverified, since it isn't cross-signed.
+  - The **terminal** shows encrypted messages as "Encrypted message" and sends to those rooms from the web page only, since the keys are in the browser.
 - **Syncing** happens while chat is open: the room list and the open room each ask the platform what changed (at most every 2 seconds per connection, with Matrix's `/sync` and no waiting). Nothing runs in the background, so when you come back after a long time a busy room may show only its latest messages. A token that stops working marks the connection with the reason; **Sync now** tries again.
 - **Credentials** (the access token, never the password) are encrypted with AES-GCM before they're stored, under a key from the `CHAT_BRIDGE_KEY` secret and bound to their account, so the database alone doesn't give them away. Without the secret, nothing can be connected. To set it: **Workers & Pages → moffittsite → Settings → Variables and Secrets → Add**, type **Secret**, name `CHAT_BRIDGE_KEY`, value a long random string (e.g. from `openssl rand -base64 32`). Changing it later means everyone reconnects.
 - **Deleting an account** deletes its connections and their rooms. (Sessions the site signed in on Matrix stay signed in there; end them from Element's session list.)
 
-**Adding a platform:** write `src/<platform>.js` with the shape described at the top of `src/bridges.js` (`fields`, `connect`, `sync`, `send`, `edit`, `remove`, `disconnect`) and add it to `PROVIDERS` there. The connect form on the web page and in the terminal is built from its `fields`, so nothing else changes.
+**Adding a platform:** write `src/<platform>.js` with the shape described at the top of `src/bridges.js` (`fields`, `connect`, `sync`, `send`, `edit`, `remove`, `disconnect`, and for encryption `canEncrypt`, `device`, `sendEncrypted`, `cryptoRequest`) and add it to `PROVIDERS` there. The connect form on the web page and in the terminal is built from its `fields`, so nothing else changes.

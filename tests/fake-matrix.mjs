@@ -1,6 +1,11 @@
 // A stand-in Matrix homeserver for tests: the parts of the client-server API
 // src/matrix.js uses, answered in memory. install() routes fetch() to it for
 // matrix.test (and anything else to a 404), the way a Worker would reach it.
+//
+// It also keeps what end-to-end encryption needs: each device's keys and
+// one-time keys, to-device messages until that device syncs, and who changed
+// their keys. A second account can be added with person() to talk to the
+// site's device from a real crypto library, as someone in Element would.
 
 export class FakeMatrix {
   constructor({ user = "@ryan:matrix.test", token = "syt_good", password = "hunter22hunter22" } = {}) {
@@ -10,6 +15,19 @@ export class FakeMatrix {
     this.requests = [];        // [method, path] for checking what was asked
     this.loggedOut = [];
     this.n = 0;
+    // Other sessions, token → {user, device}. `token` is DEV's (tests change
+    // it to make it stop working); the session a password sign-in makes is SITE.
+    this.tokens = new Map([["syt_fromlogin", { user, device: "SITE" }]]);
+    this.keys = new Map();     // "user|device" → {device_keys, otks: Map(id → key), fallback}
+    this.inbox = new Map();    // "user|device" → [to-device events]
+    this.changed = new Map();  // "user|device" → Set(users whose keys changed)
+    this.cursors = new Map();  // token → how far that session's syncs got (for person())
+  }
+
+  // Another account, signed in on one device: {token, user, device}.
+  person(user, device, token) {
+    this.tokens.set(token, { user, device });
+    return { token, user, device };
   }
 
   room(id, { name, encrypted = false, members = {} } = {}) {
@@ -65,28 +83,115 @@ export class FakeMatrix {
       return json({ access_token: "syt_fromlogin", user_id: this.user, device_id: "SITE" });
     }
     const auth = req.headers.get("Authorization");
-    if (auth !== `Bearer ${this.token}` && auth !== "Bearer syt_fromlogin") return json({ errcode: "M_UNKNOWN_TOKEN", error: "Unknown token" }, 401);
-    if (path === "/_matrix/client/v3/account/whoami") return json({ user_id: this.user, device_id: "DEV" });
+    const tok = String(auth).replace(/^Bearer /, "");
+    const who = tok === this.token ? { user: this.user, device: "DEV" } : this.tokens.get(tok);
+    if (!who) return json({ errcode: "M_UNKNOWN_TOKEN", error: "Unknown token" }, 401);
+    if (path === "/_matrix/client/v3/account/whoami") return json({ user_id: who.user, device_id: who.device });
     if (path === "/_matrix/client/v3/logout") { this.loggedOut.push(auth); return json({}); }
-    if (path === "/_matrix/client/v3/sync") return json(this.sync(url.searchParams.get("since")));
-    let m = path.match(/^\/_matrix\/client\/v3\/rooms\/([^/]+)\/send\/m\.room\.message\/([^/]+)$/);
+    if (path === "/_matrix/client/v3/sync") return json(this.sync(url.searchParams.get("since"), who));
+    if (path.startsWith("/_matrix/client/v3/keys/") || path.startsWith("/_matrix/client/v3/sendToDevice/")) return json(this.crypto(req.method, path, body, who));
+    let m = path.match(/^\/_matrix\/client\/v3\/rooms\/([^/]+)\/joined_members$/);
+    if (m && req.method === "GET") {
+      const r = this.rooms.get(decodeURIComponent(m[1]));
+      if (!r) return json({ errcode: "M_FORBIDDEN", error: "not in room" }, 403);
+      return json({ joined: Object.fromEntries([...r.members].map(([id, name]) => [id, { display_name: name }])) });
+    }
+    m = path.match(/^\/_matrix\/client\/v3\/rooms\/([^/]+)\/send\/(m\.room\.message|m\.room\.encrypted)\/([^/]+)$/);
     if (m && req.method === "PUT") {
       const room = decodeURIComponent(m[1]);
       if (!this.rooms.has(room)) return json({ errcode: "M_FORBIDDEN", error: "not in room" }, 403);
-      const event = { type: "m.room.message", event_id: `$e${++this.n}`, sender: this.user, origin_server_ts: Date.now(), content: body,
-        unsigned: { transaction_id: decodeURIComponent(m[2]) } };
+      const event = { type: m[2], event_id: `$e${++this.n}`, sender: who.user, origin_server_ts: Date.now(), content: body,
+        unsigned: { transaction_id: decodeURIComponent(m[3]) } };
       this.events.push({ room, event });
       return json({ event_id: event.event_id });
     }
     m = path.match(/^\/_matrix\/client\/v3\/rooms\/([^/]+)\/redact\/([^/]+)\/[^/]+$/);
     if (m && req.method === "PUT") {
-      this.redact(decodeURIComponent(m[1]), this.user, decodeURIComponent(m[2]));
+      this.redact(decodeURIComponent(m[1]), who.user, decodeURIComponent(m[2]));
       return json({ event_id: `$e${this.n}` });
     }
     return json({ errcode: "M_UNRECOGNIZED" }, 404);
   }
 
-  sync(since) {
+  // keys/upload, keys/query, keys/claim, keys/signatures/upload, sendToDevice.
+  crypto(method, path, body, who) {
+    const me = `${who.user}|${who.device}`;
+    const p = path.slice("/_matrix/client/v3/".length);
+    if (p === "keys/upload") {
+      const k = this.keys.get(me) ?? this.keys.set(me, { otks: new Map() }).get(me);
+      if (body.device_keys) {
+        k.device_keys = body.device_keys;
+        // Everyone else hears that this person's devices changed.
+        for (const other of this.tokens.values()) {
+          const id = `${other.user}|${other.device}`;
+          if (id !== me) (this.changed.get(id) ?? this.changed.set(id, new Set()).get(id)).add(who.user);
+        }
+      }
+      for (const [id, key] of Object.entries(body.one_time_keys ?? {})) k.otks.set(id, key);
+      if (body.fallback_keys && Object.keys(body.fallback_keys).length) k.fallback = body.fallback_keys;
+      return { one_time_key_counts: this.otkCounts(me) };
+    }
+    if (p === "keys/query") {
+      const device_keys = {};
+      for (const user of Object.keys(body.device_keys ?? {})) {
+        device_keys[user] = {};
+        for (const [id, k] of this.keys) if (id.startsWith(user + "|") && k.device_keys) device_keys[user][id.split("|")[1]] = k.device_keys;
+      }
+      return { device_keys, failures: {} };
+    }
+    if (p === "keys/claim") {
+      const one_time_keys = {};
+      for (const [user, devices] of Object.entries(body.one_time_keys ?? {})) {
+        for (const device of Object.keys(devices)) {
+          const k = this.keys.get(`${user}|${device}`);
+          if (!k) continue;
+          let found = [...k.otks].find(([id]) => id.startsWith("signed_curve25519:"));
+          if (found) k.otks.delete(found[0]);
+          else found = Object.entries(k.fallback ?? {})[0];
+          if (found) ((one_time_keys[user] ??= {})[device] = { [found[0]]: found[1] });
+        }
+      }
+      return { one_time_keys, failures: {} };
+    }
+    if (p === "keys/signatures/upload") return { failures: {} };
+    const m = p.match(/^sendToDevice\/([^/]+)\/[^/]+$/);
+    if (m && method === "PUT") {
+      for (const [user, devices] of Object.entries(body.messages ?? {})) {
+        for (const [device, content] of Object.entries(devices)) {
+          const targets = device === "*" ? [...this.tokens.values()].filter(t => t.user === user).map(t => t.device) : [device];
+          for (const d of targets) {
+            const id = `${user}|${d}`;
+            (this.inbox.get(id) ?? this.inbox.set(id, []).get(id)).push({ type: decodeURIComponent(m[1]), sender: who.user, content });
+          }
+        }
+      }
+      return {};
+    }
+    return { errcode: "M_UNRECOGNIZED" };
+  }
+
+  otkCounts(id) {
+    const n = [...(this.keys.get(id)?.otks.keys() ?? [])].filter(k => k.startsWith("signed_curve25519:")).length;
+    return { signed_curve25519: n };
+  }
+
+  // Everything that didn't fit in sync(): for a device that has keys here.
+  syncCrypto(who, out) {
+    const id = `${who.user}|${who.device}`;
+    const events = this.inbox.get(id) ?? [];
+    this.inbox.delete(id);
+    if (events.length) out.to_device = { events };
+    const changed = this.changed.get(id);
+    this.changed.delete(id);
+    if (changed?.size) out.device_lists = { changed: [...changed], left: [] };
+    if (this.keys.has(id)) {
+      out.device_one_time_keys_count = this.otkCounts(id);
+      out.device_unused_fallback_key_types = this.keys.get(id).fallback ? ["signed_curve25519"] : [];
+    }
+    return out;
+  }
+
+  sync(since, who) {
     const from = since ? Number(since) : 0;
     const join = {}, leave = {};
     for (const [id, r] of this.rooms) {
@@ -104,6 +209,6 @@ export class FakeMatrix {
       join[id] = { state: { events: state }, timeline: { events: timeline, limited: false },
         summary: { "m.heroes": [...r.members.keys()].filter(k => k !== this.user) } };
     }
-    return { next_batch: String(this.events.length), rooms: { join, leave } };
+    return this.syncCrypto(who, { next_batch: String(this.events.length), rooms: { join, leave } });
   }
 }

@@ -7,21 +7,25 @@
 // Each sync asks for what changed since the last one (/sync with a since
 // token and no waiting), so it fits in one Worker request.
 //
-// End-to-end encrypted rooms can't be read or written here yet: that needs
-// the device's Olm/Megolm keys, which this doesn't have. Their messages show
-// as a note saying so, and sending to them is refused.
+// End-to-end encrypted rooms: the site never holds the keys. A connection
+// made with a password has a session ("device") of its own, and the browser
+// that turns encryption on for it keeps that device's keys (public/chat/e2ee.js,
+// with Matrix's own crypto library). Here, encrypted events are kept as they
+// came, the to-device messages and key counts each sync brings are handed to
+// that browser, and the key requests it makes are passed on (cryptoRequest).
 
 import { randomBytes, hex } from "./crypto.js";
 
 export class ProviderError extends Error {
   // auth: the credentials no longer work, so the connection needs redoing.
-  constructor(message, { auth = false } = {}) { super(message); this.auth = auth; }
+  // refused: the site wouldn't make that request at all.
+  constructor(message, { auth = false, refused = false } = {}) { super(message); this.auth = auth; this.refused = refused; }
 }
 
 const TIMEOUT = 8000;
 // A long message from elsewhere is cut to this many characters.
 const MAX_BODY = 4000;
-const ENCRYPTED_NOTE = "🔒 Encrypted message. This site can't read end-to-end encrypted rooms yet.";
+export const ENCRYPTED_NOTE = "🔒 Encrypted message";
 
 // Only what chat shows: messages, edits and deletions, and the state that
 // names a room. No presence, receipts, typing or account data.
@@ -117,6 +121,17 @@ async function discover(raw) {
 }
 
 const txn = () => "sf" + hex(randomBytes(12));
+
+const SEG = "[^/?#]+";
+const CRYPTO_PATHS = [
+  ["POST", new RegExp(`^keys/(upload|query|claim|signatures/upload)$`)],
+  ["PUT", new RegExp(`^sendToDevice/${SEG}/${SEG}$`)],
+  ["PUT", new RegExp(`^rooms/${SEG}/send/${SEG}/${SEG}$`)],          // verification messages
+  ["GET", new RegExp(`^rooms/${SEG}/joined_members$`)],
+  ["GET", new RegExp(`^room_keys/version$`)],
+  ["GET", new RegExp(`^room_keys/keys\\?version=${SEG}$`)],
+  ["PUT", new RegExp(`^room_keys/keys\\?version=${SEG}$`)],
+];
 const room = id => encodeURIComponent(id);
 
 export const matrix = {
@@ -124,7 +139,7 @@ export const matrix = {
   name: "Matrix",
   help: "Your homeserver (e.g. matrix.org), then either an access token from Element (Settings → Help & About → Access token) "
     + "or your Matrix username and password. A password is used once, to sign in a new session called sintfoap.xyz, and isn't kept. "
-    + "End-to-end encrypted rooms show up, but their messages can't be read or sent here yet.",
+    + "End-to-end encrypted rooms work on the chat page once you turn encryption on there, which needs the username-and-password way.",
   fields: [
     { name: "homeserver", label: "Homeserver", placeholder: "matrix.org", required: true },
     { name: "token", label: "Access token", secret: true, placeholder: "syt_… (or use a username and password)" },
@@ -168,7 +183,38 @@ export const matrix = {
     const rooms = [];
     for (const [id, r] of Object.entries(data.rooms?.join ?? {})) rooms.push(joinedRoom(id, r, creds.user_id));
     for (const id of Object.keys(data.rooms?.leave ?? {})) rooms.push({ id, left: true, events: [] });
-    return { cursor: data.next_batch, rooms };
+    // For the browser holding this device's keys, if any.
+    const crypto = {
+      to_device: data.to_device?.events ?? [],
+      changed: data.device_lists?.changed ?? [], left: data.device_lists?.left ?? [],
+      otk_counts: data.device_one_time_keys_count ?? null, fallback: data.device_unused_fallback_key_types ?? null,
+    };
+    const any = crypto.to_device.length || crypto.changed.length || crypto.left.length || crypto.otk_counts;
+    return { cursor: data.next_batch, rooms, ...(any ? { crypto } : {}) };
+  },
+
+  // Whether this connection can do encryption: only with a session of its
+  // own, since a pasted token's session already has keys, kept in its app.
+  canEncrypt: creds => !!creds.own_device,
+  device: creds => ({ user_id: creds.user_id, device_id: creds.device_id }),
+
+  // An encrypted message or edit, already encrypted by the browser.
+  async sendEncrypted(creds, roomId, content) {
+    const out = await call(creds.base, "PUT", `/_matrix/client/v3/rooms/${room(roomId)}/send/m.room.encrypted/${txn()}`,
+      { token: creds.token, body: content });
+    return out.event_id;
+  },
+
+  // One of the requests the browser's crypto library makes, passed on with
+  // the token. Only the key and to-device endpoints it needs are allowed.
+  async cryptoRequest(creds, method, path, body) {
+    const ok = CRYPTO_PATHS.some(([m, re]) => m === method && re.test(path));
+    if (!ok) throw new ProviderError("that request isn't one the encryption needs", { refused: true });
+    const [p, q] = path.split("?");
+    return call(creds.base, method, "/_matrix/client/v3/" + p, {
+      token: creds.token, body: method === "GET" ? undefined : body ?? {},
+      query: q ? Object.fromEntries(new URLSearchParams(q)) : undefined,
+    });
   },
 
   async send(creds, roomId, text) {
@@ -238,8 +284,13 @@ function joinedRoom(id, r, me) {
       const target = e.redacts ?? c.redacts;
       if (target) out.events.push({ type: "delete", target });
     } else if (e.type === "m.room.encrypted") {
-      out.events.push({ type: "message", id: e.event_id, sender: e.sender, sender_name: who(e.sender), mine: e.sender === me,
-        body: ENCRYPTED_NOTE, at, encrypted: true });
+      // Kept as it came, for the browser with the keys. Edits say what they
+      // replace outside the encryption, as Matrix has it.
+      const raw = JSON.stringify({ type: e.type, content: c, sender: e.sender, event_id: e.event_id, origin_server_ts: e.origin_server_ts, room_id: id });
+      const rel = c["m.relates_to"];
+      if (rel?.rel_type === "m.replace" && rel.event_id) out.events.push({ type: "edit", target: rel.event_id, sender: e.sender, raw, at });
+      else out.events.push({ type: "message", id: e.event_id, sender: e.sender, sender_name: who(e.sender), mine: e.sender === me,
+        body: ENCRYPTED_NOTE, at, encrypted: true, raw });
     } else if (e.type === "m.room.message") {
       const rel = c["m.relates_to"];
       if (rel?.rel_type === "m.replace" && rel.event_id) {

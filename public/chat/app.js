@@ -5,7 +5,10 @@
 // Rooms are open, private (members add each other) or direct messages; each
 // poll also says who else has the room open and who's typing. Bridge rooms
 // come from your connections to other platforms (Matrix, …), listed under
-// each connection; what you send there goes to that platform.
+// each connection; what you send there goes to that platform. Encrypted
+// rooms are decrypted and encrypted here, in this browser (e2ee.js).
+
+import { Vault, textOf, textContent, editContent } from "/chat/e2ee.js";
 
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -23,6 +26,59 @@ let busy = false;         // a poll is in flight
 let editingId = null, editDraft = "";   // the message being edited in place
 let pickerFor = null;     // the message whose reaction picker is open
 let bridges = { allowed: false };   // whether you can connect other platforms, and which
+
+// ── end-to-end encryption ────────────────────────────────────────────────
+// A connection's keys live in the browser that turned encryption on for it:
+// a key of its own making in localStorage (what proves it to the site, and
+// locks the store), and the crypto library's store in IndexedDB.
+
+const vaults = new Map();   // connection id → Promise<Vault>
+const keyName = conn => `sintfoap-e2ee:${conn}`;
+const storedKey = conn => { try { return localStorage.getItem(keyName(conn)); } catch { return null; } };
+let crypto$ = null;         // the library, loaded the first time it's needed (it's large)
+
+function vaultFor(conn, { create = false } = {}) {
+  if (vaults.has(conn)) return vaults.get(conn);
+  let key = storedKey(conn);
+  if (!key && !create) return null;
+  if (!key) {
+    key = [...crypto.getRandomValues(new Uint8Array(32))].map(b => b.toString(16).padStart(2, "0")).join("");
+    try { localStorage.setItem(keyName(conn), key); } catch { throw new Error("this browser won't keep the keys (is it in private mode?)"); }
+  }
+  const made = (async () => {
+    crypto$ ??= import("/chat/vendor/matrix-crypto/index.mjs").then(async lib => { await lib.initAsync(); return lib; });
+    const lib = await crypto$;
+    return Vault.open(lib, { key, store: `sintfoap-e2ee-${conn}`, passphrase: key,
+      post: (op, body) => api("POST", `/connections/${conn}/crypto/${op}`, body) });
+  })();
+  vaults.set(conn, made);
+  made.catch(() => vaults.delete(conn));
+  return made;
+}
+
+// What this browser can do in an encrypted room: "ready", "off" (nobody holds
+// the keys yet), "elsewhere" (another browser does), or "token" (it can't).
+const keysHere = r => !r.can_encrypt ? "token" : storedKey(r.connection) ? "ready" : r.keys_held ? "elsewhere" : "off";
+
+// Decrypts the open room's encrypted messages that haven't been yet (or
+// changed: an edit brings new ones), after taking any keys that arrived.
+async function decryptOpen() {
+  const room = open && rooms.find(r => r.id === open.id);
+  if (!room?.encrypted || keysHere(room) !== "ready") return;
+  const id = open.id, vault = await vaultFor(room.connection);
+  await vault.pump();
+  let changed = false;
+  for (const m of open?.id === id ? open.messages.values() : []) {
+    if (!m.raw || m.shownRaw === m.raw && m.decrypted) continue;
+    const c = await vault.decrypt(m.raw);
+    if (open?.id !== id) return;
+    const note = "🔒 Can't decrypt this one: it was sent before encryption was on here, or its key hasn't arrived yet.";
+    const body = c ? textOf(c, m.author_name) : note;
+    if (m.body !== body || m.shownRaw !== m.raw) { m.body = body; changed = true; }
+    m.decrypted = !!c; m.shownRaw = m.raw;
+  }
+  if (changed) renderLog();
+}
 
 async function api(method, path, body) {
   const res = await fetch("/chat/api" + path, {
@@ -61,7 +117,7 @@ const NETWORK = { matrix: "Matrix" };
 
 function renderRooms() {
   const row = r => `<button data-room="${esc(r.id)}" aria-current="${open?.id === r.id}" title="${esc(r.topic || r.name)}" class="${r.kind}">
-    ${r.kind === "dm" ? `<span class="dot${online.has(r.with) ? " on" : ""}" title="${online.has(r.with) ? "Online" : "Away"}"></span>` : ""}<span class="name">${esc(r.name)}</span>${r.encrypted ? `<span class="e2e" title="End-to-end encrypted: read only here">E2E</span>` : ""}${r.mentions && open?.id !== r.id ? `<span class="n at" title="You were mentioned">@${r.mentions > 1 ? r.mentions : ""}</span>` : ""}${r.unread && open?.id !== r.id ? `<span class="n">${r.unread > 99 ? "99+" : r.unread}</span>` : ""}
+    ${r.kind === "dm" ? `<span class="dot${online.has(r.with) ? " on" : ""}" title="${online.has(r.with) ? "Online" : "Away"}"></span>` : ""}<span class="name">${esc(r.name)}</span>${r.encrypted ? `<span class="e2e" title="End-to-end encrypted${keysHere(r) === "ready" ? ", with the keys in this browser" : ": turn encryption on in the room to read it"}">E2E</span>` : ""}${r.mentions && open?.id !== r.id ? `<span class="n at" title="You were mentioned">@${r.mentions > 1 ? r.mentions : ""}</span>` : ""}${r.unread && open?.id !== r.id ? `<span class="n">${r.unread > 99 ? "99+" : r.unread}</span>` : ""}
     ${r.joined ? "" : `<span class="count">${r.members}</span>`}</button>`;
   const joined = rooms.filter(r => r.joined), others = rooms.filter(r => !r.joined);
   const dms = joined.filter(r => r.kind === "dm");
@@ -111,6 +167,7 @@ async function openRoom(id) {
   renderLog({ toBottom: true });
   renderPresence();
   renderRooms();
+  decryptOpen().catch(err => toast(err.message));
   if (open.joined && matchMedia("(min-width: 761px)").matches) $("#text")?.focus();
 }
 
@@ -118,7 +175,7 @@ function renderRoomShell(room) {
   $("#room").innerHTML = `
     <header class="room-head">
       <button class="link back" id="back" aria-label="Back to rooms">←</button>
-      <div class="title"><h2 class="${room.kind}">${esc(room.name)}</h2>${room.kind === "bridge" ? `<p>On ${esc(NETWORK[room.provider] || room.provider)} as ${esc(room.via)}${room.encrypted ? " · end-to-end encrypted, so read only here" : ""}</p>` : room.kind === "dm" ? `<p>Direct message with @${esc(room.with || "")}${online.has(room.with) ? " · online" : ""}</p>` : room.topic ? `<p>${esc(room.topic)}</p>` : room.kind === "private" ? "<p>Private: only members can see this room.</p>" : ""}</div>
+      <div class="title"><h2 class="${room.kind}">${esc(room.name)}</h2>${room.kind === "bridge" ? `<p>On ${esc(NETWORK[room.provider] || room.provider)} as ${esc(room.via)}${room.encrypted ? (keysHere(room) === "ready" ? " · encrypted, keys in this browser" : " · end-to-end encrypted") : ""}</p>` : room.kind === "dm" ? `<p>Direct message with @${esc(room.with || "")}${online.has(room.with) ? " · online" : ""}</p>` : room.topic ? `<p>${esc(room.topic)}</p>` : room.kind === "private" ? "<p>Private: only members can see this room.</p>" : ""}</div>
       <button class="link" id="search-open" aria-label="Search this room">Search</button>
       ${room.kind === "dm" || room.kind === "bridge" ? "" : `<button class="link" id="show-members">${room.members} member${room.members === 1 ? "" : "s"}</button>`}
       ${room.kind === "private" && open.joined ? `<button class="link" id="add-people">Add people</button>` : ""}
@@ -132,8 +189,7 @@ function renderRoomShell(room) {
     </form>
     <div class="log" id="log"></div>
     <div class="presence" id="presence" aria-live="polite"></div>
-    ${room.encrypted
-      ? `<div class="joinbar">This room is end-to-end encrypted, which the site can't send to yet. Answer it in your Matrix app.</div>`
+    ${room.encrypted && keysHere(room) !== "ready" ? encryptionBar(room)
       : open.joined
       ? `<form class="composer" id="composer">
           <span class="prompt" aria-hidden="true">&gt;</span>
@@ -142,6 +198,15 @@ function renderRoomShell(room) {
           <ul class="suggest" id="suggest" role="listbox" aria-label="People to mention" hidden></ul>
         </form>`
       : `<div class="joinbar">You're looking at this room. Join it to post. <button class="btn" id="join">Join room</button></div>`}`;
+}
+
+function encryptionBar(room) {
+  const why = {
+    token: "This room is end-to-end encrypted. To read and send here, remove this connection and connect again with your Matrix username and password: that gives the site a session of its own, whose keys stay in your browser. (A pasted access token's session keeps its keys in its own app.)",
+    elsewhere: "This room is end-to-end encrypted, and its keys are in another browser where you turned encryption on. Use that one, or remove the connection and connect again to move them here.",
+    off: "This room is end-to-end encrypted. Turn encryption on to read and send here: the keys are made and kept in this browser, never on the site.",
+  }[keysHere(room)];
+  return `<div class="joinbar">${esc(why)}${keysHere(room) === "off" ? ` <button class="btn" id="e2ee-on">Turn on encryption here</button>` : ""}</div>`;
 }
 
 const time = t => new Date(t * 1000).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
@@ -187,7 +252,7 @@ function renderLog({ toBottom = false, keepFrom = null } = {}) {
     const d = day(m.created_at);
     if (d !== lastDay) { html += `<div class="day">${esc(d)}</div>`; lastDay = d; prev = null; }
     const first = !prev || prev.author !== m.author || m.created_at - prev.created_at > GROUP_SECONDS;
-    html += `<div class="msg${first ? " first" : ""}${m.mine ? " mine" : ""}${m.pending ? " pending" : ""}${m.mentions_me ? " ping" : ""}${m.encrypted ? " locked" : ""}" data-id="${m.id}">
+    html += `<div class="msg${first ? " first" : ""}${m.mine ? " mine" : ""}${m.pending ? " pending" : ""}${m.mentions_me ? " ping" : ""}${m.encrypted && !m.decrypted ? " locked" : ""}" data-id="${m.id}">
       ${first ? `<div class="who">${esc(m.author_name)}<span class="at">${time(m.created_at)}</span></div>` : ""}
       ${messageHtml(m)}
     </div>`;
@@ -217,11 +282,14 @@ async function pollRoom() {
     if (open.bridge && data.messages.length) loadRooms().catch(() => {});
     const people = JSON.stringify([data.here, data.typing]);
     if (people !== JSON.stringify([open.here, open.typing])) { open.here = data.here || []; open.typing = data.typing || []; renderPresence(); }
-    if (!data.messages.length) return;
-    for (const m of data.messages) open.messages.set(m.id, m);
-    if (editingId && open.messages.get(editingId)?.deleted) editingId = null;
-    open.seq = Math.max(open.seq, data.seq);
-    renderLog();
+    if (data.messages.length) {
+      for (const m of data.messages) open.messages.set(m.id, m);
+      if (editingId && open.messages.get(editingId)?.deleted) editingId = null;
+      open.seq = Math.max(open.seq, data.seq);
+      renderLog();
+    }
+    // Keys can arrive without a message, for ones that couldn't be read yet.
+    await decryptOpen();
   } catch (e) {
     if (e.status === 404) { toast("That room was deleted."); await loadRooms().catch(() => {}); closeRoom(); }
   } finally { busy = false; }
@@ -235,6 +303,14 @@ $("#room").addEventListener("click", async e => {
     else if (t.id === "leave") {
       if (!confirm("Leave this room? You can join again any time.")) return;
       await api("POST", `/rooms/${open.id}/leave`); await loadRooms(); await openRoom(open.id);
+    }
+    else if (t.id === "e2ee-on") {
+      t.disabled = true; t.textContent = "Making keys…";
+      const room = rooms.find(r => r.id === open.id);
+      try { await vaultFor(room.connection, { create: true }); }
+      catch (err) { try { localStorage.removeItem(keyName(room.connection)); } catch { /* nothing kept */ } throw err; }
+      toast("Encryption is on in this browser. Messages sent from now on can be read here.");
+      await loadRooms(); open = null; await openRoom(room.id);
     }
     else if (t.id === "edit-room") editRoom(rooms.find(r => r.id === open.id));
     else if (t.id === "show-members") showMembers();
@@ -289,9 +365,12 @@ async function saveEdit(form) {
   const id = Number(form.dataset.edit), body = form.querySelector("textarea").value.trim();
   if (!body) return toast("A message can't be empty. Delete it instead.");
   try {
-    const m = await api("PATCH", `/rooms/${open.id}/messages/${id}`, { body });
+    const old = open.messages.get(id), room = rooms.find(r => r.id === open.id);
+    const m = await api("PATCH", `/rooms/${open.id}/messages/${id}`, old?.raw && room?.encrypted
+      ? { encrypted: await (await vaultFor(room.connection)).encrypt(room.ext_room, editContent(old.ext_id, body)) } : { body });
     open.messages.set(m.id, m);
     stopEdit();
+    decryptOpen().catch(() => {});
   } catch (err) { toast(err.message); }
 }
 
@@ -311,9 +390,12 @@ $("#room").addEventListener("submit", async e => {
   box.value = ""; grow(box);
   renderLog({ toBottom: true });
   try {
-    const m = await api("POST", `/rooms/${id}/messages`, { body });
+    const room = rooms.find(r => r.id === id);
+    const m = await api("POST", `/rooms/${id}/messages`, room?.encrypted
+      ? { encrypted: await (await vaultFor(room.connection)).encrypt(room.ext_room, textContent(body)) } : { body });
     if (open?.id !== id) return;
     open.messages.delete(temp.id);
+    if (m.raw) Object.assign(m, { body, decrypted: true, shownRaw: m.raw });
     open.messages.set(m.id, m);
     renderLog({ toBottom: true });
   } catch (err) {
@@ -593,11 +675,14 @@ async function showConnections() {
   $("#connections").innerHTML = list.map(c => `<li>
       <span class="dot${c.status === "ok" ? " on" : ""}"></span>
       <span class="what"><b>${esc(c.network)}</b> ${esc(c.label)}
-        <span>${c.status === "ok" ? `${c.rooms} room${c.rooms === 1 ? "" : "s"}${c.synced_at ? ` · synced ${esc(ago(c.synced_at))}` : ""}` : ""}${c.error ? `<span class="bad">${esc(c.error)}</span>` : ""}</span></span>
+        <span>${c.status === "ok" ? `${c.rooms} room${c.rooms === 1 ? "" : "s"}${c.synced_at ? ` · synced ${esc(ago(c.synced_at))}` : ""} · ${esc(encryptionNote(c))}` : ""}${c.error ? `<span class="bad">${esc(c.error)}</span>` : ""}</span></span>
       <button type="button" class="link" data-resync="${esc(c.id)}">Sync now</button>
       <button type="button" class="link remove" data-disconnect="${esc(c.id)}" data-label="${esc(c.label)}">Remove</button></li>`).join("")
     || `<li class="none">Nothing connected yet.</li>`;
 }
+// Where a connection's encryption keys are, in a few words.
+const encryptionNote = c => !c.can_encrypt ? "encrypted rooms need a password sign-in"
+  : storedKey(c.id) ? "encryption keys in this browser" : c.keys_held ? "encryption keys in another browser" : "encryption not turned on yet";
 function drawProvider() {
   const sel = $("#connect-provider"), providers = bridges.providers || [];
   if (sel.options.length !== providers.length) sel.innerHTML = providers.map(p => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join("");
