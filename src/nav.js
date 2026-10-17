@@ -15,8 +15,8 @@ export function siteNav(user) {
   const app = a => ({ id: a.id, label: a.name, href: a.href, icon: a.icon, key: a.key });
   return [
     ...(ready ? [{ id: "home", label: "Home", href: "/dashboard", icon: "home", key: "h", group: "site" }] : []),
-    ...APPS.filter(a => a.id !== "admin" && can(a)).map(a => ({ ...app(a), group: "site" })),
+    ...APPS.filter(a => a.group !== "account" && can(a)).map(a => ({ ...app(a), group: "site" })),
     { id: "account", label: "Settings", href: "/account", icon: "account", key: "s", group: "account" },
-    ...APPS.filter(a => a.id === "admin" && can(a)).map(a => ({ ...app(a), group: "account" })),
+    ...APPS.filter(a => a.group === "account" && can(a)).map(a => ({ ...app(a), group: "account" })),
   ];
 }

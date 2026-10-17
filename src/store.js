@@ -303,7 +303,7 @@ export const SANDBOX_CSP = [
 // scripts, nothing loaded from elsewhere except fonts.
 const PAGE_CSP = [
   "default-src 'none'", "script-src 'self'", "connect-src 'self'", "frame-src 'self'", "style-src 'unsafe-inline' https://fonts.googleapis.com",
-  "font-src https://fonts.gstatic.com", "img-src 'self' data:", "form-action 'self'", "frame-ancestors 'none'", "base-uri 'none'",
+  "font-src https://fonts.gstatic.com", "img-src 'self' data:", "manifest-src 'self'", "form-action 'self'", "frame-ancestors 'none'", "base-uri 'none'",
 ].join("; ");
 
 export async function plugins(request, env, user, pathname) {

@@ -7,7 +7,7 @@ export const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;"
 
 const CSP = [
   "default-src 'none'", "script-src 'self'", "style-src 'unsafe-inline' https://fonts.googleapis.com", "font-src https://fonts.gstatic.com",
-  "img-src 'self' data:", "form-action 'self'", "frame-ancestors 'none'", "base-uri 'none'",
+  "img-src 'self' data:", "manifest-src 'self'", "form-action 'self'", "frame-ancestors 'none'", "base-uri 'none'",
 ].join("; ");
 
 export function html(body, { status = 200, headers = {} } = {}) {
@@ -30,6 +30,7 @@ const ICON = {
   account: `<circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/>`,
   admin: `<path d="M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6z"/><path d="m9 12 2 2 4-4"/>`,
   chat: `<path d="M4 5h16v11H9l-5 4z"/><path d="M8 9.5h8M8 12.5h5"/>`,
+  bell: `<path d="M6 16V11a6 6 0 0 1 12 0v5l2 2H4z"/><path d="M10 20.5a2 2 0 0 0 4 0"/>`,
   out: `<path d="M15 4h4v16h-4M10 8l-4 4 4 4M6 12h10"/>`,
 };
 const icon = name => `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON[name]}</svg>`;
@@ -213,11 +214,15 @@ ${SHELL_CSS}
   .admin-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 12px; margin-bottom: 18px; }
 `;
 
+// The web app manifest and home-screen icon, so the site can be added to a
+// phone's home screen (on iPhone, that's what lets it get notifications).
+export const APP_HEAD = `<link rel="manifest" href="/site.webmanifest"><link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">`;
+
 const FONTS = `<link rel="preconnect" href="https://fonts.googleapis.com"><link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">`;
 
 // The rail, from siteNav(): the same on every signed-in page. `here` is the
 // id of the current page's entry ("home", "drift", "plugins", "chat",
-// "account", "admin").
+// "notifications", "account", "admin").
 export function rail(user, here) {
   const nav = siteNav(user);
   const link = n => `<a class="go" href="${esc(n.href)}" data-key="${n.key}" aria-label="${esc(n.label)}"${here === n.id ? ` aria-current="page"` : ""}>${icon(n.icon)}<span>${esc(n.label)}</span><kbd aria-hidden="true">g ${n.key}</kbd></a>`;
@@ -245,7 +250,7 @@ export async function withRail(res, user, here) {
 
 export function page(title, body, { user, wide = false, here = "" } = {}) {
   const head = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${esc(title)} · sintfoap.xyz</title><meta name="robots" content="noindex">${FONTS}
+<title>${esc(title)} · sintfoap.xyz</title><meta name="robots" content="noindex">${FONTS}${APP_HEAD}
 <style>${STYLE}</style></head><body>`;
   if (!user) return `${head}<div class="solo"><a class="crest" href="/" aria-label="sintfoap.xyz home">${CREST}<span>SINTFOAP.XYZ</span></a><main>${body}</main></div></body></html>`;
   return `${head}<div class="shell">${rail(user, here)}<main class="page${wide ? " wide" : ""}">${body}</main></div>
