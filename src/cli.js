@@ -23,7 +23,7 @@
 
 import { db, now } from "./db.js";
 import { randomBytes, randomToken, sha256 } from "./crypto.js";
-import { createSession, currentSession, clientIp, getUser, recoveryCodesLeft, endUserSessions, cleanDisplayName, AuthError, APPS } from "./auth.js";
+import { createSession, currentSession, clientIp, getUser, recoveryCodesLeft, endUserSessions, cleanDisplayName, AuthError, PLACES } from "./auth.js";
 import { mailReady } from "./mail.js";
 import { sameOrigin } from "./account.js";
 import { agenda, visitorNow } from "./drift.js";
@@ -155,7 +155,7 @@ async function dashboard(request, env) {
   return json({
     site: origin,
     user: { username: user.username, display_name: user.display_name, admin: user.areas.has("admin") },
-    apps: setup ? [] : APPS.filter(a => user.areas.has(a.area)).map(a => ({ name: a.name, blurb: a.blurb, url: origin + a.href })),
+    apps: setup ? [] : PLACES.filter(a => user.areas.has(a.area)).map(a => ({ name: a.name, blurb: a.blurb, url: origin + a.href })),
     // The site's menu, the same one the web rail shows (src/nav.js): what the
     // terminal offers and which "g" letters work, in order.
     nav: siteNav(user).map(n => ({ id: n.id, label: n.label, url: origin + n.href, key: n.key, group: n.group })),

@@ -15,11 +15,17 @@
 // changed since seq N" is one indexed query and catches all of them. Polling
 // also records that you have the room open, which is how others see who's
 // here and who's typing.
+//
+// Bridge rooms are rooms on other platforms (Matrix, …) that someone brought
+// in through a connection (src/bridges.js). Only that person is in them and
+// sees them. Posting, editing and deleting there go to the platform first,
+// and syncs bring the platform's changes in as ordinary changes to the room.
 
 import { withRail } from "./pages.js";
 import { db, now } from "./db.js";
 import { sameOrigin } from "./account.js";
 import { randomBytes, hex, sha256 } from "./crypto.js";
+import { canBridge, bridgeInfo, listConnections, addConnection, removeConnection, syncConnection, syncAll, syncRoom, onPlatform } from "./bridges.js";
 
 export class BadRequest extends Error {}
 const fail = msg => { throw new BadRequest(msg); };
@@ -79,12 +85,14 @@ const membership = (d, room, userId) =>
   d.prepare("SELECT read_seq FROM chat_members WHERE room = ? AND user_id = ?").bind(room, userId).first();
 
 // A room and your membership, or {} if there's no such room as far as you
-// can tell: private rooms and DMs you aren't in.
+// can tell: private rooms, DMs and bridge rooms you aren't in, and bridge
+// rooms once connections are turned off for you.
 async function load(d, user, roomId) {
   const room = await getRoom(d, roomId);
   if (!room) return {};
   const member = await membership(d, room.id, user.id);
   if (room.kind !== "open" && !member) return {};
+  if (room.kind === "bridge" && !canBridge(user)) return {};
   return { room, member };
 }
 
@@ -94,16 +102,18 @@ const PEOPLE = `SELECT u.id, u.username, u.display_name FROM users u
 const person = (d, username) =>
   d.prepare(`${PEOPLE} AND u.username = ?`).bind(String(username ?? "").trim().toLowerCase().replace(/^@/, "")).first();
 
-const canManage = (room, user) => room.owner === user.id || user.areas.has("admin");
+const canManage = (room, user) => room.kind !== "bridge" && (room.owner === user.id || user.areas.has("admin"));
+const bridged = room => room.kind === "bridge";
 
 // Every room, newest activity first, with what this person needs to list it.
 export async function listRooms(env, user) {
   const d = await db(env);
   const { results } = await d.prepare(`
-    SELECT r.id, r.name, r.topic, r.owner, r.seq, r.created_at, r.last_at, r.kind,
+    SELECT r.id, r.name, r.topic, r.owner, r.seq, r.created_at, r.last_at, r.kind, r.connection, r.encrypted,
            (SELECT u.display_name || char(31) || u.username FROM chat_members o JOIN users u ON u.id = o.user_id
               WHERE r.kind = 'dm' AND o.room = r.id AND o.user_id != ?) AS dm_with,
            (SELECT display_name FROM users WHERE users.id = r.owner) AS owner_name,
+           c.provider, c.label AS via,
            (SELECT COUNT(*) FROM chat_members m WHERE m.room = r.id) AS members,
            me.read_seq,
            (SELECT COUNT(*) FROM chat_messages x WHERE me.read_seq IS NOT NULL AND x.room = r.id
@@ -112,8 +122,9 @@ export async function listRooms(env, user) {
               WHERE me.read_seq IS NOT NULL AND mm.user_id = ? AND x.room = r.id
               AND COALESCE(x.posted_seq, x.seq) > me.read_seq AND x.deleted = 0) AS mentions
     FROM chat_rooms r LEFT JOIN chat_members me ON me.room = r.id AND me.user_id = ?
-    WHERE r.kind = 'open' OR me.user_id IS NOT NULL
-    ORDER BY r.last_at DESC, r.id`).bind(user.id, user.id, user.id, user.id).all();
+      LEFT JOIN chat_connections c ON c.id = r.connection
+    WHERE (r.kind = 'open' OR me.user_id IS NOT NULL) AND (r.kind != 'bridge' OR ?)
+    ORDER BY r.last_at DESC, r.id`).bind(user.id, user.id, user.id, user.id, canBridge(user) ? 1 : 0).all();
   return results.map(r => roomOut(r, user, r.read_seq != null));
 }
 
@@ -125,7 +136,9 @@ function roomOut(r, user, joined) {
     id: r.id, kind, name: kind === "dm" ? withName : r.name, topic: r.topic, owner_name: r.owner_name ?? null, members: r.members ?? 0,
     created_at: r.created_at, last_at: r.last_at, seq: r.seq, ...(kind === "dm" ? { with: withUser || null } : {}),
     joined, unread: joined ? r.unread ?? 0 : 0, mentions: joined ? r.mentions ?? 0 : 0,
-    manage: kind !== "dm" && canManage(r, user),
+    manage: kind !== "dm" && canManage({ ...r, kind }, user),
+    // Which connection a bridge room comes through, and whether it can be written to.
+    ...(kind === "bridge" ? { provider: r.provider, connection: r.connection, via: r.via, encrypted: !!r.encrypted } : {}),
   };
 }
 
@@ -133,18 +146,23 @@ async function oneRoom(env, user, id) {
   return (await listRooms(env, user)).find(r => r.id === id) ?? null;
 }
 
-const MESSAGE = `SELECT m.id, m.body, m.deleted, m.seq, m.created_at, m.edited_at, m.user_id, u.username, u.display_name
+const MESSAGE = `SELECT m.id, m.body, m.deleted, m.seq, m.created_at, m.edited_at, m.user_id, u.username, u.display_name,
+    m.ext_id, m.ext_sender, m.ext_name, m.encrypted
   FROM chat_messages m LEFT JOIN users u ON u.id = m.user_id`;
 
 function messageOut(m, user, room, reactions = []) {
   const mine = m.user_id === user.id;
+  // Someone on the other platform: named as they are there.
+  const outside = !m.user_id && m.ext_sender;
+  const locked = !!m.encrypted;
   return {
     id: m.id, seq: m.seq, created_at: m.created_at, edited_at: m.deleted ? null : m.edited_at ?? null,
     deleted: !!m.deleted, body: m.deleted ? "" : m.body,
-    author: m.username ?? null, author_name: m.display_name ?? "Deleted account",
-    mine, can_edit: !m.deleted && mine, can_delete: !m.deleted && (mine || canManage(room, user)),
-    mentions_me: !m.deleted && !mine && mentioned(m.body).includes(user.username),
+    author: outside ? m.ext_sender : m.username ?? null, author_name: outside ? m.ext_name || m.ext_sender : m.display_name ?? "Deleted account",
+    mine, can_edit: !m.deleted && mine && !locked, can_delete: !m.deleted && (mine || canManage(room, user)),
+    mentions_me: !m.deleted && !mine && !bridged(room) && mentioned(m.body).includes(user.username),
     reactions: m.deleted ? [] : reactions,
+    ...(bridged(room) ? { external: !!outside, encrypted: locked } : {}),
   };
 }
 
@@ -187,8 +205,14 @@ function mentionStatements(d, user, messageIdSql, binds, text) {
 // Reading as a member also marks the room read.
 export async function messages(env, user, roomId, { since, before } = {}) {
   const d = await db(env);
-  const { room, member } = await load(d, user, roomId);
+  let { room, member } = await load(d, user, roomId);
   if (!room) return null;
+  if (bridged(room)) {
+    // Bring in what's new on the platform first; it may have renamed or left the room.
+    await syncRoom(env, user, room);
+    ({ room, member } = await load(d, user, roomId));
+    if (!room) return null;
+  }
   let rows, more = false;
   if (since != null) {
     ({ results: rows } = await d.prepare(`${MESSAGE} WHERE m.room = ? AND m.seq > ? ORDER BY m.id LIMIT 500`).bind(room.id, since).all());
@@ -268,6 +292,7 @@ export async function typing(env, user, roomId) {
   const { room, member } = await load(d, user, roomId);
   if (!room) return null;
   if (!member) return { forbidden: "join the room to post in it" };
+  if (bridged(room)) return { typing: false };     // nobody else here to tell
   const t = now();
   await d.prepare(`INSERT INTO chat_presence (room, user_id, seen_at, typing_at) VALUES (?, ?, ?, ?)
     ON CONFLICT (room, user_id) DO UPDATE SET seen_at = excluded.seen_at, typing_at = excluded.typing_at`)
@@ -327,6 +352,7 @@ export async function addMember(env, user, roomId, body) {
   if (!room) return null;
   if (room.kind === "open") fail("anyone can join an open room; there's no need to add them");
   if (room.kind === "dm") fail("a direct message is just the two of you; make a private room for more people");
+  if (bridged(room)) fail("people are added to this room on its own platform");
   if (!member) return { forbidden: "join the room first" };
   const other = await person(d, body.username);
   if (!other) fail("there's no one here with that username");
@@ -357,6 +383,7 @@ export async function updateRoom(env, user, roomId, body) {
   const { room } = await load(d, user, roomId);
   if (!room) return null;
   if (room.kind === "dm") return { forbidden: "direct messages don't have a name or topic" };
+  if (bridged(room)) return { forbidden: "rename this room on its own platform" };
   if (!canManage(room, user)) return { forbidden: "only the room's owner can change it" };
   const { name, topic } = roomFields(body, room);
   if (room.kind === "open" && name.toLowerCase() !== room.name.toLowerCase() && await openNameTaken(d, name, room.id)) {
@@ -371,6 +398,7 @@ export async function deleteRoom(env, user, roomId, { force = false } = {}) {
   const room = force ? await getRoom(d, roomId) : (await load(d, user, roomId)).room;
   if (!room) return null;
   if (!force && room.kind === "dm") return { forbidden: "direct messages can't be deleted" };
+  if (!force && bridged(room)) return { forbidden: "rooms from a connection go when the connection is removed" };
   if (!force && !canManage(room, user)) return { forbidden: "only the room's owner can delete it" };
   await d.batch([
     d.prepare("DELETE FROM chat_presence WHERE room = ?").bind(room.id),
@@ -398,6 +426,7 @@ export async function leave(env, user, roomId) {
   const { room } = await load(d, user, roomId);
   if (!room) return null;
   if (room.kind === "dm") return { forbidden: "you can't leave a direct message" };
+  if (bridged(room)) return { forbidden: "leave this room on its own platform" };
   await d.batch([
     d.prepare("DELETE FROM chat_members WHERE room = ? AND user_id = ?").bind(room.id, user.id),
     d.prepare("DELETE FROM chat_presence WHERE room = ? AND user_id = ?").bind(room.id, user.id),
@@ -424,6 +453,7 @@ export async function post(env, user, roomId, body) {
   const t = now();
   const { n } = await d.prepare("SELECT COUNT(*) AS n FROM chat_messages WHERE user_id = ? AND created_at > ?").bind(user.id, t - RATE_WINDOW).first();
   if (n >= RATE) return { slow: "you're sending messages too quickly; wait a few seconds" };
+  if (bridged(room)) return postBridged(env, d, user, room, text);
   // One transaction: take the room's next seq and give it to the new message.
   const newest = "SELECT id FROM chat_messages WHERE room = ? AND seq = (SELECT seq FROM chat_rooms WHERE id = ?)";
   await d.batch([
@@ -440,16 +470,42 @@ export async function post(env, user, roomId, body) {
   return messageOut(m, user, room);
 }
 
+// Sends to the platform, then keeps the message here under the id it got
+// there, so the sync that brings it back finds it already in place.
+async function postBridged(env, d, user, room, text) {
+  if (room.encrypted) return { forbidden: "this room is end-to-end encrypted, and the site can't send encrypted messages yet" };
+  const sent = await onPlatform(env, d, user, room, async (p, creds) => ({ id: await p.send(creds, room.ext_id, text), sender: creds.user_id }));
+  if (sent.error) return { failed: sent.error };
+  const t = now();
+  await d.batch([
+    d.prepare("UPDATE chat_rooms SET seq = seq + 1, last_at = ? WHERE id = ?").bind(t, room.id),
+    d.prepare(`INSERT OR IGNORE INTO chat_messages (room, user_id, body, seq, posted_seq, created_at, ext_id, ext_sender, ext_name)
+      SELECT id, ?, ?, seq, seq, ?, ?, ?, ? FROM chat_rooms WHERE id = ?`).bind(user.id, text, t, sent.ok.id, sent.ok.sender, user.display_name, room.id),
+    d.prepare("UPDATE chat_members SET read_seq = (SELECT seq FROM chat_rooms WHERE id = ?) WHERE room = ? AND user_id = ?").bind(room.id, room.id, user.id),
+  ]);
+  const m = await d.prepare(`${MESSAGE} WHERE m.room = ? AND m.ext_id = ?`).bind(room.id, sent.ok.id).first();
+  return messageOut(m, user, room);
+}
+
 // Only the author edits a message. Mentions follow the new text.
 export async function editMessage(env, user, roomId, messageId, body) {
   const text = messageText(body);
   const d = await db(env);
   const { room } = await load(d, user, roomId);
   if (!room) return null;
-  const m = await d.prepare("SELECT user_id, deleted, body FROM chat_messages WHERE id = ? AND room = ?").bind(messageId, room.id).first();
+  const m = await d.prepare("SELECT user_id, deleted, body, ext_id, encrypted FROM chat_messages WHERE id = ? AND room = ?").bind(messageId, room.id).first();
   if (!m || m.deleted) return null;
   if (m.user_id !== user.id) return { forbidden: "you can only edit your own messages" };
-  if (m.body !== text) {
+  if (bridged(room) && m.body !== text) {
+    if (m.encrypted || !m.ext_id) return { forbidden: "this message can't be edited from here" };
+    const done = await onPlatform(env, d, user, room, (p, creds) => p.edit(creds, room.ext_id, m.ext_id, text));
+    if (done.error) return { failed: done.error };
+    await d.batch([
+      d.prepare("UPDATE chat_rooms SET seq = seq + 1 WHERE id = ?").bind(room.id),
+      d.prepare("UPDATE chat_messages SET body = ?, edited_at = ?, seq = (SELECT seq FROM chat_rooms WHERE id = ?) WHERE id = ?")
+        .bind(text, now(), room.id, messageId),
+    ]);
+  } else if (m.body !== text) {
     await d.batch([
       d.prepare("UPDATE chat_rooms SET seq = seq + 1 WHERE id = ?").bind(room.id),
       d.prepare("UPDATE chat_messages SET body = ?, edited_at = ?, seq = (SELECT seq FROM chat_rooms WHERE id = ?) WHERE id = ?")
@@ -473,6 +529,7 @@ export async function react(env, user, roomId, messageId, body) {
   const m = await d.prepare("SELECT deleted FROM chat_messages WHERE id = ? AND room = ?").bind(messageId, room.id).first();
   if (!m || m.deleted) return null;
   if (!member) return { forbidden: "join the room to react in it" };
+  if (bridged(room)) return { forbidden: "reactions aren't sent to other platforms yet" };
   const had = await d.prepare("SELECT 1 AS x FROM chat_reactions WHERE message = ? AND user_id = ? AND emoji = ?").bind(messageId, user.id, body.emoji).first();
   if (!!had !== body.on) {
     await d.batch([
@@ -490,9 +547,13 @@ export async function deleteMessage(env, user, roomId, messageId) {
   const d = await db(env);
   const { room } = await load(d, user, roomId);
   if (!room) return null;
-  const m = await d.prepare("SELECT user_id, deleted FROM chat_messages WHERE id = ? AND room = ?").bind(messageId, room.id).first();
+  const m = await d.prepare("SELECT user_id, deleted, ext_id FROM chat_messages WHERE id = ? AND room = ?").bind(messageId, room.id).first();
   if (!m || m.deleted) return null;
   if (m.user_id !== user.id && !canManage(room, user)) return { forbidden: "you can only delete your own messages" };
+  if (bridged(room) && m.ext_id) {
+    const done = await onPlatform(env, d, user, room, (p, creds) => p.remove(creds, room.ext_id, m.ext_id));
+    if (done.error) return { failed: done.error };
+  }
   await d.batch([
     d.prepare("UPDATE chat_rooms SET seq = seq + 1 WHERE id = ?").bind(room.id),
     d.prepare("UPDATE chat_messages SET deleted = 1, body = '', seq = (SELECT seq FROM chat_rooms WHERE id = ?) WHERE id = ?").bind(room.id, messageId),
@@ -521,8 +582,12 @@ export async function deleteMessage(env, user, roomId, messageId) {
 //   PATCH  /chat/api/rooms/<id>/messages/<message id>   {body}   (its author)
 //   DELETE /chat/api/rooms/<id>/messages/<message id>
 //   POST   /chat/api/rooms/<id>/messages/<message id>/reactions   {emoji, on}   (members)
+//   GET    /chat/api/connections                    your connections to other platforms   (with Chat connections on)
+//   POST   /chat/api/connections                    {provider, ...its fields} → a new connection, synced once
+//   DELETE /chat/api/connections/<id>               the connection and its rooms
+//   POST   /chat/api/connections/<id>/sync          sync it now, and try again if it had stopped working
 
-const ROUTE = /^\/chat\/api\/(state|people|dms|rooms)(?:\/([^/]+)(?:\/(join|leave|members|messages|search|typing)(?:\/([^/]+)(?:\/(reactions))?)?)?)?\/?$/;
+const ROUTE = /^\/chat\/api\/(state|people|dms|rooms|connections)(?:\/([^/]+)(?:\/(join|leave|members|messages|search|typing|sync)(?:\/([^/]+)(?:\/(reactions))?)?)?)?\/?$/;
 
 // Messages are shown as text, never as HTML, and the page loads nothing from
 // elsewhere except fonts.
@@ -559,17 +624,39 @@ export async function chat(request, env, user, pathname) {
       !out ? notFound()
       : out.forbidden ? json({ error: out.forbidden }, 403)
       : out.slow ? json({ error: out.slow }, 429)
+      // The other platform refused or couldn't be reached.
+      : out.failed ? json({ error: out.failed }, 502)
+      : out.unavailable ? json({ error: out.unavailable }, 503)
       : json(out, status);
 
     if (kind === "state") {
       if (id) return notFound();
       if (method !== "GET") return notAllowed();
+      if (canBridge(user)) await syncAll(env, user);
       return json({
         user: { username: user.username, name: user.display_name, admin: user.areas.has("admin") },
         rooms: await listRooms(env, user),
         online: await onlineNow(await db(env)),
         reactions: REACTIONS,
+        bridges: bridgeInfo(env, user),
       });
+    }
+    if (kind === "connections") {
+      if (!canBridge(user)) return json({ error: "connections to other platforms aren't turned on for your account" }, 403);
+      if (!id) {
+        if (method === "GET") return json(await listConnections(env, user));
+        return method === "POST" ? reply(await addConnection(env, user, await readJson(request), fail), 201) : notAllowed();
+      }
+      if (action || extra || (sub && sub !== "sync")) return notFound();
+      if (sub) {
+        if (method !== "POST") return notAllowed();
+        const d = await db(env);
+        const conn = await d.prepare("SELECT * FROM chat_connections WHERE id = ? AND user_id = ?").bind(id, user.id).first();
+        if (!conn) return notFound();
+        await syncConnection(env, d, conn, { force: true });
+        return json((await listConnections(env, user)).find(c => c.id === id));
+      }
+      return method === "DELETE" ? reply(await removeConnection(env, user, id, deleteRoom)) : notAllowed();
     }
     if (kind === "people") {
       if (id) return notFound();
@@ -588,7 +675,7 @@ export async function chat(request, env, user, pathname) {
       if (method === "DELETE") return reply(await deleteRoom(env, user, id));
       return notAllowed();
     }
-    if (action && sub !== "messages") return notFound();
+    if ((action && sub !== "messages") || sub === "sync") return notFound();
     if (sub === "join" || sub === "leave" || sub === "typing") {
       if (extra) return notFound();
       if (method !== "POST") return notAllowed();

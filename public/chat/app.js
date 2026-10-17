@@ -3,7 +3,9 @@
 // the open room often, the room list (for unread counts) less often.
 // Messages can be edited by their author, reacted to, and can @mention people.
 // Rooms are open, private (members add each other) or direct messages; each
-// poll also says who else has the room open and who's typing.
+// poll also says who else has the room open and who's typing. Bridge rooms
+// come from your connections to other platforms (Matrix, …), listed under
+// each connection; what you send there goes to that platform.
 
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -20,6 +22,7 @@ let open = null;          // { id, seq, more, joined, messages: Map(id → messa
 let busy = false;         // a poll is in flight
 let editingId = null, editDraft = "";   // the message being edited in place
 let pickerFor = null;     // the message whose reaction picker is open
+let bridges = { allowed: false };   // whether you can connect other platforms, and which
 
 async function api(method, path, body) {
   const res = await fetch("/chat/api" + path, {
@@ -44,6 +47,8 @@ function toast(text) {
 async function loadRooms() {
   const s = await api("GET", "/state");
   me = s.user; rooms = s.rooms; reactions = s.reactions || []; online = new Set(s.online || []);
+  bridges = s.bridges || { allowed: false };
+  $("#connections-open").hidden = $("#key-k").hidden = !bridges.allowed;
   renderRooms();
   const shown = open && rooms.find(r => r.id === open.id), count = $("#show-members");
   if (shown && count) count.textContent = `${shown.members} member${shown.members === 1 ? "" : "s"}`;
@@ -51,16 +56,25 @@ async function loadRooms() {
   if (open && !rooms.some(r => r.id === open.id)) { toast("That room was deleted."); closeRoom(); }
 }
 
-const roomTitle = r => r.kind === "dm" ? `@ ${r.name}` : `${r.kind === "private" ? "🔒" : "#"} ${r.name}`;
+const roomTitle = r => r.kind === "dm" ? `@ ${r.name}` : r.kind === "bridge" ? `~ ${r.name}` : `${r.kind === "private" ? "🔒" : "#"} ${r.name}`;
+const NETWORK = { matrix: "Matrix" };
 
 function renderRooms() {
   const row = r => `<button data-room="${esc(r.id)}" aria-current="${open?.id === r.id}" title="${esc(r.topic || r.name)}" class="${r.kind}">
-    ${r.kind === "dm" ? `<span class="dot${online.has(r.with) ? " on" : ""}" title="${online.has(r.with) ? "Online" : "Away"}"></span>` : ""}<span class="name">${esc(r.name)}</span>${r.mentions && open?.id !== r.id ? `<span class="n at" title="You were mentioned">@${r.mentions > 1 ? r.mentions : ""}</span>` : ""}${r.unread && open?.id !== r.id ? `<span class="n">${r.unread > 99 ? "99+" : r.unread}</span>` : ""}
+    ${r.kind === "dm" ? `<span class="dot${online.has(r.with) ? " on" : ""}" title="${online.has(r.with) ? "Online" : "Away"}"></span>` : ""}<span class="name">${esc(r.name)}</span>${r.encrypted ? `<span class="e2e" title="End-to-end encrypted: read only here">E2E</span>` : ""}${r.mentions && open?.id !== r.id ? `<span class="n at" title="You were mentioned">@${r.mentions > 1 ? r.mentions : ""}</span>` : ""}${r.unread && open?.id !== r.id ? `<span class="n">${r.unread > 99 ? "99+" : r.unread}</span>` : ""}
     ${r.joined ? "" : `<span class="count">${r.members}</span>`}</button>`;
   const joined = rooms.filter(r => r.joined), others = rooms.filter(r => !r.joined);
   const dms = joined.filter(r => r.kind === "dm");
-  $("#joined").innerHTML = joined.filter(r => r.kind !== "dm").map(row).join("") || `<p class="none">You haven't joined any rooms yet.</p>`;
+  $("#joined").innerHTML = joined.filter(r => r.kind !== "dm" && r.kind !== "bridge").map(row).join("") || `<p class="none">You haven't joined any rooms yet.</p>`;
   $("#dms").innerHTML = dms.map(row).join("") || `<p class="none">No direct messages yet.</p>`;
+  // A section for each connection, named for the platform and who you are there.
+  const vias = new Map();
+  for (const r of joined.filter(r => r.kind === "bridge")) (vias.get(r.connection) ?? vias.set(r.connection, []).get(r.connection)).push(r);
+  // (Who you are there only when one platform has two connections.)
+  const networks = [...vias.values()].map(list => list[0].provider);
+  $("#bridged").innerHTML = [...vias.values()].map(([r, ...rest]) =>
+    `<section><h2 title="${esc(r.via)}">${esc(NETWORK[r.provider] || r.provider)}${networks.filter(n => n === r.provider).length > 1 ? ` · ${esc(String(r.via).replace(/^@/, "").split(":")[0])}` : ""}</h2>
+      <div class="rooms">${[r, ...rest].map(row).join("")}</div></section>`).join("");
   $("#others").innerHTML = others.map(row).join("") || `<p class="none">${rooms.length ? "You're in every room." : "No rooms yet. Make the first one."}</p>`;
   const total = joined.reduce((n, r) => n + (open?.id === r.id ? 0 : r.unread), 0);
   const pings = joined.reduce((n, r) => n + (open?.id === r.id ? 0 : r.mentions), 0);
@@ -87,7 +101,7 @@ async function openRoom(id) {
   if (!room) { closeRoom(); return; }
   const data = await api("GET", `/rooms/${id}/messages`);
   open = { id, seq: data.seq, more: data.more, joined: data.joined, messages: new Map(data.messages.map(m => [m.id, m])), members: [],
-           here: data.here || [], typing: data.typing || [] };
+           here: data.here || [], typing: data.typing || [], bridge: room.kind === "bridge" };
   editingId = pickerFor = null; hideSuggest(); searching = null;
   room.unread = 0; room.mentions = 0;
   // For completing @names as you type.
@@ -104,12 +118,12 @@ function renderRoomShell(room) {
   $("#room").innerHTML = `
     <header class="room-head">
       <button class="link back" id="back" aria-label="Back to rooms">←</button>
-      <div class="title"><h2 class="${room.kind}">${esc(room.name)}</h2>${room.kind === "dm" ? `<p>Direct message with @${esc(room.with || "")}${online.has(room.with) ? " · online" : ""}</p>` : room.topic ? `<p>${esc(room.topic)}</p>` : room.kind === "private" ? "<p>Private: only members can see this room.</p>" : ""}</div>
+      <div class="title"><h2 class="${room.kind}">${esc(room.name)}</h2>${room.kind === "bridge" ? `<p>On ${esc(NETWORK[room.provider] || room.provider)} as ${esc(room.via)}${room.encrypted ? " · end-to-end encrypted, so read only here" : ""}</p>` : room.kind === "dm" ? `<p>Direct message with @${esc(room.with || "")}${online.has(room.with) ? " · online" : ""}</p>` : room.topic ? `<p>${esc(room.topic)}</p>` : room.kind === "private" ? "<p>Private: only members can see this room.</p>" : ""}</div>
       <button class="link" id="search-open" aria-label="Search this room">Search</button>
-      ${room.kind === "dm" ? "" : `<button class="link" id="show-members">${room.members} member${room.members === 1 ? "" : "s"}</button>`}
+      ${room.kind === "dm" || room.kind === "bridge" ? "" : `<button class="link" id="show-members">${room.members} member${room.members === 1 ? "" : "s"}</button>`}
       ${room.kind === "private" && open.joined ? `<button class="link" id="add-people">Add people</button>` : ""}
       ${room.manage ? `<button class="link" id="edit-room">Edit</button>` : ""}
-      ${open.joined && room.kind !== "dm" ? `<button class="link" id="leave">Leave</button>` : ""}
+      ${open.joined && room.kind !== "dm" && room.kind !== "bridge" ? `<button class="link" id="leave">Leave</button>` : ""}
     </header>
     <form class="searchbar" id="searchbar" hidden>
       <input id="search-q" type="search" maxlength="100" placeholder="Search ${esc(roomTitle(room))}" aria-label="Search this room" autocomplete="off">
@@ -118,7 +132,9 @@ function renderRoomShell(room) {
     </form>
     <div class="log" id="log"></div>
     <div class="presence" id="presence" aria-live="polite"></div>
-    ${open.joined
+    ${room.encrypted
+      ? `<div class="joinbar">This room is end-to-end encrypted, which the site can't send to yet. Answer it in your Matrix app.</div>`
+      : open.joined
       ? `<form class="composer" id="composer">
           <span class="prompt" aria-hidden="true">&gt;</span>
           <textarea id="text" rows="1" maxlength="2000" placeholder="Message ${esc(roomTitle(room))}" aria-label="Message" autocomplete="off"></textarea>
@@ -152,7 +168,7 @@ function messageHtml(m) {
   }
   const chips = (m.reactions || []).map(r =>
     `<button class="chip" data-react="${esc(r.emoji)}" data-mid="${m.id}" aria-pressed="${r.mine}" title="${esc(r.names)}">${esc(r.emoji)} <b>${r.count}</b></button>`).join("");
-  const canReact = open.joined && !m.pending;
+  const canReact = open.joined && !m.pending && !open.bridge;
   const picker = pickerFor === m.id
     ? `<div class="picker" role="menu">${reactions.map(e => `<button class="link" data-react="${esc(e)}" data-mid="${m.id}" role="menuitem">${esc(e)}</button>`).join("")}</div>` : "";
   return `<div class="text" title="${esc(time(m.created_at))}">${linkify(m.body)}${m.edited_at ? `<span class="edited" title="Edited ${esc(time(m.edited_at))}"> (edited)</span>` : ""}</div>
@@ -171,7 +187,7 @@ function renderLog({ toBottom = false, keepFrom = null } = {}) {
     const d = day(m.created_at);
     if (d !== lastDay) { html += `<div class="day">${esc(d)}</div>`; lastDay = d; prev = null; }
     const first = !prev || prev.author !== m.author || m.created_at - prev.created_at > GROUP_SECONDS;
-    html += `<div class="msg${first ? " first" : ""}${m.mine ? " mine" : ""}${m.pending ? " pending" : ""}${m.mentions_me ? " ping" : ""}" data-id="${m.id}">
+    html += `<div class="msg${first ? " first" : ""}${m.mine ? " mine" : ""}${m.pending ? " pending" : ""}${m.mentions_me ? " ping" : ""}${m.encrypted ? " locked" : ""}" data-id="${m.id}">
       ${first ? `<div class="who">${esc(m.author_name)}<span class="at">${time(m.created_at)}</span></div>` : ""}
       ${messageHtml(m)}
     </div>`;
@@ -197,6 +213,8 @@ async function pollRoom() {
   try {
     const data = await api("GET", `/rooms/${id}/messages?since=${open.seq}`);
     if (open?.id !== id) return;
+    // The sync it ran may have renamed the room, or brought it in encrypted.
+    if (open.bridge && data.messages.length) loadRooms().catch(() => {});
     const people = JSON.stringify([data.here, data.typing]);
     if (people !== JSON.stringify([open.here, open.typing])) { open.here = data.here || []; open.typing = data.typing || []; renderPresence(); }
     if (!data.messages.length) return;
@@ -511,6 +529,7 @@ document.addEventListener("keydown", e => {
   if (typing) return;
   if (e.key === "n") { e.preventDefault(); editRoom(); }
   else if (e.key === "m") { e.preventDefault(); pickPerson("dm"); }
+  else if (e.key === "k" && bridges.allowed) { e.preventDefault(); showConnections(); }
   else if (e.key === "f" && open) { e.preventDefault(); openSearch(); }
   else if (e.key === "/" && $("#text")) { e.preventDefault(); $("#text").focus(); }
 });
@@ -555,10 +574,79 @@ $("#members").addEventListener("click", async e => {
   } catch (err) { toast(err.message); }
 });
 
+// ── connections to other platforms ───────────────────────────────────────
+
+const ago = t => {
+  const s = Math.max(0, Math.floor(Date.now() / 1000) - t);
+  return s < 60 ? "just now" : s < 3600 ? `${Math.floor(s / 60)} min ago` : s < 86400 ? `${Math.floor(s / 3600)} h ago` : day(t);
+};
+async function showConnections() {
+  const dlg = $("#connections-dialog");
+  if (!dlg.open) dlg.showModal();
+  $("#connections-off").hidden = bridges.ready !== false;
+  $("#connections-off").textContent = "Connections need a secret the site's admin hasn't set up yet (CHAT_BRIDGE_KEY). See the README.";
+  $("#connect-form").hidden = !bridges.ready;
+  $("#connections-only-close").hidden = !!bridges.ready;
+  if (bridges.ready) drawProvider();
+  let list = [];
+  try { list = await api("GET", "/connections"); } catch (err) { toast(err.message); }
+  $("#connections").innerHTML = list.map(c => `<li>
+      <span class="dot${c.status === "ok" ? " on" : ""}"></span>
+      <span class="what"><b>${esc(c.network)}</b> ${esc(c.label)}
+        <span>${c.status === "ok" ? `${c.rooms} room${c.rooms === 1 ? "" : "s"}${c.synced_at ? ` · synced ${esc(ago(c.synced_at))}` : ""}` : ""}${c.error ? `<span class="bad">${esc(c.error)}</span>` : ""}</span></span>
+      <button type="button" class="link" data-resync="${esc(c.id)}">Sync now</button>
+      <button type="button" class="link remove" data-disconnect="${esc(c.id)}" data-label="${esc(c.label)}">Remove</button></li>`).join("")
+    || `<li class="none">Nothing connected yet.</li>`;
+}
+function drawProvider() {
+  const sel = $("#connect-provider"), providers = bridges.providers || [];
+  if (sel.options.length !== providers.length) sel.innerHTML = providers.map(p => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join("");
+  sel.hidden = $("#connect-provider-label").hidden = providers.length < 2;
+  const p = providers.find(p => p.id === sel.value) || providers[0];
+  if (!p) return;
+  $("#connect-help").textContent = p.help;
+  $("#connect-fields").innerHTML = p.fields.map(f => `<label for="cf-${esc(f.name)}">${esc(f.label)}${f.required ? "" : " <span>(optional)</span>"}</label>
+    <input id="cf-${esc(f.name)}" name="${esc(f.name)}" type="${f.secret ? "password" : "text"}" placeholder="${esc(f.placeholder || "")}" autocomplete="off" spellcheck="false"${f.required ? " required" : ""}>`).join("");
+  $("#connect-error").hidden = true;
+}
+$("#connect-provider").addEventListener("change", drawProvider);
+$("#connections-open").addEventListener("click", showConnections);
+for (const b of ["#connections-close", "#connections-close-2"]) $(b).addEventListener("click", () => $("#connections-dialog").close());
+$("#connect-form").addEventListener("submit", async e => {
+  e.preventDefault();
+  const fields = { provider: $("#connect-provider").value };
+  for (const input of $("#connect-fields").querySelectorAll("input")) if (input.value) fields[input.name] = input.value;
+  const save = $("#connect-save");
+  save.disabled = true; save.textContent = "Connecting…";
+  try {
+    const c = await api("POST", "/connections", fields);
+    toast(`Connected ${c.label}: ${c.rooms} room${c.rooms === 1 ? "" : "s"}.`);
+    drawProvider();
+    await loadRooms();
+    await showConnections();
+  } catch (err) { $("#connect-error").textContent = err.message; $("#connect-error").hidden = false; }
+  finally { save.disabled = false; save.textContent = "Connect"; }
+});
+$("#connections").addEventListener("click", async e => {
+  const b = e.target.closest("[data-resync], [data-disconnect]");
+  if (!b) return;
+  try {
+    if (b.dataset.resync) { b.disabled = true; await api("POST", `/connections/${b.dataset.resync}/sync`); }
+    else {
+      if (!confirm(`Remove ${b.dataset.label}? Its rooms leave Chat; your rooms and messages there stay as they are.`)) return;
+      await api("DELETE", `/connections/${b.dataset.disconnect}`);
+    }
+    await loadRooms();
+    await showConnections();
+  } catch (err) { toast(err.message); }
+});
+
 // ── start ────────────────────────────────────────────────────────────────
 
 async function route() {
   const id = location.hash.slice(1);
+  // The dashboard and admin page link here for connections.
+  if (id === "connections") { history.replaceState(null, "", location.pathname); if (bridges.allowed) showConnections(); return; }
   if (!id) { if (open) closeRoom(); return; }
   if (open?.id === id) return;
   try { await openRoom(id); } catch (e) { toast(e.message); closeRoom(); }
