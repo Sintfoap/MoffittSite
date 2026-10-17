@@ -14,7 +14,7 @@ async function admin(env, name = "ryan") {
   return b;
 }
 const areas = (env, name) => sql(env, "SELECT area FROM user_areas a JOIN users u ON u.id = a.user_id WHERE u.username = ? ORDER BY area", name).map(r => r.area);
-const PATHS = { drift: "/todo/", plugins: "/plugins/", chat: "/chat/", admin: "/admin" };
+const PATHS = { drift: "/todo/", plugins: "/plugins/", chat: "/chat/", admin: "/admin", notifications: "/notifications/" };
 
 test("every app is its own area, and new accounts only get the ones marked onForNew", async () => {
   assert.equal(new Set(APPS.map(a => a.area)).size, APPS.length, "two apps sharing an area couldn't be toggled apart");

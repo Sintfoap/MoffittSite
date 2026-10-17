@@ -24,7 +24,7 @@ WARN = "#e0b25a"
 REFRESH_EVERY = 30   # seconds
 
 # Which site pages have a terminal version, by the path the dashboard links to.
-IN_TERMINAL = {"/todo/": "drift", "/plugins/": "store", "/chat/": "chat", "/admin": "admin"}
+IN_TERMINAL = {"/todo/": "drift", "/plugins/": "store", "/chat/": "chat", "/admin": "admin", "/notifications/": "notifications"}
 
 
 def account_lines(data: dict) -> Text:
@@ -291,6 +291,9 @@ class SiteApp(App):
         elif name == "admin":
             from .admin_page import AdminPage
             self.push_screen(AdminPage())
+        elif name == "notifications":
+            from .notifications_page import NotificationsPage
+            self.push_screen(NotificationsPage())
         elif name == "chat":
             from .chat_page import ChatPage
             # The room named on the command line, the first time only.

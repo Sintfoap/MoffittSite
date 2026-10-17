@@ -1,16 +1,27 @@
 // The site's real Worker (src/) over HTTP on localhost, with an in-memory
 // database, for testing the terminal pages against the real APIs.
 //
-//   node cli/tests/devsite.mjs [--admin]
+//   node cli/tests/devsite.mjs [--admin] [--notify]
 //
 // Prints one line of JSON, {origin, token}: a terminal session for "ryan"
 // (made through the same code-approval flow `sintfoap login` uses), then
 // serves until it's stopped. "sam" has an approved plugin, "stars", in the store.
+// --notify turns push on (with throwaway keys), gives ryan Notifications and
+// one browser to send to, and answers every push as delivered.
 import http from "node:http";
 import worker from "../../src/worker.js";
 import { Browser, makeEnv, sqlOne, run, grantApps } from "../../tests/helpers.mjs";
+import { b64url } from "../../src/crypto.js";
 
-const env = makeEnv();
+const notify = process.argv.includes("--notify");
+let vapid = {};
+if (notify) {
+  const k = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["sign"]);
+  vapid = { VAPID_PUBLIC_KEY: b64url(new Uint8Array(await crypto.subtle.exportKey("raw", k.publicKey))),
+            VAPID_PRIVATE_KEY: (await crypto.subtle.exportKey("jwk", k.privateKey)).d };
+  globalThis.fetch = async () => new Response(null, { status: 201 });
+}
+const env = makeEnv(vapid);
 const ryan = new Browser(env), sam = new Browser(env);
 await ryan.signup("ryan", undefined, "Ryan M");
 await sam.signup("sam", undefined, "Sam");
@@ -22,6 +33,16 @@ const t = Math.floor(Date.now() / 1000);
 run(env, "INSERT INTO store_plugins (id, owner, created_at) VALUES ('stars', ?, ?)", id("sam"), t);
 run(env, `INSERT INTO store_versions (plugin_id, version, status, name, description, code, note, review_note, created_at, reviewed_at)
   VALUES ('stars', 1, 'approved', 'Stars', 'Rate items out of five.', 'export default { id: "stars", name: "Stars", clean: v => v };', '', '', ?, ?)`, t, t);
+
+if (notify) {
+  grantApps(env, "ryan", "notifications");
+  const ua = await crypto.subtle.generateKey({ name: "ECDH", namedCurve: "P-256" }, true, ["deriveBits"]);
+  const p256dh = b64url(new Uint8Array(await crypto.subtle.exportKey("raw", ua.publicKey)));
+  const res = await ryan.req("POST", "/notifications/api/devices", { json: {
+    endpoint: "https://fcm.googleapis.com/fcm/send/ryans-phone", keys: { p256dh, auth: b64url(crypto.getRandomValues(new Uint8Array(16))) },
+    label: "Chrome on Android", tz: "America/New_York" } });
+  if (res.status !== 201) throw new Error("couldn't add ryan's phone: " + res.text);
+}
 
 if (process.argv.includes("--admin")) {
   run(env, "INSERT INTO user_areas (user_id, area) VALUES (?, 'admin')", id("ryan"));
