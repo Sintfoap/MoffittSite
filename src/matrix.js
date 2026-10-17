@@ -55,19 +55,42 @@ export function serverUrl(raw) {
   return `https://${host}${u.port ? ":" + u.port : ""}${u.pathname.replace(/\/+$/, "")}`;
 }
 
+// fetch, following up to a few redirects (reverse proxies often send one) as
+// long as each lands on a public https host too. A network failure says
+// which address it was and why, since "couldn't reach" alone can't be fixed.
+async function send(url, init) {
+  for (let hops = 0; ; hops++) {
+    let res;
+    try { res = await fetch(url, { ...init, redirect: "manual", signal: AbortSignal.timeout(TIMEOUT) }); }
+    catch (e) {
+      const host = new URL(url).host;
+      if (e?.name === "TimeoutError") throw new ProviderError(`${host} didn't answer in time`);
+      throw new ProviderError(`couldn't reach ${host}${e?.message ? ` (${String(e.message).slice(0, 120)})` : ""}; check the address works from the internet, over https`);
+    }
+    const to = res.status >= 300 && res.status < 400 && res.headers.get("Location");
+    if (!to) return res;
+    if (hops >= 3) throw new ProviderError("the homeserver redirects too many times");
+    const next = new URL(to, url);
+    serverUrl(next.origin);   // throws if it points somewhere that isn't allowed
+    // A sign-in token only goes to the host it was meant for.
+    if (next.origin !== new URL(url).origin && init.headers?.Authorization) {
+      const { Authorization, ...rest } = init.headers;
+      init = { ...init, headers: rest };
+    }
+    url = next;
+    // 301/302/303 turn a write into a GET, as browsers do; 307/308 keep it.
+    if (![307, 308].includes(res.status)) init = { ...init, method: "GET", body: undefined };
+  }
+}
+
 async function call(base, method, path, { token, body, query } = {}) {
   const url = new URL(base + path);
   for (const [k, v] of Object.entries(query ?? {})) if (v != null) url.searchParams.set(k, v);
-  let res;
-  try {
-    res = await fetch(url, {
-      method, redirect: "error", signal: AbortSignal.timeout(TIMEOUT),
-      headers: { Accept: "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(body ? { "Content-Type": "application/json" } : {}) },
-      body: body ? JSON.stringify(body) : undefined,
-    });
-  } catch (e) {
-    throw new ProviderError(e?.name === "TimeoutError" ? "the homeserver didn't answer in time" : "couldn't reach the homeserver");
-  }
+  const res = await send(url, {
+    method,
+    headers: { Accept: "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(body ? { "Content-Type": "application/json" } : {}) },
+    body: body ? JSON.stringify(body) : undefined,
+  });
   const data = await res.json().catch(() => null);
   if (res.ok && data) return data;
   const code = data?.errcode, msg = data?.error;
@@ -85,7 +108,7 @@ async function discover(raw) {
   const u = new URL(base);
   if (u.pathname === "" || u.pathname === "/") {
     try {
-      const res = await fetch(`${base}/.well-known/matrix/client`, { redirect: "error", signal: AbortSignal.timeout(TIMEOUT) });
+      const res = await send(new URL(`${base}/.well-known/matrix/client`), { method: "GET" });
       const found = res.ok && (await res.json().catch(() => null))?.["m.homeserver"]?.base_url;
       if (found) return serverUrl(found);
     } catch { /* no .well-known: the address is the homeserver itself */ }
