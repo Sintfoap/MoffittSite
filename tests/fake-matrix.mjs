@@ -51,7 +51,11 @@ export class FakeMatrix {
     const url = new URL(req.url), path = url.pathname;
     const json = (obj, status = 200) => new Response(JSON.stringify(obj), { status, headers: { "Content-Type": "application/json" } });
     if (url.hostname === "matrix.test" && path === "/.well-known/matrix/client") return json({ "m.homeserver": { base_url: "https://hs.matrix.test" } });
+    // An address that's down, and one whose proxy redirects to the real thing.
+    if (url.hostname === "down.test") throw new TypeError("connection refused");
+    if (url.hostname === "moved.test") return new Response(null, { status: 301, headers: { Location: "https://matrix.test" + path } });
     if (url.hostname !== "hs.matrix.test") return json({ errcode: "M_UNRECOGNIZED" }, 404);
+    if (path.startsWith("/old/")) return new Response(null, { status: 308, headers: { Location: path.slice(4) + url.search } });
     this.requests.push([req.method, path]);
     const body = req.method === "GET" ? null : await req.json().catch(() => null);
     if (path === "/_matrix/client/v3/login") {

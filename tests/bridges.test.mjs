@@ -231,6 +231,18 @@ test("deleting an account deletes its connections and their rooms", async () => 
     sql(env, "SELECT * FROM chat_messages").length], [0, 0, 0]);
 });
 
+test("redirects are followed, and an unreachable homeserver says which address failed", async () => {
+  const { env } = setup();
+  const ryan = await person(env, "ryan", "chat-bridges");
+  const down = await connect(ryan, { homeserver: "down.test", token: "syt_good" });
+  assert.equal(down.status, 400);
+  assert.match(down.json.error, /couldn't reach down\.test \(connection refused\)/);
+  // The proxy's redirect keeps the token, since it stays on the same host.
+  assert.equal((await connect(ryan, { homeserver: "https://hs.matrix.test/old", token: "syt_good" })).status, 201);
+  const again = await connect(ryan, { homeserver: "moved.test", token: "syt_good" });
+  assert.match(again.json.error, /already connected/, "a server name that redirects to its .well-known is followed");
+});
+
 test("homeserver addresses are public https hosts", () => {
   assert.equal(serverUrl("matrix.org"), "https://matrix.org");
   assert.equal(serverUrl("https://Matrix.Example.com/"), "https://matrix.example.com");
