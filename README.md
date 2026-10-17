@@ -177,9 +177,20 @@ Store plugins never run in Drift's page or in the Worker.
 - **What they can change:** only their own slice of an item's metadata, through Drift. They can't change titles, notes or tags, or other plugins' data.
 - **What they can draw:** Drift cleans the HTML they return (`public/todo/plugin-host.js`). Scripts, styles, links, images, ids and event handlers are removed.
 - **On the server:** Drift accepts metadata for approved store plugins as plain JSON, up to 8 KB per plugin per item.
-- **For now:** store plugins can't have `mount()` views (canvases and graphs) yet, only views drawn with `render()`.
+- **Interactive views:** a `mount()` view draws on a canvas from inside the plugin's worker (below). It never gets the page's DOM, so it can't read the page or send anything anywhere.
 
 The store page and its "Try it" are served with a strict Content-Security-Policy too, since they show other people's code.
+
+### Interactive views in store plugins
+
+A store plugin's view can return HTML from `render(ctx)`, or be interactive like Graph: `mount(surface, ctx)`, then `update(ctx)` on each change and `unmount()`. Instead of an element it gets a `surface`:
+
+- `surface.canvas`: an `OffscreenCanvas` already sized for the screen (`surface.width` × `surface.height` CSS pixels, at `surface.dpr`). Drift shows it in the view.
+- `surface.colors`: Drift's theme colours (`bg`, `surface`, `raise`, `line`, `ink`, `muted`, `accent` and so on).
+- `surface.on(type, (event, ctx) => …)`: `pointerdown`, `pointermove`, `pointerup`, `pointerleave`, `click`, `dblclick`, `wheel`, `keydown`, `resize` and `theme`. Pointer events have `x` and `y` on the canvas; `wheel` has `dx` and `dy`; `keydown` has `key`.
+- `surface.cursor = "grab"` (or `pointer`, `grabbing`, `move`, `crosshair`, `text`, `zoom-in`, `zoom-out`).
+
+`ctx.open(id)` and `ctx.setMeta(id, pluginId, value)` work in `mount()` and in event handlers. Called later, from a timer, they're ignored. Pointer moves and wheel turns that pile up while a handler runs are merged, and a handler that takes over 2 seconds stops the plugin as before. Keys pressed on the focused canvas go to the plugin, except Escape and Tab. "Try it" shows the view against the sample items and says what it asked Drift to do.
 
 | Method | Path | Body |
 |---|---|---|

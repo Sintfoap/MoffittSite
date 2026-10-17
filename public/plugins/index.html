@@ -162,6 +162,9 @@ label input, label textarea {
 .try .rows .chips { display: flex; flex-wrap: wrap; gap: 6px; font-size: 12.5px; color: var(--muted); }
 .try .preview { padding: 10px 12px; border: 1px dashed var(--line-2); border-radius: var(--radius-s); background: var(--surface); }
 .try .preview label { margin-bottom: 8px; }
+.try .preview.canvas { padding: 0; border-style: solid; }
+.plugin-canvas { display: block; width: 100%; height: 360px; touch-action: none; user-select: none; }
+.plugin-canvas:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .try pre { margin: 6px 0 0; font: 12.5px/1.5 var(--mono); white-space: pre-wrap; }
 .try kbd { font: 12px var(--mono); padding: 0 5px; border: 1px solid var(--line-2); border-radius: 4px; }
 .try summary { cursor: pointer; font-size: 13px; color: var(--muted); }
