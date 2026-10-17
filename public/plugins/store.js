@@ -2,7 +2,7 @@
 // your own, and (for admins) review what's been submitted. Plugin code never
 // runs on this page: "Try it" runs it in the same sandbox Drift uses.
 
-import { Sandbox, sanitize, sanitizeIcon } from "/todo/plugin-host.js";
+import { Sandbox, sanitize, sanitizeIcon, mountCanvas } from "/todo/plugin-host.js";
 
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -286,7 +286,7 @@ $("#create-form").addEventListener("submit", attempt(async e => {
 
 // ── try it: run the code in the sandbox against a few sample items ─────────
 
-let sandbox = null;
+let sandbox = null, live = null;
 const SAMPLE = [
   ["Water the plants", ["home"]], ["Send the invoice", ["work"]], ["Book a dentist appointment", []],
 ].map(([title, tags], i) => ({ id: `i_try${i}`, collection: "c_try", title, notes: "", tags, created: "2026-01-01T09:00:00", deleted: false, meta: {} }));
@@ -296,6 +296,7 @@ async function tryIt(id, code) {
   out.hidden = false;
   out.innerHTML = `<p class="status">Running ${esc(id)} in the sandbox…</p>`;
   // A fresh sandbox each run, so a plugin stopped for looping gets another go.
+  live?.unmount(); live = null;
   sandbox?.frame.remove();
   sandbox = new Sandbox();
   const info = (await sandbox.load([{ id, code }]))[id];
@@ -330,9 +331,34 @@ async function tryIt(id, code) {
       <div><h4>Rows</h4><ul class="rows">${items.map(row).join("")}</ul></div>
       <div><h4>Item editor</h4>${r.editor == null ? `<p class="status">No editor.</p>` : `<div class="preview">${sanitize(r.editor, id)}</div>`}</div>
     </div>
-    ${info.view ? `<h4>View: ${esc(info.view.label)}</h4><div class="preview">${view || `<p class="status">The view drew nothing.</p>`}</div>` : ""}
+    ${info.view?.mount ? `<h4>View: ${esc(info.view.label)}</h4><div class="preview canvas" id="tryCanvas"></div><p class="status" id="tryFx">Try clicking, dragging and scrolling on it.</p>`
+      : info.view ? `<h4>View: ${esc(info.view.label)}</h4><div class="preview">${view || `<p class="status">The view drew nothing.</p>`}</div>` : ""}
     <details><summary>Data each sample item started with</summary><pre>${esc(JSON.stringify(Object.fromEntries(items.map(it => [it.title, it.meta[id]])), null, 2))}</pre></details>
     <p class="status">Actions: ${info.actions.map(esc).join(", ") || "none"} · Keys: ${info.keys.map(k => `<kbd>${esc(k === " " ? "Space" : k)}</kbd>`).join(" ") || "none"}</p>`;
+  if (info.view?.mount) tryView(id, info, items, snap);
+}
+
+// An interactive view, running against the sample items. What it asks for is
+// described underneath; data it sets is kept on the samples, and it hears
+// about the change as it would in Drift.
+function tryView(id, info, items, snap) {
+  const viewState = {}, note = msg => { $("#tryFx").textContent = msg; };
+  const box = sandbox;
+  live = mountCanvas($("#tryCanvas"), {
+    box, id, label: info.view.label, snapshot: () => snap({ viewState }),
+    done: r => {
+      if (r.viewState) Object.assign(viewState, r.viewState);
+      let changed = false;
+      for (const [kind, ...a] of r.effects || []) {
+        const it = items.find(x => x.id === a[0]);
+        if (kind === "open") note(it ? `It asked to open “${it.title}”. In Drift that opens the item.` : `It asked to open an item that isn't there.`);
+        else if (kind === "setMeta" && a[1] !== id) note(`It tried to change another plugin's data (${a[1]}). Drift won't allow that.`);
+        else if (kind === "setMeta" && it) { it.meta[id] = a[2]; changed = true; note(`It changed the data on “${it.title}”.`); }
+      }
+      if (changed && box === sandbox) box.compute(snap({ viewState })).catch(e => note(e.message));
+    },
+    fail: e => note(e.message),
+  });
 }
 
 // ── the code box ───────────────────────────────────────────────────────────

@@ -200,6 +200,10 @@ ul.items { list-style: none; margin: 0; padding: 0; }
 .hour .slot:hover, .hour .slot:focus-visible { background: var(--surface); }
 .hour .slot:hover::after, .hour .slot:focus-visible::after { content: "+ Add at this time"; display: block; padding: 8px 12px; font-size: 12.5px; color: var(--faint); }
 
+/* ── store plugins' interactive views (drawn in the sandbox) ── */
+.plugin-canvas { display: block; width: 100%; height: min(64vh, 560px); margin-top: 14px; border: 1px solid var(--line); border-radius: var(--radius-m); background: var(--surface); touch-action: none; user-select: none; }
+.plugin-canvas:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
 /* ── graph (Graph plugin) ───────────────────────── */
 .graph { margin-top: 14px; border: 1px solid var(--line); border-radius: var(--radius-m); background: var(--surface); overflow: hidden; }
 .graph-bar { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; padding: 6px 8px; border-bottom: 1px solid var(--line); }

@@ -82,17 +82,116 @@ export class Sandbox {
     });
     document.body.append(this.frame);
   }
-  async send(msg) {
+  async send(msg, transfer = []) {
     await this.ready;
     return new Promise((resolve, reject) => {
       const seq = ++this.seq;
       this.waiting.set(seq, { resolve, reject });
-      this.frame.contentWindow.postMessage({ ...msg, seq }, "*");
+      this.frame.contentWindow.postMessage({ ...msg, seq }, "*", transfer);
     });
   }
   load(plugins) { return this.send({ op: "load", plugins: plugins.map(({ id, code }) => ({ id, code })) }); }
   call(id, fn, args, snap) { return this.send({ op: "call", id, fn, args, snap }); }
   compute(snap) { return this.send({ op: "compute", snap }); }
+  view(id, kind, args = {}) { return this.send({ op: "view", id, kind, ...args }, args.canvas ? [args.canvas] : []); }
+}
+
+// ── interactive views ──────────────────────────────────────────────────────
+// A store plugin's mount() view draws on a canvas from inside its worker: the
+// canvas's drawing is handed over (transferControlToOffscreen), so its code
+// never touches this page. What the person does on the canvas is passed on as
+// plain events; what comes back is effects (open, setMeta…) and a cursor.
+//
+//   box        the Sandbox
+//   snapshot() plain data for the plugin's ctx
+//   done(r)    called with each answer: { effects, viewState, cursor }
+//   fail(e)    called when the plugin errors
+
+const COLORS = ["bg", "surface", "raise", "line", "line-2", "ink", "muted", "faint", "accent", "accent-ink", "accent-soft", "red", "amber", "blue", "green", "violet"];
+const colors = () => {
+  const cs = getComputedStyle(document.documentElement);
+  return Object.fromEntries(COLORS.map(k => [k.replace(/-(\w)/g, (_, c) => c.toUpperCase()), cs.getPropertyValue("--" + k).trim()]));
+};
+
+export function mountCanvas(el, { box, id, label, snapshot, done, fail }) {
+  const canvas = document.createElement("canvas");
+  canvas.className = "plugin-canvas";
+  canvas.tabIndex = 0;
+  canvas.setAttribute("role", "img");
+  canvas.setAttribute("aria-label", label || "Plugin view");
+  el.append(canvas);
+  let alive = true, said = "", theme = JSON.stringify(colors());   // said: the last error shown, so one isn't repeated per event
+  const send = (kind, args) => alive && box.view(id, kind, args).then(r => {
+    if (!alive || !r) return;
+    if (r.cursor) canvas.style.cursor = r.cursor;
+    done(r);
+  }).catch(e => { if (alive && e.message !== said) { said = e.message; fail(e); } });
+
+  const box0 = () => ({ width: canvas.clientWidth, height: canvas.clientHeight, dpr: Math.min(3, window.devicePixelRatio || 1) });
+  const first = box0();
+  let last = JSON.stringify(first);
+  send("mount", { canvas: canvas.transferControlToOffscreen(), ...first, colors: JSON.parse(theme), snap: snapshot() });
+
+  // One event in flight at a time; moves and wheels that pile up meanwhile are
+  // merged, so a slow plugin sees the latest position rather than a backlog.
+  let busy = false, queued = [];
+  const pump = () => {
+    if (busy || !queued.length || !alive) return;
+    const event = queued.shift();
+    busy = true;
+    Promise.resolve(send("event", { event })).finally(() => { busy = false; pump(); });
+  };
+  const push = event => {
+    const last = queued.at(-1);
+    if (last && last.type === event.type && (event.type === "pointermove" || event.type === "wheel")) {
+      if (event.type === "wheel") { event.dx += last.dx; event.dy += last.dy; }
+      queued[queued.length - 1] = event;
+    } else queued.push(event);
+    pump();
+  };
+  const at = e => {
+    const r = canvas.getBoundingClientRect();
+    return { x: e.clientX - r.left, y: e.clientY - r.top, button: e.button, buttons: e.buttons,
+      shift: e.shiftKey, alt: e.altKey, ctrl: e.ctrlKey, meta: e.metaKey };
+  };
+  const on = (type, fn, opts) => canvas.addEventListener(type, fn, opts);
+  for (const type of ["pointerdown", "pointermove", "pointerup", "pointerleave", "click", "dblclick"]) {
+    on(type, e => {
+      if (type === "pointerdown") { canvas.focus({ preventScroll: true }); canvas.setPointerCapture?.(e.pointerId); }
+      push({ type, pointerId: e.pointerId, pointerType: e.pointerType, ...at(e) });
+    });
+  }
+  on("wheel", e => { e.preventDefault(); push({ type: "wheel", dx: e.deltaX, dy: e.deltaY, ...at(e) }); }, { passive: false });
+  on("contextmenu", e => e.preventDefault());
+  // Keys typed on the canvas are the plugin's, except the ones for getting out.
+  on("keydown", e => {
+    if (e.key === "Escape" || e.key === "Tab") return;
+    e.stopPropagation();
+    if (e.key.startsWith("Arrow") || e.key === " ") e.preventDefault();
+    push({ type: "keydown", key: e.key, shift: e.shiftKey, alt: e.altKey, ctrl: e.ctrlKey, meta: e.metaKey });
+  });
+  const ro = new ResizeObserver(() => {
+    const b = box0(), k = JSON.stringify(b);
+    if (k !== last) { last = k; send("resize", b); }
+  });
+  ro.observe(canvas);
+  // Light/dark can change from the theme button or from the system.
+  const recolor = () => {
+    const now = JSON.stringify(colors());
+    if (now !== theme) { theme = now; send("theme", { colors: JSON.parse(now) }); }
+  };
+  const mo = new MutationObserver(recolor), dark = matchMedia("(prefers-color-scheme: dark)");
+  mo.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme", "class"] });
+  dark.addEventListener("change", recolor);
+
+  return {
+    refresh: recolor,
+    unmount() {
+      if (!alive) return;
+      box.view(id, "unmount").catch(() => {});
+      alive = false; ro.disconnect(); mo.disconnect(); dark.removeEventListener("change", recolor); canvas.remove();
+    },
+  };
 }
 
 // ── stand-ins for store plugins ────────────────────────────────────────────
@@ -156,7 +255,24 @@ export class StorePlugins {
         : host.cache[id]?.editorFor === it.id ? host.cache[id].editor : `<p class="hint">Loading…</p>`,
       actions: Object.fromEntries((info.actions || []).map(n => [n, act("action", n)])),
       keys: Object.fromEntries((info.keys || []).map(n => [n, (it, c) => act("key", n)(it, c)])),
-      view: info.view ? {
+      view: info.view?.mount ? {
+        label: info.view.label,
+        mount(el) {
+          this.live?.unmount();
+          this.live = mountCanvas(el, {
+            box: host.box, id, label: info.view.label, snapshot: () => host.drift.snapshot(),
+            done: r => {
+              const vs = host.drift.snapshot().viewState;
+              if (r.viewState && vs) Object.assign(vs, r.viewState);
+              if (r.effects?.length) host.drift.apply(r.effects, id);
+            },
+            fail: e => host.drift.toast(`${p.name}: ${e.message}`),
+          });
+        },
+        // The sandbox passes each change on to the view itself (see sync).
+        update() { this.live?.refresh(); },
+        unmount() { this.live?.unmount(); this.live = null; },
+      } : info.view ? {
         label: info.view.label,
         render: c => {
           const v = host.cache[id]?.view;

@@ -203,7 +203,7 @@ let mounted = null;
 function showView(p, c) {
   if (!p.view.mount) { unmountView(); $("#list").innerHTML = p.view.render(c); return; }
   const key = `${state.view}:${p.id}`;
-  if (mounted?.key === key) return p.view.update?.(c);
+  if (mounted?.key === key && mounted.p === p) return p.view.update?.(c);
   unmountView();
   const host = document.createElement("div");
   host.className = "view-host";
