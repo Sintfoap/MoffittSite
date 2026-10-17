@@ -6,15 +6,23 @@
 // Prints one line of JSON, {origin, token}: a terminal session for "ryan"
 // (made through the same code-approval flow `sintfoap login` uses), then
 // serves until it's stopped. "sam" has an approved plugin, "stars", in the store.
+// ryan can connect Matrix, to a stand-in homeserver (tests/fake-matrix.mjs) at
+// matrix.test with the token syt_good, where he's in one room, "Family".
 import http from "node:http";
 import worker from "../../src/worker.js";
 import { Browser, makeEnv, sqlOne, run, grantApps } from "../../tests/helpers.mjs";
+import { FakeMatrix } from "../../tests/fake-matrix.mjs";
 
-const env = makeEnv();
+const hs = new FakeMatrix().install();
+hs.room("!fam:matrix.test", { name: "Family", members: { "@ryan:matrix.test": "Ryan", "@sam:matrix.test": "Sam" } });
+hs.say("!fam:matrix.test", "@sam:matrix.test", "dinner at six?");
+
+const env = makeEnv({ CHAT_BRIDGE_KEY: "devsite-bridge-key-0123456789" });
 const ryan = new Browser(env), sam = new Browser(env);
 await ryan.signup("ryan", undefined, "Ryan M");
 await sam.signup("sam", undefined, "Sam");
 for (const who of ["ryan", "sam"]) grantApps(env, who, "plugins", "chat");
+grantApps(env, "ryan", "chat-bridges");
 const id = name => sqlOne(env, "SELECT id FROM users WHERE username = ?", name).id;
 
 // sam's plugin, approved by an admin (made straight in the database).

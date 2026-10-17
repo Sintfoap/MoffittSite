@@ -142,7 +142,12 @@ const SCHEMA = [
      seq        INTEGER NOT NULL DEFAULT 0,        -- last change number in this room
      created_at INTEGER NOT NULL,
      last_at    INTEGER NOT NULL,                  -- newest message (or creation), for sorting
-     kind       TEXT NOT NULL DEFAULT 'open'       -- open (anyone), private (members only) or dm (two people)
+     kind       TEXT NOT NULL DEFAULT 'open',      -- open (anyone), private (members only), dm (two people) or bridge (below)
+     -- A bridge room is a room on another platform, seen through one of its
+     -- owner's connections; only that owner is in it.
+     connection TEXT,                              -- chat_connections.id
+     ext_id     TEXT,                              -- the room's id there
+     encrypted  INTEGER NOT NULL DEFAULT 0         -- end-to-end encrypted there, so read-only here
    )`,
   `CREATE TABLE IF NOT EXISTS chat_members (
      room      TEXT NOT NULL,
@@ -161,7 +166,13 @@ const SCHEMA = [
      seq        INTEGER NOT NULL,                  -- the room's seq when this row last changed
      created_at INTEGER NOT NULL,
      posted_seq INTEGER,                           -- the room's seq when it was posted, for unread counts
-     edited_at  INTEGER
+     edited_at  INTEGER,
+     -- Messages in bridge rooms. user_id is the owner for their own messages
+     -- and '' for everyone else's, who are named by ext_sender and ext_name.
+     ext_id     TEXT,                              -- the message's id there
+     ext_sender TEXT,
+     ext_name   TEXT,
+     encrypted  INTEGER NOT NULL DEFAULT 0         -- arrived encrypted, so body is only a note saying so
    )`,
   `CREATE INDEX IF NOT EXISTS chat_messages_room ON chat_messages (room, id)`,
   `CREATE INDEX IF NOT EXISTS chat_messages_seq ON chat_messages (room, seq)`,
@@ -190,14 +201,35 @@ const SCHEMA = [
      PRIMARY KEY (room, user_id)
    )`,
   `CREATE INDEX IF NOT EXISTS chat_presence_user ON chat_presence (user_id, seen_at)`,
+  // Accounts on other chat platforms that someone connected (src/bridges.js).
+  `CREATE TABLE IF NOT EXISTS chat_connections (
+     id         TEXT PRIMARY KEY,                  -- "k_" + random hex
+     user_id    TEXT NOT NULL,
+     provider   TEXT NOT NULL,                     -- "matrix", …
+     label      TEXT NOT NULL,                     -- who it is there, e.g. "@ryan:matrix.org"
+     secret     TEXT NOT NULL,                     -- the credentials, sealed with CHAT_BRIDGE_KEY (crypto.js seal)
+     cursor     TEXT,                              -- where the last sync got to (Matrix: next_batch)
+     status     TEXT NOT NULL DEFAULT 'ok',        -- "ok" or "error"
+     error      TEXT,
+     created_at INTEGER NOT NULL,
+     synced_at  INTEGER NOT NULL DEFAULT 0,        -- last sync that worked
+     tried_at   INTEGER NOT NULL DEFAULT 0         -- last sync started, so they don't pile up
+   )`,
+  `CREATE INDEX IF NOT EXISTS chat_connections_user ON chat_connections (user_id)`,
+];
+
+// Indexes on columns that ADDED_COLUMNS may have only just added.
+const AFTER_COLUMNS = [
+  `CREATE INDEX IF NOT EXISTS chat_rooms_bridge ON chat_rooms (connection, ext_id)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS chat_messages_ext ON chat_messages (room, ext_id) WHERE ext_id IS NOT NULL`,
 ];
 
 // Columns added after a table first shipped. CREATE TABLE IF NOT EXISTS
 // leaves an existing table alone, so older databases get them here.
 const ADDED_COLUMNS = {
   users: ["email TEXT", "email_verified INTEGER NOT NULL DEFAULT 0"],
-  chat_messages: ["posted_seq INTEGER", "edited_at INTEGER"],
-  chat_rooms: ["kind TEXT NOT NULL DEFAULT 'open'"],
+  chat_messages: ["posted_seq INTEGER", "edited_at INTEGER", "ext_id TEXT", "ext_sender TEXT", "ext_name TEXT", "encrypted INTEGER NOT NULL DEFAULT 0"],
+  chat_rooms: ["kind TEXT NOT NULL DEFAULT 'open'", "connection TEXT", "ext_id TEXT", "encrypted INTEGER NOT NULL DEFAULT 0"],
 };
 
 async function addMissingColumns(d) {
@@ -234,7 +266,8 @@ export function db(env) {
   const d = env.TODO_DB;
   if (!d) throw new Error("D1 binding TODO_DB is not configured");
   if (!ready.has(d)) {
-    ready.set(d, d.batch(SCHEMA.map(s => d.prepare(s))).then(() => addMissingColumns(d)).then(() => splitAreas(d)).catch(e => { ready.delete(d); throw e; }));
+    ready.set(d, d.batch(SCHEMA.map(s => d.prepare(s))).then(() => addMissingColumns(d))
+      .then(() => d.batch(AFTER_COLUMNS.map(s => d.prepare(s)))).then(() => splitAreas(d)).catch(e => { ready.delete(d); throw e; }));
   }
   return ready.get(d).then(() => d);
 }

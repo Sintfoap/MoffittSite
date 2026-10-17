@@ -2,6 +2,10 @@
 right, a line to type in at the bottom. Like the web page it asks the site for
 changes every few seconds. Anything that isn't a message starts with a slash:
 /join, /leave, /new, /dm, /search, /edit, /react, /help…
+
+Rooms from your connections to other platforms (Matrix, …) are listed after
+your direct messages, marked ~; /connect, /connections and /disconnect manage
+them, as the web page's Connections dialog does.
 """
 from __future__ import annotations
 
@@ -14,14 +18,16 @@ from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.widgets import Footer, Input, Label, ListItem, ListView, Static
+from textual.screen import ModalScreen
+from textual.widgets import Button, Footer, Input, Label, ListItem, ListView, Static
 
 from . import site
-from .look import BAD, BG, GOLD, GOLD_DIM, GOOD, INK, LINE, MUTED, PANEL, Failed, Page, plural
+from .look import BAD, BG, FAINT, GOLD, GOLD_DIM, GOOD, INK, LINE, MUTED, PANEL, Failed, Page, plural
 
 ROOM_EVERY, LIST_EVERY = 2.5, 15     # seconds, the same as the web page
 TYPING_EVERY = 3                     # tell the room you're typing at most this often
-MARK = {"open": "# ", "private": "* ", "dm": "@ "}
+MARK = {"open": "# ", "private": "* ", "dm": "@ ", "bridge": "~ "}
+NETWORK = {"matrix": "Matrix"}
 GROUP_SECONDS = 5 * 60               # messages this close from one person share a heading
 
 HELP = """Type a message and press enter to send it (members only). @name mentions
@@ -39,6 +45,9 @@ someone; tab after @ completes a name from the room.
                              take it back: +1 heart laugh tada wow sad eyes pray
   /delete                    delete your last message in this room
   /older                     load older messages
+  /connections               your connections to other platforms (Matrix), and their rooms (~)
+  /connect                   connect an account there   /disconnect N   remove connection N
+  /sync [N]                  sync connections now (and retry one that stopped working)
 tab or esc moves to the room list; enter on a room opens it. Start a message
 with // to send one that begins with /."""
 
@@ -146,6 +155,8 @@ class RoomItem(ListItem):
         name.append(room["name"], style=f"bold {INK}" if room["joined"] else MUTED)
         if kind == "dm" and room.get("with") in online:
             name.append(" ●", style=GOOD)
+        if room.get("encrypted"):
+            name.append(" e2e", style=FAINT)
         if room.get("mentions") and not is_open:
             name.append("  @", style=f"bold {BAD}")
         if room["unread"] and not is_open:
@@ -196,6 +207,67 @@ def _shared_start(words: list[str]) -> str:
     return out
 
 
+class ConnectDialog(ModalScreen[dict | None]):
+    """Connect an account on another platform: the fields come from the site
+    (bridges.providers in the chat state), as on the web page. Secrets are typed hidden."""
+    BINDINGS = [Binding("escape", "cancel", "Cancel")]
+
+    def __init__(self, provider: dict):
+        super().__init__()
+        self.provider = provider
+
+    def compose(self) -> ComposeResult:
+        p = self.provider
+        with Vertical(classes="dialog"):
+            yield Label(Text(f"Connect {p['name']}", style=f"bold {INK}"))
+            yield Static(Text(p.get("help", ""), style=MUTED))
+            for f in p["fields"]:
+                yield Label(f["label"] + ("" if f.get("required") else " (optional)"), classes="lbl")
+                yield Input(id=f"f-{f['name']}", placeholder=f.get("placeholder", ""), password=bool(f.get("secret")))
+            with Horizontal(classes="buttons"):
+                yield Button("Connect", id="ok")
+                yield Button("Cancel", id="cancel", classes="quiet")
+
+    def values(self) -> dict:
+        out = {}
+        for f in self.provider["fields"]:
+            v = self.query_one(f"#f-{f['name']}", Input).value
+            if v:
+                out[f["name"]] = v
+        return out
+
+    def on_input_submitted(self, e: Input.Submitted) -> None:
+        if e.input.id == f"f-{self.provider['fields'][-1]['name']}":
+            self.dismiss(self.values())
+        else:
+            self.focus_next()
+
+    def on_button_pressed(self, e: Button.Pressed) -> None:
+        self.dismiss(self.values() if e.button.id == "ok" else None)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
+def render_connections(conns: list[dict], bridges: dict) -> Text:
+    t = Text("Connections\n", style=f"bold {INK}")
+    if not bridges.get("ready", True):
+        t.append("Connections need a secret the site's admin hasn't set up yet (CHAT_BRIDGE_KEY).\n", style=BAD)
+    for i, c in enumerate(conns, 1):
+        t.append(f"{i}. ", style=GOLD)
+        t.append(f"{c['network']} ", style=f"bold {INK}")
+        t.append(c["label"], style=INK)
+        if c["status"] == "ok":
+            t.append(f"  {plural(c['rooms'], 'room')}", style=MUTED)
+        if c.get("error"):
+            t.append(f"\n   {c['error']}", style=BAD)
+        t.append("\n")
+    if not conns:
+        t.append("Nothing connected yet.\n", style=MUTED)
+    t.append("\n/connect to add one, /disconnect N to remove one, /sync to sync now.", style=MUTED)
+    return t
+
+
 class ChatPage(Page):
     WEB_PATH = "/chat/"
     DEFAULT_CSS = f"""
@@ -230,6 +302,8 @@ class ChatPage(Page):
         self.reactions: list[str] = list(dict.fromkeys(REACTION_NAMES.values()))
         self.online: frozenset = frozenset()
         self.people: list[dict] = []        # everyone else, for /dm and /add
+        self.bridges: dict = {"allowed": False}   # whether you can connect other platforms, and which
+        self.connections: list[dict] = []       # as /connections last listed them, for /disconnect N
         self.searching: str | None = None   # the search whose results are showing
         self._typed = 0.0
         self._busy = False
@@ -280,9 +354,10 @@ class ChatPage(Page):
         s = await self.call(self.api.chat_state)
         if s is None:
             return
-        # Your rooms, then your direct messages, then rooms you could join.
-        order = lambda r: (not r["joined"], r.get("kind") == "dm")  # noqa: E731
+        # Your rooms, then your direct messages, then rooms from other platforms, then rooms you could join.
+        order = lambda r: (not r["joined"], {"dm": 1, "bridge": 2}.get(r.get("kind"), 0))  # noqa: E731
         self.me, self.rooms = s["user"], sorted(s["rooms"], key=order)
+        self.bridges = s.get("bridges") or {"allowed": False}
         self.reactions = s.get("reactions") or self.reactions
         self.online = frozenset(s.get("online") or ())
         if self.open and not any(r["id"] == self.open["id"] for r in self.rooms):
@@ -366,7 +441,11 @@ class ChatPage(Page):
         kind = r.get("kind", "open")
         t = Text(MARK[kind], style=GOLD if kind == "private" else MUTED)
         t.append(r["name"], style=f"bold {INK}")
-        if kind == "dm":
+        if kind == "bridge":
+            t.append(f"   on {NETWORK.get(r.get('provider'), r.get('provider'))} as {r.get('via')}", style=MUTED)
+            if r.get("encrypted"):
+                t.append("   end-to-end encrypted: read only here", style=GOLD_DIM)
+        elif kind == "dm":
             t.append(f"   direct message with @{r.get('with') or '?'}", style=MUTED)
             if r.get("with") in self.online:
                 t.append("  ● online", style=GOOD)
@@ -453,6 +532,8 @@ class ChatPage(Page):
             return self.status("Pick a room first.", bad=True)
         if not self.open["joined"]:
             return self.status("Join the room to post: /join", bad=True)
+        if (self.room() or {}).get("encrypted"):
+            return self.status("This room is end-to-end encrypted, which the site can't send to yet.", bad=True)
         room_id = self.open["id"]
         self._typed = 0.0
         temp = {"id": float("inf"), "body": text, "created_at": int(time.time()), "author": self.me.get("username"),
@@ -485,6 +566,8 @@ class ChatPage(Page):
                 await self.open_room(r["id"])
                 self.status(f"made {MARK[r.get('kind', 'open')]}{r['name']}" + ("; /add NAME to bring people in" if word == "private" else ""))
             return
+        if word in ("connections", "connect", "disconnect", "sync"):
+            return await self.connections_command(word, rest)
         if word == "dm":
             if not rest:
                 return self.status("Usage: /dm NAME", bad=True)
@@ -564,6 +647,50 @@ class ChatPage(Page):
         else:
             self.status(f"No command /{word}. /help lists them.", bad=True)
 
+    async def connections_command(self, word: str, rest: str) -> None:
+        if not self.bridges.get("allowed"):
+            return self.status("Connections to other platforms aren't turned on for your account.", bad=True)
+        if word == "connect":
+            providers = self.bridges.get("providers") or []
+            if not self.bridges.get("ready") or not providers:
+                return self.status("Connections need a secret the site's admin hasn't set up yet (CHAT_BRIDGE_KEY).", bad=True)
+            p = next((p for p in providers if p["id"] == rest.lower()), providers[0])
+            self.app.push_screen(ConnectDialog(p), lambda fields: fields and self.run_worker(self.connect(p, fields)))
+            return
+        conns = await self.call(self.api.chat_connections)
+        if conns is None:
+            return
+        self.connections = conns
+        if word in ("disconnect", "sync") and rest:
+            if not rest.isdigit() or not 0 < int(rest) <= len(conns):
+                return self.status(f"Usage: /{word} N, a number from /connections", bad=True)
+            picked = [conns[int(rest) - 1]]
+        elif word == "disconnect":
+            return self.status("Usage: /disconnect N, a number from /connections", bad=True)
+        else:
+            picked = conns
+        if word == "disconnect":
+            if await self.call(self.api.chat_disconnect, picked[0]["id"]) is None:
+                return
+            self.status(f"removed {picked[0]['label']}")
+        elif word == "sync":
+            for c in picked:
+                await self.call(self.api.chat_sync, c["id"])
+            self.status("synced")
+        await self.load_rooms()
+        self.connections = await self.call(self.api.chat_connections) or []
+        self.searching = "connections"      # so the room doesn't redraw over it
+        self.query_one("#messages", Static).update(render_connections(self.connections, self.bridges))
+
+    async def connect(self, provider: dict, fields: dict) -> None:
+        self.status(f"connecting to {provider['name']}…")
+        c = await self.call(self.api.chat_connect, provider["id"], fields)
+        if not c:
+            return self.status("")
+        await self.load_rooms()
+        self.status(f"connected {c['label']}: {plural(c['rooms'], 'room')}")
+        await self.connections_command("connections", "")
+
     def last_mine(self) -> dict | None:
         mine = [m for m in (self.open or {}).get("messages", {}).values()
                 if m["mine"] and not m["deleted"] and not m.get("pending")]
@@ -582,6 +709,8 @@ class ChatPage(Page):
 
     async def react(self, name: str) -> None:
         o = self.open
+        if (self.room() or {}).get("kind") == "bridge":
+            return self.status("Reactions aren't sent to other platforms yet.", bad=True)
         emoji = REACTION_NAMES.get(name.lower(), name)
         if emoji not in self.reactions:
             return self.status("Usage: /react NAME, one of +1 heart laugh tada wow sad eyes pray", bad=True)

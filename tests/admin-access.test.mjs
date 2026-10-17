@@ -14,7 +14,8 @@ async function admin(env, name = "ryan") {
   return b;
 }
 const areas = (env, name) => sql(env, "SELECT area FROM user_areas a JOIN users u ON u.id = a.user_id WHERE u.username = ? ORDER BY area", name).map(r => r.area);
-const PATHS = { drift: "/todo/", plugins: "/plugins/", chat: "/chat/", admin: "/admin" };
+// Chat connections is part of Chat, so it's tried with Chat on.
+const PATHS = { drift: "/todo/", plugins: "/plugins/", chat: "/chat/", "chat-bridges": "/chat/api/connections", admin: "/admin" };
 
 test("every app is its own area, and new accounts only get the ones marked onForNew", async () => {
   assert.equal(new Set(APPS.map(a => a.area)).size, APPS.length, "two apps sharing an area couldn't be toggled apart");
@@ -38,12 +39,14 @@ test("the admin page has a toggle for every app on every account, and they work"
 
   const id = sqlOne(env, "SELECT id FROM users WHERE username = 'josh'").id;
   for (const a of APPS.filter(a => a.id !== "admin")) {
+    if (a.parent) await ryan.post("/admin/access", { user_id: id, app: a.parent, on: "1" });
     const on = await ryan.post("/admin/access", { user_id: id, app: a.id, on: "1" });
     assert.match(on.text, new RegExp(`${a.name} is on for josh`));
     assert.match(on.text, new RegExp(`aria-pressed="true" aria-label="${a.name} for josh"`));
     assert.equal((await josh.get(PATHS[a.id])).status, 200, `${a.id} on`);
     await ryan.post("/admin/access", { user_id: id, app: a.id, on: "0" });
     assert.equal((await josh.get(PATHS[a.id])).status, 403, `${a.id} off`);
+    if (a.parent) await ryan.post("/admin/access", { user_id: id, app: a.parent, on: "0" });
   }
   assert.equal((await ryan.post("/admin/access", { user_id: id, app: "nope", on: "1" })).status, 400);
   const me = sqlOne(env, "SELECT id FROM users WHERE username = 'ryan'").id;

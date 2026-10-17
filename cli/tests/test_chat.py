@@ -367,7 +367,9 @@ class FakeSite(BaseHTTPRequestHandler):
             return self._send(401, {"error": "not signed in"})
         if self.path.endswith("/messages") and self.command == "POST":
             return self._send(429, {"error": "you're sending messages too quickly; wait a few seconds"})
-        self._send(201 if self.command == "POST" else 200, {"ok": True})
+        # The site answers lists of members, people and connections with a list.
+        lists = self.command == "GET" and self.path.endswith(("/members", "/people", "/connections"))
+        self._send(201 if self.command == "POST" else 200, [] if lists else {"ok": True})
 
     do_GET = do_POST = do_PATCH = do_DELETE = _handle
 
@@ -396,7 +398,7 @@ def test_site_chat_calls(fake):
     site.chat_delete("r_a", 7)
     site.chat_edit("r_a", 7, "fixed")
     site.chat_react("r_a", 7, "👍", on=False)
-    site.chat_members("r_a")
+    assert site.chat_members("r_a") == []
     site.chat_create("secret", private=True)
     site.chat_dm("sam")
     site.chat_people()
@@ -404,6 +406,10 @@ def test_site_chat_calls(fake):
     site.chat_remove("r_a", "kim")
     site.chat_search("r_a", "pizza & beer")
     site.chat_typing("r_a")
+    assert site.chat_connections() == []
+    site.chat_connect("matrix", {"homeserver": "matrix.org", "token": "syt_x"})
+    site.chat_sync("k_1")
+    site.chat_disconnect("k_1")
     with pytest.raises(site.SiteError, match="too quickly"):
         site.chat_post("r_a", "hello")
     assert [(m, p, b) for m, p, b, _, _ in FakeSite.seen] == [
@@ -424,6 +430,10 @@ def test_site_chat_calls(fake):
         ("DELETE", "/chat/api/rooms/r_a/members/kim", None),
         ("GET", "/chat/api/rooms/r_a/search?q=pizza%20%26%20beer", None),
         ("POST", "/chat/api/rooms/r_a/typing", None),
+        ("GET", "/chat/api/connections", None),
+        ("POST", "/chat/api/connections", {"provider": "matrix", "homeserver": "matrix.org", "token": "syt_x"}),
+        ("POST", "/chat/api/connections/k_1/sync", None),
+        ("DELETE", "/chat/api/connections/k_1", None),
         ("POST", "/chat/api/rooms/r_a/messages", {"body": "hello"}),
     ]
     # No Origin header: the site treats that like its own page.
