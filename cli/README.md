@@ -106,9 +106,11 @@ The same rooms as `/chat/`: the list on the left, the open room on the right, an
 | `/rename NAME` `/topic TEXT` | change the open room (its owner, or an admin) |
 | `/delete` | delete your last message in the open room |
 | `/older` | load older messages (`ctrl+u`) |
+| `/gif [TEXT]` | the GIF picker (`ctrl+g`): favorites, trending and categories, or a search for TEXT; `enter` sends the highlighted GIF, `ctrl+s` stars it |
+| `/star` | star the last GIF in the room for your favorites (again to unstar) |
 | `/help` | these commands |
 
-Start a message with `//` to send one that begins with `/`. Messages that mention you are marked with a bar, reactions show under a message, and a room where you were mentioned shows `@` in the list. Rooms are marked `#` (open), `*` (private) or `@` (direct message, with ● when they're online). The line above where you type says who else has the room open, or who's typing.
+Start a message with `//` to send one that begins with `/`. GIFs show as `GIF` and their link (the web page shows the picture). Messages that mention you are marked with a bar, reactions show under a message, and a room where you were mentioned shows `@` in the list. Rooms are marked `#` (open), `*` (private) or `@` (direct message, with ● when they're online). The line above where you type says who else has the room open, or who's typing.
 
 ## Notifications
 

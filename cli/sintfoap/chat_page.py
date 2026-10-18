@@ -1,7 +1,7 @@
 """Chat in the terminal, like /chat/: rooms on the left, the open room on the
 right, a line to type in at the bottom. Like the web page it asks the site for
 changes every few seconds. Anything that isn't a message starts with a slash:
-/join, /leave, /new, /dm, /search, /edit, /react, /help…
+/join, /leave, /new, /dm, /search, /edit, /react, /gif, /help…
 
 Rooms from your connections to other platforms (Matrix, …) are listed after
 your direct messages, marked ~; /connect, /connections and /disconnect manage
@@ -22,6 +22,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Footer, Input, Label, ListItem, ListView, Static
 
 from . import site
+from .gif_picker import GifPicker, is_gif
 from .look import BAD, BG, FAINT, GOLD, GOLD_DIM, GOOD, INK, LINE, MUTED, PANEL, Failed, Page, plural
 
 ROOM_EVERY, LIST_EVERY = 2.5, 15     # seconds, the same as the web page
@@ -44,6 +45,8 @@ someone; tab after @ completes a name from the room.
   /react NAME                react to the last message from someone else, or
                              take it back: +1 heart laugh tada wow sad eyes pray
   /delete                    delete your last message in this room
+  /gif [TEXT]                pick a GIF to send, or search for one (ctrl+g)
+  /star                      star the last GIF here, for your favorites (again to unstar)
   /older                     load older messages
   /connections               your connections to other platforms (Matrix), and their rooms (~)
   /connect                   connect an account there   /disconnect N   remove connection N
@@ -89,7 +92,14 @@ def body_text(body: str, me: str | None, style: str) -> Text:
     return t
 
 
-def render_log(messages: list[dict], more: bool, me: str | None = None) -> Text:
+def gif_text(url: str, style: str) -> Text:
+    """A GIF message: the terminal can't play it, so it's named and linked."""
+    t = Text("GIF ", style=f"bold {GOLD}")
+    t.append(url.strip(), style=f"{style} underline link {url.strip()}")
+    return t
+
+
+def render_log(messages: list[dict], more: bool, me: str | None = None, gif_hosts: list[str] | None = None) -> Text:
     """The open room's messages as styled text, oldest first."""
     t = Text()
     if more:
@@ -107,7 +117,8 @@ def render_log(messages: list[dict], more: bool, me: str | None = None) -> Text:
             t.append(f"  {clock(m['created_at'])}\n", style=MUTED)
         if m.get("mentions_me"):
             t.append("▌", style=GOLD)
-        t.append_text(body_text(m["body"], me, MUTED if m.get("pending") else INK))
+        style = MUTED if m.get("pending") else INK
+        t.append_text(gif_text(m["body"], style) if is_gif(m["body"], gif_hosts or []) else body_text(m["body"], me, style))
         if m.get("edited_at"):
             t.append(" (edited)", style=MUTED)
         t.append("\n")
@@ -289,6 +300,7 @@ class ChatPage(Page):
     BINDINGS = [
         Binding("ctrl+n", "new_room", "New room"),
         Binding("ctrl+u", "older", "Older"),
+        Binding("ctrl+g", "gifs", "GIFs"),
         Binding("f5", "reload", "Refresh"),
     ]
 
@@ -303,6 +315,7 @@ class ChatPage(Page):
         self.online: frozenset = frozenset()
         self.people: list[dict] = []        # everyone else, for /dm and /add
         self.bridges: dict = {"allowed": False}   # whether you can connect other platforms, and which
+        self.gifs: dict = {"ready": False, "hosts": []}   # whether the GIF picker is on, and the hosts GIFs come from
         self.connections: list[dict] = []       # as /connections last listed them, for /disconnect N
         self.searching: str | None = None   # the search whose results are showing
         self._typed = 0.0
@@ -358,6 +371,7 @@ class ChatPage(Page):
         order = lambda r: (not r["joined"], {"dm": 1, "bridge": 2}.get(r.get("kind"), 0))  # noqa: E731
         self.me, self.rooms = s["user"], sorted(s["rooms"], key=order)
         self.bridges = s.get("bridges") or {"allowed": False}
+        self.gifs = s.get("gifs") or {"ready": False, "hosts": []}
         self.reactions = s.get("reactions") or self.reactions
         self.online = frozenset(s.get("online") or ())
         if self.open and not any(r["id"] == self.open["id"] for r in self.rooms):
@@ -478,7 +492,7 @@ class ChatPage(Page):
         log = self.query_one("#log", VerticalScroll)
         near_bottom = log.max_scroll_y - log.scroll_y < 3
         shown = sorted((m for m in self.open["messages"].values() if not m["deleted"]), key=lambda m: m["id"])
-        self.query_one("#messages", Static).update(render_log(shown, self.open["more"], self.me.get("username")))
+        self.query_one("#messages", Static).update(render_log(shown, self.open["more"], self.me.get("username"), self.gifs.get("hosts")))
         if to_bottom or near_bottom:
             self.call_after_refresh(log.scroll_end, animate=False)
 
@@ -613,6 +627,10 @@ class ChatPage(Page):
                 self.status("deleted your last message")
         elif word == "older":
             await self.action_older()
+        elif word == "gif":
+            self.action_gifs(rest)
+        elif word == "star":
+            await self.star_last_gif()
         elif word in ("add", "remove"):
             if not rest:
                 return self.status(f"Usage: /{word} NAME", bad=True)
@@ -726,6 +744,36 @@ class ChatPage(Page):
             o["messages"][m["id"]] = m
             self.render_messages()
             self.status(f"{'reacted' if on else 'took back'} {emoji} to {target['author_name']}")
+
+    # ── GIFs ───────────────────────────────────────────────────────────
+    def action_gifs(self, query: str = "") -> None:
+        """The GIF picker (gif_picker.py); what's picked is sent to the open room."""
+        if not self.gifs.get("ready"):
+            return self.status("GIFs aren't set up on this site yet (the GIF_API_KEY secret).", bad=True)
+        if not self.open:
+            return self.status("Open a room first.", bad=True)
+        if not self.open["joined"]:
+            return self.status("Join the room to post: /join", bad=True)
+        room_id = self.open["id"]
+
+        def picked(gif: dict | None) -> None:
+            if gif and self.open and self.open["id"] == room_id:
+                self.run_worker(self.send(gif["url"]))
+        self.app.push_screen(GifPicker(self.api, query, self.gifs.get("provider") or "KLIPY"), picked)
+
+    async def star_last_gif(self) -> None:
+        hosts = self.gifs.get("hosts") or []
+        shown = sorted((m for m in self.open["messages"].values() if not m["deleted"] and not m.get("pending")), key=lambda m: m["id"])
+        last = next((m for m in reversed(shown) if is_gif(m["body"], hosts)), None)
+        if not last:
+            return self.status("There's no GIF here to star.", bad=True)
+        favs = await self.call(self.api.chat_gif_favorites)
+        if favs is None:
+            return
+        url = last["body"].strip()
+        on = not any(f["url"] == url for f in favs.get("favorites") or [])
+        if await self.call(self.api.chat_gif_favorite, {"url": url}, on) is not None:
+            self.status(f"{'starred' if on else 'unstarred'} {last['author_name']}'s GIF" + ("; ctrl+g → Favorites has it" if on else ""))
 
     # ── keys ───────────────────────────────────────────────────────────
     def leave_field(self) -> bool:
