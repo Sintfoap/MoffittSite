@@ -9,6 +9,7 @@
 // rooms are decrypted and encrypted here, in this browser (e2ee.js).
 
 import { Vault, Shelf, textOf, textContent, editContent, reactionContent } from "/chat/e2ee.js";
+import { toHtml } from "/chat/format.js";
 import { setupGifs, gifsReady, isGifMessage, gifMessageHtml, isFavorite, toggleFavorite, isOpen as gifsOpen, toggleGifs, closeGifs, onGifClick, onGifInput, onGifKey } from "/chat/gifs.js";
 
 const $ = s => document.querySelector(s);
@@ -26,6 +27,7 @@ let open = null;          // { id, seq, more, joined, messages: Map(id → messa
 let busy = false;         // a poll is in flight
 let editingId = null, editDraft = "";   // the message being edited in place
 let pickerFor = null;     // the message whose reaction picker is open
+let replyingTo = null;    // the message the next one you send answers
 let bridges = { allowed: false };   // whether you can connect other platforms, and which
 
 // ── end-to-end encryption ────────────────────────────────────────────────
@@ -96,7 +98,18 @@ async function readable(list, roomId = open?.id) {
     if (had?.shownRaw === m.raw && (had.decrypted || had.failed)) Object.assign(m, { body: had.body, decrypted: had.decrypted, failed: had.failed, shownRaw: m.raw });
     else rest.push({ m, had });
   }
-  const kept = await (await shelfFor(room.connection))?.get(rest.map(({ m }) => eventId(m.raw)).filter(Boolean)) ?? new Map();
+  // (And what replies answer, when that's encrypted too.)
+  const quoted = list.filter(m => m.reply?.raw && !m.reply.decrypted);
+  for (const m of quoted) {
+    const had = open?.id === roomId && open.messages.get(m.reply.id);
+    if (had?.decrypted && had.raw === m.reply.raw) Object.assign(m.reply, { body: had.body, decrypted: true });
+  }
+  const ids = [...rest.map(({ m }) => m.raw), ...quoted.filter(m => !m.reply.decrypted).map(m => m.reply.raw)].map(eventId).filter(Boolean);
+  const kept = await (await shelfFor(room.connection))?.get(ids) ?? new Map();
+  for (const m of quoted) {
+    const c = !m.reply.decrypted && kept.get(eventId(m.reply.raw));
+    if (c) Object.assign(m.reply, { body: textOf(c, m.reply.author_name), decrypted: true });
+  }
   for (const { m, had } of rest) {
     const c = kept.get(eventId(m.raw));
     if (c) read(m, c);
@@ -133,6 +146,13 @@ async function decryptOpen() {
   if (!room) return;
   const id = open.id, vault = await vaultFor(room.connection), shelf = await shelfFor(room.connection);
   const pass = async last => {
+    // What encrypted replies answer.
+    let quotes = false;
+    for (const m of open?.id === id ? [...open.messages.values()].filter(m => m.reply?.raw && !m.reply.decrypted) : []) {
+      const c = await vault.decrypt(m.reply.raw);
+      if (c) { Object.assign(m.reply, { body: textOf(c, m.reply.author_name), decrypted: true }); quotes = true; }
+    }
+    if (quotes && open?.id === id) renderLog();
     const list = open?.id === id ? [...open.messages.values()].filter(m => m.raw && !(m.shownRaw === m.raw && m.decrypted)) : [];
     if (!list.length) return;
     const got = await Promise.all(list.map(m => vault.decrypt(m.raw)));
@@ -241,7 +261,8 @@ async function openRoom(id) {
   const data = await api("GET", `/rooms/${id}/messages`);
   await readable(data.messages, id);
   open = { id, seq: data.seq, more: data.more, joined: data.joined, messages: new Map(data.messages.map(m => [m.id, m])), members: [],
-           here: data.here || [], typing: data.typing || [], bridge: room.kind === "bridge" };
+           here: data.here || [], typing: data.typing || [], reads: data.reads || [], bridge: room.kind === "bridge" };
+  replyingTo = null;
   editingId = pickerFor = null; hideSuggest(); searching = null;
   room.unread = 0; room.mentions = 0;
   // For completing @names as you type.
@@ -284,7 +305,8 @@ function renderRoomShell(room) {
         </form></div>` : ""}
     ${room.encrypted && keysHere(room) !== "ready" ? encryptionBar(room)
       : open.joined
-      ? `<form class="composer" id="composer">
+      ? `<div class="replybar" id="replybar" hidden><span id="reply-what"></span><button class="link" type="button" id="reply-cancel" aria-label="Don't reply">✕</button></div>
+        <form class="composer" id="composer">
           <span class="prompt" aria-hidden="true">&gt;</span>
           <textarea id="text" rows="1" maxlength="2000" placeholder="Message ${esc(roomTitle(room))}" aria-label="Message" autocomplete="off"></textarea>
           <button class="gif-btn" type="button" id="gif-open" aria-label="GIFs (Ctrl+G)" title="GIFs (Ctrl+G)" aria-haspopup="dialog" aria-expanded="false"${gifsReady() ? "" : " hidden"}>GIF</button>
@@ -324,12 +346,17 @@ const day = t => {
   if (d.toDateString() === y.toDateString()) return "Yesterday";
   return d.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric", year: d.getFullYear() === today.getFullYear() ? undefined : "numeric" });
 };
-// Plain text with web links made clickable and @names picked out. Everything
-// is escaped first. (The same @name rule as the site's, in src/chat.js.)
-const linkify = s => esc(s)
-  .replace(/\bhttps?:\/\/[^\s<]+[^\s<.,;:!?)"'\]]/g, u => `<a href="${u}" target="_blank" rel="noopener noreferrer">${u}</a>`)
-  .replace(/(^|[^\w@.\/])@([a-z0-9][a-z0-9_-]{2,31})(?![\w-])/gi, (all, pre, name) =>
-    `${pre}<span class="mention${name.toLowerCase() === me.username ? " you" : ""}">@${name}</span>`);
+// A message's text with its formatting (format.js), web links made
+// clickable and @names picked out. Everything is escaped first. (The same
+// @name rule as the site's, in src/chat.js.)
+const linkify = s => toHtml(s, {
+  newline: "\n",
+  link: (u, t) => `<a href="${u}" target="_blank" rel="noopener noreferrer">${t}</a>`,
+  mention: name => `<span class="mention${name.toLowerCase() === me.username ? " you" : ""}">@${name}</span>`,
+});
+// A reply's quote of what it answers: one line, without the formatting marks.
+const quoteOf = r => !r.id ? `<span class="gone">Deleted message</span>`
+  : `<b>${esc(r.author_name)}</b> ${esc(String(r.body).replace(/\s+/g, " ").replace(/(\*\*|~~|`+|^> )/g, ""))}`;
 
 function messageHtml(m) {
   if (m.id === editingId) {
@@ -346,10 +373,15 @@ function messageHtml(m) {
   const picker = pickerFor === m.id
     ? `<div class="picker" role="menu">${reactions.map(e => `<button class="link" data-react="${esc(e)}" data-mid="${m.id}" role="menuitem">${esc(e)}</button>`).join("")}</div>` : "";
   const gif = !m.deleted && isGifMessage(m.body);
-  return `<div class="text" title="${esc(time(m.created_at))}">${gif ? gifMessageHtml(m) : linkify(m.body)}${m.edited_at ? `<span class="edited" title="Edited ${esc(time(m.edited_at))}"> (edited)</span>` : ""}</div>
+  const seen = open.reads?.filter(r => r.message === m.id).map(r => r.name);
+  return `${m.reply ? `<button class="quote" ${m.reply.id ? `data-jump="${m.reply.id}"` : "disabled"} title="Go to the message this answers">${quoteOf(m.reply)}</button>` : ""}<div class="text" title="${esc(time(m.created_at))}">${gif ? gifMessageHtml(m) : linkify(m.body)}${m.edited_at ? `<span class="edited" title="Edited ${esc(time(m.edited_at))}"> (edited)</span>` : ""}</div>
     ${chips || picker ? `<div class="reacts">${chips}${picker}</div>` : ""}
-    <div class="acts">${gif && gifsReady() && !m.pending ? `<button class="link star${isFavorite(m.body.trim()) ? " on" : ""}" data-favgif="${m.id}" aria-label="${isFavorite(m.body.trim()) ? "Remove GIF from favorites" : "Add GIF to favorites"}">★</button>` : ""}${canReact ? `<button class="link" data-pick="${m.id}" aria-label="React">React</button>` : ""}${m.can_edit && !m.pending ? `<button class="link" data-editmsg="${m.id}">Edit</button>` : ""}${m.can_delete ? `<button class="link del" data-del="${m.id}" aria-label="Delete message">Delete</button>` : ""}</div>`;
+    ${seen?.length ? `<div class="seen">Seen by ${esc(names(seen))}</div>` : ""}
+    <div class="acts">${canReply(m) ? `<button class="link" data-reply="${m.id}">Reply</button>` : ""}${gif && gifsReady() && !m.pending ? `<button class="link star${isFavorite(m.body.trim()) ? " on" : ""}" data-favgif="${m.id}" aria-label="${isFavorite(m.body.trim()) ? "Remove GIF from favorites" : "Add GIF to favorites"}">★</button>` : ""}${canReact ? `<button class="link" data-pick="${m.id}" aria-label="React">React</button>` : ""}${m.can_edit && !m.pending ? `<button class="link" data-editmsg="${m.id}">Edit</button>` : ""}${m.can_delete ? `<button class="link del" data-del="${m.id}" aria-label="Delete message">Delete</button>` : ""}</div>`;
 }
+
+// You can answer a message that's here for good (and, in a bridge room, there too).
+const canReply = m => open.joined && !m.pending && !m.deleted && (!open.bridge || m.ext_id) && $("#composer");
 
 // A message still being decrypted is shown quietly; one that can't be, as locked.
 const lockClass = m => m.raw && keyedRoom() ? (m.failed ? " locked" : m.decrypting ? " decrypting" : "") : m.encrypted && !m.decrypted ? " locked" : "";
@@ -395,6 +427,7 @@ async function pollRoom() {
     if (open.bridge && data.messages.length) loadRooms().catch(() => {});
     const people = JSON.stringify([data.here, data.typing]);
     if (people !== JSON.stringify([open.here, open.typing])) { open.here = data.here || []; open.typing = data.typing || []; renderPresence(); }
+    if (data.reads && JSON.stringify(data.reads) !== JSON.stringify(open.reads)) { open.reads = data.reads; if (!data.messages.length) renderLog(); }
     if (data.messages.length) {
       await readable(data.messages, id);
       await readSoon(data.messages, id);
@@ -439,6 +472,8 @@ $("#room").addEventListener("click", async e => {
     else if (t.id === "verify-open") { $("#verify-form").hidden = false; t.hidden = true; $("#verify-key").focus(); }
     else if (t.id === "verify-cancel") { $("#verify-form").hidden = true; $("#verify-open").hidden = false; $("#verify-key").value = ""; }
     else if (t.id === "edit-room") editRoom(rooms.find(r => r.id === open.id));
+    else if (t.dataset.reply) startReply(Number(t.dataset.reply));
+    else if (t.id === "reply-cancel") stopReply();
     else if (t.id === "show-members") showMembers();
     else if (t.id === "add-people") pickPerson("add");
     else if (t.id === "search-open") openSearch();
@@ -533,26 +568,48 @@ $("#room").addEventListener("submit", async e => {
   const box = $("#text"), body = box.value.trim();
   if (!body || !open) return;
   box.value = ""; grow(box);
-  sendMessage(body, { box });
+  sendMessage(body, { box, reply: replyingTo });
+  stopReply({ focus: false });
 });
+
+// Replying: the bar over the message line says to what, until it's sent.
+function startReply(id) {
+  const m = open?.messages.get(id);
+  if (!m || !canReply(m)) return;
+  replyingTo = id;
+  const bar = $("#replybar");
+  bar.hidden = false;
+  $("#reply-what").innerHTML = `Replying to ${quoteOf({ id, author_name: m.author_name, body: m.body })}`;
+  $("#text").focus();
+}
+function stopReply({ focus = true } = {}) {
+  replyingTo = null;
+  const bar = $("#replybar");
+  if (bar) bar.hidden = true;
+  if (focus) $("#text")?.focus();
+}
 
 // Sends a message to the open room. `box` gets the text back if it fails.
 // (The GIF picker sends through here too, leaving the message line alone.)
-async function sendMessage(body, { box = null } = {}) {
+async function sendMessage(body, { box = null, reply = null } = {}) {
   if (!open) return;
-  const id = open.id;
+  const id = open.id, answers = reply && open.messages.get(reply);
   // Shown straight away, then swapped for the real one.
   typingSent = 0;
-  const temp = { id: Number.MAX_SAFE_INTEGER + tempId--, body, created_at: Math.floor(Date.now() / 1000), author: me.username, author_name: me.name, mine: true, pending: true };
+  const temp = { id: Number.MAX_SAFE_INTEGER + tempId--, body, created_at: Math.floor(Date.now() / 1000), author: me.username, author_name: me.name, mine: true, pending: true,
+                 reply: answers ? { id: answers.id, author_name: answers.author_name, body: answers.body } : null };
   open.messages.set(temp.id, temp);
   renderLog({ toBottom: true });
   try {
     const room = rooms.find(r => r.id === id);
-    const m = await api("POST", `/rooms/${id}/messages`, room?.encrypted
-      ? { encrypted: await (await vaultFor(room.connection)).encrypt(room.ext_room, textContent(body)) } : { body });
+    const content = textContent(body, { reply: answers?.ext_id });
+    const m = await api("POST", `/rooms/${id}/messages`, {
+      ...(room?.encrypted ? { encrypted: await (await vaultFor(room.connection)).encrypt(room.ext_room, content) } : { body }),
+      ...(answers ? { reply_to: answers.id } : {}) });
     if (open?.id !== id) return;
     open.messages.delete(temp.id);
-    if (m.raw) { read(m, textContent(body)); (await shelfFor(room.connection))?.put(eventId(m.raw), textContent(body)); }
+    if (m.raw) { read(m, content); (await shelfFor(room.connection))?.put(eventId(m.raw), content); }
+    if (m.reply?.encrypted && answers?.decrypted) m.reply.body = answers.body;
     open.messages.set(m.id, m);
     renderLog({ toBottom: true });
   } catch (err) {
@@ -581,6 +638,7 @@ $("#room").addEventListener("keydown", e => {
     if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); box.form.requestSubmit(); }
     else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); stopEdit(); }
   } else if (e.key === "Escape" && pickerFor != null) { e.stopPropagation(); pickerFor = null; renderLog(); }
+  else if (box.id === "text" && e.key === "Escape" && replyingTo != null) { e.preventDefault(); e.stopPropagation(); stopReply(); }
 });
 // A GIF that finishes loading at the bottom of the log keeps the log at the bottom.
 $("#room").addEventListener("load", e => {

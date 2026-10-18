@@ -253,6 +253,30 @@ test("members react to messages from a short list", async () => {
   assert.equal(sqlOne(env, "SELECT COUNT(*) AS n FROM chat_reactions").n, 0);
 });
 
+test("replies say what they answer, and formatting is kept as typed", async () => {
+  const env = makeEnv();
+  const josh = await signedIn(env, "josh"), sam = await signedIn(env, "sam");
+  const room = (await api(josh, "POST", "/rooms", { name: "Replies" })).json.id;
+  const other = (await api(josh, "POST", "/rooms", { name: "Elsewhere" })).json.id;
+  await api(sam, "POST", `/rooms/${room}/join`);
+  const q = (await say(josh, room, "**pizza** tonight? " + "x".repeat(300))).json;
+  const a = await api(sam, "POST", `/rooms/${room}/messages`, { body: "yes", reply_to: q.id });
+  assert.equal(a.status, 201);
+  assert.equal(a.json.reply.id, q.id);
+  assert.equal(a.json.reply.author_name, "josh");
+  assert.ok(a.json.reply.body.startsWith("**pizza** tonight?") && a.json.reply.body.length <= 201, "the start of it");
+  assert.equal(a.json.reply.mine, false);
+  assert.equal((await api(josh, "GET", `/rooms/${room}/messages`)).json.messages[1].reply.mine, true);
+  assert.equal((await say(josh, room, "plain")).json.reply, null);
+  // Only to a message in the same room that's still there.
+  const there = (await say(josh, other, "elsewhere")).json;
+  assert.equal((await api(sam, "POST", `/rooms/${room}/messages`, { body: "?", reply_to: there.id })).status, 400);
+  assert.equal((await api(sam, "POST", `/rooms/${room}/messages`, { body: "?", reply_to: "1" })).status, 400);
+  await api(josh, "DELETE", `/rooms/${room}/messages/${q.id}`);
+  assert.deepEqual((await api(josh, "GET", `/rooms/${room}/messages`)).json.messages[0].reply, { id: null, author_name: null, body: "", mine: false });
+  assert.equal((await api(sam, "POST", `/rooms/${room}/messages`, { body: "?", reply_to: q.id })).status, 400);
+});
+
 test("private rooms are only for their members, who add each other", async () => {
   const env = makeEnv();
   const boss = await admin(env);

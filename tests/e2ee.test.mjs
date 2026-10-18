@@ -276,3 +276,39 @@ test("what the browser has read is kept sealed, so a chat opens readable", async
   await none.put("$one", textContent("hi"));
   assert.equal((await none.get(["$one"])).size, 0);
 });
+
+test("encrypted replies say what they answer outside the encryption, and formatting is encrypted with the words", async () => {
+  const { ryan, conn } = await setup();
+  const vault = await siteVault(ryan, conn);
+  const sam = await samOnMatrix();
+  const first = await sam.say(textContent("**big** news"));
+  await syncNow(ryan, conn);
+  const room = (await api(ryan, "GET", "/state")).json.rooms.find(r => r.encrypted);
+  const [m] = (await api(ryan, "GET", `/rooms/${room.id}/messages`)).json.messages;
+  await vault.pump();
+  assert.equal(textOf(await vault.decrypt(m.raw)), "**big** news");
+  assert.equal(JSON.parse(m.raw).event_id, first);
+
+  // Ryan replies from the browser; the site checks it answers that message.
+  const content = textContent("tell me _more_", { reply: m.ext_id });
+  assert.equal(content.formatted_body, "tell me <em>more</em>");
+  const wrong = await vault.encrypt(ROOM, textContent("x", { reply: "$nope" }));
+  assert.equal((await api(ryan, "POST", `/rooms/${room.id}/messages`, { encrypted: wrong, reply_to: m.id })).status, 400);
+  assert.equal((await api(ryan, "POST", `/rooms/${room.id}/messages`, { encrypted: await vault.encrypt(ROOM, content) })).status, 400, "say which it replies to");
+  const out = await api(ryan, "POST", `/rooms/${room.id}/messages`, { encrypted: await vault.encrypt(ROOM, content), reply_to: m.id });
+  assert.equal(out.status, 201);
+  assert.equal(out.json.reply.id, m.id);
+  assert.equal(out.json.reply.encrypted, true, "the browser reads what it answers");
+  assert.ok(out.json.reply.raw);
+  const sent = hs.events.at(-1).event;
+  assert.equal(sent.type, "m.room.encrypted");
+  assert.deepEqual(sent.content["m.relates_to"], { "m.in_reply_to": { event_id: m.ext_id } });
+  assert.ok(!JSON.stringify(sent).includes("more"));
+  assert.deepEqual(await sam.read(), ["**big** news", "tell me *more*"]);
+
+  // Sam's encrypted reply comes in as a reply too.
+  await sam.say(textContent("ok", { reply: out.json.ext_id }));
+  await syncNow(ryan, conn);
+  const last = (await api(ryan, "GET", `/rooms/${room.id}/messages`)).json.messages.at(-1);
+  assert.equal(last.reply.id, out.json.id);
+});

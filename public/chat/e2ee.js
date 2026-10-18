@@ -18,6 +18,8 @@
 // It takes the library and a post(op, body) function rather than reaching
 // for them, so the tests run it in Node against a stand-in homeserver.
 
+import { fromHtml, messageContent, editContent } from "./format.js";
+
 export class Vault {
   constructor(lib, machine, post, key) {
     this.lib = lib; this.machine = machine; this.post = post; this.key = key;
@@ -285,23 +287,22 @@ async function idbRows(name) {
   };
 }
 
-// Decrypted content → the text chat shows, as the site does for plain rooms.
+// Decrypted content → the text chat shows, as the site does for plain rooms
+// (src/matrix.js): formatting as the Markdown it stands for.
 export function textOf(content, senderName) {
   const c = content?.["m.new_content"] ?? content;
-  const body = typeof c?.body === "string" ? c.body : "";
+  const html = c?.format === "org.matrix.custom.html" && typeof c.formatted_body === "string" && fromHtml(c.formatted_body);
+  const body = html || (typeof c?.body === "string" ? c.body : "");
   const kind = c?.msgtype;
   const out = kind === "m.emote" ? `* ${senderName} ${body}`
     : ["m.image", "m.file", "m.video", "m.audio"].includes(kind) ? `[${kind.slice(2)}] ${body}`
-    : body.replace(/^(> .*\n)+\n/, "");
+    : html ? body : body.replace(/^(> .*\n)+\n/, "");
   return out.replace(/[\u0000-\u0009\u000b-\u001f\u007f]/g, " ").trim();
 }
 
-export const textContent = text => ({ msgtype: "m.text", body: text });
+export const textContent = messageContent;
 export const reactionContent = (eventId, emoji) => ({ "m.relates_to": { rel_type: "m.annotation", event_id: eventId, key: emoji } });
-export const editContent = (eventId, text) => ({
-  msgtype: "m.text", body: "* " + text, "m.new_content": { msgtype: "m.text", body: text },
-  "m.relates_to": { rel_type: "m.replace", event_id: eventId },
-});
+export { editContent };
 
 // ── secret storage (what a Security Key opens) ────────────────────────────
 // As the Matrix spec has it: m.secret_storage.v1.aes-hmac-sha2. Each secret

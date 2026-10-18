@@ -26,6 +26,16 @@ export class FakeMatrix {
     this.accountData = new Map();   // "user|type" → content
     this.backups = [];         // [{version, algorithm, auth_data, rooms: {room: {session: data}}}]
     this.signatures = [];      // every keys/signatures/upload body, to check what was signed
+    this.typed = [];           // [room, user, body] for each "typing" the site sent
+    this.receipts = [];        // [room, user, event id] for each read receipt the site sent
+  }
+
+  // Ephemeral events for the next sync: who's typing, and read receipts.
+  typing(room, users) { this.ephemeral(room, { type: "m.typing", content: { user_ids: users } }); }
+  receipt(room, user, event) { this.ephemeral(room, { type: "m.receipt", content: { [event]: { "m.read": { [user]: { ts: Date.now() } } } } }); }
+  ephemeral(room, e) {
+    const r = this.rooms.get(room);
+    (r.ephemeral ??= []).push(e); r.changed = true;
   }
 
   setAccountData(user, type, content) { this.accountData.set(`${user}|${type}`, content); }
@@ -135,6 +145,10 @@ export class FakeMatrix {
       this.events.push({ room, event });
       return json({ event_id: event.event_id });
     }
+    m = path.match(/^\/_matrix\/client\/v3\/rooms\/([^/]+)\/typing\/([^/]+)$/);
+    if (m && req.method === "PUT") { this.typed.push([decodeURIComponent(m[1]), decodeURIComponent(m[2]), body]); return json({}); }
+    m = path.match(/^\/_matrix\/client\/v3\/rooms\/([^/]+)\/receipt\/m\.read\/([^/]+)$/);
+    if (m && req.method === "POST") { this.receipts.push([decodeURIComponent(m[1]), who.user, decodeURIComponent(m[2])]); return json({}); }
     m = path.match(/^\/_matrix\/client\/v3\/rooms\/([^/]+)\/redact\/([^/]+)\/[^/]+$/);
     if (m && req.method === "PUT") {
       this.redact(decodeURIComponent(m[1]), who.user, decodeURIComponent(m[2]));
@@ -289,7 +303,9 @@ export class FakeMatrix {
         r.renamed = false;
       }
       for (const [mxid, name] of r.members) state.push({ type: "m.room.member", state_key: mxid, content: { membership: "join", displayname: name } });
-      join[id] = { state: { events: state }, timeline: { events: timeline, limited: false },
+      const ephemeral = { events: r.ephemeral ?? [] };
+      r.ephemeral = [];
+      join[id] = { state: { events: state }, timeline: { events: timeline, limited: false }, ephemeral,
         summary: { "m.heroes": [...r.members.keys()].filter(k => k !== this.user) } };
     }
     return this.syncCrypto(who, { next_batch: String(this.events.length), rooms: { join, leave } });

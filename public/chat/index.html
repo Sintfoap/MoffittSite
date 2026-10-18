@@ -128,6 +128,21 @@ button.link:hover { color: var(--gold); }
 .edit-actions span { margin-right: auto; }
 .edit-actions .btn { padding: 4px 12px; }
 .msg.pending { opacity: .5; }
+.msg .quote { display: block; max-width: 100%; margin: 2px 0 1px; padding: 0 0 0 8px; border: 0; border-left: 2px solid var(--line-2); background: none;
+  font: inherit; font-size: 12.5px; color: var(--faint); text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
+.msg .quote b { color: var(--muted); }
+.msg .quote:hover:not(:disabled) { border-left-color: var(--gold); }
+.msg .quote:disabled, .msg .quote .gone { cursor: default; font-style: italic; }
+.msg .seen { font-size: 11.5px; color: var(--faint); text-align: right; }
+.msg .text strong { color: var(--ink); }
+.msg .text code { padding: 0 3px; background: var(--field); border: 1px solid var(--line); font-size: .92em; }
+.msg .text pre { margin: 4px 0; padding: 6px 9px; background: var(--field); border: 1px solid var(--line); white-space: pre-wrap; }
+.msg .text pre code { padding: 0; border: 0; background: none; }
+.msg .text blockquote { margin: 2px 0; padding-left: 8px; border-left: 2px solid var(--line-2); }
+.replybar { display: flex; align-items: center; gap: 8px; padding: 6px 18px 0; font-size: 12.5px; color: var(--faint); }
+.replybar span { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.replybar b { color: var(--muted); }
+.replybar:not([hidden]) + .composer { border-top: 0; }
 .msg.locked .text { font-style: italic; color: var(--faint); }
 .msg.decrypting .text { color: var(--faint); }
 .log .empty, .welcome { margin: auto; text-align: center; color: var(--muted); padding: 24px; max-width: 420px; }

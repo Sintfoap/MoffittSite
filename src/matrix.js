@@ -15,6 +15,7 @@
 // that browser, and the key requests it makes are passed on (cryptoRequest).
 
 import { randomBytes, hex } from "./crypto.js";
+import { fromHtml, messageContent, editContent } from "../public/chat/format.js";
 
 export class ProviderError extends Error {
   // auth: the credentials no longer work, so the connection needs redoing.
@@ -27,14 +28,15 @@ const TIMEOUT = 8000;
 const MAX_BODY = 4000;
 export const ENCRYPTED_NOTE = "🔒 Encrypted message";
 
-// Only what chat shows: messages, edits and deletions, and the state that
-// names a room. No presence, receipts, typing or account data.
+// Only what chat shows: messages, edits, reactions and deletions, the state
+// that names a room, and who's typing and has read what. No presence or
+// account data.
 const STATE_TYPES = ["m.room.name", "m.room.topic", "m.room.canonical_alias", "m.room.encryption", "m.room.member"];
 const filter = limit => JSON.stringify({
   presence: { not_types: ["*"] },
   account_data: { not_types: ["*"] },
   room: {
-    ephemeral: { not_types: ["*"] },
+    ephemeral: { types: ["m.typing", "m.receipt"] },
     account_data: { not_types: ["*"] },
     state: { lazy_load_members: true, types: STATE_TYPES },
     timeline: { limit, lazy_load_members: true,
@@ -176,9 +178,10 @@ export const matrix = {
   // {cursor, rooms: [{id, name?, fallback_name?, topic?, encrypted?, left?, events: [...]}]}.
   // name/topic are left out when this sync didn't say (fallback_name is
   // what to call a room with no name); events are
-  //   {type: "message", id, sender, sender_name, mine, body, at, encrypted}
+  //   {type: "message", id, sender, sender_name, mine, body, at, encrypted, reply?}
   //   {type: "edit", target, body, at}
   //   {type: "delete", target}
+  // and, when this sync said, typing: [names] and receipts: [{user, name, event, at}].
   async sync(creds, cursor) {
     const data = await call(creds.base, "GET", "/_matrix/client/v3/sync", { token: creds.token, query: {
       since: cursor || undefined, timeout: "0", set_presence: "offline", filter: filter(cursor ? 50 : 20),
@@ -222,18 +225,26 @@ export const matrix = {
     });
   },
 
-  async send(creds, roomId, text) {
+  // reply: the id of the message it answers, if it does.
+  async send(creds, roomId, text, { reply } = {}) {
     const out = await call(creds.base, "PUT", `/_matrix/client/v3/rooms/${room(roomId)}/send/m.room.message/${txn()}`,
-      { token: creds.token, body: { msgtype: "m.text", body: text } });
+      { token: creds.token, body: messageContent(text, { reply }) });
     return out.event_id;
   },
 
   async edit(creds, roomId, eventId, text) {
-    await call(creds.base, "PUT", `/_matrix/client/v3/rooms/${room(roomId)}/send/m.room.message/${txn()}`, { token: creds.token, body: {
-      msgtype: "m.text", body: "* " + text,
-      "m.new_content": { msgtype: "m.text", body: text },
-      "m.relates_to": { rel_type: "m.replace", event_id: eventId },
-    } });
+    await call(creds.base, "PUT", `/_matrix/client/v3/rooms/${room(roomId)}/send/m.room.message/${txn()}`, { token: creds.token, body: editContent(eventId, text) });
+  },
+
+  // "Typing…" for a few seconds, or not any more.
+  async typing(creds, roomId, on) {
+    await call(creds.base, "PUT", `/_matrix/client/v3/rooms/${room(roomId)}/typing/${encodeURIComponent(creds.user_id)}`,
+      { token: creds.token, body: on ? { typing: true, timeout: 6000 } : { typing: false } });
+  },
+
+  // Says you've read the room up to this message.
+  async receipt(creds, roomId, eventId) {
+    await call(creds.base, "POST", `/_matrix/client/v3/rooms/${room(roomId)}/receipt/m.read/${encodeURIComponent(eventId)}`, { token: creds.token, body: {} });
   },
 
   // A reaction: an annotation of the message with the emoji as its key.
@@ -258,13 +269,22 @@ const localpart = mxid => String(mxid).replace(/^@/, "").split(":")[0];
 const dropReplyQuote = body => body.replace(/^(> .*\n)+\n/, "");
 
 function textOf(content, senderName) {
-  const body = typeof content?.body === "string" ? content.body : "";
+  // Formatting comes as HTML; chat keeps it as the Markdown it stands for.
+  const html = content?.format === "org.matrix.custom.html" && typeof content.formatted_body === "string" && fromHtml(content.formatted_body);
+  const body = html || (typeof content?.body === "string" ? content.body : "");
   const kind = content?.msgtype;
   let out = kind === "m.emote" ? `* ${senderName} ${body}`
     : ["m.image", "m.file", "m.video", "m.audio"].includes(kind) ? `[${kind.slice(2)}] ${body}`
-    : dropReplyQuote(body);
+    : html ? body : dropReplyQuote(body);
   out = out.replace(/[\u0000-\u0009\u000b-\u001f\u007f]/g, " ").trim();
   return out.length > MAX_BODY ? out.slice(0, MAX_BODY) + "…" : out;
+}
+
+// What a message answers, if it's a reply: {reply: its id}. (Outside the
+// encryption in an encrypted room, as Matrix has it.)
+function replyOf(c) {
+  const id = c?.["m.relates_to"]?.["m.in_reply_to"]?.event_id;
+  return typeof id === "string" && id.length <= 255 ? { reply: id } : {};
 }
 
 // A reaction → {target, key}. In an encrypted room it's encrypted too, but
@@ -316,7 +336,7 @@ function joinedRoom(id, r, me) {
       const rel = c["m.relates_to"];
       if (rel?.rel_type === "m.replace" && rel.event_id) out.events.push({ type: "edit", target: rel.event_id, sender: e.sender, raw, at });
       else out.events.push({ type: "message", id: e.event_id, sender: e.sender, sender_name: who(e.sender), mine: e.sender === me,
-        body: ENCRYPTED_NOTE, at, encrypted: true, raw });
+        body: ENCRYPTED_NOTE, at, encrypted: true, raw, ...replyOf(c) });
     } else if (e.type === "m.room.message") {
       const rel = c["m.relates_to"];
       if (rel?.rel_type === "m.replace" && rel.event_id) {
@@ -324,9 +344,23 @@ function joinedRoom(id, r, me) {
         if (body) out.events.push({ type: "edit", target: rel.event_id, sender: e.sender, body, at });
       } else {
         const body = textOf(c, who(e.sender));
-        if (body) out.events.push({ type: "message", id: e.event_id, sender: e.sender, sender_name: who(e.sender), mine: e.sender === me, body, at, encrypted: false });
+        if (body) out.events.push({ type: "message", id: e.event_id, sender: e.sender, sender_name: who(e.sender), mine: e.sender === me, body, at, encrypted: false, ...replyOf(c) });
       }
     }
   }
+  // Who's typing now (when that changed), and how far people have read.
+  for (const e of r.ephemeral?.events ?? []) {
+    if (e.type === "m.typing" && Array.isArray(e.content?.user_ids)) {
+      out.typing = e.content.user_ids.filter(u => typeof u === "string" && u !== me).slice(0, 10).map(who);
+    } else if (e.type === "m.receipt") {
+      for (const [event, kinds] of Object.entries(e.content ?? {})) {
+        for (const [user, info] of Object.entries(kinds?.["m.read"] ?? {})) {
+          if (user === me || info?.thread_id && info.thread_id !== "main") continue;
+          (out.receipts ??= []).push({ user, name: who(user), event, at: Math.floor((info?.ts ?? Date.now()) / 1000) });
+        }
+      }
+    }
+  }
+  if (out.receipts?.length > 50) out.receipts = out.receipts.slice(-50);
   return out;
 }

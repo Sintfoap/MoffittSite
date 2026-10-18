@@ -434,19 +434,36 @@ def test_chat_connects_matrix_and_talks_in_its_rooms(real_site):
             await pilot.press("enter")
             await settle(pilot, 0.5)
         assert "reacted 🎉 to Sam" in str(page.query_one("#status").render()), str(page.query_one("#status").render())
+        await type_(pilot, "/reply @sam six is **great**")
+        await pilot.press("enter")
+        await settle(pilot, 0.5)
+        shown = str(page.query_one("#messages").render())
+        assert "↳ Sam dinner at six?" in shown and "six is great" in shown, shown
         await type_(pilot, "/disconnect 2")
         await pilot.press("enter")
         await settle(pilot)
     run_app("chat", bridge)
     room = next(r for r in site.chat_state()["rooms"] if r["kind"] == "bridge")
     msgs = site.chat_messages(room["id"])["messages"]
-    assert [(m["body"], m["mine"]) for m in msgs] == [("dinner at six?", False), ("on my way!", True)]
+    assert [(m["body"], m["mine"]) for m in msgs] == [("dinner at six?", False), ("on my way!", True), ("six is **great**", True)]
+    assert msgs[2]["reply"]["id"] == msgs[0]["id"]
     [c] = site.chat_connections()
     site.chat_disconnect(c["id"])
     assert not any(r["kind"] == "bridge" for r in site.chat_state()["rooms"])
 
 
 # ── the rules, without a site ──────────────────────────────────────────────
+
+def test_chat_formatting_matches_the_web_page():
+    from sintfoap.chat_page import body_text, quote_text
+    t = body_text("**bold** *it* ~~no~~ `x*y*` [site](https://e.org) @josh\n> quoted\n```\ncode **raw**\n```", "josh", "white")
+    assert t.plain == "bold it no x*y* site @josh\n▏quoted\ncode **raw**"
+    styles = {t.plain[s.start:s.end]: str(s.style) for s in t.spans}
+    assert "bold" in styles["bold"] and "italic" in styles["it"] and "strike" in styles["no"]
+    assert "link https://e.org" in styles["site"]
+    assert quote_text({"id": None}).plain.endswith("Deleted message")
+    assert quote_text({"id": 1, "author_name": "Sam", "body": "**big**\nnews"}).plain == "  ↳ Sam big news"
+
 
 def test_quick_add_parsing_matches_the_web_page():
     title, f = R.parse_quick("Call Sam #Family +home !2 ^+3d @3:15pm")

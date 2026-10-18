@@ -41,6 +41,7 @@ someone; tab after @ completes a name from the room.
   /who                       who's in the room, and who's online (●)
   /search TEXT               find messages in this room; /search on its own goes back
   /rename NAME  /topic TEXT  change the open room (its owner, or an admin)
+  /reply [@NAME] TEXT        answer the last message from someone else (or from NAME)
   /edit [TEXT]               change your last message (↑ on an empty line too)
   /react NAME                react to the last message from someone else, or
                              take it back: +1 heart laugh tada wow sad eyes pray
@@ -51,6 +52,7 @@ someone; tab after @ completes a name from the room.
   /connections               your connections to other platforms (Matrix), and their rooms (~)
   /connect                   connect an account there   /disconnect N   remove connection N
   /sync [N]                  sync connections now (and retry one that stopped working)
+**bold**, *italic*, ~~struck~~, `code` and "> " quotes work as they do on the web.
 tab or esc moves to the room list; enter on a room opens it. Start a message
 with // to send one that begins with /."""
 
@@ -79,16 +81,67 @@ def day(t: int) -> str:
     return f"{d:%A} {d.day} {d:%B}" + ("" if d.year == today.year else f" {d.year}")
 
 
-def body_text(body: str, me: str | None, style: str) -> Text:
-    """A message's text with @names picked out, and @you stronger still."""
-    t, at = Text(), 0
-    for m in MENTION.finditer(body):
+# The web page's formatting (public/chat/format.js): code first, then the rest.
+CODE_BLOCK = re.compile(r"```(?:[a-z0-9+-]*\n)?([\s\S]*?)```", re.IGNORECASE)
+INLINE = re.compile(r"`([^`\n]+)`|\*\*(?=\S)([^*]*?\S)\*\*|~~(?=\S)([^~]*?\S)~~"
+                    r"|(?<![\w*])\*(?=[^\s*])([^*]*?[^\s*])\*(?![\w*])|(?<!\w)_(?=[^\s_])([^_]*?[^\s_])_(?!\w)"
+                    r"|\[([^\]\n]{1,200})\]\((https?://[^\s)]+)\)")
+
+
+def _mentions(t: Text, text: str, me: str | None, style: str) -> None:
+    at = 0
+    for m in MENTION.finditer(text):
         start = m.start(2) - 1
-        t.append(body[at:start], style=style)
+        t.append(text[at:start], style=style)
         you = me and m.group(2).lower() == me
         t.append("@" + m.group(2), style=f"bold {BG} on {GOLD}" if you else f"bold {GOLD}")
         at = m.end()
-    t.append(body[at:], style=style)
+    t.append(text[at:], style=style)
+
+
+def _inline(t: Text, text: str, me: str | None, style: str) -> None:
+    at = 0
+    for m in INLINE.finditer(text):
+        _mentions(t, text[at:m.start()], me, style)
+        code, bold, struck, em, em2, label, url = m.groups()
+        if code is not None:
+            t.append(code, style=f"{GOLD_DIM} on {PANEL}")
+        elif label is not None:
+            t.append(label, style=f"{style} underline link {url}")
+        else:
+            inner = bold or struck or em or em2
+            _mentions(t, inner, me, f"{style} {'bold' if bold else 'strike' if struck else 'italic'}")
+        at = m.end()
+    _mentions(t, text[at:], me, style)
+
+
+def body_text(body: str, me: str | None, style: str) -> Text:
+    """A message's text, formatted, with @names picked out, and @you stronger still."""
+    t = Text()
+    for i, part in enumerate(CODE_BLOCK.split(body)):
+        if i % 2:
+            t.append(part.rstrip("\n"), style=f"{GOLD_DIM} on {PANEL}")
+            continue
+        for j, line in enumerate(part.split("\n")):
+            if j:
+                t.append("\n")
+            if line.startswith(">"):
+                t.append("▏", style=LINE)
+                _inline(t, line[1:].removeprefix(" "), me, MUTED)
+            else:
+                _inline(t, line, me, style)
+    return t
+
+
+def quote_text(reply: dict) -> Text:
+    """What a reply answers, on one line."""
+    t = Text("  ↳ ", style=LINE)
+    if not reply.get("id"):
+        t.append("Deleted message", style=f"italic {MUTED}")
+        return t
+    t.append(reply["author_name"] + " ", style=f"bold {MUTED}")
+    words = re.sub(r"\*\*|~~|`+|^> ", "", re.sub(r"\s+", " ", reply.get("body") or ""))
+    t.append(words[:80] + ("…" if len(words) > 80 else ""), style=MUTED)
     return t
 
 
@@ -99,8 +152,10 @@ def gif_text(url: str, style: str) -> Text:
     return t
 
 
-def render_log(messages: list[dict], more: bool, me: str | None = None, gif_hosts: list[str] | None = None) -> Text:
-    """The open room's messages as styled text, oldest first."""
+def render_log(messages: list[dict], more: bool, me: str | None = None, gif_hosts: list[str] | None = None,
+               reads: list[dict] | None = None) -> Text:
+    """The open room's messages as styled text, oldest first; reads: [{name, message}],
+    who on another platform has read up to which message."""
     t = Text()
     if more:
         t.append("  /older for earlier messages\n", style=GOLD_DIM)
@@ -115,6 +170,9 @@ def render_log(messages: list[dict], more: bool, me: str | None = None, gif_host
             t.append("\n")
             t.append(m["author_name"], style=f"bold {GOLD if m['mine'] else INK}")
             t.append(f"  {clock(m['created_at'])}\n", style=MUTED)
+        if m.get("reply"):
+            t.append_text(quote_text(m["reply"]))
+            t.append("\n")
         if m.get("mentions_me"):
             t.append("▌", style=GOLD)
         style = MUTED if m.get("pending") else INK
@@ -127,6 +185,9 @@ def render_log(messages: list[dict], more: bool, me: str | None = None, gif_host
             for r in m["reactions"]:
                 t.append(f" {r['emoji']} {r['count']} ", style=f"bold {GOLD}" if r["mine"] else MUTED)
             t.append("\n")
+        seen = [r["name"] for r in reads or [] if r["message"] == m["id"]]
+        if seen:
+            t.append(f"  seen by {_names(seen)}\n", style=MUTED)
         prev = m
     if not messages:
         t.append("\nNo messages yet.\n", style=MUTED)
@@ -406,7 +467,7 @@ class ChatPage(Page):
             return
         self.open = {"id": room_id, "seq": data["seq"], "more": data["more"], "joined": data["joined"],
                      "messages": {m["id"]: m for m in data["messages"]}, "members": [],
-                     "here": data.get("here") or [], "typing": data.get("typing") or []}
+                     "here": data.get("here") or [], "typing": data.get("typing") or [], "reads": data.get("reads") or []}
         self.searching = None
         r = self.room()
         if r:
@@ -492,7 +553,8 @@ class ChatPage(Page):
         log = self.query_one("#log", VerticalScroll)
         near_bottom = log.max_scroll_y - log.scroll_y < 3
         shown = sorted((m for m in self.open["messages"].values() if not m["deleted"]), key=lambda m: m["id"])
-        self.query_one("#messages", Static).update(render_log(shown, self.open["more"], self.me.get("username"), self.gifs.get("hosts")))
+        self.query_one("#messages", Static).update(render_log(shown, self.open["more"], self.me.get("username"), self.gifs.get("hosts"),
+                                                              self.open.get("reads")))
         if to_bottom or near_bottom:
             self.call_after_refresh(log.scroll_end, animate=False)
 
@@ -510,6 +572,11 @@ class ChatPage(Page):
             if people != (self.open["here"], self.open["typing"]):
                 self.open["here"], self.open["typing"] = people
                 self.render_presence()
+            reads = data.get("reads") or []
+            if reads != self.open.get("reads"):
+                self.open["reads"] = reads
+                if not data["messages"]:
+                    self.render_messages()
             if not data["messages"]:
                 return
             for m in data["messages"]:
@@ -541,7 +608,7 @@ class ChatPage(Page):
         else:
             await self.send(text.removeprefix("/"))     # "//" sends a message that starts with "/"
 
-    async def send(self, text: str) -> None:
+    async def send(self, text: str, reply: dict | None = None) -> None:
         if not self.open:
             return self.status("Pick a room first.", bad=True)
         if not self.open["joined"]:
@@ -551,10 +618,11 @@ class ChatPage(Page):
         room_id = self.open["id"]
         self._typed = 0.0
         temp = {"id": float("inf"), "body": text, "created_at": int(time.time()), "author": self.me.get("username"),
-                "author_name": self.me.get("name", ""), "mine": True, "deleted": False, "pending": True}
+                "author_name": self.me.get("name", ""), "mine": True, "deleted": False, "pending": True,
+                "reply": {"id": reply["id"], "author_name": reply["author_name"], "body": reply["body"]} if reply else None}
         self.open["messages"][temp["id"]] = temp
         self.render_messages(to_bottom=True)
-        m = await self.call(self.api.chat_post, room_id, text)
+        m = await self.call(self.api.chat_post, room_id, text, *([reply["id"]] if reply else []))
         if self.open and self.open["id"] == room_id:
             self.open["messages"].pop(temp["id"], None)
             if m:
@@ -592,6 +660,8 @@ class ChatPage(Page):
             return
         if not o:
             return self.status("Open a room first.", bad=True)
+        if word == "reply":
+            return await self.reply(rest)
         if word in ("join", "leave"):
             if await self.call(self.api.chat_join if word == "join" else self.api.chat_leave, o["id"]) is not None:
                 await self.load_rooms()
@@ -724,6 +794,24 @@ class ChatPage(Page):
         box.cursor_position = len(box.value)
         box.focus()
         self.status("change it and press enter; esc to leave it as it was")
+
+    async def reply(self, rest: str) -> None:
+        """/reply [@NAME] TEXT: answers the last message from someone else, or from NAME."""
+        o = self.open
+        who, _, text = rest.partition(" ") if rest.startswith("@") else ("", "", rest)
+        if not text.strip():
+            return self.status("Usage: /reply [@NAME] TEXT", bad=True)
+        bridged = (self.room() or {}).get("kind") == "bridge"
+        shown = sorted((m for m in o["messages"].values() if not m["deleted"] and not m.get("pending")
+                        and (not bridged or m.get("ext_id"))), key=lambda m: m["id"])
+        name = who[1:].lower()
+        # (Someone elsewhere goes by their name there, or the start of their id: @sam for @sam:matrix.org.)
+        named = lambda m: name in ((m["author"] or "").lower(), m["author_name"].lower(), (m["author"] or "").lower().lstrip("@").split(":")[0])  # noqa: E731
+        target = next((m for m in reversed(shown) if named(m)), None) if name \
+            else next((m for m in reversed(shown) if not m["mine"]), None)
+        if not target:
+            return self.status(f"There's no message from {who} here to reply to." if name else "There's nothing here to reply to yet.", bad=True)
+        await self.send(text.strip(), reply=target)
 
     async def react(self, name: str) -> None:
         o = self.open

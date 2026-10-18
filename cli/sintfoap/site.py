@@ -331,13 +331,14 @@ def chat_state() -> dict:
 
 
 def chat_messages(room: str, since: int | None = None, before: int | None = None) -> dict:
-    """{seq, more, joined, messages, here, typing}: the newest page, older ones (before), or changes (since)."""
+    """{seq, more, joined, messages, here, typing, reads?}: the newest page, older ones (before), or changes (since)."""
     q = f"?since={int(since)}" if since is not None else f"?before={int(before)}" if before is not None else ""
     return _get(f"/chat/api/rooms/{_q(room)}/messages{q}")
 
 
-def chat_post(room: str, text: str) -> dict:
-    return api("POST", f"/chat/api/rooms/{_q(room)}/messages", {"body": text})
+def chat_post(room: str, text: str, reply_to: int | None = None) -> dict:
+    """Sends a message; reply_to is the id of the message it answers, if any."""
+    return api("POST", f"/chat/api/rooms/{_q(room)}/messages", {"body": text, **({"reply_to": int(reply_to)} if reply_to is not None else {})})
 
 
 def chat_delete(room: str, message_id: int) -> dict:

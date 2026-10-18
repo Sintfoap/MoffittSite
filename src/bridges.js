@@ -6,10 +6,12 @@
 //   { id, name, help, fields: [{name, label, secret?, required?, placeholder?}],
 //     connect(fields) → {label, creds}      check the credentials, once
 //     sync(creds, cursor) → {cursor, rooms} what changed since the last sync
-//     send(creds, room, text) → message id
+//     send(creds, room, text, {reply?}) → message id (reply: what it answers)
 //     edit(creds, room, message id, text)
 //     remove(creds, room, message id)        a message, or a reaction
 //     react(creds, room, message id, emoji) → the reaction's id
+//     typing(creds, room, on)               (optional) "typing…" there
+//     receipt(creds, room, message id)      (optional) read up to here
 //     disconnect(creds)                     undo whatever connect made there
 //     and, for end-to-end encryption (optional):
 //     canEncrypt(creds), device(creds) → {user_id, device_id},
@@ -225,9 +227,10 @@ async function applyRoom(env, d, conn, r, initial) {
     if (e.type === "message") {
       stmts.push(
         d.prepare("UPDATE chat_rooms SET seq = seq + 1, last_at = MAX(last_at, ?) WHERE id = ?").bind(e.at, id),
-        d.prepare(`INSERT OR IGNORE INTO chat_messages (room, user_id, body, seq, posted_seq, created_at, ext_id, ext_sender, ext_name, encrypted, ext_raw)
-          SELECT id, ?, ?, seq, seq, ?, ?, ?, ?, ?, ? FROM chat_rooms WHERE id = ?`)
-          .bind(e.mine ? conn.user_id : "", e.body, e.at, e.id, e.sender, e.sender_name, e.encrypted ? 1 : 0, e.raw ?? null, id),
+        // (A reply to a message from before this site's history points nowhere.)
+        d.prepare(`INSERT OR IGNORE INTO chat_messages (room, user_id, body, seq, posted_seq, created_at, ext_id, ext_sender, ext_name, encrypted, ext_raw, reply_to)
+          SELECT id, ?, ?, seq, seq, ?, ?, ?, ?, ?, ?, (SELECT id FROM chat_messages WHERE room = ? AND ext_id = ?) FROM chat_rooms WHERE id = ?`)
+          .bind(e.mine ? conn.user_id : "", e.body, e.at, e.id, e.sender, e.sender_name, e.encrypted ? 1 : 0, e.raw ?? null, id, e.reply ?? null, id),
       );
     } else if (e.type === "edit" && e.raw) {
       // An encrypted edit replaces what the browser decrypts.
@@ -254,6 +257,13 @@ async function applyRoom(env, d, conn, r, initial) {
           WHERE room = ? AND ext_id = ? AND deleted = 0`).bind(id, id, e.target));
     }
   }
+  // Who's typing there, and how far people there have read.
+  if (r.typing) stmts.push(d.prepare("UPDATE chat_rooms SET ext_typing = ?, ext_typing_at = ? WHERE id = ?").bind(JSON.stringify(r.typing), t, id));
+  for (const rc of r.receipts ?? []) {
+    stmts.push(d.prepare(`INSERT INTO chat_ext_reads (room, ext_user, ext_name, ext_id, at) VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT (room, ext_user) DO UPDATE SET ext_name = excluded.ext_name, ext_id = excluded.ext_id, at = excluded.at WHERE excluded.at >= at`)
+      .bind(id, rc.user, rc.name, rc.event, rc.at));
+  }
   // The first sync brings in recent history, which isn't news to anyone.
   if (initial || !existing) {
     stmts.push(d.prepare("UPDATE chat_members SET read_seq = (SELECT seq FROM chat_rooms WHERE id = ?) WHERE room = ? AND user_id = ?").bind(id, id, conn.user_id));
@@ -264,6 +274,7 @@ async function applyRoom(env, d, conn, r, initial) {
 async function dropRoom(d, id) {
   await d.batch([
     d.prepare("DELETE FROM chat_presence WHERE room = ?").bind(id),
+    d.prepare("DELETE FROM chat_ext_reads WHERE room = ?").bind(id),
     d.prepare("DELETE FROM chat_reactions WHERE message IN (SELECT id FROM chat_messages WHERE room = ?)").bind(id),
     d.prepare("DELETE FROM chat_messages WHERE room = ?").bind(id),
     d.prepare("DELETE FROM chat_members WHERE room = ?").bind(id),
