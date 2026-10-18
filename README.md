@@ -302,6 +302,7 @@ Chat can also bring in your rooms from other chat platforms, so you read and ans
 
 - **Turning them on:** "Turn on here" asks the browser for permission and registers `/sw.js`, then sends its push subscription to the site. Each browser or phone is turned on separately and listed under "Where they go", where any of them can be removed. Up to 10 per account. If someone else turns notifications on in the same browser, it moves to their account.
 - **Chat** pushes a direct message, an `@mention` of you, and (off by default) every message in rooms you've joined. Nobody is pushed about a room they have open, or about their own messages. Private rooms and DMs only ever reach their members. Needs the Chat app too.
+- **Chat connections** (Matrix): a message in one of your connected rooms that your notification settings on Matrix say is worth one (the same ones Element's phone app follows). While you have Notifications and Chat connections, the cron registers a *pusher* on your Matrix account pointing at `<SITE_URL>/_matrix/push/v1/notify`, so your homeserver tells the site the moment such a message arrives; the site syncs that connection and pushes it. The pusher's key names the connection and is signed with `CHAT_BRIDGE_KEY`, so nothing else can pose as your homeserver. If a homeserver won't take a pusher, the cron syncs the connection every five minutes and pushes what's new instead, one notification per room. Encrypted messages only say who sent them, since their keys are in your browser. Turning the setting off, losing access or removing the connection takes the pusher off again.
 - **Drift** reminds you before each timed item starts (15 minutes by default; when it starts, 5, 10, 30 minutes, an hour or a day before) and at 8am on the day of an all-day item, in the time zone of the browser you turned them on in. Items in collections shared with you remind you too. Done and deleted items don't. The reminders come from a cron trigger every five minutes (`triggers` in `wrangler.jsonc`, `scheduled()` in `src/worker.js`), and each is sent once (`push_sent`). Needs the Drift app too.
 - **Sending:** the Worker encrypts each message for its browser and signs a VAPID token itself (`src/push.js`, WebCrypto only), then posts it to the browser's push service: Google, Mozilla, Apple or Microsoft. Subscriptions for any other host are refused. A browser whose push service says it's gone is forgotten, and so is one refused five times in a row.
 - **iPhone and iPad:** Safari only allows push for sites added to the home screen (Share → Add to Home Screen). The page says so there; once it's opened from the home screen it works like anywhere else.
@@ -315,12 +316,12 @@ Push stays off, and the page says so, until the site has a VAPID key pair.
 2. **Add them to the Worker** in the Cloudflare dashboard: **Workers & Pages → moffittsite → Settings → Variables and Secrets → Add**, type **Secret**, once as `VAPID_PUBLIC_KEY` and once as `VAPID_PRIVATE_KEY`.
 3. **Turn Notifications on** for people from `/admin`.
 
-`PUSH_CONTACT` in `wrangler.jsonc` is the address push services can reach the site's owner at (a `https:` or `mailto:` URL). Changing the keys later means everyone turns notifications on again. Preview builds have no database, so push can only be tried on the real site.
+`SITE_URL` in `wrangler.jsonc` is the site's own address, which Matrix pushers call back. `PUSH_CONTACT` is the address push services can reach the site's owner at (a `https:` or `mailto:` URL). Changing the keys later means everyone turns notifications on again. Preview builds have no database, so push can only be tried on the real site.
 
 | Method | Path | Body |
 |---|---|---|
 | GET | `/notifications/api/state` | → `{configured, public_key, prefs, devices, apps, leads}` |
-| PATCH | `/notifications/api/prefs` | any of `{chat_dms, chat_mentions, chat_rooms, drift_events, drift_lead, tz}` |
+| PATCH | `/notifications/api/prefs` | any of `{chat_dms, chat_mentions, chat_rooms, chat_bridges, drift_events, drift_lead, tz}` |
 | POST | `/notifications/api/devices` | the browser's `PushSubscription.toJSON()`, plus `{label, tz}` |
 | DELETE | `/notifications/api/devices/<id>` | |
 | POST | `/notifications/api/test` | pushes a test to all your browsers → also `{sent, failed}` |

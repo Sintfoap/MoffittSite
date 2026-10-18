@@ -76,6 +76,7 @@ function render() {
   lead.value = prefs.drift_lead;
   lead.disabled = !prefs.drift_events;
   $("#chat-prefs").hidden = !apps.chat;
+  $("#bridge-pref").hidden = !apps.bridges;
   $("#drift-prefs").hidden = !apps.drift;
   $("#no-apps").hidden = apps.chat || apps.drift;
 

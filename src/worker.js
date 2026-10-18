@@ -7,15 +7,17 @@
 // "todo" area before the page or API is served. /plugins (the plugin store,
 // src/store.js) and /chat (src/chat.js) each need their own app turned on for
 // the account on the admin page, and so does /notifications (src/notify.js).
-// /login/cli is signing in from a terminal (src/cli.js). scheduled() is the
-// cron trigger in wrangler.jsonc, which sends Drift's reminders.
+// /login/cli is signing in from a terminal (src/cli.js). /_matrix/push/v1/notify
+// is where Matrix homeservers tell the site about new messages for
+// notifications (src/notify.js). scheduled() is the cron trigger in
+// wrangler.jsonc: Drift's reminders, and syncing chat connections.
 import { plugins, installed, install, uninstall, PLUGIN_ID, SANDBOX_CSP } from "./store.js";
 import { protect, handleAuth, AUTH_PATHS, sameOrigin } from "./account.js";
 import { currentSession, areaOf } from "./auth.js";
 import { handleCli, CLI_PATHS } from "./cli.js";
 import { withRail } from "./pages.js";
 import { chat } from "./chat.js";
-import { notifications, driftReminders } from "./notify.js";
+import { notifications, driftReminders, pushGateway, bridgeUpkeep } from "./notify.js";
 import { state, version, createItem, updateItem, createCollection, updateCollection, shareCollection, unshareCollection, readJson, BadRequest, ID } from "./drift.js";
 
 // /todo/api/state, /todo/api/version, /todo/api/items[/<id>],
@@ -57,6 +59,7 @@ export default {
     }
     // The frame store plugins run in. It holds no data and needs no sign-in.
     if (pathname.startsWith("/sandbox/")) return sandbox(request, env);
+    if (pathname === "/_matrix/push/v1/notify") return pushGateway(request, env, ctx ? p => ctx.waitUntil(p) : undefined);
     if (pathname === "/login/status") return loginStatus(request, env);
     if (CLI_PATHS.test(pathname)) return handleCli(request, env);
     if (AUTH_PATHS.test(pathname)) return handleAuth(request, env);
@@ -65,6 +68,7 @@ export default {
 
   async scheduled(controller, env, ctx) {
     ctx.waitUntil(driftReminders(env, controller.scheduledTime).catch(e => console.error("drift reminders failed:", e)));
+    ctx.waitUntil(bridgeUpkeep(env).catch(e => console.error("connection upkeep failed:", e)));
   },
 };
 

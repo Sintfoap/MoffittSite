@@ -472,7 +472,7 @@ def notify_state() -> dict:
 
 
 def save_notify_prefs(**fields: Any) -> dict:
-    """Any of chat_dms, chat_mentions, chat_rooms, drift_events, drift_lead, tz; returns notify_state()."""
+    """Any of chat_dms, chat_mentions, chat_rooms, chat_bridges, drift_events, drift_lead, tz; returns notify_state()."""
     return api("PATCH", "/notifications/api/prefs", fields)
 
 

@@ -14,6 +14,7 @@ export class FakeMatrix {
     this.rooms = new Map();    // id → {name, encrypted, members: Map(mxid → name)}
     this.requests = [];        // [method, path] for checking what was asked
     this.loggedOut = [];
+    this.pushers = new Map();  // pushkey → {url, app_id, format}; refusePushers makes /pushers/set fail
     this.n = 0;
     // Other sessions, token → {user, device}. `token` is DEV's (tests change
     // it to make it stop working); the session a password sign-in makes is SITE.
@@ -95,6 +96,12 @@ export class FakeMatrix {
     if (path === "/_matrix/client/v3/account/whoami") return json({ user_id: who.user, device_id: who.device });
     if (path === "/_matrix/client/v3/logout") { this.loggedOut.push(auth); return json({}); }
     if (path === "/_matrix/client/v3/sync") return json(this.sync(url.searchParams.get("since"), who));
+    if (path === "/_matrix/client/v3/pushers/set" && req.method === "POST") {
+      if (this.refusePushers) return json({ errcode: "M_UNKNOWN", error: "pushers are turned off here" }, 400);
+      if (body.kind === null) this.pushers.delete(body.pushkey);
+      else this.pushers.set(body.pushkey, { url: body.data?.url, app_id: body.app_id, format: body.data?.format });
+      return json({});
+    }
     if (path.startsWith("/_matrix/client/v3/keys/") || path.startsWith("/_matrix/client/v3/sendToDevice/")) return json(this.crypto(req.method, path, body, who));
     let a = path.match(/^\/_matrix\/client\/v3\/user\/([^/]+)\/account_data\/([^/]+)$/);
     if (a) {
