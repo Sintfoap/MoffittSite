@@ -37,6 +37,13 @@ def real_site(monkeypatch):
 
 
 @pytest.fixture
+def notify_site(monkeypatch):
+    proc, origin = start_site(monkeypatch, "--notify")
+    yield origin
+    proc.kill()
+
+
+@pytest.fixture
 def admin_site(monkeypatch):
     proc, origin = start_site(monkeypatch, "--admin")
     yield origin
@@ -262,7 +269,7 @@ def test_admins_switch_apps_on_and_off_in_the_terminal(admin_site):
         page = app.screen
         assert type(page).__name__ == "AdminPage"
         apps = [a["id"] for a in page.data["apps"]]
-        assert apps == ["drift", "admin", "plugins", "chat", "chat-bridges"]
+        assert apps == ["drift", "admin", "plugins", "chat", "chat-bridges", "notifications"]
         # A switch for every app on every account; your own admin one can't be turned off.
         assert len(page.boxes) == len(apps) * len(page.data["users"])
         me = next(i for i, u in enumerate(page.data["users"]) if u["you"])
@@ -286,6 +293,50 @@ def test_g_a_opens_the_terminal_admin_page(admin_site):
         app.go("a")
         await settle(pilot, 0.5)
         assert type(app.screen).__name__ == "AdminPage"
+    run_app("dashboard", go)
+
+
+# ── notifications ──────────────────────────────────────────────────────────
+
+def test_notifications_page_changes_what_is_sent_and_where(notify_site):
+    async def notifications(app, pilot):
+        page = app.screen
+        assert type(page).__name__ == "NotificationsPage"
+        assert page.data["configured"]
+        assert [d["label"] for d in page.data["devices"]] == ["Chrome on Android"]
+        assert page.query_one("#chat_dms").value
+        assert not page.query_one("#chat_rooms").value
+        # A switch here is the same setting as on the website.
+        page.query_one("#chat_rooms").focus()
+        await pilot.press("space")
+        await settle(pilot, 0.5)
+        assert site.notify_state()["prefs"]["chat_rooms"] is True
+        page.query_one("#lead").value = 60
+        await settle(pilot, 0.5)
+        assert site.notify_state()["prefs"]["drift_lead"] == 60
+        page.query_one("#drift_events").focus()
+        await pilot.press("space")
+        await settle(pilot, 0.5)
+        assert site.notify_state()["prefs"]["drift_events"] is False
+        assert page.query_one("#lead").disabled
+        # t sends a test to every browser; Remove forgets one.
+        await pilot.press("t")
+        await settle(pilot, 0.5)
+        assert page.data["sent"] == 1
+        page.query_one(f"#rm-{page.data['devices'][0]['id']}").press()
+        await settle(pilot, 0.5)
+        assert site.notify_state()["devices"] == []
+        assert not page.query_one("#test").display
+    run_app("notifications", notifications)
+
+
+def test_g_n_opens_the_terminal_notifications_page(notify_site):
+    async def go(app, pilot):
+        await settle(pilot, 0.5)
+        assert any(n["key"] == "n" for n in app.data["nav"])
+        app.go("n")
+        await settle(pilot, 0.5)
+        assert type(app.screen).__name__ == "NotificationsPage"
     run_app("dashboard", go)
 
 

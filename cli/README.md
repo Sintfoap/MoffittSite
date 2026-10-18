@@ -14,6 +14,7 @@ sintfoap                    # signs you in the first time, then opens your dashb
 | `sintfoap store` | the plugin store |
 | `sintfoap settings` | account settings |
 | `sintfoap chat [ROOM]` | chat rooms, opening ROOM if you name one |
+| `sintfoap notifications` | what's pushed to your browsers and phone, and where |
 | `sintfoap admin` | which apps each account can use (admins) |
 | `sintfoap login` | shows a code and opens the site; approve it there |
 | `sintfoap dashboard --plain` | the dashboard as text, for scripts and pipes |
@@ -39,7 +40,7 @@ nix develop                                  # a shell with Python, Textual and 
 
 ## The dashboard
 
-The same panels as `/dashboard`, in the site's colours: Today (overdue Drift items in red, then what's due today), your account with its checks (two-factor, recovery codes, email), and a card per app your account can use. It refreshes every 30 seconds. Drift, the plugin store, chat, account settings and Admin open here in the terminal; anything else opens in your browser.
+The same panels as `/dashboard`, in the site's colours: Today (overdue Drift items in red, then what's due today), your account with its checks (two-factor, recovery codes, email), and a card per app your account can use. It refreshes every 30 seconds. Drift, the plugin store, chat, notifications, account settings and Admin open here in the terminal; anything else opens in your browser.
 
 | Key | |
 |---|---|
@@ -51,7 +52,7 @@ The same panels as `/dashboard`, in the site's colours: Today (overdue Drift ite
 | `o` | sign out this terminal |
 | `q` | quit |
 
-On every page `esc` goes back, `w` opens the same page in your browser and `q` quits. `g` then a letter jumps around, as on the website: `g h` home, `g d` Drift, `g p` plugin store, `g c` chat, `g s` settings, `g a` admin, `g o` sign out.
+On every page `esc` goes back, `w` opens the same page in your browser and `q` quits. `g` then a letter jumps around, as on the website: `g h` home, `g d` Drift, `g p` plugin store, `g c` chat, `g s` settings, `g n` notifications, `g a` admin, `g o` sign out.
 
 ## Drift
 
@@ -105,9 +106,15 @@ The same rooms as `/chat/`: the list on the left, the open room on the right, an
 | `/rename NAME` `/topic TEXT` | change the open room (its owner, or an admin) |
 | `/delete` | delete your last message in the open room |
 | `/older` | load older messages (`ctrl+u`) |
+| `/gif [TEXT]` | the GIF picker (`ctrl+g`): favorites, trending and categories, or a search for TEXT; `enter` sends the highlighted GIF, `ctrl+s` stars it |
+| `/star` | star the last GIF in the room for your favorites (again to unstar) |
 | `/help` | these commands |
 
-Start a message with `//` to send one that begins with `/`. Messages that mention you are marked with a bar, reactions show under a message, and a room where you were mentioned shows `@` in the list. Rooms are marked `#` (open), `*` (private) or `@` (direct message, with ● when they're online). The line above where you type says who else has the room open, or who's typing.
+Start a message with `//` to send one that begins with `/`. GIFs show as `GIF` and their link (the web page shows the picture). Messages that mention you are marked with a bar, reactions show under a message, and a room where you were mentioned shows `@` in the list. Rooms are marked `#` (open), `*` (private) or `@` (direct message, with ● when they're online). The line above where you type says who else has the room open, or who's typing.
+
+## Notifications
+
+The same settings as `/notifications/`: what Chat and Drift push to you (direct messages, @mentions, every message in rooms you've joined, Drift reminders and how long before), and the list of browsers they go to. `space` switches a setting, Remove takes a browser off the list, and `t` sends a test to all of them. A terminal can't receive push notifications itself, so turning them on for a browser or phone happens there: `w` opens the page.
 
 ## Account settings
 
@@ -124,6 +131,7 @@ sintfoap/drift_rules.py    quick-add, dates and ordering, as on the web page
 sintfoap/store_page.py     the plugin store
 sintfoap/settings_page.py  account settings
 sintfoap/chat_page.py      chat
+sintfoap/notifications_page.py  what's pushed and where
 sintfoap/__main__.py       the command
 tests/                     python -m pytest tests
 tests/devsite.mjs          the site's real Worker on localhost, for tests/test_pages.py (needs node 22)
