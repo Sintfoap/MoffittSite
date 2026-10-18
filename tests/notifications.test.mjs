@@ -114,13 +114,13 @@ test("settings: defaults, saving, devices, and what's refused", async () => {
   const s = (await api(b, "GET", "/state")).json;
   assert.equal(s.configured, true);
   assert.equal(s.public_key, keys.VAPID_PUBLIC_KEY);
-  assert.deepEqual(s.prefs, { chat_dms: true, chat_mentions: true, chat_rooms: false, drift_events: true, drift_lead: 15, tz: "UTC" });
-  assert.deepEqual(s.apps, { chat: true, drift: true });
+  assert.deepEqual(s.prefs, { chat_dms: true, chat_mentions: true, chat_rooms: false, chat_bridges: true, drift_events: true, drift_lead: 15, tz: "UTC" });
+  assert.deepEqual(s.apps, { chat: true, drift: true, bridges: false });
   assert.deepEqual(s.devices, []);
 
   const p = await api(b, "PATCH", "/prefs", { chat_rooms: true, drift_lead: 60, tz: "America/Chicago" });
   assert.equal(p.status, 200);
-  assert.deepEqual(p.json.prefs, { chat_dms: true, chat_mentions: true, chat_rooms: true, drift_events: true, drift_lead: 60, tz: "America/Chicago" });
+  assert.deepEqual(p.json.prefs, { chat_dms: true, chat_mentions: true, chat_rooms: true, chat_bridges: true, drift_events: true, drift_lead: 60, tz: "America/Chicago" });
   for (const bad of [{ drift_lead: 7 }, { chat_dms: "yes" }, { tz: "Mars/Olympus" }, { nope: true }]) {
     assert.equal((await api(b, "PATCH", "/prefs", bad)).status, 400, JSON.stringify(bad));
   }

@@ -306,6 +306,7 @@ def test_notifications_page_changes_what_is_sent_and_where(notify_site):
         assert [d["label"] for d in page.data["devices"]] == ["Chrome on Android"]
         assert page.query_one("#chat_dms").value
         assert not page.query_one("#chat_rooms").value
+        assert page.query_one("#chat_bridges").display, "ryan has Chat connections"
         # A switch here is the same setting as on the website.
         page.query_one("#chat_rooms").focus()
         await pilot.press("space")

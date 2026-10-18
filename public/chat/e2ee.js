@@ -505,3 +505,53 @@ async function storageKey(secret, desc) {
   }
   return key;
 }
+
+// ── encrypted attachments (pictures in encrypted rooms) ───────────────────
+// As the Matrix spec has it (v2): the file is AES-CTR encrypted with a key
+// of its own, uploaded as it is, and the message (itself encrypted) carries
+// the key, the counter and the encrypted file's SHA-256.
+
+export async function encryptAttachment(bytes) {
+  const key = await subtle().generateKey({ name: "AES-CTR", length: 256 }, true, ["encrypt", "decrypt"]);
+  // 8 random bytes, then a 64-bit counter from zero.
+  const iv = new Uint8Array(16);
+  globalThis.crypto.getRandomValues(iv.subarray(0, 8));
+  const data = new Uint8Array(await subtle().encrypt({ name: "AES-CTR", counter: iv, length: 64 }, key, bytes));
+  const jwk = await subtle().exportKey("jwk", key);
+  return {
+    data,
+    file: {
+      v: "v2", iv: unb64(iv), hashes: { sha256: unb64(await subtle().digest("SHA-256", data)) },
+      key: { kty: "oct", key_ops: ["encrypt", "decrypt"], alg: "A256CTR", k: jwk.k, ext: true },
+    },
+  };
+}
+
+// The encrypted bytes and the message's `file` → the file, once its hash checks out.
+export async function decryptAttachment(data, file) {
+  if (file?.key?.alg !== "A256CTR" || !file.iv || !file.hashes?.sha256) throw new Error("that isn't an encrypted file");
+  if (unb64(await subtle().digest("SHA-256", data)) !== file.hashes.sha256.replace(/=+$/, "")) throw new Error("the file doesn't match its message");
+  const key = await subtle().importKey("jwk", { kty: "oct", k: file.key.k, alg: "A256CTR", ext: true }, "AES-CTR", false, ["decrypt"]);
+  return new Uint8Array(await subtle().decrypt({ name: "AES-CTR", counter: b64(file.iv), length: 64 }, key, data));
+}
+
+const PICTURES = ["image/gif", "image/png", "image/jpeg", "image/webp"];
+
+// A decrypted image message's picture: {mimetype, width, height, name, mxc, file?}
+// (file: the key to decrypt it with), or null.
+export function imageOf(content) {
+  const c = content?.["m.new_content"] ?? content;
+  if (c?.msgtype !== "m.image") return null;
+  const info = c.info ?? {}, mimetype = String(info.mimetype || "").toLowerCase();
+  const mxc = c.file?.url ?? c.url;
+  if (!PICTURES.includes(mimetype) || typeof mxc !== "string" || !/^mxc:\/\/[^/]+\/[\w-]+$/.test(mxc)) return null;
+  const dim = v => Number.isInteger(v) && v > 0 && v < 20000 ? v : null;
+  return { mimetype, width: dim(info.w), height: dim(info.h), name: String(c.body || ""), mxc, ...(c.file ? { file: c.file } : {}) };
+}
+
+// The message for a picture uploaded encrypted: what Element sends.
+export const imageContent = ({ name, mimetype, size, width, height }, file, mxc) => ({
+  msgtype: "m.image", body: name,
+  info: { mimetype, size, ...(width && height ? { w: width, h: height } : {}) },
+  file: { ...file, url: mxc },
+});

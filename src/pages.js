@@ -214,9 +214,9 @@ ${SHELL_CSS}
   .admin-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 12px; margin-bottom: 18px; }
 `;
 
-// The web app manifest and home-screen icon, so the site can be added to a
+// The tab icon, web app manifest and home-screen icon, so the site can be added to a
 // phone's home screen (on iPhone, that's what lets it get notifications).
-export const APP_HEAD = `<link rel="manifest" href="/site.webmanifest"><link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">`;
+export const APP_HEAD = `<link rel="icon" href="/favicon.ico" sizes="32x32"><link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="manifest" href="/site.webmanifest"><link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">`;
 
 const FONTS = `<link rel="preconnect" href="https://fonts.googleapis.com"><link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">`;
 

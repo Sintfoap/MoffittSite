@@ -179,7 +179,8 @@ const SCHEMA = [
      ext_name   TEXT,
      encrypted  INTEGER NOT NULL DEFAULT 0,        -- arrived encrypted, so body is only a note saying so
      ext_raw    TEXT,                              -- an encrypted message as it came (its latest edit), for the browser with the keys
-     reply_to   INTEGER                            -- the message this one answers, if it's a reply
+     reply_to   INTEGER,                           -- the message this one answers, if it's a reply
+     ext_media  TEXT                               -- a picture it carries, as JSON {mxc, mimetype, width, height, name}
    )`,
   `CREATE INDEX IF NOT EXISTS chat_messages_room ON chat_messages (room, id)`,
   `CREATE INDEX IF NOT EXISTS chat_messages_seq ON chat_messages (room, seq)`,
@@ -254,6 +255,7 @@ const SCHEMA = [
      chat_rooms    INTEGER NOT NULL,               -- every message in rooms they've joined
      drift_events  INTEGER NOT NULL,
      drift_lead    INTEGER NOT NULL,               -- minutes before a timed event
+     chat_bridges  INTEGER NOT NULL DEFAULT 1,     -- messages from connected platforms (Matrix)
      tz            TEXT NOT NULL,                  -- their time zone, for Drift's local times
      updated_at    INTEGER NOT NULL
    )`,
@@ -280,7 +282,8 @@ const SCHEMA = [
      -- End-to-end encryption, whose keys only a browser holds (public/chat/e2ee.js).
      can_encrypt   INTEGER NOT NULL DEFAULT 0,     -- the connection has a session of its own to hold keys
      crypto_owner  TEXT,                           -- sha256 of the key the browser holding them proves itself with
-     crypto_counts TEXT                            -- JSON: the latest one-time key counts, for that browser
+     crypto_counts TEXT,                           -- JSON: the latest one-time key counts, for that browser
+     pusher_at     INTEGER NOT NULL DEFAULT 0      -- when its pusher was registered on the platform (src/notify.js), 0 = none
    )`,
   `CREATE INDEX IF NOT EXISTS chat_connections_user ON chat_connections (user_id)`,
   // What each sync brought for the browser holding a connection's keys
@@ -305,9 +308,10 @@ const AFTER_COLUMNS = [
 // leaves an existing table alone, so older databases get them here.
 const ADDED_COLUMNS = {
   users: ["email TEXT", "email_verified INTEGER NOT NULL DEFAULT 0"],
-  chat_messages: ["posted_seq INTEGER", "edited_at INTEGER", "ext_id TEXT", "ext_sender TEXT", "ext_name TEXT", "encrypted INTEGER NOT NULL DEFAULT 0", "ext_raw TEXT", "reply_to INTEGER"],
+  chat_messages: ["posted_seq INTEGER", "edited_at INTEGER", "ext_id TEXT", "ext_sender TEXT", "ext_name TEXT", "encrypted INTEGER NOT NULL DEFAULT 0", "ext_raw TEXT", "reply_to INTEGER", "ext_media TEXT"],
   chat_reactions: ["ext_id TEXT", "ext_name TEXT"],
-  chat_connections: ["can_encrypt INTEGER NOT NULL DEFAULT 0", "crypto_owner TEXT", "crypto_counts TEXT"],
+  chat_connections: ["can_encrypt INTEGER NOT NULL DEFAULT 0", "crypto_owner TEXT", "crypto_counts TEXT", "pusher_at INTEGER NOT NULL DEFAULT 0"],
+  push_prefs: ["chat_bridges INTEGER NOT NULL DEFAULT 1"],
   chat_rooms: ["kind TEXT NOT NULL DEFAULT 'open'", "connection TEXT", "ext_id TEXT", "encrypted INTEGER NOT NULL DEFAULT 0", "ext_typing TEXT", "ext_typing_at INTEGER", "ext_read TEXT", "ext_back TEXT", "ext_invite TEXT"],
 };
 

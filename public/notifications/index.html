@@ -6,6 +6,7 @@
 <title>Notifications · sintfoap.xyz</title>
 <meta name="robots" content="noindex">
 <meta name="theme-color" content="#0b0f0a">
+<link rel="icon" href="/favicon.ico" sizes="32x32"><link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="manifest" href="/site.webmanifest">
 <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -121,6 +122,7 @@ select { padding: 5px 8px; background: var(--field); border: 1px solid var(--lin
       <label class="check"><input type="checkbox" data-pref="chat_dms"><span>Direct messages</span></label>
       <label class="check"><input type="checkbox" data-pref="chat_mentions"><span>When someone @mentions you</span></label>
       <label class="check"><input type="checkbox" data-pref="chat_rooms"><span>Every message in rooms you've joined<small>Not while you have the room open.</small></span></label>
+      <label class="check" id="bridge-pref"><input type="checkbox" data-pref="chat_bridges"><span>Messages from your connections (Matrix)<small>The ones your notification settings there would notify you about. Encrypted ones only say who sent them.</small></span></label>
     </fieldset>
     <fieldset id="drift-prefs">
       <legend>Drift</legend>

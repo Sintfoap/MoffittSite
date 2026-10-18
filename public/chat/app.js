@@ -8,7 +8,7 @@
 // each connection; what you send there goes to that platform. Encrypted
 // rooms are decrypted and encrypted here, in this browser (e2ee.js).
 
-import { Vault, Shelf, textOf, textContent, editContent, reactionContent } from "/chat/e2ee.js";
+import { Vault, Shelf, textOf, textContent, editContent, reactionContent, encryptAttachment, decryptAttachment, imageOf, imageContent } from "/chat/e2ee.js";
 import { toHtml } from "/chat/format.js";
 import { setupGifs, gifsReady, isGifMessage, gifMessageHtml, isFavorite, toggleFavorite, isOpen as gifsOpen, toggleGifs, closeGifs, onGifClick, onGifInput, onGifKey } from "/chat/gifs.js";
 
@@ -78,7 +78,11 @@ function shelfFor(conn) {
 const eventId = raw => { try { return JSON.parse(raw).event_id || null; } catch { return null; } };
 // The open room, when it's encrypted and its keys are in this browser.
 const keyedRoom = () => { const r = open && rooms.find(r => r.id === open.id); return r?.encrypted && keysHere(r) === "ready" ? r : null; };
-const read = (m, content) => Object.assign(m, { body: textOf(content, m.author_name), decrypted: true, decrypting: false, failed: false, shownRaw: m.raw });
+const read = (m, content, roomId = open?.id) => {
+  const pic = imageOf(content);
+  return Object.assign(m, { body: textOf(content, m.author_name), media: pic ? { ...pic, url: mediaPath(roomId, pic.mxc) } : null,
+    decrypted: true, decrypting: false, failed: false, shownRaw: m.raw });
+};
 
 const lockedNote = vault => vault.backup
   ? "🔒 Can't decrypt this one: its key isn't in your key backup, or hasn't arrived yet."
@@ -95,7 +99,7 @@ async function readable(list, roomId = open?.id) {
   for (const m of list) {
     if (!m.raw) continue;
     const had = open?.id === roomId && open.messages.get(m.id);
-    if (had?.shownRaw === m.raw && (had.decrypted || had.failed)) Object.assign(m, { body: had.body, decrypted: had.decrypted, failed: had.failed, shownRaw: m.raw });
+    if (had?.shownRaw === m.raw && (had.decrypted || had.failed)) Object.assign(m, { body: had.body, media: had.media, decrypted: had.decrypted, failed: had.failed, shownRaw: m.raw });
     else rest.push({ m, had });
   }
   // (And what replies answer, when that's encrypted too.)
@@ -112,7 +116,7 @@ async function readable(list, roomId = open?.id) {
   }
   for (const { m, had } of rest) {
     const c = kept.get(eventId(m.raw));
-    if (c) read(m, c);
+    if (c) read(m, c, roomId);
     // (One already found to be unreadable says so straight away.)
     else if (ready.get(room.connection)?.cache.get(m.raw) === null) Object.assign(m, { body: lockedNote(ready.get(room.connection)), failed: true, shownRaw: m.raw });
     // (An edit keeps showing the text it replaces until the new one's read.)
@@ -132,7 +136,7 @@ async function readSoon(list, roomId) {
     await vault.pump();
     await Promise.all(waiting.map(async m => {
       const c = await vault.decrypt(m.raw);
-      if (c) { read(m, c); shelf?.put(eventId(m.raw), c); }
+      if (c) { read(m, c, roomId); shelf?.put(eventId(m.raw), c); }
     }));
   })().catch(() => {});
   await Promise.race([work, new Promise(r => setTimeout(r, 1000))]);
@@ -179,6 +183,34 @@ async function decryptOpen() {
 // there's an encrypted room they're for, rather than when one is opened.
 function warmKeys() {
   for (const r of rooms) if (r.encrypted && keysHere(r) === "ready") { vaultFor(r.connection)?.catch(() => {}); shelfFor(r.connection); }
+}
+
+// ── pictures from bridge rooms ───────────────────────────────────────────
+// They come through the site (it has the connection's sign-in). An encrypted
+// room's are encrypted, so they're decrypted here and shown from a blob: URL.
+
+const mediaPath = (roomId, mxc) => `/chat/api/rooms/${roomId}/media?mxc=${encodeURIComponent(mxc)}`;
+const decrypted = new Map();   // mxc → object URL, or null while loading / if it failed
+
+function pictureSrc(media) {
+  if (!media.file) return media.url;
+  if (decrypted.has(media.mxc)) return decrypted.get(media.mxc);
+  decrypted.set(media.mxc, null);
+  (async () => {
+    const res = await fetch(media.url);
+    if (!res.ok) throw new Error(`couldn't fetch the picture (${res.status})`);
+    const bytes = await decryptAttachment(new Uint8Array(await res.arrayBuffer()), media.file);
+    decrypted.set(media.mxc, URL.createObjectURL(new Blob([bytes], { type: media.mimetype })));
+    renderLog();
+  })().catch(err => console.warn("picture:", err.message));
+  return null;
+}
+
+function pictureHtml(media) {
+  const src = pictureSrc(media), size = media.width && media.height ? ` width="${media.width}" height="${media.height}"` : "";
+  return src
+    ? `<a class="gif-msg" href="${esc(src)}" target="_blank" rel="noopener noreferrer"><img src="${esc(src)}" alt="${esc(media.name || "picture")}"${size} loading="lazy"></a>`
+    : `<span class="pic-wait">${esc(media.name || "picture")}…</span>`;
 }
 
 async function api(method, path, body) {
@@ -451,9 +483,9 @@ function messageHtml(m) {
   const canReact = open.joined && !m.pending && (!room || !room.encrypted || keysHere(room) === "ready");
   const picker = pickerFor === m.id
     ? `<div class="picker" role="menu">${reactions.map(e => `<button class="link" data-react="${esc(e)}" data-mid="${m.id}" role="menuitem">${esc(e)}</button>`).join("")}</div>` : "";
-  const gif = !m.deleted && isGifMessage(m.body);
+  const gif = !m.deleted && isGifMessage(m.body), pic = !m.deleted && !gif && m.media;
   const seen = open.reads?.filter(r => r.message === m.id).map(r => r.name);
-  return `${m.reply ? `<button class="quote" ${m.reply.id ? `data-jump="${m.reply.id}"` : "disabled"} title="Go to the message this answers">${quoteOf(m.reply)}</button>` : ""}<div class="text" title="${esc(time(m.created_at))}">${gif ? gifMessageHtml(m) : linkify(m.body)}${m.edited_at ? `<span class="edited" title="Edited ${esc(time(m.edited_at))}"> (edited)</span>` : ""}</div>
+  return `${m.reply ? `<button class="quote" ${m.reply.id ? `data-jump="${m.reply.id}"` : "disabled"} title="Go to the message this answers">${quoteOf(m.reply)}</button>` : ""}<div class="text" title="${esc(time(m.created_at))}">${gif ? gifMessageHtml(m) : pic ? pictureHtml(m.media) : linkify(m.body)}${m.edited_at ? `<span class="edited" title="Edited ${esc(time(m.edited_at))}"> (edited)</span>` : ""}</div>
     ${chips || picker ? `<div class="reacts">${chips}${picker}</div>` : ""}
     ${seen?.length ? `<div class="seen">Seen by ${esc(names(seen))}</div>` : ""}
     <div class="acts">${canReply(m) ? `<button class="link" data-reply="${m.id}">Reply</button>` : ""}${gif && gifsReady() && !m.pending ? `<button class="link star${isFavorite(m.body.trim()) ? " on" : ""}" data-favgif="${m.id}" aria-label="${isFavorite(m.body.trim()) ? "Remove GIF from favorites" : "Add GIF to favorites"}">★</button>` : ""}${canReact ? `<button class="link" data-pick="${m.id}" aria-label="React">React</button>` : ""}${m.can_edit && !m.pending ? `<button class="link" data-editmsg="${m.id}">Edit</button>` : ""}${m.can_delete ? `<button class="link del" data-del="${m.id}" aria-label="Delete message">Delete</button>` : ""}</div>`;
@@ -607,7 +639,7 @@ $("#room").addEventListener("click", async e => {
 
 function startEdit(id) {
   const m = open?.messages.get(id);
-  if (!m?.can_edit) return;
+  if (!m?.can_edit || m.media) return;
   editingId = id; editDraft = m.body; pickerFor = null;
   renderLog();
   const box = $("#log .edit textarea");
@@ -678,6 +710,27 @@ function stopReply({ focus = true } = {}) {
   if (focus) $("#text")?.focus();
 }
 
+// A GIF for an encrypted room goes as Element sends a picture: its bytes
+// (through the site, which may fetch them) encrypted here, uploaded, and an
+// image message with the key. If any of that fails, it goes as its link.
+async function gifContent(roomId, url) {
+  try {
+    const res = await fetch(`/chat/api/gifs/file?url=${encodeURIComponent(url)}`);
+    if (!res.ok) throw new Error(`couldn't fetch the GIF (${res.status})`);
+    const bytes = new Uint8Array(await res.arrayBuffer()), mimetype = res.headers.get("Content-Type");
+    const gif = mimetype === "image/gif" && bytes.length >= 10;
+    const { data, file } = await encryptAttachment(bytes);
+    const up = await fetch(`/chat/api/rooms/${roomId}/media`, { method: "POST", headers: { "Content-Type": "application/octet-stream" }, body: data });
+    const out = await up.json().catch(() => ({}));
+    if (!up.ok) throw new Error(out.error || `couldn't upload the GIF (${up.status})`);
+    return imageContent({ name: decodeURIComponent(new URL(url).pathname.split("/").pop()), mimetype, size: bytes.length,
+      width: gif ? bytes[6] | bytes[7] << 8 : null, height: gif ? bytes[8] | bytes[9] << 8 : null }, file, out.mxc);
+  } catch (err) {
+    console.warn("GIF as a picture:", err.message);
+    return textContent(url);
+  }
+}
+
 // Sends a message to the open room. `box` gets the text back if it fails.
 // (The GIF picker sends through here too, leaving the message line alone.)
 async function sendMessage(body, { box = null, reply = null } = {}) {
@@ -691,7 +744,7 @@ async function sendMessage(body, { box = null, reply = null } = {}) {
   renderLog({ toBottom: true });
   try {
     const room = rooms.find(r => r.id === id);
-    const content = textContent(body, { reply: answers?.ext_id });
+    const content = isGifMessage(body) && !answers ? await gifContent(id, body) : textContent(body, { reply: answers?.ext_id });
     const m = await api("POST", `/rooms/${id}/messages`, {
       ...(room?.encrypted ? { encrypted: await (await vaultFor(room.connection)).encrypt(room.ext_room, content) } : { body }),
       ...(answers ? { reply_to: answers.id } : {}) });
@@ -721,7 +774,7 @@ $("#room").addEventListener("keydown", e => {
     e.preventDefault();
     $("#composer").requestSubmit();
   } else if (box.id === "text" && e.key === "ArrowUp" && !box.value) {
-    const last = [...open.messages.values()].filter(m => m.can_edit && !m.pending).sort((a, b) => b.id - a.id)[0];
+    const last = [...open.messages.values()].filter(m => m.can_edit && !m.pending && !m.media).sort((a, b) => b.id - a.id)[0];
     if (last) { e.preventDefault(); startEdit(last.id); }
   } else if (box.closest?.(".edit")) {
     if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); box.form.requestSubmit(); }

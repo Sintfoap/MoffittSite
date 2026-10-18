@@ -24,9 +24,17 @@ export class ProviderError extends Error {
 }
 
 const TIMEOUT = 8000;
+// Pictures passed to and from Matrix, at most (bytes).
+export const MAX_MEDIA = 10 * 1024 * 1024;
+// A Matrix media address: mxc://<server>/<id>.
+export const MXC = /^mxc:\/\/([A-Za-z0-9.:\[\]-]{1,255})\/([A-Za-z0-9_-]{1,255})$/;
+// Pictures chat shows; anything else is passed on as data, never as a page.
+export const IMAGE_TYPES = ["image/gif", "image/png", "image/jpeg", "image/webp"];
 // A long message from elsewhere is cut to this many characters.
 const MAX_BODY = 4000;
 export const ENCRYPTED_NOTE = "🔒 Encrypted message";
+// The app id the site's pushers are registered under.
+export const PUSH_APP = "xyz.sintfoap.chat";
 
 // Only what chat shows: messages, edits, reactions and deletions, the state
 // that names a room, and who's typing and has read what. No presence or
@@ -234,6 +242,64 @@ export const matrix = {
     });
   },
 
+  // A pusher: the homeserver POSTs to `url` (a Matrix push gateway address,
+  // …/_matrix/push/v1/notify) whenever an event arrives that this account's
+  // push rules say should notify, the way it tells Element's phone app.
+  // Only the event's id is sent; the site syncs to read it.
+  async setPusher(creds, key, url) {
+    await call(creds.base, "POST", "/_matrix/client/v3/pushers/set", { token: creds.token, body: {
+      kind: "http", app_id: PUSH_APP, pushkey: key, app_display_name: "sintfoap.xyz", device_display_name: "sintfoap.xyz notifications",
+      lang: "en", data: { url, format: "event_id_only" }, append: true,
+    } });
+  },
+
+  async removePusher(creds, key) {
+    await call(creds.base, "POST", "/_matrix/client/v3/pushers/set", { token: creds.token, body: { kind: null, app_id: PUSH_APP, pushkey: key } });
+  },
+
+  // A picture: uploaded to the homeserver, then sent as an image message,
+  // as Element sends one. {bytes, mimetype, name, width, height}.
+  async sendImage(creds, roomId, { bytes, mimetype, name, width, height }) {
+    const mxc = await this.upload(creds, bytes, mimetype, name);
+    const out = await call(creds.base, "PUT", `/_matrix/client/v3/rooms/${room(roomId)}/send/m.room.message/${txn()}`, { token: creds.token, body: {
+      msgtype: "m.image", body: name, url: mxc,
+      info: { mimetype, size: bytes.byteLength, ...(width && height ? { w: width, h: height } : {}) },
+    } });
+    return out.event_id;
+  },
+
+  // Bytes to the homeserver's media store → their mxc:// address. (The
+  // browser uploads an encrypted room's pictures this way too, encrypted.)
+  async upload(creds, bytes, mimetype, name = "") {
+    if (bytes.byteLength > MAX_MEDIA) throw new ProviderError("that file is too big to send");
+    const url = new URL(`${creds.base}/_matrix/media/v3/upload`);
+    if (name) url.searchParams.set("filename", name);
+    const res = await send(url, { method: "POST", headers: { Authorization: `Bearer ${creds.token}`, "Content-Type": mimetype }, body: bytes });
+    const data = await res.json().catch(() => null);
+    if (res.status === 401) throw new ProviderError("Matrix says the sign-in is no longer valid; connect it again", { auth: true });
+    if (!res.ok || !MXC.test(data?.content_uri ?? "")) throw new ProviderError(`Matrix wouldn't take the file: ${String(data?.error || data?.errcode || `error ${res.status}`).slice(0, 200)}`);
+    return data.content_uri;
+  },
+
+  // An mxc:// address → {bytes, mimetype}, through the authenticated media
+  // API (Matrix 1.11), or the older one for homeservers without it.
+  async download(creds, mxc) {
+    const m = String(mxc).match(MXC);
+    if (!m) throw new ProviderError("that isn't a Matrix media address", { refused: true });
+    const path = `${encodeURIComponent(m[1])}/${encodeURIComponent(m[2])}`;
+    let res = await send(new URL(`${creds.base}/_matrix/client/v1/media/download/${path}`), { method: "GET", headers: { Authorization: `Bearer ${creds.token}` } });
+    if (res.status === 404 || res.status === 400 || res.status === 405) {
+      const old = await send(new URL(`${creds.base}/_matrix/media/v3/download/${path}`), { method: "GET", headers: {} });
+      if (old.ok || res.status === 400 || res.status === 405) res = old;
+    }
+    if (res.status === 401) throw new ProviderError("Matrix says the sign-in is no longer valid; connect it again", { auth: true });
+    if (!res.ok) throw new ProviderError(`Matrix couldn't give that file (${res.status})`);
+    if (Number(res.headers.get("Content-Length")) > MAX_MEDIA) throw new ProviderError("that file is too big to show here");
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    if (bytes.byteLength > MAX_MEDIA) throw new ProviderError("that file is too big to show here");
+    return { bytes, mimetype: String(res.headers.get("Content-Type") || "").split(";")[0].trim().toLowerCase() };
+  },
+
   // reply: the id of the message it answers, if it does.
   async send(creds, roomId, text, { reply } = {}) {
     const out = await call(creds.base, "PUT", `/_matrix/client/v3/rooms/${room(roomId)}/send/m.room.message/${txn()}`,
@@ -385,6 +451,16 @@ export function reactionOf(e) {
   return key && key.length <= 32 ? { target: rel.event_id, key } : null;
 }
 
+// A picture in an (unencrypted) image message: where it is and its shape,
+// for chat to show it. The body stays "[image] name" for the terminal and search.
+function imageOf(c) {
+  if (c?.msgtype !== "m.image" || typeof c.url !== "string" || !MXC.test(c.url)) return null;
+  const info = c.info ?? {}, mimetype = String(info.mimetype || "").toLowerCase();
+  if (!IMAGE_TYPES.includes(mimetype)) return null;
+  const dim = v => Number.isInteger(v) && v > 0 && v < 20000 ? v : null;
+  return { mxc: c.url, mimetype, width: dim(info.w), height: dim(info.h), name: String(c.body || "").slice(0, 200) };
+}
+
 function joinedRoom(id, r, me) {
   const state = [...(r.state?.events ?? []), ...(r.timeline?.events ?? []).filter(e => e.state_key !== undefined)];
   const names = new Map();
@@ -431,7 +507,8 @@ function joinedRoom(id, r, me) {
         if (body) out.events.push({ type: "edit", target: rel.event_id, sender: e.sender, body, at });
       } else {
         const body = textOf(c, who(e.sender));
-        if (body) out.events.push({ type: "message", id: e.event_id, sender: e.sender, sender_name: who(e.sender), mine: e.sender === me, body, at, encrypted: false, ...replyOf(c) });
+        if (body) out.events.push({ type: "message", id: e.event_id, sender: e.sender, sender_name: who(e.sender), mine: e.sender === me, body, at, encrypted: false,
+          ...replyOf(c), ...(imageOf(c) ? { media: imageOf(c) } : {}) });
       }
     }
   }
