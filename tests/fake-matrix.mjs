@@ -26,6 +26,8 @@ export class FakeMatrix {
     this.accountData = new Map();   // "user|type" → content
     this.backups = [];         // [{version, algorithm, auth_data, rooms: {room: {session: data}}}]
     this.signatures = [];      // every keys/signatures/upload body, to check what was signed
+    this.media = new Map();    // media id → {bytes, type}; legacyMedia: no authenticated media API
+    this.legacyMedia = false;
   }
 
   setAccountData(user, type, content) { this.accountData.set(`${user}|${type}`, content); }
@@ -48,6 +50,12 @@ export class FakeMatrix {
       content: { msgtype: "m.text", body, ...extra } };
     this.events.push({ room, event });
     return event.event_id;
+  }
+  // A picture someone sent: stored, then an image message pointing to it.
+  image(room, sender, bytes, type = "image/gif", name = "cat.gif", info = {}) {
+    const id = `m${++this.n}`;
+    this.media.set(id, { bytes, type });
+    return this.say(room, sender, name, { msgtype: "m.image", url: `mxc://hs.matrix.test/${id}`, info: { mimetype: type, size: bytes.length, ...info } });
   }
   encrypted(room, sender) {
     const event = { type: "m.room.encrypted", event_id: `$e${++this.n}`, sender, origin_server_ts: Date.now(), content: { algorithm: "m.megolm.v1.aes-sha2", ciphertext: "…" } };
@@ -81,7 +89,14 @@ export class FakeMatrix {
     if (url.hostname !== "hs.matrix.test") return json({ errcode: "M_UNRECOGNIZED" }, 404);
     if (path.startsWith("/old/")) return new Response(null, { status: 308, headers: { Location: path.slice(4) + url.search } });
     this.requests.push([req.method, path]);
-    const body = req.method === "GET" ? null : await req.json().catch(() => null);
+    // The old media API needs no sign-in.
+    const old = path.match(/^\/_matrix\/media\/v3\/download\/hs\.matrix\.test\/([^/]+)$/);
+    if (old && req.method === "GET") {
+      const f = this.media.get(decodeURIComponent(old[1]));
+      return f ? new Response(f.bytes, { headers: { "Content-Type": f.type } }) : json({ errcode: "M_NOT_FOUND" }, 404);
+    }
+    if (path === "/_matrix/media/v3/upload" && req.method === "POST" && !req.headers.get("Authorization")) return json({ errcode: "M_MISSING_TOKEN" }, 401);
+    const body = req.method === "GET" || path === "/_matrix/media/v3/upload" ? null : await req.json().catch(() => null);
     if (path === "/_matrix/client/v3/login") {
       if (body?.identifier?.user !== this.user && body?.identifier?.user !== "ryan" || body.password !== this.password) {
         return json({ errcode: "M_FORBIDDEN", error: "Invalid username or password" }, 403);
@@ -95,6 +110,17 @@ export class FakeMatrix {
     if (path === "/_matrix/client/v3/account/whoami") return json({ user_id: who.user, device_id: who.device });
     if (path === "/_matrix/client/v3/logout") { this.loggedOut.push(auth); return json({}); }
     if (path === "/_matrix/client/v3/sync") return json(this.sync(url.searchParams.get("since"), who));
+    if (path === "/_matrix/media/v3/upload" && req.method === "POST") {
+      const id = `m${++this.n}`;
+      this.media.set(id, { bytes: new Uint8Array(await req.arrayBuffer()), type: req.headers.get("Content-Type"), name: url.searchParams.get("filename") });
+      return json({ content_uri: `mxc://hs.matrix.test/${id}` });
+    }
+    const dl = path.match(/^\/_matrix\/client\/v1\/media\/download\/hs\.matrix\.test\/([^/]+)$/);
+    if (dl && req.method === "GET") {
+      if (this.legacyMedia) return json({ errcode: "M_UNRECOGNIZED" }, 404);
+      const f = this.media.get(decodeURIComponent(dl[1]));
+      return f ? new Response(f.bytes, { headers: { "Content-Type": f.type } }) : json({ errcode: "M_NOT_FOUND" }, 404);
+    }
     if (path.startsWith("/_matrix/client/v3/keys/") || path.startsWith("/_matrix/client/v3/sendToDevice/")) return json(this.crypto(req.method, path, body, who));
     let a = path.match(/^\/_matrix\/client\/v3\/user\/([^/]+)\/account_data\/([^/]+)$/);
     if (a) {
