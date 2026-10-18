@@ -24,7 +24,7 @@ class FakeGifApi(FakeChatApi):
         self.searches = []
 
     def chat_state(self):
-        return {**super().chat_state(), "gifs": {"ready": self.ready, "hosts": HOSTS, "provider": "KLIPY"}}
+        return {**super().chat_state(), "gifs": {"ready": self.ready, "hosts": HOSTS, "provider": "GIPHY"}}
 
     def chat_gifs(self, q="", pos=None):
         self.searches.append((q, pos))

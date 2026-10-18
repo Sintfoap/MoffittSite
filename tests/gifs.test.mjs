@@ -13,6 +13,25 @@ const gif = (id, w = 200, h = 100) => ({
   },
 });
 
+// GIPHY's shapes: images by size, numbers as strings, links with tracking parameters.
+const giphyGif = (id, w = "480", h = "270") => ({
+  id, title: `${id} GIF`,
+  images: {
+    original: { url: `https://media2.giphy.com/media/${id}/giphy.gif?cid=abc&rid=giphy.gif&ct=g`, width: w, height: h },
+    fixed_width: { url: `https://media2.giphy.com/media/${id}/200w.gif?cid=abc`, width: "200", height: "113" },
+  },
+});
+function giphy(url) {
+  const p = url.pathname, offset = Number(url.searchParams.get("offset") || 0);
+  if (p === "/v1/gifs/search") return Response.json({ data: [giphyGif("dog1"), giphyGif("dog2"),
+    { id: "bad", images: { original: { url: "https://evil.example/x.gif", width: "1", height: "1" } } }],
+    pagination: { total_count: 50, count: 3, offset } });
+  if (p === "/v1/gifs/trending") return Response.json({ data: [giphyGif("hot")], pagination: { total_count: 1, count: 1, offset: 0 } });
+  if (p === "/v1/gifs/categories") return Response.json({ data: [
+    { name: "reactions", name_encoded: "reactions", gif: giphyGif("cat-reactions") }, { name: "animals", gif: null }] });
+  return new Response("not found", { status: 404 });
+}
+
 let asked, realFetch, status;
 beforeEach(() => {
   asked = []; status = 200; realFetch = globalThis.fetch;
@@ -20,6 +39,7 @@ beforeEach(() => {
     const url = new URL(input instanceof Request ? input.url : String(input));
     asked.push(url);
     if (status !== 200) return new Response("no", { status });
+    if (url.hostname === "api.giphy.com") return giphy(url);
     if (url.hostname !== "api.klipy.com") return new Response("not found", { status: 404 });
     const p = url.pathname;
     if (p === "/v2/search") return Response.json({ results: [gif("cat1"), gif("cat2", 100, 300),
@@ -85,6 +105,32 @@ test("search, trending and categories come from KLIPY, keeping the key on the se
   assert.equal((await api(b, "GET", "/gifs?q=cat")).status, 502);
   assert.equal((await api(b, "POST", "/gifs")).status, 405);
   assert.equal((await api(b, "GET", "/gifs/nope")).status, 404);
+});
+
+test("GIPHY is used when its key is set, with its tracking parameters dropped", async () => {
+  const env = makeEnv({ GIPHY_API_KEY: "gk", GIF_API_KEY: "kk" });
+  const b = await signedIn(env, "josh");
+  assert.equal((await api(b, "GET", "/state")).json.gifs.provider, "GIPHY");
+
+  const found = await api(b, "GET", "/gifs?q=dog&pos=25");
+  assert.equal(found.status, 200);
+  assert.deepEqual(found.json.results[0], { id: "dog1", title: "dog1 GIF", url: "https://media2.giphy.com/media/dog1/giphy.gif",
+    preview: "https://media2.giphy.com/media/dog1/200w.gif", width: 480, height: 270 });
+  assert.deepEqual(found.json.results.map(g => g.id), ["dog1", "dog2"]);
+  assert.equal(found.json.next, "28");
+  const q = asked.at(-1);
+  assert.deepEqual([q.hostname, q.pathname, q.searchParams.get("api_key"), q.searchParams.get("q"), q.searchParams.get("offset"), q.searchParams.get("rating")],
+    ["api.giphy.com", "/v1/gifs/search", "gk", "dog", "25", "pg-13"]);
+  assert.doesNotMatch(found.text, /gk/);
+
+  const hot = await api(b, "GET", "/gifs");
+  assert.equal(asked.at(-1).pathname, "/v1/gifs/trending");
+  assert.deepEqual([hot.json.results.map(g => g.id), hot.json.next], [["hot"], null]);
+
+  assert.deepEqual((await api(b, "GET", "/gifs/categories")).json.categories, [
+    { name: "reactions", query: "reactions", preview: "https://media2.giphy.com/media/cat-reactions/200w.gif" },
+    { name: "animals", query: "animals", preview: null },
+  ]);
 });
 
 test("the chat page may show pictures from the GIF hosts", async () => {
