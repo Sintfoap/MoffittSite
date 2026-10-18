@@ -8,7 +8,7 @@
 // each connection; what you send there goes to that platform. Encrypted
 // rooms are decrypted and encrypted here, in this browser (e2ee.js).
 
-import { Vault, textOf, textContent, editContent, reactionContent } from "/chat/e2ee.js";
+import { Vault, Shelf, textOf, textContent, editContent, reactionContent } from "/chat/e2ee.js";
 
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -33,6 +33,7 @@ let bridges = { allowed: false };   // whether you can connect other platforms, 
 // locks the store), and the crypto library's store in IndexedDB.
 
 const vaults = new Map();   // connection id → Promise<Vault>
+const ready = new Map();    // connection id → Vault, once it's open
 const keyName = conn => `sintfoap-e2ee:${conn}`;
 const storedKey = conn => { try { return localStorage.getItem(keyName(conn)); } catch { return null; } };
 let crypto$ = null;         // the library, loaded the first time it's needed (it's large)
@@ -52,7 +53,7 @@ function vaultFor(conn, { create = false } = {}) {
       post: (op, body) => api("POST", `/connections/${conn}/crypto/${op}`, body) });
   })();
   vaults.set(conn, made);
-  made.catch(() => vaults.delete(conn));
+  made.then(v => ready.set(conn, v), () => vaults.delete(conn));
   return made;
 }
 
@@ -60,27 +61,100 @@ function vaultFor(conn, { create = false } = {}) {
 // the keys yet), "elsewhere" (another browser does), or "token" (it can't).
 const keysHere = r => !r.can_encrypt ? "token" : storedKey(r.connection) ? "ready" : r.keys_held ? "elsewhere" : "off";
 
-// Decrypts the open room's encrypted messages that haven't been yet (or
-// changed: an edit brings new ones), after taking any keys that arrived.
-async function decryptOpen() {
-  const room = open && rooms.find(r => r.id === open.id);
-  if (!room?.encrypted || keysHere(room) !== "ready") return;
-  const id = open.id, vault = await vaultFor(room.connection);
-  await vault.pump();
-  showVerify(await vault.status());
-  let changed = false;
-  for (const m of open?.id === id ? open.messages.values() : []) {
-    if (!m.raw || m.shownRaw === m.raw && m.decrypted) continue;
-    const c = await vault.decrypt(m.raw);
-    if (open?.id !== id) return;
-    const note = (await vault.status()).backup
-      ? "🔒 Can't decrypt this one: its key isn't in your key backup, or hasn't arrived yet."
-      : "🔒 Can't decrypt this one yet. Verify with your Security Key to unlock older messages.";
-    const body = c ? textOf(c, m.author_name) : note;
-    if (m.body !== body || m.shownRaw !== m.raw) { m.body = body; changed = true; }
-    m.decrypted = !!c; m.shownRaw = m.raw;
+// What this browser read before, kept sealed (e2ee.js, Shelf), so a chat
+// opens with its messages readable instead of decrypting them all again.
+const shelves = new Map();  // connection id → Promise<Shelf | null>
+function shelfFor(conn) {
+  if (shelves.has(conn)) return shelves.get(conn);
+  const key = storedKey(conn);
+  if (!key) return Promise.resolve(null);
+  const made = Shelf.open(key, { name: `sintfoap-e2ee-read-${conn}` }).catch(() => null);
+  shelves.set(conn, made);
+  return made;
+}
+const eventId = raw => { try { return JSON.parse(raw).event_id || null; } catch { return null; } };
+// The open room, when it's encrypted and its keys are in this browser.
+const keyedRoom = () => { const r = open && rooms.find(r => r.id === open.id); return r?.encrypted && keysHere(r) === "ready" ? r : null; };
+const read = (m, content) => Object.assign(m, { body: textOf(content, m.author_name), decrypted: true, decrypting: false, failed: false, shownRaw: m.raw });
+
+const lockedNote = vault => vault.backup
+  ? "🔒 Can't decrypt this one: its key isn't in your key backup, or hasn't arrived yet."
+  : "🔒 Can't decrypt this one yet. Verify with your Security Key to unlock older messages.";
+
+// Messages from the server, before they're shown: in an encrypted room the
+// server only has "Encrypted message", so each one takes the text it had
+// when it was last shown, or what this browser read before. Any still
+// unread say so quietly until decryptOpen gets to them.
+async function readable(list, roomId = open?.id) {
+  const room = rooms.find(r => r.id === roomId);
+  if (!room?.encrypted || keysHere(room) !== "ready") return list;
+  const rest = [];
+  for (const m of list) {
+    if (!m.raw) continue;
+    const had = open?.id === roomId && open.messages.get(m.id);
+    if (had?.shownRaw === m.raw && (had.decrypted || had.failed)) Object.assign(m, { body: had.body, decrypted: had.decrypted, failed: had.failed, shownRaw: m.raw });
+    else rest.push({ m, had });
   }
-  if (changed) renderLog();
+  const kept = await (await shelfFor(room.connection))?.get(rest.map(({ m }) => eventId(m.raw)).filter(Boolean)) ?? new Map();
+  for (const { m, had } of rest) {
+    const c = kept.get(eventId(m.raw));
+    if (c) read(m, c);
+    // (One already found to be unreadable says so straight away.)
+    else if (ready.get(room.connection)?.cache.get(m.raw) === null) Object.assign(m, { body: lockedNote(ready.get(room.connection)), failed: true, shownRaw: m.raw });
+    // (An edit keeps showing the text it replaces until the new one's read.)
+    else Object.assign(m, had?.decrypted ? { body: had.body } : { body: "Decrypting…", decrypting: true });
+  }
+  return list;
+}
+
+// Messages still to be read → as many read as can be in a moment (taking
+// any keys that came with them first), so they appear readable rather than
+// filling in. What's left, decryptOpen gets to.
+async function readSoon(list, roomId) {
+  const room = rooms.find(r => r.id === roomId), waiting = list.filter(m => m.decrypting);
+  if (!waiting.length || !room) return;
+  const work = (async () => {
+    const vault = await vaultFor(room.connection), shelf = await shelfFor(room.connection);
+    await vault.pump();
+    await Promise.all(waiting.map(async m => {
+      const c = await vault.decrypt(m.raw);
+      if (c) { read(m, c); shelf?.put(eventId(m.raw), c); }
+    }));
+  })().catch(() => {});
+  await Promise.race([work, new Promise(r => setTimeout(r, 1000))]);
+}
+
+// Decrypts the open room's messages that haven't been yet (or changed: an
+// edit brings new ones): first with the keys already here, then again after
+// taking any that arrived.
+async function decryptOpen() {
+  const room = keyedRoom();
+  if (!room) return;
+  const id = open.id, vault = await vaultFor(room.connection), shelf = await shelfFor(room.connection);
+  const pass = async last => {
+    const list = open?.id === id ? [...open.messages.values()].filter(m => m.raw && !(m.shownRaw === m.raw && m.decrypted)) : [];
+    if (!list.length) return;
+    const got = await Promise.all(list.map(m => vault.decrypt(m.raw)));
+    if (open?.id !== id) return;
+    let changed = false;
+    const note = last && lockedNote(vault);
+    list.forEach((m, i) => {
+      if (got[i]) { read(m, got[i]); shelf?.put(eventId(m.raw), got[i]); changed = true; }
+      else if (last && (m.body !== note || !m.failed)) { Object.assign(m, { body: note, failed: true, decrypting: false, shownRaw: m.raw }); changed = true; }
+    });
+    if (changed) renderLog();
+  };
+  await pass(false);
+  await vault.pump();
+  if (open?.id !== id) return;
+  showVerify(await vault.status());
+  await pass(true);
+}
+
+// Starts loading the crypto library and keys as soon as the page knows
+// there's an encrypted room they're for, rather than when one is opened.
+function warmKeys() {
+  for (const r of rooms) if (r.encrypted && keysHere(r) === "ready") { vaultFor(r.connection)?.catch(() => {}); shelfFor(r.connection); }
 }
 
 async function api(method, path, body) {
@@ -109,6 +183,7 @@ async function loadRooms() {
   bridges = s.bridges || { allowed: false };
   $("#connections-open").hidden = $("#key-k").hidden = !bridges.allowed;
   renderRooms();
+  warmKeys();
   const shown = open && rooms.find(r => r.id === open.id), count = $("#show-members");
   if (shown && count) count.textContent = `${shown.members} member${shown.members === 1 ? "" : "s"}`;
   // The open room was deleted by its owner.
@@ -159,6 +234,7 @@ async function openRoom(id) {
   const room = rooms.find(r => r.id === id);
   if (!room) { closeRoom(); return; }
   const data = await api("GET", `/rooms/${id}/messages`);
+  await readable(data.messages, id);
   open = { id, seq: data.seq, more: data.more, joined: data.joined, messages: new Map(data.messages.map(m => [m.id, m])), members: [],
            here: data.here || [], typing: data.typing || [], bridge: room.kind === "bridge" };
   editingId = pickerFor = null; hideSuggest(); searching = null;
@@ -167,6 +243,8 @@ async function openRoom(id) {
   api("GET", `/rooms/${id}/members`).then(list => { if (open?.id === id) open.members = list; }).catch(() => {});
   document.body.classList.add("in-room");
   renderRoomShell(room);
+  await readSoon(data.messages, id);
+  if (open?.id !== id) return;
   renderLog({ toBottom: true });
   renderPresence();
   renderRooms();
@@ -265,6 +343,9 @@ function messageHtml(m) {
     <div class="acts">${canReact ? `<button class="link" data-pick="${m.id}" aria-label="React">React</button>` : ""}${m.can_edit && !m.pending ? `<button class="link" data-editmsg="${m.id}">Edit</button>` : ""}${m.can_delete ? `<button class="link del" data-del="${m.id}" aria-label="Delete message">Delete</button>` : ""}</div>`;
 }
 
+// A message still being decrypted is shown quietly; one that can't be, as locked.
+const lockClass = m => m.raw && keyedRoom() ? (m.failed ? " locked" : m.decrypting ? " decrypting" : "") : m.encrypted && !m.decrypted ? " locked" : "";
+
 function renderLog({ toBottom = false, keepFrom = null } = {}) {
   const log = $("#log");
   if (!log || searching) return;
@@ -276,7 +357,7 @@ function renderLog({ toBottom = false, keepFrom = null } = {}) {
     const d = day(m.created_at);
     if (d !== lastDay) { html += `<div class="day">${esc(d)}</div>`; lastDay = d; prev = null; }
     const first = !prev || prev.author !== m.author || m.created_at - prev.created_at > GROUP_SECONDS;
-    html += `<div class="msg${first ? " first" : ""}${m.mine ? " mine" : ""}${m.pending ? " pending" : ""}${m.mentions_me ? " ping" : ""}${m.encrypted && !m.decrypted ? " locked" : ""}" data-id="${m.id}">
+    html += `<div class="msg${first ? " first" : ""}${m.mine ? " mine" : ""}${m.pending ? " pending" : ""}${m.mentions_me ? " ping" : ""}${lockClass(m)}" data-id="${m.id}">
       ${first ? `<div class="who">${esc(m.author_name)}<span class="at">${time(m.created_at)}</span></div>` : ""}
       ${messageHtml(m)}
     </div>`;
@@ -307,6 +388,9 @@ async function pollRoom() {
     const people = JSON.stringify([data.here, data.typing]);
     if (people !== JSON.stringify([open.here, open.typing])) { open.here = data.here || []; open.typing = data.typing || []; renderPresence(); }
     if (data.messages.length) {
+      await readable(data.messages, id);
+      await readSoon(data.messages, id);
+      if (open?.id !== id) return;
       for (const m of data.messages) open.messages.set(m.id, m);
       if (editingId && open.messages.get(editingId)?.deleted) editingId = null;
       open.seq = Math.max(open.seq, data.seq);
@@ -347,9 +431,10 @@ $("#room").addEventListener("click", async e => {
     else if (t.id === "older") {
       const oldest = Math.min(...open.messages.keys());
       const data = await api("GET", `/rooms/${open.id}/messages?before=${oldest}`);
-      for (const m of data.messages) open.messages.set(m.id, m);
+      for (const m of await readable(data.messages)) open.messages.set(m.id, m);
       open.more = data.more;
       renderLog({ keepFrom: $("#log").scrollTop });
+      decryptOpen().catch(() => {});
     }
     else if (t.closest("[data-react]")) {
       const b = t.closest("[data-react]"), mid = Number(b.dataset.mid), emoji = b.dataset.react;
@@ -361,8 +446,7 @@ $("#room").addEventListener("click", async e => {
         if (keysHere(room) !== "ready") throw new Error("Turn encryption on in this room to react here.");
         body.encrypted = await (await vaultFor(room.connection)).encrypt(room.ext_room, reactionContent(target.ext_id, emoji), "m.reaction");
       }
-      const m = await api("POST", `/rooms/${open.id}/messages/${mid}/reactions`, body);
-      if (target?.decrypted) Object.assign(m, { body: target.body, decrypted: true, shownRaw: target.shownRaw });
+      const m = await readable([await api("POST", `/rooms/${open.id}/messages/${mid}/reactions`, body)]).then(([m]) => m);
       open.messages.set(m.id, m);
       renderLog();
     }
@@ -398,12 +482,13 @@ async function saveEdit(form) {
   const id = Number(form.dataset.edit), body = form.querySelector("textarea").value.trim();
   if (!body) return toast("A message can't be empty. Delete it instead.");
   try {
-    const old = open.messages.get(id), room = rooms.find(r => r.id === open.id);
+    const old = open.messages.get(id), room = rooms.find(r => r.id === open.id), content = editContent(old?.ext_id, body);
     const m = await api("PATCH", `/rooms/${open.id}/messages/${id}`, old?.raw && room?.encrypted
-      ? { encrypted: await (await vaultFor(room.connection)).encrypt(room.ext_room, editContent(old.ext_id, body)) } : { body });
+      ? { encrypted: await (await vaultFor(room.connection)).encrypt(room.ext_room, content) } : { body });
+    // (You know what you wrote: it needn't be decrypted to show it.)
+    if (m.raw) { read(m, content); (await shelfFor(room.connection))?.put(eventId(m.raw), content); }
     open.messages.set(m.id, m);
     stopEdit();
-    decryptOpen().catch(() => {});
   } catch (err) { toast(err.message); }
 }
 
@@ -415,7 +500,7 @@ async function verifySession(form) {
   try {
     const out = await (await vaultFor(room.connection)).unlock(secret);
     input.value = ""; form.hidden = true;
-    for (const m of open.messages.values()) m.decrypted = false;   // try them all again
+    for (const m of open.messages.values()) if (m.failed) m.shownRaw = null;   // try the locked ones again
     toast(out.backup ? "Verified. Older messages are coming in from your key backup." : "Verified. Your account has no key backup, so older messages stay locked.");
     await decryptOpen();
   } catch (err) { toast(err.message); }
@@ -444,7 +529,7 @@ $("#room").addEventListener("submit", async e => {
       ? { encrypted: await (await vaultFor(room.connection)).encrypt(room.ext_room, textContent(body)) } : { body });
     if (open?.id !== id) return;
     open.messages.delete(temp.id);
-    if (m.raw) Object.assign(m, { body, decrypted: true, shownRaw: m.raw });
+    if (m.raw) { read(m, textContent(body)); (await shelfFor(room.connection))?.put(eventId(m.raw), textContent(body)); }
     open.messages.set(m.id, m);
     renderLog({ toBottom: true });
   } catch (err) {
@@ -569,7 +654,7 @@ function renderResults() {
 async function jumpTo(id) {
   for (let i = 0; i < 40 && !open.messages.has(id) && open.more; i++) {
     const data = await api("GET", `/rooms/${open.id}/messages?before=${Math.min(...open.messages.keys())}`);
-    for (const m of data.messages) open.messages.set(m.id, m);
+    for (const m of await readable(data.messages)) open.messages.set(m.id, m);
     open.more = data.more;
   }
   searching = null;

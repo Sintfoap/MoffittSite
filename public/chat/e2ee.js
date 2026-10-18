@@ -86,7 +86,7 @@ export class Vault {
           this.backup = { key, version: info.version };
         }
       }
-      this.cache.clear(); this.tried.clear();
+      this.forgetMisses(); this.tried.clear();
       await this.flush();
       return { verified: !!status.hasSelfSigning, backup: !!this.backup };
     });
@@ -106,6 +106,11 @@ export class Vault {
     const session = JSON.parse(key.decryptV1(d.ephemeral, d.mac, d.ciphertext));
     await this.machine.importBackedUpRoomKeys(new Map([[new lib.RoomId(event.room_id), new Map([[sid, session]])]]), () => {}, version);
     return true;
+  }
+
+  // New keys came in: what couldn't be read may be now. (What could stays read.)
+  forgetMisses() {
+    for (const [raw, c] of this.cache) if (!c) this.cache.delete(raw);
   }
 
   // One thing at a time: the library's requests have to be answered in order.
@@ -134,7 +139,7 @@ export class Vault {
           await this.machine.receiveSyncChanges(JSON.stringify(it.to_device), lists, otk, fallback);
         }
         got = true;
-        if (items.length) { ack = items.at(-1).id; this.cache.clear(); }
+        if (items.length) { ack = items.at(-1).id; this.forgetMisses(); }
         await this.flush();
         if (!items.length) break;
       }
@@ -209,6 +214,75 @@ export class Vault {
       return out;
     });
   }
+}
+
+// ── what this browser has already read ────────────────────────────────────
+// Decrypting takes the crypto library, which is large to load, so what was
+// read once is kept: event id → decrypted content, in IndexedDB, sealed with
+// AES-GCM under a key made from the connection's own browser key (the same
+// key that locks the library's store). A chat then opens with its messages
+// already readable, and the library only has to read the new ones.
+//
+// rows: where the sealed rows go, {get(ids) → Map, put(id, value)}; left
+// out, IndexedDB (and where there's none, nowhere: nothing is kept).
+
+export class Shelf {
+  constructor(aes, rows) { this.aes = aes; this.rows = rows; }
+
+  static async open(hexKey, { name, rows } = {}) {
+    const bytes = Uint8Array.from(hexKey.match(/../g), h => parseInt(h, 16));
+    const ikm = await subtle().importKey("raw", bytes, "HKDF", false, ["deriveKey"]);
+    const aes = await subtle().deriveKey({ name: "HKDF", hash: "SHA-256", salt: new Uint8Array(32), info: new TextEncoder().encode("sintfoap-e2ee-read") },
+      ikm, { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
+    return new Shelf(aes, rows ?? await idbRows(name));
+  }
+
+  // event ids → Map of the ones kept, to their decrypted content.
+  async get(ids) {
+    const out = new Map();
+    if (!ids.length) return out;
+    let rows;
+    try { rows = await this.rows.get(ids); } catch { return out; }
+    await Promise.all([...rows].map(async ([id, { iv, data }]) => {
+      try { out.set(id, JSON.parse(new TextDecoder().decode(await subtle().decrypt({ name: "AES-GCM", iv, additionalData: new TextEncoder().encode(id) }, this.aes, data)))); }
+      catch { /* sealed under another key: skip it */ }
+    }));
+    return out;
+  }
+
+  async put(id, content) {
+    if (!id || !content) return;
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const data = new Uint8Array(await subtle().encrypt({ name: "AES-GCM", iv, additionalData: new TextEncoder().encode(id) },
+      this.aes, new TextEncoder().encode(JSON.stringify(content))));
+    try { await this.rows.put(id, { iv, data }); } catch { /* full, or private mode: it's only a shortcut */ }
+  }
+}
+
+async function idbRows(name) {
+  const none = { get: async () => new Map(), put: async () => {} };
+  if (!name || !globalThis.indexedDB) return none;
+  const db = await new Promise(resolve => {
+    const req = indexedDB.open(name, 1);
+    req.onupgradeneeded = () => req.result.createObjectStore("read");
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = req.onblocked = () => resolve(null);
+  });
+  if (!db) return none;
+  const done = tx => new Promise((ok, fail) => { tx.oncomplete = () => ok(); tx.onerror = tx.onabort = () => fail(tx.error); });
+  return {
+    async get(ids) {
+      const tx = db.transaction("read"), store = tx.objectStore("read"), out = new Map();
+      for (const id of ids) { const r = store.get(id); r.onsuccess = () => { if (r.result) out.set(id, r.result); }; }
+      await done(tx);
+      return out;
+    },
+    async put(id, value) {
+      const tx = db.transaction("read", "readwrite");
+      tx.objectStore("read").put(value, id);
+      await done(tx);
+    },
+  };
 }
 
 // Decrypted content → the text chat shows, as the site does for plain rooms.

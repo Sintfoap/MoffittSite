@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { Browser, makeEnv, grantApps, sqlOne } from "./helpers.mjs";
 import { FakeMatrix } from "./fake-matrix.mjs";
 import * as lib from "../public/chat/vendor/matrix-crypto/node.mjs";
-import { Vault, textOf, textContent, editContent, reactionContent, encryptSecret, encodeRecoveryKey } from "../public/chat/e2ee.js";
+import { Vault, Shelf, textOf, textContent, editContent, reactionContent, encryptSecret, encodeRecoveryKey } from "../public/chat/e2ee.js";
 
 const ROOM = "!secret:matrix.test";
 let hs;
@@ -258,4 +258,21 @@ test("reactions in an encrypted room are encrypted too, and go both ways", async
   // Taking it back is a redaction, which isn't encrypted, so it needs no keys.
   await api(ryan, "POST", `/rooms/${room.id}/messages/${m.id}/reactions`, { emoji: "👍", on: false });
   assert.equal(hs.events.at(-1).event.type, "m.room.redaction");
+});
+
+test("what the browser has read is kept sealed, so a chat opens readable", async () => {
+  const rows = new Map();
+  const store = { get: async ids => new Map(ids.filter(id => rows.has(id)).map(id => [id, rows.get(id)])), put: async (id, v) => { rows.set(id, v); } };
+  const shelf = await Shelf.open(hexKey("a"), { rows: store });
+  await shelf.put("$one", textContent("the door code is 4471"));
+  assert.ok(!new TextDecoder().decode(rows.get("$one").data).includes("4471"), "sealed, not kept as text");
+  assert.deepEqual([...(await shelf.get(["$one", "$two"]))], [["$one", textContent("the door code is 4471")]]);
+  // Another browser key can't open it, and a row moved to another event doesn't open either.
+  assert.equal((await (await Shelf.open(hexKey("b"), { rows: store })).get(["$one"])).size, 0);
+  rows.set("$two", rows.get("$one"));
+  assert.deepEqual([...(await shelf.get(["$two"])).keys()], []);
+  // With nowhere to keep them (no IndexedDB, as here in Node), nothing is, and nothing breaks.
+  const none = await Shelf.open(hexKey("a"), { name: "x" });
+  await none.put("$one", textContent("hi"));
+  assert.equal((await none.get(["$one"])).size, 0);
 });
