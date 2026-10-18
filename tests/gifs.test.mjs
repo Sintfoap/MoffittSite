@@ -137,7 +137,7 @@ test("the chat page may show pictures from the GIF hosts", async () => {
   const env = makeEnv({ GIF_API_KEY: "k" });
   const b = await signedIn(env, "josh");
   const csp = (await b.get("/chat/")).headers.get("Content-Security-Policy");
-  assert.match(csp, /img-src 'self' data: https:\/\/klipy\.com https:\/\/\*\.klipy\.com/);
+  assert.match(csp, /img-src 'self' data: blob: https:\/\/klipy\.com https:\/\/\*\.klipy\.com/);
   assert.doesNotMatch(csp, /connect-src[^;]*klipy/);
 });
 

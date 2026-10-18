@@ -8,7 +8,7 @@
 // each connection; what you send there goes to that platform. Encrypted
 // rooms are decrypted and encrypted here, in this browser (e2ee.js).
 
-import { Vault, textOf, textContent, editContent } from "/chat/e2ee.js";
+import { Vault, textOf, textContent, editContent, encryptAttachment, decryptAttachment, imageOf, imageContent } from "/chat/e2ee.js";
 import { setupGifs, gifsReady, isGifMessage, gifMessageHtml, isFavorite, toggleFavorite, isOpen as gifsOpen, toggleGifs, closeGifs, onGifClick, onGifInput, onGifKey } from "/chat/gifs.js";
 
 const $ = s => document.querySelector(s);
@@ -79,9 +79,39 @@ async function decryptOpen() {
       : "🔒 Can't decrypt this one yet. Verify with your Security Key to unlock older messages.";
     const body = c ? textOf(c, m.author_name) : note;
     if (m.body !== body || m.shownRaw !== m.raw) { m.body = body; changed = true; }
+    const pic = c && imageOf(c);
+    m.media = pic ? { ...pic, url: mediaPath(id, pic.mxc) } : null;
     m.decrypted = !!c; m.shownRaw = m.raw;
   }
   if (changed) renderLog();
+}
+
+// ── pictures from bridge rooms ───────────────────────────────────────────
+// They come through the site (it has the connection's sign-in). An encrypted
+// room's are encrypted, so they're decrypted here and shown from a blob: URL.
+
+const mediaPath = (roomId, mxc) => `/chat/api/rooms/${roomId}/media?mxc=${encodeURIComponent(mxc)}`;
+const decrypted = new Map();   // mxc → object URL, or null while loading / if it failed
+
+function pictureSrc(media) {
+  if (!media.file) return media.url;
+  if (decrypted.has(media.mxc)) return decrypted.get(media.mxc);
+  decrypted.set(media.mxc, null);
+  (async () => {
+    const res = await fetch(media.url);
+    if (!res.ok) throw new Error(`couldn't fetch the picture (${res.status})`);
+    const bytes = await decryptAttachment(new Uint8Array(await res.arrayBuffer()), media.file);
+    decrypted.set(media.mxc, URL.createObjectURL(new Blob([bytes], { type: media.mimetype })));
+    renderLog();
+  })().catch(err => console.warn("picture:", err.message));
+  return null;
+}
+
+function pictureHtml(media) {
+  const src = pictureSrc(media), size = media.width && media.height ? ` width="${media.width}" height="${media.height}"` : "";
+  return src
+    ? `<a class="gif-msg" href="${esc(src)}" target="_blank" rel="noopener noreferrer"><img src="${esc(src)}" alt="${esc(media.name || "picture")}"${size} loading="lazy"></a>`
+    : `<span class="pic-wait">${esc(media.name || "picture")}…</span>`;
 }
 
 async function api(method, path, body) {
@@ -267,10 +297,10 @@ function messageHtml(m) {
   const canReact = open.joined && !m.pending && !open.bridge;
   const picker = pickerFor === m.id
     ? `<div class="picker" role="menu">${reactions.map(e => `<button class="link" data-react="${esc(e)}" data-mid="${m.id}" role="menuitem">${esc(e)}</button>`).join("")}</div>` : "";
-  const gif = !m.deleted && isGifMessage(m.body);
-  return `<div class="text" title="${esc(time(m.created_at))}">${gif ? gifMessageHtml(m) : linkify(m.body)}${m.edited_at ? `<span class="edited" title="Edited ${esc(time(m.edited_at))}"> (edited)</span>` : ""}</div>
+  const gif = !m.deleted && isGifMessage(m.body), pic = !m.deleted && !gif && m.media;
+  return `<div class="text" title="${esc(time(m.created_at))}">${gif ? gifMessageHtml(m) : pic ? pictureHtml(m.media) : linkify(m.body)}${m.edited_at ? `<span class="edited" title="Edited ${esc(time(m.edited_at))}"> (edited)</span>` : ""}</div>
     ${chips || picker ? `<div class="reacts">${chips}${picker}</div>` : ""}
-    <div class="acts">${gif && gifsReady() && !m.pending ? `<button class="link star${isFavorite(m.body.trim()) ? " on" : ""}" data-favgif="${m.id}" aria-label="${isFavorite(m.body.trim()) ? "Remove GIF from favorites" : "Add GIF to favorites"}">★</button>` : ""}${canReact ? `<button class="link" data-pick="${m.id}" aria-label="React">React</button>` : ""}${m.can_edit && !m.pending ? `<button class="link" data-editmsg="${m.id}">Edit</button>` : ""}${m.can_delete ? `<button class="link del" data-del="${m.id}" aria-label="Delete message">Delete</button>` : ""}</div>`;
+    <div class="acts">${gif && gifsReady() && !m.pending ? `<button class="link star${isFavorite(m.body.trim()) ? " on" : ""}" data-favgif="${m.id}" aria-label="${isFavorite(m.body.trim()) ? "Remove GIF from favorites" : "Add GIF to favorites"}">★</button>` : ""}${canReact ? `<button class="link" data-pick="${m.id}" aria-label="React">React</button>` : ""}${m.can_edit && !m.pending && !m.media ? `<button class="link" data-editmsg="${m.id}">Edit</button>` : ""}${m.can_delete ? `<button class="link del" data-del="${m.id}" aria-label="Delete message">Delete</button>` : ""}</div>`;
 }
 
 function renderLog({ toBottom = false, keepFrom = null } = {}) {
@@ -392,7 +422,7 @@ $("#room").addEventListener("click", async e => {
 
 function startEdit(id) {
   const m = open?.messages.get(id);
-  if (!m?.can_edit) return;
+  if (!m?.can_edit || m.media) return;
   editingId = id; editDraft = m.body; pickerFor = null;
   renderLog();
   const box = $("#log .edit textarea");
@@ -444,6 +474,27 @@ $("#room").addEventListener("submit", async e => {
   sendMessage(body, { box });
 });
 
+// A GIF for an encrypted room goes as Element sends a picture: its bytes
+// (through the site, which may fetch them) encrypted here, uploaded, and an
+// image message with the key. If any of that fails, it goes as its link.
+async function gifContent(roomId, url) {
+  try {
+    const res = await fetch(`/chat/api/gifs/file?url=${encodeURIComponent(url)}`);
+    if (!res.ok) throw new Error(`couldn't fetch the GIF (${res.status})`);
+    const bytes = new Uint8Array(await res.arrayBuffer()), mimetype = res.headers.get("Content-Type");
+    const gif = mimetype === "image/gif" && bytes.length >= 10;
+    const { data, file } = await encryptAttachment(bytes);
+    const up = await fetch(`/chat/api/rooms/${roomId}/media`, { method: "POST", headers: { "Content-Type": "application/octet-stream" }, body: data });
+    const out = await up.json().catch(() => ({}));
+    if (!up.ok) throw new Error(out.error || `couldn't upload the GIF (${up.status})`);
+    return imageContent({ name: decodeURIComponent(new URL(url).pathname.split("/").pop()), mimetype, size: bytes.length,
+      width: gif ? bytes[6] | bytes[7] << 8 : null, height: gif ? bytes[8] | bytes[9] << 8 : null }, file, out.mxc);
+  } catch (err) {
+    console.warn("GIF as a picture:", err.message);
+    return textContent(url);
+  }
+}
+
 // Sends a message to the open room. `box` gets the text back if it fails.
 // (The GIF picker sends through here too, leaving the message line alone.)
 async function sendMessage(body, { box = null } = {}) {
@@ -457,7 +508,7 @@ async function sendMessage(body, { box = null } = {}) {
   try {
     const room = rooms.find(r => r.id === id);
     const m = await api("POST", `/rooms/${id}/messages`, room?.encrypted
-      ? { encrypted: await (await vaultFor(room.connection)).encrypt(room.ext_room, textContent(body)) } : { body });
+      ? { encrypted: await (await vaultFor(room.connection)).encrypt(room.ext_room, isGifMessage(body) ? await gifContent(id, body) : textContent(body)) } : { body });
     if (open?.id !== id) return;
     open.messages.delete(temp.id);
     if (m.raw) Object.assign(m, { body, decrypted: true, shownRaw: m.raw });
@@ -483,7 +534,7 @@ $("#room").addEventListener("keydown", e => {
     e.preventDefault();
     $("#composer").requestSubmit();
   } else if (box.id === "text" && e.key === "ArrowUp" && !box.value) {
-    const last = [...open.messages.values()].filter(m => m.can_edit && !m.pending).sort((a, b) => b.id - a.id)[0];
+    const last = [...open.messages.values()].filter(m => m.can_edit && !m.pending && !m.media).sort((a, b) => b.id - a.id)[0];
     if (last) { e.preventDefault(); startEdit(last.id); }
   } else if (box.closest?.(".edit")) {
     if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); box.form.requestSubmit(); }

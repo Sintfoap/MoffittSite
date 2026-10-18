@@ -13,6 +13,8 @@
 //     and, for end-to-end encryption (optional):
 //     canEncrypt(creds), device(creds) → {user_id, device_id},
 //     sendEncrypted(creds, room, content) → message id,
+//     and for pictures (optional): sendImage(creds, room, {bytes, mimetype, name, width, height}) → message id,
+//     upload(creds, bytes, mimetype, name) → media address, download(creds, address) → {bytes, mimetype}
 //     cryptoRequest(creds, method, path, body) → the platform's answer }
 // Adding a platform means writing one of those and listing it in PROVIDERS;
 // the API, the web page and the terminal build their forms from `fields`.
@@ -224,9 +226,9 @@ async function applyRoom(env, d, conn, r, initial) {
     if (e.type === "message") {
       stmts.push(
         d.prepare("UPDATE chat_rooms SET seq = seq + 1, last_at = MAX(last_at, ?) WHERE id = ?").bind(e.at, id),
-        d.prepare(`INSERT OR IGNORE INTO chat_messages (room, user_id, body, seq, posted_seq, created_at, ext_id, ext_sender, ext_name, encrypted, ext_raw)
-          SELECT id, ?, ?, seq, seq, ?, ?, ?, ?, ?, ? FROM chat_rooms WHERE id = ?`)
-          .bind(e.mine ? conn.user_id : "", e.body, e.at, e.id, e.sender, e.sender_name, e.encrypted ? 1 : 0, e.raw ?? null, id),
+        d.prepare(`INSERT OR IGNORE INTO chat_messages (room, user_id, body, seq, posted_seq, created_at, ext_id, ext_sender, ext_name, encrypted, ext_raw, ext_media)
+          SELECT id, ?, ?, seq, seq, ?, ?, ?, ?, ?, ?, ? FROM chat_rooms WHERE id = ?`)
+          .bind(e.mine ? conn.user_id : "", e.body, e.at, e.id, e.sender, e.sender_name, e.encrypted ? 1 : 0, e.raw ?? null, e.media ? JSON.stringify(e.media) : null, id),
       );
     } else if (e.type === "edit" && e.raw) {
       // An encrypted edit replaces what the browser decrypts.

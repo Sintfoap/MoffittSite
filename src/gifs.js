@@ -38,6 +38,23 @@ export function isGif(env, url) {
   return gifHosts(env).some(h => host === h || host.endsWith("." + h)) && /\.(gif|webp)$/i.test(u.pathname);
 }
 
+// A GIF's own bytes, for passing on to another platform as a picture
+// (src/chat.js sends GIFs to Matrix this way): {bytes, mimetype, name, width, height}.
+const MAX_GIF = 8 * 1024 * 1024;
+export async function fetchGif(env, url) {
+  if (!isGif(env, url)) return null;
+  let res;
+  try { res = await fetch(url, { signal: AbortSignal.timeout(TIMEOUT), redirect: "manual" }); } catch { return null; }
+  const mimetype = String(res.headers.get("Content-Type") || "").split(";")[0].trim().toLowerCase();
+  if (!res.ok || !["image/gif", "image/webp"].includes(mimetype) || Number(res.headers.get("Content-Length")) > MAX_GIF) return null;
+  const bytes = new Uint8Array(await res.arrayBuffer());
+  if (bytes.byteLength > MAX_GIF) return null;
+  // A GIF says its size in its first ten bytes ("GIF89a", then width and height, little-endian).
+  const gif = mimetype === "image/gif" && bytes.byteLength >= 10 && String.fromCharCode(...bytes.slice(0, 3)) === "GIF";
+  const name = decodeURIComponent(new URL(url).pathname.split("/").pop() || "") || (gif ? "image.gif" : "image.webp");
+  return { bytes, mimetype, name, width: gif ? bytes[6] | bytes[7] << 8 : null, height: gif ? bytes[8] | bytes[9] << 8 : null };
+}
+
 async function ask(url, params) {
   for (const [k, v] of Object.entries(params)) if (v != null && v !== "") url.searchParams.set(k, String(v));
   let res;

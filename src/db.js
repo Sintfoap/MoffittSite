@@ -173,7 +173,8 @@ const SCHEMA = [
      ext_sender TEXT,
      ext_name   TEXT,
      encrypted  INTEGER NOT NULL DEFAULT 0,        -- arrived encrypted, so body is only a note saying so
-     ext_raw    TEXT                               -- an encrypted message as it came (its latest edit), for the browser with the keys
+     ext_raw    TEXT,                              -- an encrypted message as it came (its latest edit), for the browser with the keys
+     ext_media  TEXT                               -- a picture it carries, as JSON {mxc, mimetype, width, height, name}
    )`,
   `CREATE INDEX IF NOT EXISTS chat_messages_room ON chat_messages (room, id)`,
   `CREATE INDEX IF NOT EXISTS chat_messages_seq ON chat_messages (room, seq)`,
@@ -285,7 +286,7 @@ const AFTER_COLUMNS = [
 // leaves an existing table alone, so older databases get them here.
 const ADDED_COLUMNS = {
   users: ["email TEXT", "email_verified INTEGER NOT NULL DEFAULT 0"],
-  chat_messages: ["posted_seq INTEGER", "edited_at INTEGER", "ext_id TEXT", "ext_sender TEXT", "ext_name TEXT", "encrypted INTEGER NOT NULL DEFAULT 0", "ext_raw TEXT"],
+  chat_messages: ["posted_seq INTEGER", "edited_at INTEGER", "ext_id TEXT", "ext_sender TEXT", "ext_name TEXT", "encrypted INTEGER NOT NULL DEFAULT 0", "ext_raw TEXT", "ext_media TEXT"],
   chat_connections: ["can_encrypt INTEGER NOT NULL DEFAULT 0", "crypto_owner TEXT", "crypto_counts TEXT"],
   chat_rooms: ["kind TEXT NOT NULL DEFAULT 'open'", "connection TEXT", "ext_id TEXT", "encrypted INTEGER NOT NULL DEFAULT 0"],
 };

@@ -27,7 +27,8 @@ import { sameOrigin } from "./account.js";
 import { randomBytes, hex, sha256 } from "./crypto.js";
 import { canBridge, bridgeInfo, listConnections, addConnection, removeConnection, syncConnection, syncAll, syncRoom, onPlatform, cryptoOp, ENCRYPTED_NOTE } from "./bridges.js";
 import { chatPushes } from "./notify.js";
-import { gifInfo, gifImageSources, gifSearch, gifCategories, favorites, favorite } from "./gifs.js";
+import { gifInfo, gifImageSources, gifSearch, gifCategories, favorites, favorite, isGif, fetchGif } from "./gifs.js";
+import { MXC, IMAGE_TYPES, MAX_MEDIA } from "./matrix.js";
 
 export class BadRequest extends Error {}
 const fail = msg => { throw new BadRequest(msg); };
@@ -151,26 +152,32 @@ async function oneRoom(env, user, id) {
 }
 
 const MESSAGE = `SELECT m.id, m.body, m.deleted, m.seq, m.created_at, m.edited_at, m.user_id, u.username, u.display_name,
-    m.ext_id, m.ext_sender, m.ext_name, m.encrypted, m.ext_raw
+    m.ext_id, m.ext_sender, m.ext_name, m.encrypted, m.ext_raw, m.ext_media
   FROM chat_messages m LEFT JOIN users u ON u.id = m.user_id`;
+
+const mediaUrl = (room, mxc) => `/chat/api/rooms/${room.id}/media?mxc=${encodeURIComponent(mxc)}`;
 
 function messageOut(m, user, room, reactions = []) {
   const mine = m.user_id === user.id;
   // Someone on the other platform: named as they are there.
   const outside = !m.user_id && m.ext_sender;
   const locked = !!m.encrypted;
+  let media = null;
+  try { media = m.ext_media && !m.deleted ? JSON.parse(m.ext_media) : null; } catch { /* shown as its text */ }
   return {
     id: m.id, seq: m.seq, created_at: m.created_at, edited_at: m.deleted ? null : m.edited_at ?? null,
     deleted: !!m.deleted, body: m.deleted ? "" : m.body,
     author: outside ? m.ext_sender : m.username ?? null, author_name: outside ? m.ext_name || m.ext_sender : m.display_name ?? "Deleted account",
     // An encrypted message can be edited only from the browser with the keys.
-    mine, can_edit: !m.deleted && mine && (!locked || !!m.ext_raw), can_delete: !m.deleted && (mine || canManage(room, user)),
+    mine, can_edit: !m.deleted && mine && (!locked || !!m.ext_raw) && !media, can_delete: !m.deleted && (mine || canManage(room, user)),
     mentions_me: !m.deleted && !mine && !bridged(room) && mentioned(m.body).includes(user.username),
     reactions: m.deleted ? [] : reactions,
     ...(bridged(room) ? { external: !!outside, encrypted: locked } : {}),
     // As it came, for the browser to decrypt; body is only a note.
     // (After an edit, raw is the edit; ext_id is still the message's own id there.)
     ...(locked && m.ext_raw && !m.deleted ? { raw: m.ext_raw, ext_id: m.ext_id } : {}),
+    // A picture from the other platform, fetched through the site (mediaFile).
+    ...(media ? { media: { url: mediaUrl(room, media.mxc), mimetype: media.mimetype, width: media.width ?? null, height: media.height ?? null, name: media.name ?? "" } } : {}),
   };
 }
 
@@ -498,7 +505,12 @@ export async function post(env, user, roomId, body, later = p => p) {
 // there, so the sync that brings it back finds it already in place.
 async function postBridged(env, d, user, room, text) {
   if (room.encrypted) return { forbidden: "this room is end-to-end encrypted: send to it from the chat page in the browser that holds its keys" };
-  const sent = await onPlatform(env, d, user, room, async (p, creds) => ({ id: await p.send(creds, room.ext_id, text), sender: creds.user_id }));
+  // A GIF goes as a picture where the platform takes them, as it would from
+  // their own app; if it can't be fetched it goes as its link.
+  const gif = isGif(env, text) ? await fetchGif(env, text) : null;
+  const sent = await onPlatform(env, d, user, room, async (p, creds) => ({
+    id: gif && p.sendImage ? await p.sendImage(creds, room.ext_id, gif) : await p.send(creds, room.ext_id, text), sender: creds.user_id,
+  }));
   if (sent.error) return { failed: sent.error };
   const t = now();
   await d.batch([
@@ -530,6 +542,46 @@ async function postEncrypted(env, d, user, room, content) {
   ]);
   const m = await d.prepare(`${MESSAGE} WHERE m.room = ? AND m.ext_id = ?`).bind(room.id, sent.ok.id).first();
   return messageOut(m, user, room);
+}
+
+// ── pictures in bridge rooms ───────────────────────────────────────────────
+
+// Bytes as a response the page can show in an <img>, and nothing more: never
+// a page of its own, whatever the platform said it was.
+const fileResponse = (bytes, mimetype) => new Response(bytes, { headers: {
+  "Content-Type": IMAGE_TYPES.includes(mimetype) ? mimetype : "application/octet-stream",
+  "Content-Disposition": IMAGE_TYPES.includes(mimetype) ? "inline" : "attachment",
+  "Cache-Control": "private, max-age=86400", "X-Content-Type-Options": "nosniff",
+  "Content-Security-Policy": "default-src 'none'; sandbox",
+} });
+
+// A picture from a bridge room's platform (mxc://… on Matrix), fetched with
+// the connection's sign-in, which is why it comes through here. Encrypted
+// rooms' pictures come as the encrypted bytes, for the browser to decrypt.
+export async function mediaFile(env, user, roomId, mxc) {
+  if (!MXC.test(mxc ?? "")) return null;
+  const d = await db(env);
+  const { room } = await load(d, user, roomId);
+  if (!room || !bridged(room)) return null;
+  const got = await onPlatform(env, d, user, room, async (p, creds) => p.download ? p.download(creds, mxc) : null);
+  if (got.error) return { failed: got.error };
+  if (!got.ok) return null;
+  return { file: fileResponse(got.ok.bytes, got.ok.mimetype) };
+}
+
+// The browser's encrypted picture for an encrypted bridge room, to the
+// platform's media store → {mxc}. It then sends the message that points to it.
+export async function mediaUpload(env, user, roomId, request) {
+  const d = await db(env);
+  const { room } = await load(d, user, roomId);
+  if (!room || !bridged(room)) return null;
+  if (!room.encrypted) return { forbidden: "pictures go to this room as messages" };
+  if (Number(request.headers.get("Content-Length")) > MAX_MEDIA) fail("that file is too big to send");
+  const bytes = new Uint8Array(await request.arrayBuffer());
+  if (!bytes.byteLength || bytes.byteLength > MAX_MEDIA) fail(bytes.byteLength ? "that file is too big to send" : "nothing to send");
+  const up = await onPlatform(env, d, user, room, async (p, creds) => p.upload ? p.upload(creds, bytes, "application/octet-stream") : null);
+  if (up.error) return { failed: up.error };
+  return up.ok ? { mxc: up.ok } : { forbidden: "this platform doesn't take files from here" };
 }
 
 // Only the author edits a message. Mentions follow the new text.
@@ -645,6 +697,8 @@ export async function deleteMessage(env, user, roomId, messageId) {
 //   PATCH  /chat/api/rooms/<id>/messages/<message id>   {body}   (its author)
 //   DELETE /chat/api/rooms/<id>/messages/<message id>
 //   POST   /chat/api/rooms/<id>/messages/<message id>/reactions   {emoji, on}   (members)
+//   GET    /chat/api/rooms/<id>/media?mxc=<address>  a picture in a bridge room, from its platform
+//   POST   /chat/api/rooms/<id>/media               (the bytes) an encrypted bridge room's encrypted picture → {mxc}
 //   GET    /chat/api/connections                    your connections to other platforms   (with Chat connections on)
 //   POST   /chat/api/connections                    {provider, ...its fields} → a new connection, synced once
 //   DELETE /chat/api/connections/<id>               the connection and its rooms
@@ -655,16 +709,17 @@ export async function deleteMessage(env, user, roomId, messageId) {
 //   GET    /chat/api/gifs[?q=<text>&pos=<next>]     GIFs for the picker: a search, or what's trending → {results, next}
 //   GET    /chat/api/gifs/categories                the picker's category tiles
 //   GET    /chat/api/gifs/favorites                 your starred GIFs
+//   GET    /chat/api/gifs/file?url=<GIF link>       a GIF's bytes, for the browser to encrypt for an encrypted room
 //   POST   /chat/api/gifs/favorites                 {gif, on}   star a GIF, or take the star off
 
-const ROUTE = /^\/chat\/api\/(state|people|dms|rooms|connections|gifs)(?:\/([^/]+)(?:\/(join|leave|members|messages|search|typing|sync|crypto)(?:\/([^/]+)(?:\/(reactions))?)?)?)?\/?$/;
+const ROUTE = /^\/chat\/api\/(state|people|dms|rooms|connections|gifs)(?:\/([^/]+)(?:\/(join|leave|members|messages|search|typing|sync|crypto|media)(?:\/([^/]+)(?:\/(reactions))?)?)?)?\/?$/;
 
 // Messages are shown as text, never as HTML, and the page loads nothing from
 // elsewhere except fonts and GIFs from the GIF hosts (src/gifs.js).
-// (WebAssembly is for the encryption library.)
+// (WebAssembly is for the encryption library; blob: is for pictures it decrypts.)
 const pageCsp = env => [
   "default-src 'none'", "script-src 'self' 'wasm-unsafe-eval'", "connect-src 'self'", "style-src 'unsafe-inline' https://fonts.googleapis.com",
-  "font-src https://fonts.gstatic.com", ["img-src 'self' data:", ...gifImageSources(env)].join(" "), "manifest-src 'self'", "form-action 'self'", "frame-ancestors 'none'", "base-uri 'none'",
+  "font-src https://fonts.gstatic.com", ["img-src 'self' data: blob:", ...gifImageSources(env)].join(" "), "manifest-src 'self'", "form-action 'self'", "frame-ancestors 'none'", "base-uri 'none'",
 ].join("; ");
 
 const json = (obj, status = 200) =>
@@ -721,6 +776,10 @@ export async function chat(request, env, user, pathname, ctx) {
       }
       if (method !== "GET") return notAllowed();
       if (id === "categories") return reply(await gifCategories(env));
+      if (id === "file") {
+        const gif = await fetchGif(env, new URL(request.url).searchParams.get("url"));
+        return gif ? fileResponse(gif.bytes, gif.mimetype) : notFound();
+      }
       if (id) return notFound();
       const q = new URL(request.url).searchParams;
       return reply(await gifSearch(env, user, { q: q.get("q"), pos: q.get("pos") }));
@@ -769,6 +828,13 @@ export async function chat(request, env, user, pathname, ctx) {
       if (extra) return notFound();
       if (method !== "POST") return notAllowed();
       return reply(await ({ join, leave, typing })[sub](env, user, id));
+    }
+    if (sub === "media") {
+      if (extra) return notFound();
+      if (method === "POST") return reply(await mediaUpload(env, user, id, request), 201);
+      if (method !== "GET") return notAllowed();
+      const out = await mediaFile(env, user, id, new URL(request.url).searchParams.get("mxc"));
+      return out?.file ?? reply(out);
     }
     if (sub === "search") {
       if (extra) return notFound();

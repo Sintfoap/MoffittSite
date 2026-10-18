@@ -265,3 +265,89 @@ test("sealed values open only with their key and context", async () => {
   assert.equal(await unseal(KEY, "ctx", s.slice(0, -2) + "AA"), null);
   assert.notEqual(await seal(KEY, "ctx", "secret text"), s, "a fresh nonce every time");
 });
+
+// A tiny GIF: "GIF89a", 3×2, then a minimal image.
+const GIF = new Uint8Array([71, 73, 70, 56, 57, 97, 3, 0, 2, 0, 0, 0, 0, 44, 0, 0, 0, 0, 1, 0, 1, 0, 0, 2, 0, 59]);
+
+test("pictures sent on Matrix show up as pictures, fetched through the site", async () => {
+  const { env } = setup();
+  const ryan = await person(env, "ryan", "chat-bridges"), sam = await person(env, "sam", "chat-bridges");
+  const conn = (await connect(ryan)).json;
+  const room = (await api(ryan, "GET", "/state")).json.rooms.find(r => r.kind === "bridge").id;
+  hs.image("!fam:matrix.test", "@sam:matrix.test", GIF, "image/gif", "dance.gif", { w: 3, h: 2 });
+  hs.image("!fam:matrix.test", "@sam:matrix.test", new TextEncoder().encode("<script>"), "text/html", "page.html");
+  await syncNow(ryan, conn.id);
+  const msgs = (await api(ryan, "GET", `/rooms/${room}/messages`)).json.messages;
+  const pic = msgs.find(m => m.body === "[image] dance.gif");
+  assert.ok(pic.media, "the picture comes with where to get it");
+  assert.deepEqual([pic.media.mimetype, pic.media.width, pic.media.height, pic.media.name, pic.can_edit], ["image/gif", 3, 2, "dance.gif", false]);
+  // Something that isn't a picture is only its text.
+  assert.equal(msgs.find(m => m.body === "[image] page.html").media, undefined);
+
+  const got = await ryan.req("GET", pic.media.url);
+  assert.equal(got.status, 200);
+  assert.equal(got.headers.get("Content-Type"), "image/gif");
+  assert.match(got.headers.get("Content-Security-Policy"), /sandbox/);
+  assert.equal(got.headers.get("X-Content-Type-Options"), "nosniff");
+  // A homeserver without the authenticated media API: the old one.
+  hs.legacyMedia = true;
+  assert.equal((await ryan.req("GET", pic.media.url)).status, 200);
+  // Whatever a homeserver says a file is, only pictures are served as pictures.
+  const html = [...hs.media.entries()].find(([, f]) => f.type === "text/html")[0];
+  const asData = await ryan.req("GET", `/chat/api/rooms/${room}/media?mxc=${encodeURIComponent(`mxc://hs.matrix.test/${html}`)}`);
+  assert.equal(asData.headers.get("Content-Type"), "application/octet-stream");
+  // Only the connection's owner, and only real media addresses.
+  assert.equal((await sam.req("GET", pic.media.url)).status, 404);
+  assert.equal((await ryan.req("GET", `/chat/api/rooms/${room}/media?mxc=https://evil.example/x`)).status, 404);
+});
+
+test("a GIF sent to a Matrix room goes as a picture, uploaded there", async () => {
+  const { env } = setup();
+  env.GIPHY_API_KEY = "k";
+  const giphyUrl = "https://media2.giphy.com/media/abc/giphy.gif";
+  const inner = globalThis.fetch;
+  globalThis.fetch = (input, init) => new URL(input.url || String(input)).hostname === "media2.giphy.com"
+    ? Promise.resolve(new Response(GIF, { headers: { "Content-Type": "image/gif" } })) : inner(input, init);
+  const ryan = await person(env, "ryan", "chat-bridges");
+  await connect(ryan);
+  const room = (await api(ryan, "GET", "/state")).json.rooms.find(r => r.kind === "bridge").id;
+  const sent = await api(ryan, "POST", `/rooms/${room}/messages`, { body: giphyUrl });
+  assert.equal(sent.status, 201);
+  assert.equal(sent.json.body, giphyUrl, "it's shown here as the GIF it was");
+  const ev = hs.events.at(-1).event;
+  assert.equal(ev.content.msgtype, "m.image");
+  assert.deepEqual(ev.content.info, { mimetype: "image/gif", size: GIF.length, w: 3, h: 2 });
+  assert.equal(ev.content.body, "giphy.gif");
+  const stored = hs.media.get(ev.content.url.split("/").pop());
+  assert.deepEqual([...stored.bytes], [...GIF]);
+  // Plain text still goes as text.
+  await api(ryan, "POST", `/rooms/${room}/messages`, { body: "nice" });
+  assert.equal(hs.events.at(-1).event.content.msgtype, "m.text");
+  // The browser can fetch a GIF's bytes (to encrypt it), but only GIFs from the GIF hosts.
+  const file = await ryan.req("GET", `/chat/api/gifs/file?url=${encodeURIComponent(giphyUrl)}`);
+  assert.deepEqual([file.status, file.headers.get("Content-Type")], [200, "image/gif"]);
+  assert.equal((await ryan.req("GET", "/chat/api/gifs/file?url=https%3A%2F%2Fevil.example%2Fx.gif")).status, 404);
+  // Uploads straight from the browser are for encrypted rooms only.
+  assert.equal((await ryan.req("POST", `/chat/api/rooms/${room}/media`, { headers: { "Content-Type": "application/octet-stream" } })).status, 403);
+});
+
+test("an encrypted room's pictures are uploaded and fetched as they are, encrypted", async () => {
+  const { env } = setup();
+  hs.room("!secret:matrix.test", { encrypted: true, members: { "@ryan:matrix.test": "Ryan", "@kim:matrix.test": "Kim" } });
+  const ryan = await person(env, "ryan", "chat-bridges");
+  await connect(ryan);
+  const room = (await api(ryan, "GET", "/state")).json.rooms.find(r => r.encrypted).id;
+  const { default: worker } = await import("../src/worker.js");
+  const sealed = new Uint8Array([9, 8, 7, 6, 5]);
+  const up = await worker.fetch(new Request(`https://sintfoap.test/chat/api/rooms/${room}/media`, { method: "POST", body: sealed,
+    headers: { Cookie: `__Host-sid=${ryan.cookie}`, Origin: "https://sintfoap.test", "Content-Type": "application/octet-stream" } }), env);
+  assert.equal(up.status, 201);
+  const { mxc } = await up.json();
+  assert.match(mxc, /^mxc:\/\/hs\.matrix\.test\//);
+  const back = await ryan.req("GET", `/chat/api/rooms/${room}/media?mxc=${encodeURIComponent(mxc)}`);
+  assert.deepEqual([back.status, back.headers.get("Content-Type"), back.headers.get("Content-Disposition")], [200, "application/octet-stream", "attachment"]);
+  // From another site, refused.
+  const cross = await worker.fetch(new Request(`https://sintfoap.test/chat/api/rooms/${room}/media`, { method: "POST", body: sealed,
+    headers: { Cookie: `__Host-sid=${ryan.cookie}`, Origin: "https://evil.example" } }), env);
+  assert.equal(cross.status, 403);
+});
