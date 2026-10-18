@@ -10,6 +10,8 @@
 //     edit(creds, room, message id, text)
 //     remove(creds, room, message id)        a message, or a reaction
 //     react(creds, room, message id, emoji) → the reaction's id
+//     join(creds, room), leave(creds, room)  accept an invite; leave (or decline one)
+//     startDm(creds, their id, {encrypted}) → {id, name}   (optional) a direct message there
 //     history(creds, room, from) → {events, from}   (optional) older events, oldest
 //                                           first, as sync has them, and where to go on from (null: the start)
 //     typing(creds, room, on)               (optional) "typing…" there
@@ -199,9 +201,9 @@ export async function syncAll(env, user) {
 }
 
 // Syncs the connection a bridge room belongs to (for the open room).
-export async function syncRoom(env, user, room) {
+export async function syncRoom(env, user, room, { force = false } = {}) {
   const d = await db(env);
-  await syncConnection(env, d, await d.prepare("SELECT * FROM chat_connections WHERE id = ? AND user_id = ?").bind(room.connection, user.id).first());
+  await syncConnection(env, d, await d.prepare("SELECT * FROM chat_connections WHERE id = ? AND user_id = ?").bind(room.connection, user.id).first(), { force });
 }
 
 async function applyRoom(env, d, conn, r, initial) {
@@ -213,10 +215,12 @@ async function applyRoom(env, d, conn, r, initial) {
   }
   const t = now();
   const stmts = [];
+  // An invite: listed (at the top) until it's accepted or declined.
+  const invite = r.invite ? JSON.stringify(r.invite) : null;
   if (!existing) {
     stmts.push(
-      d.prepare(`INSERT INTO chat_rooms (id, name, topic, owner, created_at, last_at, kind, connection, ext_id, encrypted)
-        VALUES (?, ?, ?, ?, ?, ?, 'bridge', ?, ?, ?)`).bind(id, r.name || r.fallback_name || r.id, r.topic ?? "", conn.user_id, t, 0, conn.id, r.id, r.encrypted ? 1 : 0),
+      d.prepare(`INSERT INTO chat_rooms (id, name, topic, owner, created_at, last_at, kind, connection, ext_id, encrypted, ext_invite)
+        VALUES (?, ?, ?, ?, ?, ?, 'bridge', ?, ?, ?, ?)`).bind(id, r.name || r.fallback_name || r.id, r.topic ?? "", conn.user_id, t, invite ? t : 0, conn.id, r.id, r.encrypted ? 1 : 0, invite),
       d.prepare("INSERT OR IGNORE INTO chat_members (room, user_id, joined_at) VALUES (?, ?, ?)").bind(id, conn.user_id, t),
     );
   } else if (r.name !== undefined || r.topic !== undefined || r.encrypted) {
@@ -224,6 +228,7 @@ async function applyRoom(env, d, conn, r, initial) {
       // A name taken away falls back to the stand-in; a stand-in alone never replaces a name.
       .bind(r.name || (r.name === "" && r.fallback_name) || existing.name, r.topic ?? existing.topic, r.encrypted ? 1 : 0, id));
   }
+  if (existing) stmts.push(d.prepare("UPDATE chat_rooms SET ext_invite = ? WHERE id = ? AND ext_invite IS NOT ?").bind(invite, id, invite));
   for (const e of r.events) {
     const bump = d.prepare("UPDATE chat_rooms SET seq = seq + 1 WHERE id = ?").bind(id);
     if (e.type === "message") {
@@ -273,6 +278,53 @@ async function applyRoom(env, d, conn, r, initial) {
     stmts.push(d.prepare("UPDATE chat_members SET read_seq = (SELECT seq FROM chat_rooms WHERE id = ?) WHERE room = ? AND user_id = ?").bind(id, id, conn.user_id));
   }
   if (stmts.length) await d.batch(stmts);
+}
+
+// Accepting an invite (joining there), and leaving a room there or
+// declining an invite: the room goes from here too.
+export async function joinBridged(env, d, user, room) {
+  const done = await onPlatform(env, d, user, room, (p, creds) => p.join(creds, room.ext_id));
+  if (done.error) return { failed: done.error };
+  await d.prepare("UPDATE chat_rooms SET ext_invite = NULL WHERE id = ?").bind(room.id).run();
+  await syncRoom(env, user, room, { force: true });
+  return { joined: true };
+}
+export async function leaveBridged(env, d, user, room) {
+  const done = await onPlatform(env, d, user, room, (p, creds) => p.leave(creds, room.ext_id));
+  if (done.error) return { failed: done.error };
+  await dropRoom(d, room.id);
+  return { joined: false, gone: true };
+}
+
+// A direct message with someone on a connection's platform: {user} (their
+// id there) → the room, made there if it's new, and synced in.
+export async function startDm(env, user, connId, body, fail) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) fail("body must be a JSON object");
+  for (const k of Object.keys(body)) if (!["user", "encrypted"].includes(k)) fail(`unknown field ${JSON.stringify(k)}`);
+  if (typeof body.user !== "string" || !body.user.trim()) fail("user is required");
+  if (body.encrypted !== undefined && typeof body.encrypted !== "boolean") fail("encrypted must be true or false");
+  const d = await db(env);
+  const conn = await getConnection(d, user, connId);
+  if (!conn) return null;
+  const c = await forRoom(env, d, user, { connection: conn.id });
+  if (c.error) return { failed: c.error };
+  if (!c.provider.startDm) return { forbidden: `${c.provider.name} can't start conversations from here` };
+  // Encrypted, as Element makes them, when this connection can hold keys.
+  const encrypted = body.encrypted ?? !!c.provider.canEncrypt?.(c.creds);
+  if (encrypted && !c.provider.canEncrypt?.(c.creds)) return { forbidden: "an encrypted conversation needs a connection signed in with a username and password" };
+  let ext;
+  try { ext = await c.provider.startDm(c.creds, body.user, { encrypted }); }
+  catch (e) {
+    if (!(e instanceof ProviderError)) throw e;
+    if (e.auth) await setError(d, conn, e.message);
+    return { failed: e.message };
+  }
+  await syncConnection(env, d, await getConnection(d, user, connId), { force: true });
+  const id = await localRoomId(conn, ext.id);
+  if (!await d.prepare("SELECT 1 AS x FROM chat_rooms WHERE id = ?").bind(id).first()) return { failed: "the conversation was made there, but hasn't come through yet; sync in a moment" };
+  // Until they've joined, it may have nothing to be named for but its id: name it for them.
+  await d.prepare("UPDATE chat_rooms SET name = ? WHERE id = ? AND name = ext_id").bind(ext.name, id).run();
+  return { id };
 }
 
 // Brings in a page of a bridge room's older history, from before anything

@@ -37,7 +37,9 @@ someone; tab after @ completes a name from the room.
   /new NAME | TOPIC          make a room anyone can join (the topic is optional)
   /private NAME | TOPIC      make a room only people you add can see
   /add NAME  /remove NAME    add someone to a private room, or take them out (owner)
-  /dm NAME                   a direct message with someone (tab completes names)
+  /dm NAME                   a direct message with someone (tab completes names);
+                             /dm @sam:matrix.org [N] starts one on Matrix, through connection N
+  /accept  /decline          answer an invite to a room on Matrix (/leave leaves one there)
   /who                       who's in the room, and who's online (●)
   /search TEXT               find messages in this room; /search on its own goes back
   /rename NAME  /topic TEXT  change the open room (its owner, or an admin)
@@ -251,6 +253,8 @@ class RoomItem(ListItem):
         badges = Text()
         if kind == "dm" and room.get("with") in online:
             badges.append(" ●", style=GOOD)
+        if room.get("invite"):
+            badges.append(" invite", style=f"bold {GOLD}")
         if room.get("encrypted"):
             badges.append(" e2e", style=FAINT)
         if room.get("mentions") and not is_open:
@@ -562,6 +566,8 @@ class ChatPage(Page):
             t.append("   private: /add NAME to bring people in", style=GOLD_DIM)
         if not o["joined"]:
             t.append("   not joined: /join to post", style=GOLD)
+        if r.get("invite"):
+            t.append(f"   {r['invite']['by']} invited you: /accept or /decline", style=GOLD)
         if r["topic"]:
             t.append("\n" + r["topic"], style=MUTED)
         self.query_one("#head", Static).update(t)
@@ -685,6 +691,9 @@ class ChatPage(Page):
         if word == "dm":
             if not rest:
                 return self.status("Usage: /dm NAME", bad=True)
+            who, _, n = rest.partition(" ")
+            if ":" in who:
+                return await self.bridge_dm(who, n.strip())
             r = await self.call(self.api.chat_dm, rest.lstrip("@"))
             if r:
                 await self.load_rooms()
@@ -694,11 +703,22 @@ class ChatPage(Page):
             return self.status("Open a room first.", bad=True)
         if word == "reply":
             return await self.reply(rest)
-        if word in ("join", "leave"):
-            if await self.call(self.api.chat_join if word == "join" else self.api.chat_leave, o["id"]) is not None:
+        if word in ("join", "leave", "accept", "decline"):
+            joining = word in ("join", "accept")
+            invite = (self.room() or {}).get("invite")
+            if word in ("accept", "decline") and not invite:
+                return self.status("There's no invite to answer here.", bad=True)
+            out = await self.call(self.api.chat_join if joining else self.api.chat_leave, o["id"])
+            if out is not None:
                 await self.load_rooms()
-                await self.open_room(o["id"])
-                self.status("joined" if word == "join" else "left the room")
+                if out.get("gone"):
+                    # A room on another platform goes from here when you leave it there.
+                    self.open = None
+                    self.query_one("#messages", Static).update(Text("Left. Pick another room.", style=MUTED))
+                    self.query_one("#head", Static).update("")
+                else:
+                    await self.open_room(o["id"])
+                self.status(("accepted" if invite else "joined") if joining else ("declined" if invite else "left the room"))
         elif word in ("rename", "topic"):
             if word == "rename" and not rest:
                 return self.status("Usage: /rename NAME", bad=True)
@@ -826,6 +846,21 @@ class ChatPage(Page):
         box.cursor_position = len(box.value)
         box.focus()
         self.status("change it and press enter; esc to leave it as it was")
+
+    async def bridge_dm(self, who: str, n: str) -> None:
+        """/dm @sam:matrix.org [N]: a direct message on Matrix, through connection N (or the first)."""
+        conns = self.connections or await self.call(self.api.chat_connections) or []
+        self.connections = conns
+        if not conns:
+            return self.status("Connect a Matrix account first: /connect", bad=True)
+        if n and not (n.isdigit() and 1 <= int(n) <= len(conns)):
+            return self.status(f"There's no connection {n}: /connections lists them.", bad=True)
+        conn = conns[int(n) - 1] if n else conns[0]
+        r = await self.call(self.api.chat_bridge_dm, conn["id"], who, False)
+        if r:
+            await self.load_rooms()
+            await self.open_room(r["id"])
+            self.status(f"talking with {who} on {NETWORK.get(conn.get('provider'), conn.get('provider'))}")
 
     async def reply(self, rest: str) -> None:
         """/reply [@NAME] TEXT: answers the last message from someone else, or from NAME."""

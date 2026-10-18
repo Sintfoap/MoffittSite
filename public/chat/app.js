@@ -220,7 +220,7 @@ const NETWORK = { matrix: "Matrix" };
 
 function renderRooms() {
   const row = r => `<button data-room="${esc(r.id)}" aria-current="${open?.id === r.id}" title="${esc(r.topic || r.name)}" class="${r.kind}">
-    ${r.kind === "dm" ? `<span class="dot${online.has(r.with) ? " on" : ""}" title="${online.has(r.with) ? "Online" : "Away"}"></span>` : ""}<span class="name">${esc(r.name)}</span>${r.encrypted ? `<span class="e2e" title="End-to-end encrypted${keysHere(r) === "ready" ? ", with the keys in this browser" : ": turn encryption on in the room to read it"}">E2E</span>` : ""}${r.mentions && open?.id !== r.id ? `<span class="n at" title="You were mentioned">@${r.mentions > 1 ? r.mentions : ""}</span>` : ""}${r.unread && open?.id !== r.id ? `<span class="n">${r.unread > 99 ? "99+" : r.unread}</span>` : ""}
+    ${r.kind === "dm" ? `<span class="dot${online.has(r.with) ? " on" : ""}" title="${online.has(r.with) ? "Online" : "Away"}"></span>` : ""}<span class="name">${esc(r.name)}</span>${r.invite ? `<span class="n invite" title="${esc(r.invite.by)} invited you">invite</span>` : ""}${r.encrypted ? `<span class="e2e" title="End-to-end encrypted${keysHere(r) === "ready" ? ", with the keys in this browser" : ": turn encryption on in the room to read it"}">E2E</span>` : ""}${r.mentions && open?.id !== r.id ? `<span class="n at" title="You were mentioned">@${r.mentions > 1 ? r.mentions : ""}</span>` : ""}${r.unread && open?.id !== r.id ? `<span class="n">${r.unread > 99 ? "99+" : r.unread}</span>` : ""}
     ${r.joined ? "" : `<span class="count">${r.members}</span>`}</button>`;
   const joined = rooms.filter(r => r.joined), others = rooms.filter(r => !r.joined);
   const dms = joined.filter(r => r.kind === "dm");
@@ -232,7 +232,7 @@ function renderRooms() {
   // (Who you are there only when one platform has two connections.)
   const networks = [...vias.values()].map(list => list[0].provider);
   $("#bridged").innerHTML = [...vias.values()].map(([r, ...rest]) =>
-    `<section><h2 title="${esc(r.via)}">${esc(NETWORK[r.provider] || r.provider)}${networks.filter(n => n === r.provider).length > 1 ? ` · ${esc(String(r.via).replace(/^@/, "").split(":")[0])}` : ""}</h2>
+    `<section><h2 title="${esc(r.via)}">${esc(NETWORK[r.provider] || r.provider)}${networks.filter(n => n === r.provider).length > 1 ? ` · ${esc(String(r.via).replace(/^@/, "").split(":")[0])}` : ""}<button class="link add" data-newdm="${esc(r.connection)}" data-network="${esc(NETWORK[r.provider] || r.provider)}" title="Message someone on ${esc(NETWORK[r.provider] || r.provider)}" aria-label="Message someone on ${esc(NETWORK[r.provider] || r.provider)}">+</button></h2>
       <div class="rooms">${[r, ...rest].map(row).join("")}</div></section>`).join("");
   $("#others").innerHTML = others.map(row).join("") || `<p class="none">${rooms.length ? "You're in every room." : "No rooms yet. Make the first one."}</p>`;
   const total = joined.reduce((n, r) => n + (open?.id === r.id ? 0 : r.unread), 0);
@@ -241,9 +241,36 @@ function renderRooms() {
 }
 
 document.querySelector(".side").addEventListener("click", e => {
+  const dm = e.target.closest("[data-newdm]");
+  if (dm) return newBridgeDm(dm.dataset.newdm, dm.dataset.network);
   const b = e.target.closest("[data-room]");
   if (b) location.hash = b.dataset.room;
 });
+
+// A direct message with someone on another platform, by their id there.
+function newBridgeDm(conn, network) {
+  const d = $("#mdm-dialog"), can = rooms.some(r => r.connection === conn && r.can_encrypt);
+  d.dataset.conn = conn;
+  $("#mdm-title").textContent = `Message someone on ${network}`;
+  $("#mdm-user").value = ""; $("#mdm-error").hidden = true;
+  $("#mdm-encrypted").checked = !!can; $("#mdm-encrypted-row").hidden = !can;
+  d.showModal();
+  $("#mdm-user").focus();
+}
+$("#mdm-form").addEventListener("submit", async e => {
+  e.preventDefault();
+  const d = $("#mdm-dialog"), save = $("#mdm-save");
+  save.disabled = true; save.textContent = "Starting…";
+  try {
+    const out = await api("POST", `/connections/${d.dataset.conn}/dm`, { user: $("#mdm-user").value.trim(),
+      ...($("#mdm-encrypted-row").hidden ? {} : { encrypted: $("#mdm-encrypted").checked }) });
+    d.close();
+    await loadRooms();
+    location.hash = out.id;
+  } catch (err) { $("#mdm-error").textContent = err.message; $("#mdm-error").hidden = false; }
+  finally { save.disabled = false; save.textContent = "Start"; }
+});
+$("#mdm-cancel").addEventListener("click", () => $("#mdm-dialog").close());
 
 // ── the open room ────────────────────────────────────────────────────────
 
@@ -289,7 +316,7 @@ function renderRoomShell(room) {
       ${room.kind === "dm" || room.kind === "bridge" ? "" : `<button class="link" id="show-members">${room.members} member${room.members === 1 ? "" : "s"}</button>`}
       ${room.kind === "private" && open.joined ? `<button class="link" id="add-people">Add people</button>` : ""}
       ${room.manage ? `<button class="link" id="edit-room">Edit</button>` : ""}
-      ${open.joined && room.kind !== "dm" && room.kind !== "bridge" ? `<button class="link" id="leave">Leave</button>` : ""}
+      ${open.joined && room.kind !== "dm" && !room.invite ? `<button class="link" id="leave">Leave</button>` : ""}
     </header>
     <form class="searchbar" id="searchbar" hidden>
       <input id="search-q" type="search" maxlength="100" placeholder="Search ${esc(roomTitle(room))}" aria-label="Search this room" autocomplete="off">
@@ -305,7 +332,8 @@ function renderRoomShell(room) {
           <button class="btn" type="submit">Verify</button><button class="link" type="button" id="verify-cancel">Cancel</button>
           <p class="verify-note">It's used here in your browser to open your account's secret storage, and never sent to the site.</p>
         </form></div>` : ""}
-    ${room.encrypted && keysHere(room) !== "ready" ? encryptionBar(room)
+    ${room.invite ? `<div class="joinbar">${esc(room.invite.by)} invited you to this ${esc(NETWORK[room.provider] || room.provider)} room. <button class="btn" id="join">Accept</button> <button class="btn quiet" id="decline">Decline</button></div>`
+      : room.encrypted && keysHere(room) !== "ready" ? encryptionBar(room)
       : open.joined
       ? `<div class="replybar" id="replybar" hidden><span id="reply-what"></span><button class="link" type="button" id="reply-cancel" aria-label="Don't reply">✕</button></div>
         <form class="composer" id="composer">
@@ -459,9 +487,13 @@ $("#room").addEventListener("click", async e => {
     }
     else if (t.id === "back") closeRoom();
     else if (t.id === "join") { await api("POST", `/rooms/${open.id}/join`); await loadRooms(); await openRoom(open.id); }
-    else if (t.id === "leave") {
-      if (!confirm("Leave this room? You can join again any time.")) return;
-      await api("POST", `/rooms/${open.id}/leave`); await loadRooms(); await openRoom(open.id);
+    else if (t.id === "leave" || t.id === "decline") {
+      const room = rooms.find(r => r.id === open.id);
+      if (t.id === "leave" && !confirm(room?.kind === "bridge"
+        ? `Leave ${room.name} on ${NETWORK[room.provider] || room.provider}? It goes from here too, and you'd need inviting back to a private one.`
+        : "Leave this room? You can join again any time.")) return;
+      const out = await api("POST", `/rooms/${open.id}/leave`); await loadRooms();
+      if (out.gone) closeRoom(); else await openRoom(open.id);
     }
     else if (t.id === "e2ee-on") {
       t.disabled = true; t.textContent = "Making keys…";

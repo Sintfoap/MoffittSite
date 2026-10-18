@@ -71,6 +71,9 @@ button.link:hover { color: var(--gold); }
 .side .list::-webkit-scrollbar { width: 8px; }
 .side .list::-webkit-scrollbar-thumb { background: var(--line-2); }
 .side .list::-webkit-scrollbar-track { background: transparent; }
+.side h2 .add { float: right; padding: 0 4px; font-size: 14px; line-height: 1; letter-spacing: 0; color: var(--faint); }
+.side h2 .add:hover { color: var(--gold); }
+.rooms .n.invite { background: none; border: 1px solid var(--gold); color: var(--gold); }
 .side h2 { margin: 0 6px 6px; font: 400 11px var(--mono); letter-spacing: 3px; text-transform: uppercase; color: var(--faint); }
 .side section + section, .side section + #bridged section, #bridged section + section, #bridged + section { margin-top: 16px; }
 .rooms { display: flex; flex-direction: column; gap: 1px; }
@@ -327,6 +330,16 @@ dialog .wrap { padding: 22px 24px; display: flex; flex-direction: column; gap: 4
       <button type="button" class="btn quiet" id="room-cancel">Cancel</button>
       <button type="submit" class="btn" id="room-save">Create</button>
     </div>
+  </form>
+</dialog>
+
+<dialog id="mdm-dialog">
+  <form id="mdm-form">
+    <h2 id="mdm-title">Message someone</h2>
+    <label for="mdm-user">Their ID there</label><input id="mdm-user" required maxlength="255" autocomplete="off" spellcheck="false" placeholder="@sam:matrix.org">
+    <label class="check" id="mdm-encrypted-row"><input type="checkbox" id="mdm-encrypted"><span><b>End-to-end encrypted</b><br>As Element makes them. You'll read and send it here in this browser, with encryption turned on.</span></label>
+    <p class="error" id="mdm-error" hidden></p>
+    <div class="actions"><span class="spacer"></span><button type="button" class="btn quiet" id="mdm-cancel">Cancel</button><button type="submit" class="btn" id="mdm-save">Start</button></div>
   </form>
 </dialog>
 

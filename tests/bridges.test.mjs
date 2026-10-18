@@ -144,10 +144,55 @@ test("sending, editing and deleting go to Matrix", async () => {
   assert.equal((await api(ryan, "DELETE", `/rooms/${room.id}/messages/${sent.json.id}`)).status, 200);
   assert.equal(hs.events.at(-1).event.type, "m.room.redaction");
 
-  // Rooms from a connection are managed on Matrix, not here.
+  // Rooms from a connection are managed on Matrix, not here; leaving leaves there.
   assert.equal((await api(ryan, "PATCH", `/rooms/${room.id}`, { name: "x" })).status, 403);
-  assert.equal((await api(ryan, "POST", `/rooms/${room.id}/leave`)).status, 403);
   assert.equal((await api(ryan, "DELETE", `/rooms/${room.id}`)).status, 403);
+  assert.equal((await api(ryan, "POST", `/rooms/${room.id}/leave`)).status, 200);
+  assert.equal(hs.rooms.get("!fam:matrix.test").left, true);
+  assert.equal((await api(ryan, "GET", "/state")).json.rooms.filter(r => r.kind === "bridge").length, 0);
+});
+
+test("invites can be accepted or declined, and direct messages started", async () => {
+  const { env } = setup();
+  const ryan = await person(env, "ryan", "chat-bridges");
+  const conn = (await connect(ryan)).json;
+  hs.invite("!party:matrix.test", "@kim:matrix.test", { name: "Party", members: { "@kim:matrix.test": "Kim" } });
+  hs.invite("!dm:matrix.test", "@sam:matrix.test", { members: { "@sam:matrix.test": "Sam" } });
+  await syncNow(ryan, conn.id);
+  let rooms = (await api(ryan, "GET", "/state")).json.rooms.filter(r => r.kind === "bridge");
+  const party = rooms.find(r => r.name === "Party"), dm = rooms.find(r => r.invite?.by === "Sam");
+  assert.deepEqual(party.invite, { by: "Kim" });
+  assert.equal(dm.name, "Sam", "named for who it's from");
+  assert.equal((await api(ryan, "POST", `/rooms/${party.id}/messages`, { body: "hi" })).status, 403, "accept first");
+
+  // Accepting joins there, and the room comes in properly.
+  assert.deepEqual((await api(ryan, "POST", `/rooms/${party.id}/join`)).json, { joined: true });
+  hs.say("!party:matrix.test", "@kim:matrix.test", "welcome!");
+  await syncNow(ryan, conn.id);
+  rooms = (await api(ryan, "GET", "/state")).json.rooms.filter(r => r.kind === "bridge");
+  assert.equal(rooms.find(r => r.id === party.id).invite, undefined);
+  assert.deepEqual((await api(ryan, "GET", `/rooms/${party.id}/messages`)).json.messages.map(m => m.body), ["welcome!"]);
+  // Declining leaves there, and it's gone here.
+  assert.equal((await api(ryan, "POST", `/rooms/${dm.id}/leave`)).status, 200);
+  assert.equal(hs.rooms.get("!dm:matrix.test").left, true);
+  assert.ok(!(await api(ryan, "GET", "/state")).json.rooms.some(r => r.id === dm.id));
+
+  // A new direct message: made there (plain, since a pasted token can't hold keys), and listed here.
+  const start = (user, extra = {}) => api(ryan, "POST", `/connections/${conn.id}/dm`, { user, ...extra });
+  assert.equal((await start("sam")).status, 502, "a Matrix ID");
+  assert.equal((await start("@nobody:matrix.test")).status, 502);
+  assert.equal((await start("@sam:matrix.test", { encrypted: true })).status, 403);
+  const made = await start("@sam:matrix.test");
+  assert.equal(made.status, 201, made.json.error);
+  const [created] = hs.created;
+  assert.deepEqual([created.is_direct, created.invite, created.initial_state], [true, ["@sam:matrix.test"], []]);
+  assert.deepEqual(hs.accountData.get("@ryan:matrix.test|m.direct"), { "@sam:matrix.test": [created.id] }, "so Element lists it as a DM");
+  assert.equal((await api(ryan, "GET", "/state")).json.rooms.find(r => r.id === made.json.id).name, "sam", "named for them");
+  await api(ryan, "POST", `/rooms/${made.json.id}/messages`, { body: "hey Sam" });
+  assert.deepEqual(hs.bodies(created.id), ["hey Sam"]);
+  // Asking again finds the same one.
+  assert.equal((await start("@sam:matrix.test")).json.id, made.json.id);
+  assert.equal(hs.created.length, 1);
 });
 
 test("reactions go both ways: Matrix's show here, and yours are sent there", async () => {

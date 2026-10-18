@@ -176,7 +176,8 @@ export const matrix = {
   },
 
   // What changed since `cursor` (or recent history, the first time):
-  // {cursor, rooms: [{id, name?, fallback_name?, topic?, encrypted?, left?, back?, events: [...]}]}.
+  // {cursor, rooms: [{id, name?, fallback_name?, topic?, encrypted?, left?, back?, invite?, events: [...]}]}.
+  // (invite: {by}, for a room you've been invited to and haven't joined yet.)
   // (back: where older history starts there, for history(); "" when there is none.)
   // name/topic are left out when this sync didn't say (fallback_name is
   // what to call a room with no name); events are
@@ -196,6 +197,7 @@ export const matrix = {
       rooms.push(out);
     }
     for (const id of Object.keys(data.rooms?.leave ?? {})) rooms.push({ id, left: true, events: [] });
+    for (const [id, r] of Object.entries(data.rooms?.invite ?? {})) rooms.push(invitedRoom(id, r, creds.user_id));
     // For the browser holding this device's keys, if any.
     const crypto = {
       to_device: data.to_device?.events ?? [],
@@ -261,6 +263,42 @@ export const matrix = {
     return out.event_id;
   },
 
+  // Accepting an invite, and leaving a room (or declining an invite).
+  async join(creds, roomId) {
+    await call(creds.base, "POST", `/_matrix/client/v3/join/${room(roomId)}`, { token: creds.token, body: {} });
+  },
+  async leave(creds, roomId) {
+    await call(creds.base, "POST", `/_matrix/client/v3/rooms/${room(roomId)}/leave`, { token: creds.token, body: {} });
+  },
+
+  // A direct message with someone there (@name:server) → {id, name}: the
+  // one you already have with them, or a new one, as Element makes them
+  // (invite-only, encrypted when this connection can hold keys).
+  async startDm(creds, user, { encrypted = false } = {}) {
+    user = String(user ?? "").trim();
+    if (!/^@[a-z0-9._=\-/+]+:[a-z0-9.-]+(:\d+)?$/i.test(user) || user.length > 255) throw new ProviderError("give their Matrix ID, like @sam:matrix.org");
+    if (user === creds.user_id) throw new ProviderError("that's you");
+    const me = encodeURIComponent(creds.user_id);
+    let direct = {};
+    try { direct = await call(creds.base, "GET", `/_matrix/client/v3/user/${me}/account_data/m.direct`, { token: creds.token }); }
+    catch (e) { if (e.auth) throw e; }
+    const joined = new Set((await call(creds.base, "GET", "/_matrix/client/v3/joined_rooms", { token: creds.token })).joined_rooms ?? []);
+    const have = (direct[user] ?? []).find(id => joined.has(id));
+    let profile;
+    try { profile = await call(creds.base, "GET", `/_matrix/client/v3/profile/${encodeURIComponent(user)}`, { token: creds.token }); }
+    catch (e) { if (e.auth) throw e; if (!have) throw new ProviderError(`Matrix doesn't know ${user}`); }
+    const name = String(profile?.displayname || localpart(user)).slice(0, 60);
+    if (have) return { id: have, name };
+    const out = await call(creds.base, "POST", "/_matrix/client/v3/createRoom", { token: creds.token, body: {
+      preset: "trusted_private_chat", is_direct: true, invite: [user],
+      initial_state: encrypted ? [{ type: "m.room.encryption", state_key: "", content: { algorithm: "m.megolm.v1.aes-sha2" } }] : [],
+    } });
+    // So Element lists it under People too.
+    await call(creds.base, "PUT", `/_matrix/client/v3/user/${me}/account_data/m.direct`,
+      { token: creds.token, body: { ...direct, [user]: [...(direct[user] ?? []), out.room_id] } }).catch(() => {});
+    return { id: out.room_id, name };
+  },
+
   // A page of a room's older history, before `from` (where a sync's timeline
   // started, or the last page ended): {events, from} as sync has them, with
   // from null at the room's start. An edit made since comes with its message.
@@ -309,6 +347,24 @@ function textOf(content, senderName) {
     : html ? body : dropReplyQuote(body);
   out = out.replace(/[\u0000-\u0009\u000b-\u001f\u007f]/g, " ").trim();
   return out.length > MAX_BODY ? out.slice(0, MAX_BODY) + "…" : out;
+}
+
+// A room you've been invited to: named from what the invite shows, and who sent it.
+function invitedRoom(id, r, me) {
+  const out = { id, events: [], invite: { by: null } };
+  const names = new Map();
+  for (const e of r.invite_state?.events ?? []) {
+    const c = e.content ?? {};
+    if (e.type === "m.room.member" && c.displayname) names.set(e.state_key, String(c.displayname).slice(0, 80));
+    if (e.type === "m.room.member" && e.state_key === me && c.membership === "invite") out.invite.by = e.sender;
+    else if (e.type === "m.room.name") out.name = String(c.name ?? "").trim().slice(0, 60);
+    else if (e.type === "m.room.encryption") out.encrypted = true;
+  }
+  const by = out.invite.by;
+  out.invite.by = by ? names.get(by) || localpart(by) : "someone";
+  // A direct message is named for who it's with.
+  out.fallback_name = out.invite.by;
+  return out;
 }
 
 // What a message answers, if it's a reply: {reply: its id}. (Outside the

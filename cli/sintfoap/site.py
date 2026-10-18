@@ -458,6 +458,11 @@ def chat_disconnect(connection: str) -> dict:
     return api("DELETE", f"/chat/api/connections/{_q(connection)}")
 
 
+def chat_bridge_dm(connection: str, user: str, encrypted: bool | None = None) -> dict:
+    """{id}: a direct message with someone on a connection's platform (their id there, @sam:matrix.org)."""
+    return api("POST", f"/chat/api/connections/{_q(connection)}/dm", {"user": user, **({"encrypted": encrypted} if encrypted is not None else {})})
+
+
 def chat_sync(connection: str) -> dict:
     """Syncs a connection now (and tries again if it had stopped working); returns it."""
     return api("POST", f"/chat/api/connections/{_q(connection)}/sync")

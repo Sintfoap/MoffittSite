@@ -25,7 +25,8 @@ import { withRail } from "./pages.js";
 import { db, now } from "./db.js";
 import { sameOrigin } from "./account.js";
 import { randomBytes, hex, sha256 } from "./crypto.js";
-import { canBridge, bridgeInfo, listConnections, addConnection, removeConnection, syncConnection, syncAll, syncRoom, onPlatform, cryptoOp, backfill, ENCRYPTED_NOTE } from "./bridges.js";
+import { canBridge, bridgeInfo, listConnections, addConnection, removeConnection, syncConnection, syncAll, syncRoom, onPlatform, cryptoOp, backfill,
+  joinBridged, leaveBridged, startDm, ENCRYPTED_NOTE } from "./bridges.js";
 import { chatPushes } from "./notify.js";
 import { gifInfo, gifImageSources, gifSearch, gifCategories, favorites, favorite } from "./gifs.js";
 
@@ -114,7 +115,7 @@ const bridged = room => room.kind === "bridge";
 export async function listRooms(env, user) {
   const d = await db(env);
   const { results } = await d.prepare(`
-    SELECT r.id, r.name, r.topic, r.owner, r.seq, r.created_at, r.last_at, r.kind, r.connection, r.encrypted, r.ext_id,
+    SELECT r.id, r.name, r.topic, r.owner, r.seq, r.created_at, r.last_at, r.kind, r.connection, r.encrypted, r.ext_id, r.ext_invite,
            (SELECT u.display_name || char(31) || u.username FROM chat_members o JOIN users u ON u.id = o.user_id
               WHERE r.kind = 'dm' AND o.room = r.id AND o.user_id != ?) AS dm_with,
            (SELECT display_name FROM users WHERE users.id = r.owner) AS owner_name,
@@ -143,9 +144,11 @@ function roomOut(r, user, joined) {
     joined, unread: joined ? r.unread ?? 0 : 0, mentions: joined ? r.mentions ?? 0 : 0,
     manage: kind !== "dm" && canManage({ ...r, kind }, user),
     // Which connection a bridge room comes through, and whether it can be written to.
-    ...(kind === "bridge" ? { provider: r.provider, connection: r.connection, via: r.via, encrypted: !!r.encrypted } : {}),
+    ...(kind === "bridge" ? { provider: r.provider, connection: r.connection, via: r.via, encrypted: !!r.encrypted, can_encrypt: !!r.can_encrypt } : {}),
+    // An invite there you haven't answered: {by}.
+    ...(kind === "bridge" && r.ext_invite ? { invite: JSON.parse(r.ext_invite) } : {}),
     // For the browser with the connection's keys: the room there, and whether keys can be or are held.
-    ...(kind === "bridge" && r.encrypted ? { ext_room: r.ext_id, can_encrypt: !!r.can_encrypt, keys_held: !!r.crypto_owner } : {}),
+    ...(kind === "bridge" && r.encrypted ? { ext_room: r.ext_id, keys_held: !!r.crypto_owner } : {}),
   };
 }
 
@@ -472,6 +475,8 @@ export async function join(env, user, roomId) {
   const d = await db(env);
   const { room } = await load(d, user, roomId);
   if (!room) return null;
+  // In a bridge room it's accepting the invite there.
+  if (bridged(room)) return room.ext_invite ? joinBridged(env, d, user, room) : { joined: true };
   // Joining counts everything already there as read.
   await d.prepare("INSERT OR IGNORE INTO chat_members (room, user_id, joined_at, read_seq) VALUES (?, ?, ?, ?)")
     .bind(room.id, user.id, now(), room.seq).run();
@@ -483,7 +488,8 @@ export async function leave(env, user, roomId) {
   const { room } = await load(d, user, roomId);
   if (!room) return null;
   if (room.kind === "dm") return { forbidden: "you can't leave a direct message" };
-  if (bridged(room)) return { forbidden: "leave this room on its own platform" };
+  // Leaving there (or declining the invite), which takes it from here too.
+  if (bridged(room)) return leaveBridged(env, d, user, room);
   await d.batch([
     d.prepare("DELETE FROM chat_members WHERE room = ? AND user_id = ?").bind(room.id, user.id),
     d.prepare("DELETE FROM chat_presence WHERE room = ? AND user_id = ?").bind(room.id, user.id),
@@ -531,6 +537,7 @@ export async function post(env, user, roomId, body, later = p => p) {
   const { room, member } = await load(d, user, roomId);
   if (!room) return null;
   if (!member) return { forbidden: "join the room to post in it" };
+  if (room.ext_invite) return { forbidden: "accept the invite to post here" };
   const t = now();
   const { n } = await d.prepare("SELECT COUNT(*) AS n FROM chat_messages WHERE user_id = ? AND created_at > ?").bind(user.id, t - RATE_WINDOW).first();
   if (n >= RATE) return { slow: "you're sending messages too quickly; wait a few seconds" };
@@ -732,6 +739,7 @@ export async function deleteMessage(env, user, roomId, messageId) {
 //   POST   /chat/api/connections                    {provider, ...its fields} → a new connection, synced once
 //   DELETE /chat/api/connections/<id>               the connection and its rooms
 //   POST   /chat/api/connections/<id>/sync          sync it now, and try again if it had stopped working
+//   POST   /chat/api/connections/<id>/dm            {user, encrypted?} → {id}: a direct message with someone there
 //   POST   /chat/api/connections/<id>/crypto/claim    {key}   this browser holds the encryption keys → {device}
 //   POST   /chat/api/connections/<id>/crypto/inbox    {key, ack?}   what syncs brought for the keys → {items, counts}
 //   POST   /chat/api/connections/<id>/crypto/request  {key, method, path, body?}   a key request, passed on → {response}
@@ -740,7 +748,7 @@ export async function deleteMessage(env, user, roomId, messageId) {
 //   GET    /chat/api/gifs/favorites                 your starred GIFs
 //   POST   /chat/api/gifs/favorites                 {gif, on}   star a GIF, or take the star off
 
-const ROUTE = /^\/chat\/api\/(state|people|dms|rooms|connections|gifs)(?:\/([^/]+)(?:\/(join|leave|members|messages|search|typing|sync|crypto)(?:\/([^/]+)(?:\/(reactions))?)?)?)?\/?$/;
+const ROUTE = /^\/chat\/api\/(state|people|dms|rooms|connections|gifs)(?:\/([^/]+)(?:\/(join|leave|members|messages|search|typing|sync|crypto|dm)(?:\/([^/]+)(?:\/(reactions))?)?)?)?\/?$/;
 
 // Messages are shown as text, never as HTML, and the page loads nothing from
 // elsewhere except fonts and GIFs from the GIF hosts (src/gifs.js).
@@ -820,6 +828,10 @@ export async function chat(request, env, user, pathname, ctx) {
         if (method !== "POST") return notAllowed();
         return reply(await cryptoOp(env, user, id, extra, await readJson(request, LIMITS.crypto), fail));
       }
+      if (sub === "dm" && !extra && !action) {
+        if (method !== "POST") return notAllowed();
+        return reply(await startDm(env, user, id, await readJson(request), fail), 201);
+      }
       if (action || extra || (sub && sub !== "sync")) return notFound();
       if (sub) {
         if (method !== "POST") return notAllowed();
@@ -848,7 +860,7 @@ export async function chat(request, env, user, pathname, ctx) {
       if (method === "DELETE") return reply(await deleteRoom(env, user, id));
       return notAllowed();
     }
-    if ((action && sub !== "messages") || sub === "sync" || sub === "crypto") return notFound();
+    if ((action && sub !== "messages") || sub === "sync" || sub === "crypto" || sub === "dm") return notFound();
     if (sub === "join" || sub === "leave" || sub === "typing") {
       if (extra) return notFound();
       if (method !== "POST") return notAllowed();

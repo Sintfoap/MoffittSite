@@ -420,8 +420,7 @@ def test_chat_connects_matrix_and_talks_in_its_rooms(real_site):
         await settle(pilot, 1.5)
         assert type(app.screen).__name__ == "ChatPage"
         assert "@ryan:matrix.test" in str(page.query_one("#messages").render()), str(page.query_one("#status").render())
-        room = next(r for r in page.rooms if r["kind"] == "bridge")
-        assert room["name"] == "Family"
+        room = next(r for r in page.rooms if r["kind"] == "bridge" and r["name"] == "Family")
         await page.open_room(room["id"])
         await settle(pilot)
         assert "dinner at six?" in str(page.query_one("#messages").render())
@@ -439,11 +438,26 @@ def test_chat_connects_matrix_and_talks_in_its_rooms(real_site):
         await settle(pilot, 0.5)
         shown = str(page.query_one("#messages").render())
         assert "↳ Sam dinner at six?" in shown and "six is great" in shown, shown
+        # An invite: accepted from the room.
+        club = next(r for r in page.rooms if r.get("invite"))
+        await page.open_room(club["id"])
+        await settle(pilot)
+        assert "Kim invited you: /accept or /decline" in str(page.query_one("#head").render())
+        await type_(pilot, "/accept")
+        await pilot.press("enter")
+        await settle(pilot, 0.5)
+        assert "accepted" in str(page.query_one("#status").render()), str(page.query_one("#status").render())
+        assert not next(r for r in page.rooms if r["id"] == club["id"]).get("invite")
+        # A new direct message on Matrix.
+        await type_(pilot, "/dm @sam:matrix.test")
+        await pilot.press("enter")
+        await settle(pilot, 1)
+        assert "talking with @sam:matrix.test on Matrix" in str(page.query_one("#status").render()), str(page.query_one("#status").render())
         await type_(pilot, "/disconnect 2")
         await pilot.press("enter")
         await settle(pilot)
     run_app("chat", bridge)
-    room = next(r for r in site.chat_state()["rooms"] if r["kind"] == "bridge")
+    room = next(r for r in site.chat_state()["rooms"] if r["kind"] == "bridge" and r["name"] == "Family")
     msgs = site.chat_messages(room["id"])["messages"]
     assert [(m["body"], m["mine"]) for m in msgs] == [("dinner at six?", False), ("on my way!", True), ("six is **great**", True)]
     assert msgs[2]["reply"]["id"] == msgs[0]["id"]

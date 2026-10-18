@@ -30,6 +30,13 @@ export class FakeMatrix {
     this.receipts = [];        // [room, user, event id] for each read receipt the site sent
   }
 
+  // An invite for the signed-in account to a room someone else is in.
+  invite(id, by, { name, encrypted = false, members = {} } = {}) {
+    const r = this.room(id, { name, encrypted, members });
+    r.invited = by;
+    return r;
+  }
+
   // Ephemeral events for the next sync: who's typing, and read receipts.
   typing(room, users) { this.ephemeral(room, { type: "m.typing", content: { user_ids: users } }); }
   receipt(room, user, event) { this.ephemeral(room, { type: "m.receipt", content: { [event]: { "m.read": { [user]: { ts: Date.now() } } } } }); }
@@ -119,6 +126,34 @@ export class FakeMatrix {
     if (path === "/_matrix/client/v3/sync") {
       const limit = JSON.parse(url.searchParams.get("filter") || "{}").room?.timeline?.limit;
       return json(this.sync(url.searchParams.get("since"), who, { limit: this.limited ? limit : undefined }));
+    }
+    if (path === "/_matrix/client/v3/joined_rooms") return json({ joined_rooms: [...this.rooms].filter(([, r]) => !r.left && !r.invited).map(([id]) => id) });
+    let p = path.match(/^\/_matrix\/client\/v3\/profile\/([^/]+)$/);
+    if (p) {
+      const u = decodeURIComponent(p[1]), known = [...this.rooms.values()].some(r => r.members.has(u)) || (this.people ?? []).includes(u);
+      return known ? json({ displayname: u.slice(1).split(":")[0] }) : json({ errcode: "M_NOT_FOUND", error: "Profile not found" }, 404);
+    }
+    if (path === "/_matrix/client/v3/createRoom" && req.method === "POST") {
+      const id = `!new${++this.n}:matrix.test`;
+      const encrypted = (body.initial_state ?? []).some(e => e.type === "m.room.encryption");
+      const r = this.room(id, { encrypted, members: { [who.user]: "Ryan" } });
+      r.invites = body.invite ?? []; r.direct = !!body.is_direct; r.changed = true;
+      this.created = [...(this.created ?? []), { id, ...body }];
+      return json({ room_id: id });
+    }
+    p = path.match(/^\/_matrix\/client\/v3\/join\/([^/]+)$/);
+    if (p && req.method === "POST") {
+      const r = this.rooms.get(decodeURIComponent(p[1]));
+      if (!r?.invited) return json({ errcode: "M_FORBIDDEN", error: "not invited" }, 403);
+      r.invited = false; r.members.set(who.user, "Ryan"); r.changed = true; r.renamed = true;
+      return json({ room_id: decodeURIComponent(p[1]) });
+    }
+    p = path.match(/^\/_matrix\/client\/v3\/rooms\/([^/]+)\/leave$/);
+    if (p && req.method === "POST") {
+      const r = this.rooms.get(decodeURIComponent(p[1]));
+      if (!r) return json({ errcode: "M_FORBIDDEN", error: "not in room" }, 403);
+      r.left = true; r.invited = false;
+      return json({});
     }
     let h = path.match(/^\/_matrix\/client\/v3\/rooms\/([^/]+)\/messages$/);
     if (h && req.method === "GET") return json(this.history(decodeURIComponent(h[1]), url.searchParams));
@@ -310,8 +345,17 @@ export class FakeMatrix {
 
   sync(since, who, { limit } = {}) {
     const from = since ? Number(since) : 0;
-    const join = {}, leave = {};
+    const join = {}, leave = {}, invite = {};
     for (const [id, r] of this.rooms) {
+      if (r.invited) {
+        invite[id] = { invite_state: { events: [
+          ...(r.name ? [{ type: "m.room.name", state_key: "", content: { name: r.name } }] : []),
+          ...(r.encrypted ? [{ type: "m.room.encryption", state_key: "", content: {} }] : []),
+          ...[...r.members].map(([mxid, name]) => ({ type: "m.room.member", state_key: mxid, sender: mxid, content: { membership: "join", displayname: name } })),
+          { type: "m.room.member", state_key: this.user, sender: r.invited, content: { membership: "invite" } },
+        ] } };
+        continue;
+      }
       if (r.left) { if (from) leave[id] = { timeline: { events: [] } }; continue; }
       const all = this.events.map((e, i) => [e, i]).slice(from).filter(([e]) => e.room === id);
       // (Only the latest `limit` when asked, as a homeserver does, with where the rest begins.)
@@ -331,6 +375,6 @@ export class FakeMatrix {
       join[id] = { state: { events: state }, timeline: { events: timeline, limited: shown.length < all.length, prev_batch: prevBatch }, ephemeral,
         summary: { "m.heroes": [...r.members.keys()].filter(k => k !== this.user) } };
     }
-    return this.syncCrypto(who, { next_batch: String(this.events.length), rooms: { join, leave } });
+    return this.syncCrypto(who, { next_batch: String(this.events.length), rooms: { join, leave, invite } });
   }
 }
