@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { Browser, makeEnv, grantApps, sqlOne } from "./helpers.mjs";
 import { FakeMatrix } from "./fake-matrix.mjs";
 import * as lib from "../public/chat/vendor/matrix-crypto/node.mjs";
-import { Vault, textOf, textContent, editContent } from "../public/chat/e2ee.js";
+import { Vault, textOf, textContent, editContent, encryptSecret, encodeRecoveryKey } from "../public/chat/e2ee.js";
 
 const ROOM = "!secret:matrix.test";
 let hs;
@@ -39,9 +39,10 @@ const siteVault = (b, conn, key = hexKey("a")) => Vault.open(lib, {
   },
 });
 
-// Sam, on his own device, syncing straight from the homeserver.
-async function samOnMatrix() {
-  const who = hs.person("@sam:matrix.test", "SAMDEV", "syt_sam");
+// Someone on their own device (Sam, or Ryan's Element), syncing straight
+// from the homeserver.
+async function onMatrix(user = "@sam:matrix.test", device = "SAMDEV", token = "syt_sam") {
+  const who = hs.person(user, device, token);
   let since = null, n = 0;
   const timeline = [];
   const call = async (method, path, body) => {
@@ -79,8 +80,9 @@ async function samOnMatrix() {
     }
     return [...shown.values()];
   };
-  return { vault, say, read };
+  return { vault, say, read, call };
 }
+const samOnMatrix = () => onMatrix();
 
 test("an encrypted room can be read and written from the chat page, and the site never sees the words", async () => {
   const { env, ryan, conn } = await setup();
@@ -143,6 +145,9 @@ test("one browser holds a connection's keys; others are told where they are", as
   const r = await api(ryan, "POST", `/connections/${conn.id}/crypto/request`, { key: hexKey("a"), method: "GET", path: "account/whoami" });
   assert.equal(r.status, 403);
   assert.match(r.json.error, /isn't one the encryption needs/);
+  const theirs = await api(ryan, "POST", `/connections/${conn.id}/crypto/request`,
+    { key: hexKey("a"), method: "GET", path: `user/${encodeURIComponent("@sam:matrix.test")}/account_data/m.megolm_backup.v1` });
+  assert.equal(theirs.status, 403, "only your own account's secrets");
   const bad = await api(ryan, "POST", `/connections/${conn.id}/crypto/inbox`, { key: "nope" });
   assert.equal(bad.status, 400);
 });
@@ -156,4 +161,71 @@ test("plain text can't be sent to an encrypted room, and encrypted content only 
   const mine = await api(ryan, "POST", "/rooms", { name: "Plain" });
   const r = await api(ryan, "POST", `/rooms/${mine.json.id}/messages`, { encrypted: { algorithm: "m.megolm.v1.aes-sha2", ciphertext: "x" } });
   assert.equal(r.status, 400);
+});
+
+test("a Security Key verifies the site's session, and older messages come from the key backup", async () => {
+  const { ryan, conn } = await setup();
+  const me = "@ryan:matrix.test";
+  // Ryan's Element, set up the way Element does it: cross-signing, a key
+  // backup, and both kept in secret storage under a Security Key (made from
+  // a Security Phrase).
+  const element = await onMatrix(me, "ELEMENT", "syt_element");
+  const boot = await element.vault.machine.bootstrapCrossSigning(true);
+  if (boot.uploadKeysRequest) await element.vault.send(boot.uploadKeysRequest);
+  await element.call("POST", "keys/device_signing/upload", JSON.parse(boot.uploadSigningKeysRequest.body));
+  await element.vault.send(boot.uploadSignaturesRequest);
+  const exported = await element.vault.machine.exportCrossSigningKeys();
+  const backupKey = lib.BackupDecryptionKey.createRandomKey();
+  const pub = backupKey.megolmV1PublicKey.publicKeyBase64;
+  const { version } = await element.call("POST", "room_keys/version", { algorithm: "m.megolm_backup.v1.curve25519-aes-sha2", auth_data: { public_key: pub } });
+  await element.vault.machine.enableBackupV1(pub, version);
+  element.vault.backup = { key: backupKey, version };
+
+  const phrase = "correct horse battery staple", salt = "saltysalt";
+  const base = await crypto.subtle.importKey("raw", new TextEncoder().encode(phrase), "PBKDF2", false, ["deriveBits"]);
+  const ssss = new Uint8Array(await crypto.subtle.deriveBits({ name: "PBKDF2", hash: "SHA-512", salt: new TextEncoder().encode(salt), iterations: 1000 }, base, 256));
+  const check = await encryptSecret(ssss, "", new Uint8Array(32));
+  hs.setAccountData(me, "m.secret_storage.default_key", { key: "k1" });
+  hs.setAccountData(me, "m.secret_storage.key.k1", { algorithm: "m.secret_storage.v1.aes-hmac-sha2", iv: check.iv, mac: check.mac,
+    passphrase: { algorithm: "m.pbkdf2", salt, iterations: 1000 } });
+  for (const [name, value] of [["m.cross_signing.master", exported.masterKey], ["m.cross_signing.self_signing", exported.self_signing_key],
+    ["m.cross_signing.user_signing", exported.userSigningKey], ["m.megolm_backup.v1", backupKey.toBase64()]]) {
+    hs.setAccountData(me, name, { encrypted: { k1: await encryptSecret(ssss, name, value) } });
+  }
+
+  // Sam writes before the site has keys: only Element gets the room key, and backs it up.
+  const sam = await samOnMatrix();
+  await sam.say(textContent("from before the site"));
+  await element.vault.pump();
+  assert.equal(Object.keys(hs.backups[0].rooms[ROOM] ?? {}).length, 1, "Element backed the room key up");
+
+  const vault = await siteVault(ryan, conn);
+  await syncNow(ryan, conn);
+  const room = (await api(ryan, "GET", "/state")).json.rooms.find(r => r.encrypted);
+  const [old] = (await api(ryan, "GET", `/rooms/${room.id}/messages`)).json.messages;
+  assert.equal(await vault.decrypt(old.raw), null, "nothing to read it with yet");
+  assert.deepEqual(await vault.status(), { verified: false, backup: false });
+
+  await assert.rejects(vault.unlock("not a key at all"), /isn't the right one/);
+  await assert.rejects(vault.unlock(encodeRecoveryKey(crypto.getRandomValues(new Uint8Array(32)))), /isn't the right one/);
+  // The Security Key Element shows, or the phrase it was made from: either works.
+  assert.match(encodeRecoveryKey(ssss), /^Es\w{2}( \w{4}){11}$/);
+  assert.deepEqual(await vault.unlock(phrase), { verified: true, backup: true });
+  assert.deepEqual(await vault.unlock(encodeRecoveryKey(ssss)), { verified: true, backup: true });
+
+  // The old message reads now, its key fetched from the backup.
+  assert.equal(textOf(await vault.decrypt(old.raw)), "from before the site");
+  // The site's session is signed with Ryan's self-signing key, so Element sees it as verified.
+  const ssk = Object.keys(hs.signing.get(me).self_signing_key.keys)[0];
+  assert.ok(hs.keys.get(`${me}|SITE`).device_keys.signatures[me][ssk], "signed by the self-signing key");
+  await element.vault.pump();
+  await element.vault.machine.updateTrackedUsers([new lib.UserId(me)]);
+  await element.vault.flush();
+  const seen = await element.vault.machine.getDevice(new lib.UserId(me), new lib.DeviceId("SITE"));
+  assert.ok(seen.isCrossSignedByOwner(), "Element sees the site's session as verified");
+
+  // And keys for what's sent from now on go into the backup too.
+  await api(ryan, "POST", `/rooms/${room.id}/messages`, { encrypted: await vault.encrypt(ROOM, textContent("backed up")) });
+  await vault.pump();
+  assert.equal(Object.keys(hs.backups[0].rooms[ROOM]).length, 2, "the site's own room key went into the backup");
 });
