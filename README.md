@@ -18,6 +18,7 @@ public/          the website, served as static files
   notifications/   turning push notifications on, and what they're for
   sw.js            the service worker that shows push notifications
   site.webmanifest, icons/   so the site can be added to a phone's home screen
+  favicon.svg, favicon.ico   the browser tab icon (the same emblem as icons/)
 src/             the Worker: runs only for the paths in run_worker_first
   worker.js        routing: sign-in pages, then /todo behind protect()
   account.js       /login /signup /logout /dashboard /account /admin, and protect()
