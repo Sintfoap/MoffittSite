@@ -7,7 +7,8 @@ import assert from "node:assert/strict";
 import { Browser, makeEnv, grantApps, sqlOne } from "./helpers.mjs";
 import { FakeMatrix } from "./fake-matrix.mjs";
 import * as lib from "../public/chat/vendor/matrix-crypto/node.mjs";
-import { Vault, textOf, textContent, editContent, encryptSecret, encodeRecoveryKey } from "../public/chat/e2ee.js";
+import { Vault, textOf, textContent, editContent, encryptSecret, encodeRecoveryKey, encryptAttachment, decryptAttachment, imageOf, imageContent } from "../public/chat/e2ee.js";
+import worker from "../src/worker.js";
 
 const ROOM = "!secret:matrix.test";
 let hs;
@@ -228,4 +229,41 @@ test("a Security Key verifies the site's session, and older messages come from t
   await api(ryan, "POST", `/rooms/${room.id}/messages`, { encrypted: await vault.encrypt(ROOM, textContent("backed up")) });
   await vault.pump();
   assert.equal(Object.keys(hs.backups[0].rooms[ROOM]).length, 2, "the site's own room key went into the backup");
+});
+
+test("pictures in an encrypted room: encrypted files both ways, decrypted only in the browser", async () => {
+  const { env, ryan, conn } = await setup();
+  const ryanVault = await siteVault(ryan, conn);
+  const sam = await samOnMatrix();
+  const GIF = new Uint8Array([71, 73, 70, 56, 57, 97, 3, 0, 2, 0, 0, 0, 0, 44, 0, 0, 0, 0, 1, 0, 1, 0, 0, 2, 0, 59]);
+
+  // Sam's Element sends a picture: the file encrypted and uploaded, then a message with its key.
+  const { data, file } = await encryptAttachment(GIF);
+  const id = "samgif";
+  hs.media.set(id, { bytes: data, type: "application/octet-stream" });
+  await sam.say(imageContent({ name: "wave.gif", mimetype: "image/gif", size: GIF.length, width: 3, height: 2 }, file, `mxc://hs.matrix.test/${id}`));
+  await syncNow(ryan, conn);
+  const room = (await api(ryan, "GET", "/state")).json.rooms.find(r => r.encrypted);
+  const [m] = (await api(ryan, "GET", `/rooms/${room.id}/messages`)).json.messages;
+  await ryanVault.pump();
+  const pic = imageOf(await ryanVault.decrypt(m.raw));
+  assert.deepEqual([pic.mimetype, pic.width, pic.height, pic.name, pic.mxc], ["image/gif", 3, 2, "wave.gif", `mxc://hs.matrix.test/${id}`]);
+  // The page fetches the encrypted file through the site and decrypts it.
+  const fetched = await worker.fetch(new Request(`https://sintfoap.test/chat/api/rooms/${room.id}/media?mxc=${encodeURIComponent(pic.mxc)}`,
+    { headers: { Cookie: `__Host-sid=${ryan.cookie}` } }), env);
+  assert.equal(fetched.status, 200);
+  assert.deepEqual([...await decryptAttachment(new Uint8Array(await fetched.arrayBuffer()), pic.file)], [...GIF]);
+
+  // Ryan sends a GIF the same way, as the chat page does (gifContent in app.js).
+  const mine = await encryptAttachment(GIF);
+  const up = await worker.fetch(new Request(`https://sintfoap.test/chat/api/rooms/${room.id}/media`, { method: "POST", body: mine.data,
+    headers: { Cookie: `__Host-sid=${ryan.cookie}`, Origin: "https://sintfoap.test", "Content-Type": "application/octet-stream" } }), env);
+  const { mxc } = await up.json();
+  const content = imageContent({ name: "giphy.gif", mimetype: "image/gif", size: GIF.length, width: 3, height: 2 }, mine.file, mxc);
+  assert.equal((await api(ryan, "POST", `/rooms/${room.id}/messages`, { encrypted: await ryanVault.encrypt(ROOM, content) })).status, 201);
+  assert.deepEqual(await sam.read(), ["[image] wave.gif", "[image] giphy.gif"]);
+  // What's on the homeserver is only ciphertext.
+  const stored = hs.media.get(mxc.split("/").pop()).bytes;
+  assert.notDeepEqual([...stored], [...GIF]);
+  assert.deepEqual([...await decryptAttachment(stored, content.file)], [...GIF]);
 });
