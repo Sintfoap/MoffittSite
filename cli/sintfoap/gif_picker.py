@@ -74,7 +74,7 @@ class GifPicker(ModalScreen[dict | None]):
         Binding("ctrl+s", "star", "Favorite"),
     ]
 
-    def __init__(self, api=site, query: str = "", provider: str = "KLIPY"):
+    def __init__(self, api=site, query: str = "", provider: str = "GIFs"):
         super().__init__()
         self.api, self.query_text, self.provider = api, query, provider
         self.view: dict = {"kind": "home"}

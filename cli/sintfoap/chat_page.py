@@ -749,7 +749,7 @@ class ChatPage(Page):
     def action_gifs(self, query: str = "") -> None:
         """The GIF picker (gif_picker.py); what's picked is sent to the open room."""
         if not self.gifs.get("ready"):
-            return self.status("GIFs aren't set up on this site yet (the GIF_API_KEY secret).", bad=True)
+            return self.status("GIFs aren't set up on this site yet (the GIPHY_API_KEY or GIF_API_KEY secret).", bad=True)
         if not self.open:
             return self.status("Open a room first.", bad=True)
         if not self.open["joined"]:
@@ -759,7 +759,7 @@ class ChatPage(Page):
         def picked(gif: dict | None) -> None:
             if gif and self.open and self.open["id"] == room_id:
                 self.run_worker(self.send(gif["url"]))
-        self.app.push_screen(GifPicker(self.api, query, self.gifs.get("provider") or "KLIPY"), picked)
+        self.app.push_screen(GifPicker(self.api, query, self.gifs.get("provider") or "GIFs"), picked)
 
     async def star_last_gif(self) -> None:
         hosts = self.gifs.get("hosts") or []
