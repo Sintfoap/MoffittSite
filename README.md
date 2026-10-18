@@ -15,6 +15,9 @@ public/          the website, served as static files
   plugins/         the plugin store page (signed-in Drift users)
   sandbox/         the frame store plugins run in
   chat/            chat rooms (signed-in Drift users)
+  notifications/   turning push notifications on, and what they're for
+  sw.js            the service worker that shows push notifications
+  site.webmanifest, icons/   so the site can be added to a phone's home screen
 src/             the Worker: runs only for the paths in run_worker_first
   worker.js        routing: sign-in pages, then /todo behind protect()
   account.js       /login /signup /logout /dashboard /account /admin, and protect()
@@ -28,6 +31,8 @@ src/             the Worker: runs only for the paths in run_worker_first
   drift.js         Drift storage: collections and items per account
   store.js         the plugin store: drafts, review queue, approved plugins
   chat.js          chat: rooms, members, messages
+  push.js          sending Web Push: encryption (RFC 8291) and VAPID signing, with WebCrypto
+  notify.js        notifications: settings, browsers, Chat's pushes and Drift's reminders
   bridges.js       chat connections: other platforms' rooms in chat, with sealed credentials
   matrix.js        the Matrix provider for those
   vendor/uqr.mjs   QR codes for two-factor setup (MIT)
@@ -273,3 +278,32 @@ Chat can also bring in your rooms from other chat platforms, so you read and ans
 - **Deleting an account** deletes its connections and their rooms. (Sessions the site signed in on Matrix stay signed in there; end them from Element's session list.)
 
 **Adding a platform:** write `src/<platform>.js` with the shape described at the top of `src/bridges.js` (`fields`, `connect`, `sync`, `send`, `edit`, `remove`, `disconnect`, and for encryption `canEncrypt`, `device`, `sendEncrypted`, `cryptoRequest`) and add it to `PROVIDERS` there. The connect form on the web page and in the terminal is built from its `fields`, so nothing else changes.
+
+## Notifications
+
+`/notifications/` is where people opt into push notifications for Chat and Drift. It's an app in `APPS` like the others, so it has its own toggle on `/admin` and starts off for everyone. Nothing is ever pushed to a browser that hasn't been turned on from that page.
+
+- **Turning them on:** "Turn on here" asks the browser for permission and registers `/sw.js`, then sends its push subscription to the site. Each browser or phone is turned on separately and listed under "Where they go", where any of them can be removed. Up to 10 per account. If someone else turns notifications on in the same browser, it moves to their account.
+- **Chat** pushes a direct message, an `@mention` of you, and (off by default) every message in rooms you've joined. Nobody is pushed about a room they have open, or about their own messages. Private rooms and DMs only ever reach their members. Needs the Chat app too.
+- **Drift** reminds you before each timed item starts (15 minutes by default; when it starts, 5, 10, 30 minutes, an hour or a day before) and at 8am on the day of an all-day item, in the time zone of the browser you turned them on in. Items in collections shared with you remind you too. Done and deleted items don't. The reminders come from a cron trigger every five minutes (`triggers` in `wrangler.jsonc`, `scheduled()` in `src/worker.js`), and each is sent once (`push_sent`). Needs the Drift app too.
+- **Sending:** the Worker encrypts each message for its browser and signs a VAPID token itself (`src/push.js`, WebCrypto only), then posts it to the browser's push service: Google, Mozilla, Apple or Microsoft. Subscriptions for any other host are refused. A browser whose push service says it's gone is forgotten, and so is one refused five times in a row.
+- **iPhone and iPad:** Safari only allows push for sites added to the home screen (Share → Add to Home Screen). The page says so there; once it's opened from the home screen it works like anywhere else.
+- **Terminal:** `sintfoap notifications` (`g n`) has the same settings and list of browsers, and sends a test. A terminal can't receive pushes itself.
+
+### Turning on push
+
+Push stays off, and the page says so, until the site has a VAPID key pair.
+
+1. **Make the keys** on any computer with Node: `npx web-push generate-vapid-keys`. It prints a public key and a private key.
+2. **Add them to the Worker** in the Cloudflare dashboard: **Workers & Pages → moffittsite → Settings → Variables and Secrets → Add**, type **Secret**, once as `VAPID_PUBLIC_KEY` and once as `VAPID_PRIVATE_KEY`.
+3. **Turn Notifications on** for people from `/admin`.
+
+`PUSH_CONTACT` in `wrangler.jsonc` is the address push services can reach the site's owner at (a `https:` or `mailto:` URL). Changing the keys later means everyone turns notifications on again. Preview builds have no database, so push can only be tried on the real site.
+
+| Method | Path | Body |
+|---|---|---|
+| GET | `/notifications/api/state` | → `{configured, public_key, prefs, devices, apps, leads}` |
+| PATCH | `/notifications/api/prefs` | any of `{chat_dms, chat_mentions, chat_rooms, drift_events, drift_lead, tz}` |
+| POST | `/notifications/api/devices` | the browser's `PushSubscription.toJSON()`, plus `{label, tz}` |
+| DELETE | `/notifications/api/devices/<id>` | |
+| POST | `/notifications/api/test` | pushes a test to all your browsers → also `{sent, failed}` |

@@ -202,6 +202,38 @@ const SCHEMA = [
      PRIMARY KEY (room, user_id)
    )`,
   `CREATE INDEX IF NOT EXISTS chat_presence_user ON chat_presence (user_id, seen_at)`,
+  // Push notifications (src/notify.js). A device is one browser's push
+  // subscription; it belongs to whoever turned notifications on in it last.
+  `CREATE TABLE IF NOT EXISTS push_devices (
+     id         TEXT PRIMARY KEY,                  -- first 32 hex of SHA-256 of the endpoint
+     user_id    TEXT NOT NULL,
+     endpoint   TEXT NOT NULL,                     -- the push service's address for this browser
+     p256dh     TEXT NOT NULL,                     -- the browser's keys (base64url)
+     auth       TEXT NOT NULL,
+     label      TEXT NOT NULL DEFAULT '',          -- e.g. "Chrome on Android"
+     created_at INTEGER NOT NULL,
+     last_ok    INTEGER,                           -- last push the service accepted
+     failures   INTEGER NOT NULL DEFAULT 0         -- refusals in a row; dropped after a few
+   )`,
+  `CREATE INDEX IF NOT EXISTS push_devices_user ON push_devices (user_id)`,
+  // What each person wants pushed. No row means the defaults in src/notify.js.
+  `CREATE TABLE IF NOT EXISTS push_prefs (
+     user_id       TEXT PRIMARY KEY,
+     chat_dms      INTEGER NOT NULL,
+     chat_mentions INTEGER NOT NULL,
+     chat_rooms    INTEGER NOT NULL,               -- every message in rooms they've joined
+     drift_events  INTEGER NOT NULL,
+     drift_lead    INTEGER NOT NULL,               -- minutes before a timed event
+     tz            TEXT NOT NULL,                  -- their time zone, for Drift's local times
+     updated_at    INTEGER NOT NULL
+   )`,
+  // Drift reminders already sent, so the cron never sends one twice.
+  `CREATE TABLE IF NOT EXISTS push_sent (
+     user_id TEXT NOT NULL,
+     key     TEXT NOT NULL,                        -- the item, its start and the lead time
+     sent_at INTEGER NOT NULL,
+     PRIMARY KEY (user_id, key)
+   )`,
   // Accounts on other chat platforms that someone connected (src/bridges.js).
   `CREATE TABLE IF NOT EXISTS chat_connections (
      id         TEXT PRIMARY KEY,                  -- "k_" + random hex

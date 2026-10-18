@@ -439,3 +439,26 @@ def chat_disconnect(connection: str) -> dict:
 def chat_sync(connection: str) -> dict:
     """Syncs a connection now (and tries again if it had stopped working); returns it."""
     return api("POST", f"/chat/api/connections/{_q(connection)}/sync")
+
+
+# ──────────────────────────── notifications ─────────────────────────────────
+# /notifications/api/ (src/notify.js). A terminal can't receive push
+# notifications, but it can change what's sent and where it goes.
+
+def notify_state() -> dict:
+    """{configured, public_key, prefs, devices, apps, leads}."""
+    return _get("/notifications/api/state")
+
+
+def save_notify_prefs(**fields: Any) -> dict:
+    """Any of chat_dms, chat_mentions, chat_rooms, drift_events, drift_lead, tz; returns notify_state()."""
+    return api("PATCH", "/notifications/api/prefs", fields)
+
+
+def remove_device(device_id: str) -> dict:
+    return api("DELETE", f"/notifications/api/devices/{_q(device_id)}")
+
+
+def send_test() -> dict:
+    """Pushes a test notification to all your browsers; notify_state() plus {sent, failed}."""
+    return api("POST", "/notifications/api/test")

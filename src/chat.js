@@ -26,6 +26,7 @@ import { db, now } from "./db.js";
 import { sameOrigin } from "./account.js";
 import { randomBytes, hex, sha256 } from "./crypto.js";
 import { canBridge, bridgeInfo, listConnections, addConnection, removeConnection, syncConnection, syncAll, syncRoom, onPlatform, cryptoOp, ENCRYPTED_NOTE } from "./bridges.js";
+import { chatPushes } from "./notify.js";
 
 export class BadRequest extends Error {}
 const fail = msg => { throw new BadRequest(msg); };
@@ -461,7 +462,9 @@ function encryptedContent(body) {
   return c;
 }
 
-export async function post(env, user, roomId, body) {
+// `later` takes the push notifications for the new message, so they can be
+// sent after the answer (ctx.waitUntil); without it they're sent first.
+export async function post(env, user, roomId, body, later = p => p) {
   const content = encryptedContent(body);
   const text = content ? "" : messageText(body);
   const d = await db(env);
@@ -486,6 +489,7 @@ export async function post(env, user, roomId, body) {
     d.prepare("UPDATE chat_presence SET typing_at = 0 WHERE room = ? AND user_id = ?").bind(room.id, user.id),
   ]);
   const m = await d.prepare(`${MESSAGE} WHERE m.room = ? AND m.user_id = ? ORDER BY m.id DESC LIMIT 1`).bind(room.id, user.id).first();
+  await later(chatPushes(env, { room, author: user, message: m, hereSince: t - HERE }).catch(e => console.error("chat pushes failed:", e)));
   return messageOut(m, user, room);
 }
 
@@ -654,7 +658,7 @@ const ROUTE = /^\/chat\/api\/(state|people|dms|rooms|connections)(?:\/([^/]+)(?:
 // elsewhere except fonts. (WebAssembly is for the encryption library.)
 const PAGE_CSP = [
   "default-src 'none'", "script-src 'self' 'wasm-unsafe-eval'", "connect-src 'self'", "style-src 'unsafe-inline' https://fonts.googleapis.com",
-  "font-src https://fonts.gstatic.com", "img-src 'self' data:", "form-action 'self'", "frame-ancestors 'none'", "base-uri 'none'",
+  "font-src https://fonts.gstatic.com", "img-src 'self' data:", "manifest-src 'self'", "form-action 'self'", "frame-ancestors 'none'", "base-uri 'none'",
 ].join("; ");
 
 const json = (obj, status = 200) =>
@@ -662,7 +666,7 @@ const json = (obj, status = 200) =>
 
 const int = v => /^\d{1,15}$/.test(v ?? "") ? Number(v) : undefined;
 
-export async function chat(request, env, user, pathname) {
+export async function chat(request, env, user, pathname, ctx) {
   if (!pathname.startsWith("/chat/api/")) {
     const asset = await withRail(await env.ASSETS.fetch(request), user, "chat");
     const res = new Response(asset.body, asset);
@@ -769,7 +773,8 @@ export async function chat(request, env, user, pathname) {
       const q = new URL(request.url).searchParams;
       return reply(await messages(env, user, id, { since: int(q.get("since")), before: int(q.get("before")) }));
     }
-    if (method === "POST") return reply(await post(env, user, id, await readJson(request)), 201);
+    const later = ctx ? p => ctx.waitUntil(p) : undefined;
+    if (method === "POST") return reply(await post(env, user, id, await readJson(request), later), 201);
     return notAllowed();
   } catch (e) {
     if (e instanceof BadRequest) return json({ error: e.message }, 400);

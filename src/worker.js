@@ -6,13 +6,16 @@
 // homepage's sign-in link, and /todo, which needs a signed-in account with the
 // "todo" area before the page or API is served. /plugins (the plugin store,
 // src/store.js) and /chat (src/chat.js) each need their own app turned on for
-// the account on the admin page. /login/cli is signing in from a terminal (src/cli.js).
+// the account on the admin page, and so does /notifications (src/notify.js).
+// /login/cli is signing in from a terminal (src/cli.js). scheduled() is the
+// cron trigger in wrangler.jsonc, which sends Drift's reminders.
 import { plugins, installed, install, uninstall, PLUGIN_ID, SANDBOX_CSP } from "./store.js";
 import { protect, handleAuth, AUTH_PATHS, sameOrigin } from "./account.js";
 import { currentSession, areaOf } from "./auth.js";
 import { handleCli, CLI_PATHS } from "./cli.js";
 import { withRail } from "./pages.js";
 import { chat } from "./chat.js";
+import { notifications, driftReminders } from "./notify.js";
 import { state, version, createItem, updateItem, createCollection, updateCollection, shareCollection, unshareCollection, readJson, BadRequest, ID } from "./drift.js";
 
 // /todo/api/state, /todo/api/version, /todo/api/items[/<id>],
@@ -21,7 +24,7 @@ const API = /^\/todo\/api\/(state|version|items|collections|installs)(?:\/([^/]+
 const USERNAME = /^[a-z0-9_.-]{1,64}$/;
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url), { pathname } = url;
     // "/todo" → "/todo/" before anything else; the redirect itself reveals nothing.
     if (pathname === "/todo") {
@@ -43,7 +46,14 @@ export default {
       return Response.redirect(url.toString(), 308);
     }
     if (pathname.startsWith("/chat/")) {
-      return protect(request, env, areaOf("chat"), user => chat(request, env, user, pathname));
+      return protect(request, env, areaOf("chat"), user => chat(request, env, user, pathname, ctx));
+    }
+    if (pathname === "/notifications") {
+      url.pathname = "/notifications/";
+      return Response.redirect(url.toString(), 308);
+    }
+    if (pathname.startsWith("/notifications/")) {
+      return protect(request, env, areaOf("notifications"), user => notifications(request, env, user, pathname));
     }
     // The frame store plugins run in. It holds no data and needs no sign-in.
     if (pathname.startsWith("/sandbox/")) return sandbox(request, env);
@@ -51,6 +61,10 @@ export default {
     if (CLI_PATHS.test(pathname)) return handleCli(request, env);
     if (AUTH_PATHS.test(pathname)) return handleAuth(request, env);
     return env.ASSETS.fetch(request);
+  },
+
+  async scheduled(controller, env, ctx) {
+    ctx.waitUntil(driftReminders(env, controller.scheduledTime).catch(e => console.error("drift reminders failed:", e)));
   },
 };
 
