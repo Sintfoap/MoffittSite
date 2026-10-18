@@ -150,31 +150,60 @@ def render_results(found: dict, q: str) -> Text:
     return t
 
 
+class Clipped(Static):
+    """One line of text, cut short with … to fit its width."""
+
+    def __init__(self, text: Text, **kw):
+        super().__init__(**kw)
+        self.text = text
+
+    def set(self, text: Text) -> None:
+        self.text = text
+        self.refresh()
+
+    def render(self) -> Text:
+        out = self.text.copy()
+        out.truncate(max(self.size.width, 1), overflow="ellipsis")
+        return out
+
+
 class RoomItem(ListItem):
+    """A room in the list: its name, cut short with … when it's too long for
+    the column, then its badges, which always show (like .rooms on /chat/)."""
+
     def __init__(self, room: dict, is_open: bool, online: frozenset = frozenset()):
         self.room = room
-        super().__init__(Label(self.label(room, is_open, online)))
+        name, badges = self.parts(room, is_open, online)
+        super().__init__(Horizontal(Clipped(name, classes="name"), Label(badges, classes="badges")))
 
     def update(self, room: dict, is_open: bool, online: frozenset = frozenset()) -> None:
         self.room = room
-        self.query_one(Label).update(self.label(room, is_open, online))
+        name, badges = self.parts(room, is_open, online)
+        self.query_one(".name", Clipped).set(name)
+        self.query_one(".badges", Label).update(badges)
 
     @staticmethod
-    def label(room: dict, is_open: bool, online: frozenset = frozenset()) -> Text:
+    def parts(room: dict, is_open: bool, online: frozenset = frozenset()) -> tuple[Text, Text]:
         kind = room.get("kind", "open")
         name = Text(MARK[kind], style=GOLD if kind == "private" else MUTED)
         name.append(room["name"], style=f"bold {INK}" if room["joined"] else MUTED)
+        badges = Text()
         if kind == "dm" and room.get("with") in online:
-            name.append(" ●", style=GOOD)
+            badges.append(" ●", style=GOOD)
         if room.get("encrypted"):
-            name.append(" e2e", style=FAINT)
+            badges.append(" e2e", style=FAINT)
         if room.get("mentions") and not is_open:
-            name.append("  @", style=f"bold {BAD}")
+            badges.append("  @", style=f"bold {BAD}")
         if room["unread"] and not is_open:
-            name.append(f"  {min(room['unread'], 99)}", style=f"bold {GOLD}")
+            badges.append(f"  {min(room['unread'], 99)}", style=f"bold {GOLD}")
         if not room["joined"]:
-            name.append(f"  {room['members']}", style=MUTED)
-        return name
+            badges.append(f"  {room['members']}", style=MUTED)
+        return name, badges
+
+    @staticmethod
+    def label(room: dict, is_open: bool, online: frozenset = frozenset()) -> Text:
+        name, badges = RoomItem.parts(room, is_open, online)
+        return name + badges
 
 
 class MessageInput(Input):
@@ -288,6 +317,9 @@ class ChatPage(Page):
     ChatPage #rooms {{ background: {BG}; border: round {LINE}; height: 1fr; }}
     ChatPage #rooms:focus {{ border: round {GOLD}; background-tint: {BG} 0%; }}
     ChatPage #rooms > ListItem {{ background: {BG}; padding: 0 1; }}
+    ChatPage #rooms > ListItem > Horizontal {{ height: 1; }}
+    ChatPage #rooms .name {{ width: 1fr; }}
+    ChatPage #rooms .badges {{ width: auto; }}
     ChatPage #rooms > ListItem.-highlight {{ background: {PANEL}; }}
     ChatPage #rooms:focus > ListItem.-highlight {{ background: #1d2a1b; }}
     ChatPage #room {{ background: {PANEL}; border: round {LINE}; }}
