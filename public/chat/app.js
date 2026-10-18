@@ -168,6 +168,9 @@ async function decryptOpen() {
   await pass(false);
   await vault.pump();
   if (open?.id !== id) return;
+  const flows = await vault.verifications();
+  if (open?.id !== id) return;
+  showFlows(flows, vault);
   showVerify(await vault.status());
   await pass(true);
 }
@@ -326,7 +329,8 @@ function renderRoomShell(room) {
     <div class="log" id="log"></div>
     <div class="presence" id="presence" aria-live="polite"></div>
     ${room.encrypted && keysHere(room) === "ready" ? `<div class="joinbar verifybar" id="verifybar" hidden>
-        <span id="verify-why"></span><button class="btn quiet" type="button" id="verify-open">Verify with Security Key</button>
+        <span id="verify-why"></span><button class="btn quiet" type="button" id="verify-device">Verify with another device</button><button class="btn quiet" type="button" id="verify-open">Verify with Security Key</button>
+        <div class="verify-flow" id="verify-flow" hidden aria-live="polite"></div>
         <form id="verify-form" class="verify-form" hidden>
           <input id="verify-key" type="password" autocomplete="off" spellcheck="false" placeholder="Security Key or Security Phrase" aria-label="Security Key or Security Phrase">
           <button class="btn" type="submit">Verify</button><button class="link" type="button" id="verify-cancel">Cancel</button>
@@ -356,7 +360,52 @@ function showVerify({ verified, backup }) {
   $("#verify-why").textContent = verified
     ? "This session is verified, but your account has no key backup to unlock older messages from."
     : "This session isn't verified yet, so Matrix apps flag it and older messages stay locked.";
-  $("#verify-open").hidden = verified || !$("#verify-form").hidden;
+  const busy = !$("#verify-form").hidden || !$("#verify-flow").hidden;
+  $("#verify-open").hidden = verified || busy;
+  $("#verify-device").hidden = verified || busy;
+  if (!$("#verify-flow").hidden) bar.hidden = false;
+}
+
+// Verifying with another of your sessions (e2ee.js, verifications): what's
+// happening, and what you can do about it, in the verify bar.
+let flowShown = null;           // the verification on show
+const flowsEnded = new Set();   // ones already said to have ended
+function showFlows(flows, vault) {
+  const el = $("#verify-flow");
+  if (!el) return;
+  for (const f of flows.filter(f => f.state === "done" || f.state === "cancelled")) {
+    if (flowsEnded.has(f.id)) continue;
+    flowsEnded.add(f.id);
+    if (f.id === flowShown) toast(f.state === "done" ? "Verified. This session now trusts your other one." : "Verification cancelled.");
+  }
+  const f = flows.filter(f => !flowsEnded.has(f.id)).at(-1);
+  if (f) flowShown = f.id;        // kept after it ends, so its end is said
+  el.hidden = !f;
+  if (!f) { el.innerHTML = ""; return; }
+  const html = {
+    requested: f.by_us
+      ? `<p>Accept the request in Element (or another Matrix app) on one of your other devices.</p><button class="link" data-flow="cancel">Cancel</button>`
+      : `<p>Another of your sessions${f.other_device ? ` (${esc(f.other_device)})` : ""} wants to verify this one.</p><button class="btn" data-flow="accept">Accept</button> <button class="link" data-flow="cancel">Decline</button>`,
+    ready: `<p>Starting…</p><button class="link" data-flow="cancel">Cancel</button>`,
+    compare: `<p>Do these match what your other session shows, in the same order?</p>
+      <ol class="emoji">${(f.emoji || []).map(e => `<li><span>${esc(e.symbol)}</span>${esc(e.name)}</li>`).join("")}</ol>
+      <button class="btn" data-flow="confirm">They match</button> <button class="btn quiet" data-flow="cancel">They don't match</button>`,
+    waiting: `<p>Waiting for your other session to confirm…</p>`,
+  }[f.state];
+  // (Only redrawn when it changes, so a button isn't swapped out from under a click.)
+  if (el.dataset.at !== f.id + f.state) { el.innerHTML = html; el.dataset.at = f.id + f.state; }
+  el.onclick = async e => {
+    const b = e.target.closest("[data-flow]");
+    if (!b) return;
+    b.disabled = true;
+    try {
+      const op = { accept: "acceptVerification", confirm: "confirmVerification", cancel: "cancelVerification" }[b.dataset.flow];
+      await vault[op](f.id);
+      await decryptOpen();
+    } catch (err) { toast(err.message); b.disabled = false; }
+  };
+  const bar = $("#verifybar");
+  if (bar) bar.hidden = false;
 }
 
 function encryptionBar(room) {
@@ -502,6 +551,12 @@ $("#room").addEventListener("click", async e => {
       catch (err) { try { localStorage.removeItem(keyName(room.connection)); } catch { /* nothing kept */ } throw err; }
       toast("Encryption is on in this browser. Messages sent from now on can be read here.");
       await loadRooms(); open = null; await openRoom(room.id);
+    }
+    else if (t.id === "verify-device") {
+      const room = rooms.find(r => r.id === open.id);
+      t.disabled = true;
+      try { await (await vaultFor(room.connection)).requestVerification(); await decryptOpen(); }
+      finally { t.disabled = false; }
     }
     else if (t.id === "verify-open") { $("#verify-form").hidden = false; t.hidden = true; $("#verify-key").focus(); }
     else if (t.id === "verify-cancel") { $("#verify-form").hidden = true; $("#verify-open").hidden = false; $("#verify-key").value = ""; }

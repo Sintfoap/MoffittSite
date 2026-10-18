@@ -312,3 +312,92 @@ test("encrypted replies say what they answer outside the encryption, and formatt
   const last = (await api(ryan, "GET", `/rooms/${room.id}/messages`)).json.messages.at(-1);
   assert.equal(last.reply.id, out.json.id);
 });
+
+test("verifying with another session by emoji, as Element does, gets the same as a Security Key", async () => {
+  const { ryan, conn } = await setup();
+  const me = "@ryan:matrix.test";
+  // Ryan's Element: cross-signing and a key backup, with the keys to both.
+  const element = await onMatrix(me, "ELEMENT", "syt_element");
+  const boot = await element.vault.machine.bootstrapCrossSigning(true);
+  if (boot.uploadKeysRequest) await element.vault.send(boot.uploadKeysRequest);
+  await element.call("POST", "keys/device_signing/upload", JSON.parse(boot.uploadSigningKeysRequest.body));
+  await element.vault.send(boot.uploadSignaturesRequest);
+  const backupKey = lib.BackupDecryptionKey.createRandomKey();
+  const pub = backupKey.megolmV1PublicKey.publicKeyBase64;
+  const { version } = await element.call("POST", "room_keys/version", { algorithm: "m.megolm_backup.v1.curve25519-aes-sha2", auth_data: { public_key: pub } });
+  await element.vault.machine.saveBackupDecryptionKey(backupKey, version);
+  await element.vault.machine.enableBackupV1(pub, version);
+  element.vault.backup = { key: backupKey, version };
+  const sam = await samOnMatrix();
+  await sam.say(textContent("from before the site"));
+  await element.vault.pump();
+
+  const vault = await siteVault(ryan, conn);
+  await syncNow(ryan, conn);
+  const room = (await api(ryan, "GET", "/state")).json.rooms.find(r => r.encrypted);
+  const [old] = (await api(ryan, "GET", `/rooms/${room.id}/messages`)).json.messages;
+  assert.equal(await vault.decrypt(old.raw), null);
+  // Both sides keep looking, as their pages poll.
+  const look = async () => {
+    await syncNow(ryan, conn); await vault.pump(); await element.vault.pump();
+    return [await vault.verifications(), await element.vault.verifications()];
+  };
+
+  // The chat page asks; Element sees it and accepts.
+  // (Element has heard of the site's session by now, as it would have.)
+  await element.vault.machine.updateTrackedUsers([new lib.UserId(me)]);
+  await element.vault.pump();
+  await vault.requestVerification();
+  let [mine, theirs] = await look();
+  assert.deepEqual(mine.map(v => [v.state, v.by_us]), [["requested", true]]);
+  assert.deepEqual(theirs.map(v => [v.state, v.by_us]), [["requested", false]]);
+  await element.vault.acceptVerification(theirs[0].id);
+  for (let i = 0; i < 6 && !(mine[0]?.emoji && theirs[0]?.emoji); i++) [mine, theirs] = await look();
+  assert.equal(mine[0].state, "compare");
+  assert.equal(mine[0].emoji.length, 7);
+  assert.deepEqual(mine[0].emoji, theirs[0].emoji, "the same emoji on both");
+  assert.ok(mine[0].emoji.every(e => e.symbol && e.name));
+
+  // They match: both say so.
+  await vault.confirmVerification(mine[0].id);
+  [mine] = await look();
+  assert.equal(mine[0].state, "waiting");
+  await element.vault.confirmVerification(theirs[0].id);
+  for (let i = 0; i < 6 && !(mine[0]?.state === "done" && (await vault.status()).backup); i++) [mine, theirs] = await look();
+  assert.equal(mine[0].state, "done");
+  // Element signed the site's session, and shared the backup's key when asked.
+  assert.deepEqual(await vault.status(), { verified: true, backup: true });
+  assert.equal(textOf(await vault.decrypt(old.raw)), "from before the site");
+  const device = await element.vault.machine.getDevice(new lib.UserId(me), new lib.DeviceId("SITE"));
+  assert.equal(device.isVerified(), true, "Element trusts it");
+  const ssk = Object.keys(hs.signing.get(me).self_signing_key.keys)[0];
+  assert.ok(hs.keys.get(`${me}|SITE`).device_keys.signatures[me][ssk], "and it's signed with the cross-signing key, so other apps trust it too");
+});
+
+test("a verification that doesn't match is cancelled on both sides", async () => {
+  const { ryan, conn } = await setup();
+  const element = await onMatrix("@ryan:matrix.test", "ELEMENT", "syt_element");
+  const boot = await element.vault.machine.bootstrapCrossSigning(true);
+  if (boot.uploadKeysRequest) await element.vault.send(boot.uploadKeysRequest);
+  await element.call("POST", "keys/device_signing/upload", JSON.parse(boot.uploadSigningKeysRequest.body));
+  await element.vault.send(boot.uploadSignaturesRequest);
+  const vault = await siteVault(ryan, conn);
+  const look = async () => { await syncNow(ryan, conn); await vault.pump(); await element.vault.pump(); return [await vault.verifications(), await element.vault.verifications()]; };
+  // This time Element asks.
+  const identity = await element.vault.machine.getIdentity(new lib.UserId("@ryan:matrix.test"));
+  await element.vault.machine.updateTrackedUsers([new lib.UserId("@ryan:matrix.test")]);
+  await element.vault.flush();
+  const [, out] = await identity.requestVerification([lib.VerificationMethod.SasV1]);
+  await element.vault.send(out);
+  let [mine, theirs] = await look();
+  assert.deepEqual(mine.map(v => [v.state, v.by_us]), [["requested", false]]);
+  await vault.acceptVerification(mine[0].id);
+  for (let i = 0; i < 6 && !(mine[0]?.emoji && theirs[0]?.emoji); i++) [mine, theirs] = await look();
+  // Element starts comparing once the page accepts? Either way, they get emoji.
+  assert.equal(mine[0].state, "compare");
+  await vault.cancelVerification(mine[0].id);
+  [mine, theirs] = await look();
+  assert.equal(mine[0].state, "cancelled");
+  assert.equal(theirs[0].state, "cancelled");
+  assert.deepEqual(await vault.status(), { verified: false, backup: false });
+});

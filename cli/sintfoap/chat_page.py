@@ -555,7 +555,7 @@ class ChatPage(Page):
         if kind == "bridge":
             t.append(f"   on {NETWORK.get(r.get('provider'), r.get('provider'))} as {r.get('via')}", style=MUTED)
             if r.get("encrypted"):
-                t.append("   end-to-end encrypted: read and send it on the web chat page, where its keys are", style=GOLD_DIM)
+                t.append("   end-to-end encrypted: read, send and verify it on the web chat page, where its keys are", style=GOLD_DIM)
         elif kind == "dm":
             t.append(f"   direct message with @{r.get('with') or '?'}", style=MUTED)
             if r.get("with") in self.online:

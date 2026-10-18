@@ -94,6 +94,119 @@ export class Vault {
     });
   }
 
+  // ── verifying with another of your devices (emoji) ───────────────────
+  // As Element's "Verify with another device": this session asks your other
+  // sessions (or one of them asks it), both show the same seven emoji, and
+  // once you say they match on both, each trusts the other. Your other
+  // session then signs this one with your cross-signing key and, asked,
+  // shares the key backup's key, as a Security Key would.
+
+  // Asks your other sessions to verify this one.
+  requestVerification() {
+    return this.lock(async () => {
+      // (Knowing your other sessions first, to ask them.)
+      await this.machine.updateTrackedUsers([new this.lib.UserId(this.device.user_id)]);
+      await this.flush();
+      const identity = await this.machine.getIdentity(new this.lib.UserId(this.device.user_id));
+      if (!identity) throw new Error("your account has no cross-signing set up yet, so there's nothing to verify against; Element sets it up");
+      const [, out] = await identity.requestVerification([this.lib.VerificationMethod.SasV1]);
+      await this.send(out);
+      await this.flush();
+    });
+  }
+
+  // Where each verification with your own sessions is, for showing:
+  // [{id, state, by_us, other_device, emoji}] where state is "requested"
+  // (waiting for the other side, or for you to accept), "ready", "compare"
+  // (emoji: [{symbol, name}] to compare), "waiting" (you said they match;
+  // the other side hasn't yet), "done" or "cancelled".
+  // It also takes the next step itself where no one needs asking.
+  verifications() {
+    return this.lock(async () => {
+      const { lib } = this, P = lib.VerificationRequestPhase, out = [];
+      // (Ones that finished leave the library's list; they're kept here to say how they ended.)
+      this.flows ??= new Map();
+      for (const req of await this.machine.getVerificationRequests(new lib.UserId(this.device.user_id))) {
+        if (req.isSelfVerification()) this.flows.set(req.flowId, req);
+      }
+      for (const req of this.flows.values()) {
+        const phase = req.phase();
+        let sas = req.getVerification?.();
+        if (sas && !(sas instanceof lib.Sas)) sas = null;
+        // We asked and they're ready: start comparing emoji. They started it: go along.
+        if (phase === P.Ready && req.weStarted() && !sas) {
+          const started = await req.startSas();
+          if (started) { sas = started[0]; await this.send(started[1]); }
+        }
+        if (sas && !sas.weStarted() && !sas.hasBeenAccepted()) { const r = sas.accept(); if (r) await this.send(r); }
+        const done = req.isDone() || sas?.isDone();
+        if (done && !this.verified?.has(req.flowId)) await this.afterVerified(req.flowId);
+        const emoji = sas?.emoji?.();
+        out.push({
+          id: req.flowId, by_us: req.weStarted(), other_device: req.otherDeviceId?.toString() ?? null,
+          state: req.isCancelled() || sas?.isCancelled() ? "cancelled" : done ? "done"
+            : sas?.haveWeConfirmed() ? "waiting" : emoji ? "compare"
+            : phase === P.Requested || phase === P.Created ? "requested" : "ready",
+          ...(emoji ? { emoji: emoji.map(e => ({ symbol: e.symbol, name: e.description })) } : {}),
+        });
+      }
+      await this.flush();
+      return out;
+    });
+  }
+
+  // Accepting a request from another session; then the emoji match, or don't.
+  acceptVerification(id) { return this.onRequest(id, async req => req.acceptWithMethods([this.lib.VerificationMethod.SasV1])); }
+  confirmVerification(id) {
+    return this.onRequest(id, async req => {
+      const sas = req.getVerification?.();
+      for (const r of sas ? await sas.confirm() : []) await this.send(r);
+    });
+  }
+  cancelVerification(id) { return this.onRequest(id, async req => (req.getVerification?.() ?? req).cancel()); }
+  onRequest(id, fn) {
+    return this.lock(async () => {
+      const req = await this.machine.getVerificationRequest(new this.lib.UserId(this.device.user_id), id);
+      if (!req) throw new Error("that verification has gone; start again");
+      const r = await fn(req);
+      if (r) await this.send(r);
+      await this.flush();
+    });
+  }
+
+  // Verified with another session: ask it for the secrets a Security Key
+  // would open (it answers once it trusts this one), and take them as they come.
+  async afterVerified(id) {
+    (this.verified ??= new Set()).add(id);
+    await this.machine.requestMissingSecretsIfNeeded();
+  }
+
+  // Secrets your other sessions sent: the cross-signing keys (the library
+  // takes those itself; then this session signs itself with them) and the
+  // key backup's key.
+  async takeSecrets() {
+    const { lib } = this, me = this.device.user_id;
+    const status = await this.machine.crossSigningStatus();
+    if (status.hasSelfSigning && !this.signedSelf) {
+      const device = await this.machine.getDevice(new lib.UserId(me), new lib.DeviceId(this.device.device_id));
+      if (device && !device.isCrossSignedByOwner()) await this.send(await device.verify());
+      this.signedSelf = true;
+    }
+    if (this.backup) return;
+    const keys = await this.machine.getSecretsFromInbox("m.megolm_backup.v1");
+    for (const secret of keys ?? []) {
+      const key = lib.BackupDecryptionKey.fromBase64(secret);
+      let info = null;
+      try { info = (await this.ask("request", { method: "GET", path: "room_keys/version" })).response; } catch { /* no backup */ }
+      if (info?.auth_data?.public_key !== key.megolmV1PublicKey.publicKeyBase64) continue;
+      await this.machine.saveBackupDecryptionKey(key, info.version);
+      await this.machine.enableBackupV1(info.auth_data.public_key, info.version);
+      this.backup = { key, version: info.version };
+      this.forgetMisses(); this.tried.clear();
+    }
+    await this.machine.deleteSecretsFromInbox("m.megolm_backup.v1");
+  }
+
   // A room key from the backup, for one message this session missed.
   async fromBackup(event) {
     const { lib } = this, sid = event.content?.session_id;
@@ -141,7 +254,7 @@ export class Vault {
           await this.machine.receiveSyncChanges(JSON.stringify(it.to_device), lists, otk, fallback);
         }
         got = true;
-        if (items.length) { ack = items.at(-1).id; this.forgetMisses(); }
+        if (items.length) { ack = items.at(-1).id; this.forgetMisses(); await this.takeSecrets(); }
         await this.flush();
         if (!items.length) break;
       }
