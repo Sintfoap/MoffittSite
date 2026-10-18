@@ -150,7 +150,8 @@ const SCHEMA = [
      encrypted  INTEGER NOT NULL DEFAULT 0,        -- end-to-end encrypted there, so read-only here
      ext_typing TEXT,                              -- JSON [names]: who's typing there, as of ext_typing_at
      ext_typing_at INTEGER,
-     ext_read   TEXT                               -- the message there we last said we'd read up to
+     ext_read   TEXT,                              -- the message there we last said we'd read up to
+     ext_back   TEXT                               -- where older history there starts ('' once it's all here)
    )`,
   `CREATE TABLE IF NOT EXISTS chat_members (
      room      TEXT NOT NULL,
@@ -306,7 +307,7 @@ const ADDED_COLUMNS = {
   chat_messages: ["posted_seq INTEGER", "edited_at INTEGER", "ext_id TEXT", "ext_sender TEXT", "ext_name TEXT", "encrypted INTEGER NOT NULL DEFAULT 0", "ext_raw TEXT", "reply_to INTEGER"],
   chat_reactions: ["ext_id TEXT", "ext_name TEXT"],
   chat_connections: ["can_encrypt INTEGER NOT NULL DEFAULT 0", "crypto_owner TEXT", "crypto_counts TEXT"],
-  chat_rooms: ["kind TEXT NOT NULL DEFAULT 'open'", "connection TEXT", "ext_id TEXT", "encrypted INTEGER NOT NULL DEFAULT 0", "ext_typing TEXT", "ext_typing_at INTEGER", "ext_read TEXT"],
+  chat_rooms: ["kind TEXT NOT NULL DEFAULT 'open'", "connection TEXT", "ext_id TEXT", "encrypted INTEGER NOT NULL DEFAULT 0", "ext_typing TEXT", "ext_typing_at INTEGER", "ext_read TEXT", "ext_back TEXT"],
 };
 
 async function addMissingColumns(d) {

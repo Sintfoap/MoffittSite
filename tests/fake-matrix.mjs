@@ -116,7 +116,12 @@ export class FakeMatrix {
     if (!who) return json({ errcode: "M_UNKNOWN_TOKEN", error: "Unknown token" }, 401);
     if (path === "/_matrix/client/v3/account/whoami") return json({ user_id: who.user, device_id: who.device });
     if (path === "/_matrix/client/v3/logout") { this.loggedOut.push(auth); return json({}); }
-    if (path === "/_matrix/client/v3/sync") return json(this.sync(url.searchParams.get("since"), who));
+    if (path === "/_matrix/client/v3/sync") {
+      const limit = JSON.parse(url.searchParams.get("filter") || "{}").room?.timeline?.limit;
+      return json(this.sync(url.searchParams.get("since"), who, { limit: this.limited ? limit : undefined }));
+    }
+    let h = path.match(/^\/_matrix\/client\/v3\/rooms\/([^/]+)\/messages$/);
+    if (h && req.method === "GET") return json(this.history(decodeURIComponent(h[1]), url.searchParams));
     if (path.startsWith("/_matrix/client/v3/keys/") || path.startsWith("/_matrix/client/v3/sendToDevice/")) return json(this.crypto(req.method, path, body, who));
     let a = path.match(/^\/_matrix\/client\/v3\/user\/([^/]+)\/account_data\/([^/]+)$/);
     if (a) {
@@ -288,12 +293,30 @@ export class FakeMatrix {
     return out;
   }
 
-  sync(since, who) {
+  // Older history, as /messages has it: newest first, before `from` (an
+  // index into events, as sync tokens are here).
+  history(room, q) {
+    const from = q.has("from") ? Number(q.get("from")) : this.events.length, limit = Number(q.get("limit") || 10);
+    const types = JSON.parse(q.get("filter") || "{}").types;
+    const before = this.events.map((e, i) => [e, i]).filter(([e, i]) => i < from && e.room === room && (!types || types.includes(e.event.type))).reverse().slice(0, limit);
+    const redacted = new Set(this.events.filter(e => e.event.type === "m.room.redaction").map(e => e.event.redacts));
+    const chunk = before.map(([e]) => {
+      const edit = this.events.filter(x => x.event.content?.["m.relates_to"]?.rel_type === "m.replace" && x.event.content["m.relates_to"].event_id === e.event.event_id).at(-1);
+      return { ...e.event, unsigned: { ...(redacted.has(e.event.event_id) ? { redacted_because: {} } : {}), ...(edit ? { "m.relations": { "m.replace": edit.event } } : {}) } };
+    });
+    this.requests.push(["history", room, from]);
+    return { chunk, start: String(from), ...(before.length ? { end: String(before.at(-1)[1]) } : {}), state: [] };
+  }
+
+  sync(since, who, { limit } = {}) {
     const from = since ? Number(since) : 0;
     const join = {}, leave = {};
     for (const [id, r] of this.rooms) {
       if (r.left) { if (from) leave[id] = { timeline: { events: [] } }; continue; }
-      const timeline = this.events.slice(from).filter(e => e.room === id).map(e => e.event);
+      const all = this.events.map((e, i) => [e, i]).slice(from).filter(([e]) => e.room === id);
+      // (Only the latest `limit` when asked, as a homeserver does, with where the rest begins.)
+      const shown = limit && all.length > limit ? all.slice(-limit) : all;
+      const timeline = shown.map(([e]) => e.event), prevBatch = String(shown[0]?.[1] ?? from);
       if (from && !timeline.length && !r.changed) continue;
       r.changed = false;
       const state = [];
@@ -305,7 +328,7 @@ export class FakeMatrix {
       for (const [mxid, name] of r.members) state.push({ type: "m.room.member", state_key: mxid, content: { membership: "join", displayname: name } });
       const ephemeral = { events: r.ephemeral ?? [] };
       r.ephemeral = [];
-      join[id] = { state: { events: state }, timeline: { events: timeline, limited: false }, ephemeral,
+      join[id] = { state: { events: state }, timeline: { events: timeline, limited: shown.length < all.length, prev_batch: prevBatch }, ephemeral,
         summary: { "m.heroes": [...r.members.keys()].filter(k => k !== this.user) } };
     }
     return this.syncCrypto(who, { next_batch: String(this.events.length), rooms: { join, leave } });

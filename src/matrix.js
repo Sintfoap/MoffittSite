@@ -32,6 +32,7 @@ export const ENCRYPTED_NOTE = "🔒 Encrypted message";
 // that names a room, and who's typing and has read what. No presence or
 // account data.
 const STATE_TYPES = ["m.room.name", "m.room.topic", "m.room.canonical_alias", "m.room.encryption", "m.room.member"];
+const HISTORY_TYPES = ["m.room.message", "m.room.encrypted", "m.reaction"];
 const filter = limit => JSON.stringify({
   presence: { not_types: ["*"] },
   account_data: { not_types: ["*"] },
@@ -175,7 +176,8 @@ export const matrix = {
   },
 
   // What changed since `cursor` (or recent history, the first time):
-  // {cursor, rooms: [{id, name?, fallback_name?, topic?, encrypted?, left?, events: [...]}]}.
+  // {cursor, rooms: [{id, name?, fallback_name?, topic?, encrypted?, left?, back?, events: [...]}]}.
+  // (back: where older history starts there, for history(); "" when there is none.)
   // name/topic are left out when this sync didn't say (fallback_name is
   // what to call a room with no name); events are
   //   {type: "message", id, sender, sender_name, mine, body, at, encrypted, reply?}
@@ -187,7 +189,12 @@ export const matrix = {
       since: cursor || undefined, timeout: "0", set_presence: "offline", filter: filter(cursor ? 50 : 20),
     } });
     const rooms = [];
-    for (const [id, r] of Object.entries(data.rooms?.join ?? {})) rooms.push(joinedRoom(id, r, creds.user_id));
+    for (const [id, r] of Object.entries(data.rooms?.join ?? {})) {
+      const out = joinedRoom(id, r, creds.user_id);
+      // The first sync's timeline, when it isn't cut short, is the room's whole history.
+      if (!cursor && r.timeline?.limited === false) out.back = "";
+      rooms.push(out);
+    }
     for (const id of Object.keys(data.rooms?.leave ?? {})) rooms.push({ id, left: true, events: [] });
     // For the browser holding this device's keys, if any.
     const crypto = {
@@ -254,6 +261,30 @@ export const matrix = {
     return out.event_id;
   },
 
+  // A page of a room's older history, before `from` (where a sync's timeline
+  // started, or the last page ended): {events, from} as sync has them, with
+  // from null at the room's start. An edit made since comes with its message.
+  async history(creds, roomId, from) {
+    const data = await call(creds.base, "GET", `/_matrix/client/v3/rooms/${room(roomId)}/messages`, { token: creds.token, query: {
+      dir: "b", from, limit: "40", filter: JSON.stringify({ lazy_load_members: true, types: HISTORY_TYPES }),
+    } });
+    const chunk = [...(data.chunk ?? [])].reverse();
+    const r = joinedRoom(roomId, { state: { events: data.state ?? [] }, timeline: { events: chunk } }, creds.user_id);
+    // Edits made since: the newest one rides along with the message.
+    for (const e of r.events) {
+      const ev = chunk.find(x => x.event_id === e.id);
+      const edit = e.type === "message" && ev?.unsigned?.["m.relations"]?.["m.replace"];
+      if (edit?.sender !== ev?.sender || !edit?.content) continue;
+      const at = Math.floor((edit.origin_server_ts ?? Date.now()) / 1000);
+      if (edit.type === "m.room.encrypted" && e.encrypted) Object.assign(e, { raw: JSON.stringify({ ...edit, room_id: roomId }), edited_at: at });
+      else if (edit.type === "m.room.message" && !e.encrypted) {
+        const body = textOf(edit.content["m.new_content"] ?? edit.content, e.sender_name);
+        if (body) Object.assign(e, { body, edited_at: at });
+      }
+    }
+    return { events: r.events.filter(e => e.type === "message" || e.type === "reaction"), from: data.end && data.end !== from && chunk.length ? data.end : null };
+  },
+
   // Deletes a message, or takes back a reaction (both are redactions).
   async remove(creds, roomId, eventId) {
     await call(creds.base, "PUT", `/_matrix/client/v3/rooms/${room(roomId)}/redact/${encodeURIComponent(eventId)}/${txn()}`,
@@ -301,7 +332,7 @@ export function reactionOf(e) {
 function joinedRoom(id, r, me) {
   const state = [...(r.state?.events ?? []), ...(r.timeline?.events ?? []).filter(e => e.state_key !== undefined)];
   const names = new Map();
-  const out = { id, events: [] };
+  const out = { id, events: [], ...(r.timeline?.prev_batch ? { back: r.timeline.prev_batch } : {}) };
   for (const e of state) {
     const c = e.content ?? {};
     if (e.type === "m.room.member" && c.displayname) names.set(e.state_key, String(c.displayname).slice(0, 80));

@@ -25,7 +25,7 @@ import { withRail } from "./pages.js";
 import { db, now } from "./db.js";
 import { sameOrigin } from "./account.js";
 import { randomBytes, hex, sha256 } from "./crypto.js";
-import { canBridge, bridgeInfo, listConnections, addConnection, removeConnection, syncConnection, syncAll, syncRoom, onPlatform, cryptoOp, ENCRYPTED_NOTE } from "./bridges.js";
+import { canBridge, bridgeInfo, listConnections, addConnection, removeConnection, syncConnection, syncAll, syncRoom, onPlatform, cryptoOp, backfill, ENCRYPTED_NOTE } from "./bridges.js";
 import { chatPushes } from "./notify.js";
 import { gifInfo, gifImageSources, gifSearch, gifCategories, favorites, favorite } from "./gifs.js";
 
@@ -249,7 +249,14 @@ export async function messages(env, user, roomId, { since, before } = {}) {
       ? d.prepare(`${MESSAGE} WHERE m.room = ? AND m.id < ? AND m.deleted = 0 ORDER BY m.id DESC LIMIT ?`).bind(room.id, before, LIMITS.page + 1)
       : d.prepare(`${MESSAGE} WHERE m.room = ? AND m.deleted = 0 ORDER BY m.id DESC LIMIT ?`).bind(room.id, LIMITS.page + 1);
     ({ results: rows } = await q.all());
-    more = rows.length > LIMITS.page;
+    // Run out of what's here in a bridge room: bring older messages in from the platform.
+    // (A few pages at most, since a page there can be all things already here.)
+    for (let i = 0; i < 3 && bridged(room) && before != null && rows.length <= LIMITS.page && room.ext_back !== ""; i++) {
+      await backfill(env, d, user, room);
+      ({ results: rows } = await q.all());
+      room = await getRoom(d, room.id);
+    }
+    more = rows.length > LIMITS.page || bridged(room) && room.ext_back !== "";
     rows = rows.slice(0, LIMITS.page).reverse();
   }
   if (member && member.read_seq < room.seq) {
@@ -746,7 +753,8 @@ const pageCsp = env => [
 const json = (obj, status = 200) =>
   new Response(JSON.stringify(obj), { status, headers: { "Content-Type": "application/json" } });
 
-const int = v => /^\d{1,15}$/.test(v ?? "") ? Number(v) : undefined;
+// (Messages from further back on another platform have ids below zero: bridges.js, backfill.)
+const int = v => /^-?\d{1,15}$/.test(v ?? "") ? Number(v) : undefined;
 
 export async function chat(request, env, user, pathname, ctx) {
   if (!pathname.startsWith("/chat/api/")) {

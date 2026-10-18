@@ -266,6 +266,47 @@ test("typing and read receipts go both ways", async () => {
   assert.equal(hs.receipts.at(-1)[2], hs.events.at(-1).event.event_id);
 });
 
+test("scrolling back past what's here brings older history in from Matrix", async () => {
+  const { env } = setup();
+  hs.limited = true;
+  const R = "!fam:matrix.test", sam = "@sam:matrix.test";
+  const first = hs.say(R, sam, "message 1");
+  for (let i = 2; i <= 30; i++) hs.say(R, sam, `message ${i}`);
+  hs.edit(R, sam, first, "message 1, edited");
+  hs.react(R, "@ryan:matrix.test", first, "👍");
+  hs.say(R, sam, "about the first", { "m.relates_to": { "m.in_reply_to": { event_id: first } } });
+  for (let i = 31; i <= 50; i++) hs.say(R, sam, `message ${i}`);
+  const ryan = await person(env, "ryan", "chat-bridges");
+  await connect(ryan);
+  const room = (await api(ryan, "GET", "/state")).json.rooms[0];
+  let page = (await api(ryan, "GET", `/rooms/${room.id}/messages`)).json;
+  assert.deepEqual(page.messages.map(m => m.body), Array.from({ length: 20 }, (_, i) => `message ${i + 31}`), "the first sync brings the latest 20");
+  assert.equal(page.more, true);
+  assert.equal(page.messages.every(m => m.id > 0), true);
+
+  // Scrolling back: older pages come from Matrix, in order, before what's here.
+  const older = (await api(ryan, "GET", `/rooms/${room.id}/messages?before=${page.messages[0].id}`)).json;
+  assert.ok(older.messages.length > 20);
+  assert.ok(older.messages.every(m => m.id < 0), "below everything else");
+  assert.deepEqual(older.messages.slice(-2).map(m => m.body), ["message 30", "about the first"], "right up to what was here");
+  let all = [...older.messages];
+  let more = older.more;
+  for (let i = 0; i < 5 && more; i++) {
+    const next = (await api(ryan, "GET", `/rooms/${room.id}/messages?before=${all[0].id}`)).json;
+    all = [...next.messages, ...all]; more = next.more;
+  }
+  assert.equal(more, false, "the room's start is reached");
+  const one = all.find(m => m.body.startsWith("message 1,"));
+  assert.equal(one.body, "message 1, edited", "with edits made since");
+  assert.ok(one.edited_at);
+  assert.deepEqual(one.reactions.map(r => [r.emoji, r.mine]), [["👍", true]]);
+  assert.equal(all.find(m => m.body === "about the first").reply.id, one.id);
+  assert.deepEqual(all.filter(m => /^message \d+$/.test(m.body)).map(m => Number(m.body.split(" ")[1])), Array.from({ length: 29 }, (_, i) => i + 2), "in order, once each");
+  // History isn't unread, and doesn't come to a poll as news.
+  assert.equal((await api(ryan, "GET", "/state")).json.rooms[0].unread, 0);
+  assert.equal((await api(ryan, "GET", `/rooms/${room.id}/messages?since=${page.seq}`)).json.messages.length, 0);
+});
+
 test("encrypted rooms come in as they are; a pasted token can't hold keys, so they stay read-only", async () => {
   const { env } = setup();
   hs.room("!secret:matrix.test", { encrypted: true, members: { "@ryan:matrix.test": "Ryan", "@kim:matrix.test": "Kim" } });

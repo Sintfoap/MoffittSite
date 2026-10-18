@@ -10,6 +10,8 @@
 //     edit(creds, room, message id, text)
 //     remove(creds, room, message id)        a message, or a reaction
 //     react(creds, room, message id, emoji) → the reaction's id
+//     history(creds, room, from) → {events, from}   (optional) older events, oldest
+//                                           first, as sync has them, and where to go on from (null: the start)
 //     typing(creds, room, on)               (optional) "typing…" there
 //     receipt(creds, room, message id)      (optional) read up to here
 //     disconnect(creds)                     undo whatever connect made there
@@ -257,6 +259,8 @@ async function applyRoom(env, d, conn, r, initial) {
           WHERE room = ? AND ext_id = ? AND deleted = 0`).bind(id, id, e.target));
     }
   }
+  // Where older history starts, the first time a sync says.
+  if (r.back !== undefined) stmts.push(d.prepare("UPDATE chat_rooms SET ext_back = ? WHERE id = ? AND ext_back IS NULL").bind(r.back, id));
   // Who's typing there, and how far people there have read.
   if (r.typing) stmts.push(d.prepare("UPDATE chat_rooms SET ext_typing = ?, ext_typing_at = ? WHERE id = ?").bind(JSON.stringify(r.typing), t, id));
   for (const rc of r.receipts ?? []) {
@@ -269,6 +273,38 @@ async function applyRoom(env, d, conn, r, initial) {
     stmts.push(d.prepare("UPDATE chat_members SET read_seq = (SELECT seq FROM chat_rooms WHERE id = ?) WHERE room = ? AND user_id = ?").bind(id, id, conn.user_id));
   }
   if (stmts.length) await d.batch(stmts);
+}
+
+// Brings in a page of a bridge room's older history, from before anything
+// here, when you scroll back past it. Those messages take ids below every
+// other (counting down from 0), so they sort before what's already here.
+// They're history, so they're neither unread nor news to a poll.
+export async function backfill(env, d, user, room) {
+  const got = await onPlatform(env, d, user, room, (p, creds) => p.history?.(creds, room.ext_id, room.ext_back || undefined));
+  if (got.error || !got.ok) return 0;
+  const { events, from } = got.ok, id = room.id;
+  const nextId = "(SELECT MIN(COALESCE(MIN(id), 0), 0) - 1 FROM chat_messages)";
+  const stmts = [];
+  // Newest first, so the oldest ends up lowest.
+  const msgs = events.filter(e => e.type === "message").reverse();
+  for (const e of msgs) {
+    stmts.push(d.prepare(`INSERT OR IGNORE INTO chat_messages (id, room, user_id, body, seq, posted_seq, created_at, ext_id, ext_sender, ext_name, encrypted, ext_raw, edited_at)
+      SELECT ${nextId}, ?, ?, ?, 0, 0, ?, ?, ?, ?, ?, ?, ?`)
+      .bind(id, e.mine ? user.id : "", e.body, e.at, e.id, e.sender, e.sender_name, e.encrypted ? 1 : 0, e.raw ?? null, e.edited_at ?? null));
+  }
+  // Then what refers to them: replies, and reactions.
+  for (const e of msgs.filter(e => e.reply)) {
+    stmts.push(d.prepare(`UPDATE chat_messages SET reply_to = (SELECT id FROM chat_messages WHERE room = ? AND ext_id = ?)
+      WHERE room = ? AND ext_id = ? AND reply_to IS NULL`).bind(id, e.reply, id, e.id));
+  }
+  for (const e of events.filter(e => e.type === "reaction")) {
+    stmts.push(d.prepare(`INSERT OR IGNORE INTO chat_reactions (message, user_id, emoji, created_at, ext_id, ext_name)
+      SELECT id, ?, ?, ?, ?, ? FROM chat_messages WHERE room = ? AND ext_id = ? AND deleted = 0`)
+      .bind(e.mine ? user.id : "~" + e.sender, e.key, e.at, e.id, e.sender_name, id, e.target));
+  }
+  stmts.push(d.prepare("UPDATE chat_rooms SET ext_back = ? WHERE id = ?").bind(from ?? "", id));
+  await d.batch(stmts);
+  return msgs.length;
 }
 
 async function dropRoom(d, id) {
