@@ -202,6 +202,17 @@ const SCHEMA = [
      PRIMARY KEY (room, user_id)
    )`,
   `CREATE INDEX IF NOT EXISTS chat_presence_user ON chat_presence (user_id, seen_at)`,
+  // Each account's starred GIFs for the chat GIF picker (src/gifs.js).
+  `CREATE TABLE IF NOT EXISTS chat_gif_favorites (
+     user_id  TEXT NOT NULL,
+     url      TEXT NOT NULL,                       -- the GIF that's sent
+     preview  TEXT NOT NULL,                       -- a smaller one for the picker
+     width    INTEGER,
+     height   INTEGER,
+     title    TEXT NOT NULL DEFAULT '',
+     added_at INTEGER NOT NULL,
+     PRIMARY KEY (user_id, url)
+   )`,
   // Push notifications (src/notify.js). A device is one browser's push
   // subscription; it belongs to whoever turned notifications on in it last.
   `CREATE TABLE IF NOT EXISTS push_devices (

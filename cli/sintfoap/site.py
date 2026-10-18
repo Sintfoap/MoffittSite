@@ -406,6 +406,27 @@ def chat_leave(room: str) -> dict:
     return api("POST", f"/chat/api/rooms/{_q(room)}/leave")
 
 
+def chat_gifs(q: str = "", pos: str | None = None) -> dict:
+    """{results: [{id, title, url, preview, width, height}], next}: a GIF search, or what's trending without q."""
+    return _get(f"/chat/api/gifs?q={_q(q)}" + (f"&pos={_q(pos)}" if pos else ""))
+
+
+def chat_gif_categories() -> dict:
+    """{categories: [{name, query, preview}]}: the GIF picker's categories."""
+    return _get("/chat/api/gifs/categories")
+
+
+def chat_gif_favorites() -> dict:
+    """{favorites: [{url, preview, width, height, title}]}: your starred GIFs, newest first."""
+    return _get("/chat/api/gifs/favorites")
+
+
+def chat_gif_favorite(gif: dict, on: bool = True) -> dict:
+    """Stars a GIF (or with on=False takes the star off); the same as chat_gif_favorites() after."""
+    keep = {k: gif.get(k) for k in ("url", "preview", "width", "height", "title") if gif.get(k) is not None}
+    return api("POST", "/chat/api/gifs/favorites", {"gif": keep, "on": bool(on)})
+
+
 # ──────────────────────────────── admin ─────────────────────────────────────
 # /admin/api/access (src/account.js); admins only.
 

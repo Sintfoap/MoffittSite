@@ -27,6 +27,7 @@ import { sameOrigin } from "./account.js";
 import { randomBytes, hex, sha256 } from "./crypto.js";
 import { canBridge, bridgeInfo, listConnections, addConnection, removeConnection, syncConnection, syncAll, syncRoom, onPlatform, cryptoOp, ENCRYPTED_NOTE } from "./bridges.js";
 import { chatPushes } from "./notify.js";
+import { gifInfo, gifImageSources, gifSearch, gifCategories, favorites, favorite } from "./gifs.js";
 
 export class BadRequest extends Error {}
 const fail = msg => { throw new BadRequest(msg); };
@@ -651,14 +652,19 @@ export async function deleteMessage(env, user, roomId, messageId) {
 //   POST   /chat/api/connections/<id>/crypto/claim    {key}   this browser holds the encryption keys → {device}
 //   POST   /chat/api/connections/<id>/crypto/inbox    {key, ack?}   what syncs brought for the keys → {items, counts}
 //   POST   /chat/api/connections/<id>/crypto/request  {key, method, path, body?}   a key request, passed on → {response}
+//   GET    /chat/api/gifs[?q=<text>&pos=<next>]     GIFs for the picker: a search, or what's trending → {results, next}
+//   GET    /chat/api/gifs/categories                the picker's category tiles
+//   GET    /chat/api/gifs/favorites                 your starred GIFs
+//   POST   /chat/api/gifs/favorites                 {gif, on}   star a GIF, or take the star off
 
-const ROUTE = /^\/chat\/api\/(state|people|dms|rooms|connections)(?:\/([^/]+)(?:\/(join|leave|members|messages|search|typing|sync|crypto)(?:\/([^/]+)(?:\/(reactions))?)?)?)?\/?$/;
+const ROUTE = /^\/chat\/api\/(state|people|dms|rooms|connections|gifs)(?:\/([^/]+)(?:\/(join|leave|members|messages|search|typing|sync|crypto)(?:\/([^/]+)(?:\/(reactions))?)?)?)?\/?$/;
 
 // Messages are shown as text, never as HTML, and the page loads nothing from
-// elsewhere except fonts. (WebAssembly is for the encryption library.)
-const PAGE_CSP = [
+// elsewhere except fonts and GIFs from the GIF hosts (src/gifs.js).
+// (WebAssembly is for the encryption library.)
+const pageCsp = env => [
   "default-src 'none'", "script-src 'self' 'wasm-unsafe-eval'", "connect-src 'self'", "style-src 'unsafe-inline' https://fonts.googleapis.com",
-  "font-src https://fonts.gstatic.com", "img-src 'self' data:", "manifest-src 'self'", "form-action 'self'", "frame-ancestors 'none'", "base-uri 'none'",
+  "font-src https://fonts.gstatic.com", ["img-src 'self' data:", ...gifImageSources(env)].join(" "), "manifest-src 'self'", "form-action 'self'", "frame-ancestors 'none'", "base-uri 'none'",
 ].join("; ");
 
 const json = (obj, status = 200) =>
@@ -671,7 +677,7 @@ export async function chat(request, env, user, pathname, ctx) {
     const asset = await withRail(await env.ASSETS.fetch(request), user, "chat");
     const res = new Response(asset.body, asset);
     if ((res.headers.get("Content-Type") || "").startsWith("text/html")) {
-      res.headers.set("Content-Security-Policy", PAGE_CSP);
+      res.headers.set("Content-Security-Policy", pageCsp(env));
       res.headers.set("X-Content-Type-Options", "nosniff");
     }
     return res;
@@ -704,7 +710,20 @@ export async function chat(request, env, user, pathname, ctx) {
         online: await onlineNow(await db(env)),
         reactions: REACTIONS,
         bridges: bridgeInfo(env, user),
+        gifs: gifInfo(env),
       });
+    }
+    if (kind === "gifs") {
+      if (sub) return notFound();
+      if (id === "favorites") {
+        if (method === "GET") return json(await favorites(env, user));
+        return method === "POST" ? reply(await favorite(env, user, await readJson(request), fail)) : notAllowed();
+      }
+      if (method !== "GET") return notAllowed();
+      if (id === "categories") return reply(await gifCategories(env));
+      if (id) return notFound();
+      const q = new URL(request.url).searchParams;
+      return reply(await gifSearch(env, user, { q: q.get("q"), pos: q.get("pos") }));
     }
     if (kind === "connections") {
       if (!canBridge(user)) return json({ error: "connections to other platforms aren't turned on for your account" }, 403);

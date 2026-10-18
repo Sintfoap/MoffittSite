@@ -14,7 +14,7 @@ public/          the website, served as static files
     plugins/         Checklist, Events, List, Graph; one file each
   plugins/         the plugin store page (signed-in Drift users)
   sandbox/         the frame store plugins run in
-  chat/            chat rooms (signed-in Drift users)
+  chat/            chat rooms (signed-in Drift users); gifs.js is the GIF picker
   notifications/   turning push notifications on, and what they're for
   sw.js            the service worker that shows push notifications
   site.webmanifest, icons/   so the site can be added to a phone's home screen
@@ -31,6 +31,7 @@ src/             the Worker: runs only for the paths in run_worker_first
   drift.js         Drift storage: collections and items per account
   store.js         the plugin store: drafts, review queue, approved plugins
   chat.js          chat: rooms, members, messages
+  gifs.js          chat's GIF picker: search, trending and categories from KLIPY, and favorites
   push.js          sending Web Push: encryption (RFC 8291) and VAPID signing, with WebCrypto
   notify.js        notifications: settings, browsers, Chat's pushes and Drift's reminders
   bridges.js       chat connections: other platforms' rooms in chat, with sealed credentials
@@ -229,6 +230,7 @@ A store plugin's view can return HTML from `render(ctx)`, or be interactive like
 - **Messages:** plain text up to 2,000 characters, shown with web links clickable and nothing else formatted. You can edit and delete your own (an edited message says so); a room's owner and admins can delete anyone's. Ten messages per ten seconds per person, at most. On the page, `↑` in an empty message box edits your last message.
 - **Mentions:** `@username` in a message mentions that person. It's highlighted for them, and the room shows `@` in their room list until they read it. Typing `@` offers the room's members to pick from.
 - **Reactions:** members react to a message with one of 👍 ❤️ 😂 🎉 😮 😢 👀 🙏; each shows a count, and hovering shows who.
+- **GIFs:** the **GIF** button by the message box (or `Ctrl+G`) opens a picker modelled on Discord's. Before you type it shows tiles for your **Favorites**, **Trending GIFs** and categories; typing searches as you go, in two columns that load more as you scroll. Clicking a GIF sends it (shift-click keeps the picker open), and the star on each one keeps it in your favorites; GIFs in the chat have a ★ too. Arrow keys move around the grid and Enter sends. In the terminal, `ctrl+g` or `/gif [text]` opens the same picker as a list, and `/star` stars the last GIF in the room. See [GIFs](#gifs).
 - **Updates:** the page asks for new messages every 2.5 seconds while it's visible and refreshes the room list every 15. Every change in a room (a new, edited or deleted message, or a reaction) takes the room's next `seq` number, so asking for what changed since a number catches all of them. Rooms and messages are in D1 like everything else, so no extra Cloudflare setup is needed.
 - **Deleting an account** removes its messages, reactions and memberships. Rooms it made stay, for admins to manage.
 
@@ -252,6 +254,10 @@ A store plugin's view can return HTML from `render(ctx)`, or be interactive like
 | PATCH | `/chat/api/rooms/<id>/messages/<message id>` | `{body}` (author), or `{encrypted}` as above, an `m.replace` edit of that message |
 | DELETE | `/chat/api/rooms/<id>/messages/<message id>` | (author, room owner or admin) |
 | POST | `/chat/api/rooms/<id>/messages/<message id>/reactions` | `{emoji, on}`: add (`true`) or take back (`false`) a reaction (members) |
+| GET | `/chat/api/gifs` | `?q=<text>&pos=<next>`: a GIF search, or what's trending without `q` → `{results, next}` |
+| GET | `/chat/api/gifs/categories` | (the picker's category tiles) |
+| GET | `/chat/api/gifs/favorites` | (your starred GIFs, newest first) |
+| POST | `/chat/api/gifs/favorites` | `{gif: {url, preview, width, height, title}, on}`: star a GIF, or take the star off |
 | GET | `/chat/api/connections` | (your connections to other platforms; needs Chat connections) |
 | POST | `/chat/api/connections` | `{provider, ...its fields}`, e.g. `{provider: "matrix", homeserver, token}`: connect, and sync once |
 | DELETE | `/chat/api/connections/<id>` | remove it and its rooms |
@@ -259,6 +265,15 @@ A store plugin's view can return HTML from `render(ctx)`, or be interactive like
 | POST | `/chat/api/connections/<id>/crypto/claim` | `{key}`: this browser holds the connection's encryption keys (only if no other does) → `{device}` |
 | POST | `/chat/api/connections/<id>/crypto/inbox` | `{key, ack}`: what syncs brought for the keys, after taking back up to `ack` → `{items, counts}` |
 | POST | `/chat/api/connections/<id>/crypto/request` | `{key, method, path, body}`: one of the key requests encryption needs, passed on to Matrix → `{response}` |
+
+### GIFs
+
+GIFs come from [KLIPY](https://klipy.com), the service Discord moved to when Google shut down Tenor's API in June 2026, through KLIPY's Tenor-compatible API (`/v2/search`, `/v2/featured`, `/v2/categories`; `src/gifs.js`). The browser never talks to KLIPY's API: the site asks on its behalf, so the key stays on the server.
+
+- **Turning it on:** get an API key from KLIPY's partner panel (partner.klipy.com → API Keys), then **Workers & Pages → moffittsite → Settings → Variables and Secrets → Add**, type **Secret**, name `GIF_API_KEY`. Without it the GIF button is hidden and the terminal says GIFs aren't set up. `GIF_API_BASE` (a variable) points it at another service with the same API, and `GIF_HOSTS` changes where GIFs may be shown from (default `klipy.com tenor.com giphy.com` and their subdomains).
+- **Sending** a GIF posts an ordinary message whose whole text is the GIF's link, so it counts toward the message rate, can be deleted like any message, and reaches Matrix rooms and the terminal as a link. The chat page shows a message like that as the picture, but only for `https` links to `.gif` or `.webp` files on `GIF_HOSTS`. The page's CSP lets it load pictures from those hosts and nowhere else, and they're loaded without a referrer.
+- **Favorites** are kept per account in D1 (up to 200), so the web page and the terminal share them. Deleting an account deletes them.
+- Search results use KLIPY's `medium` content filter.
 
 ### Connections to other platforms
 

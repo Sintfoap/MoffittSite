@@ -42,6 +42,8 @@
   // account claim admin while there is none. See README.
   // CHAT_BRIDGE_KEY, also a secret, encrypts the tokens people give Chat to
   // connect their other chat platforms (Matrix). Without it connections are off.
+  // GIF_API_KEY, also a secret, is a KLIPY API key (partner.klipy.com) for chat's
+  // GIF picker. Without it the picker is off. See src/gifs.js.
 
   // Branch builds run `wrangler preview`, which takes its settings from here.
   // Previews have no database, so signing in there fails closed.

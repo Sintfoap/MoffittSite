@@ -161,6 +161,48 @@ mark { background: var(--gold); color: var(--on-gold); }
 .composer textarea { flex: 1; min-width: 0; resize: none; max-height: 160px; padding: 8px 11px; line-height: 1.5;
   background: var(--field); border: 1px solid var(--line-2); border-radius: 0; color: var(--ink); }
 .composer textarea:focus { outline: 2px solid var(--gold); outline-offset: 1px; }
+
+/* GIFs: the button by the message line, the picker over it (after Discord's), and GIFs in the log */
+.gif-btn { align-self: stretch; padding: 0 10px; border: 1px solid var(--line-2); background: var(--field); color: var(--muted); cursor: pointer;
+  font: 700 11.5px var(--mono); letter-spacing: 1px; }
+.gif-btn:hover, .gif-btn[aria-expanded="true"] { color: var(--gold); border-color: var(--gold); }
+.gifs { position: absolute; right: 18px; bottom: calc(100% - 6px); z-index: 4; width: min(440px, calc(100% - 36px)); height: min(460px, 62vh);
+  display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--line-2); box-shadow: 0 12px 32px rgb(0 0 0 / .35); }
+.gif-head { display: flex; align-items: center; gap: 6px; padding: 10px; border-bottom: 1px dashed var(--line); }
+.gif-head input { flex: 1; min-width: 0; padding: 7px 10px; background: var(--field); border: 1px solid var(--line-2); border-radius: 0; color: var(--ink); }
+.gif-head input:focus { outline: 2px solid var(--gold); outline-offset: 1px; }
+.gif-back { font-size: 16px !important; }
+.gif-title { flex: 1; font-weight: 700; padding: 7px 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gif-body { flex: 1; min-height: 0; overflow-y: auto; padding: 8px; scrollbar-color: var(--line) transparent; }
+.gif-body:focus { outline: none; }
+.gif-foot { padding: 4px 10px; font-size: 10.5px; letter-spacing: 1px; color: var(--faint); text-align: right; border-top: 1px dashed var(--line); }
+.gif-tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.gif-tile { position: relative; height: 104px; padding: 0; border: 0; overflow: hidden; cursor: pointer; background: var(--gold-soft); }
+.gif-tile img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.gif-tile::after { content: ""; position: absolute; inset: 0; background: rgb(0 0 0 / .5); transition: background .15s; }
+.gif-tile:hover::after, .gif-tile:focus-visible::after { background: rgb(0 0 0 / .25); }
+.gif-tile span { position: absolute; inset: 0; z-index: 1; display: grid; place-items: center; padding: 6px; color: #fff; font-weight: 700; text-align: center; text-shadow: 0 1px 3px #000; text-transform: capitalize; }
+.gif-tile.fav span { color: #f5d77e; }
+.gif-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; align-items: start; }
+.gif-col { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.gif-cell { position: relative; width: 100%; background: var(--gold-soft); }
+.gif-item { display: block; width: 100%; height: 100%; padding: 0; border: 0; background: none; cursor: pointer; }
+.gif-item img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.gif-item:focus-visible { outline: 2px solid var(--gold); outline-offset: -2px; }
+.gif-cell:hover .gif-item img { filter: brightness(1.08); }
+.gif-star { position: absolute; top: 4px; right: 4px; width: 28px; height: 28px; border: 0; background: rgb(0 0 0 / .55); color: #fff; font-size: 15px; cursor: pointer; opacity: 0; transition: opacity .12s; }
+.gif-cell:hover .gif-star, .gif-star:focus-visible, .gif-star[aria-pressed="true"] { opacity: 1; }
+.gif-star[aria-pressed="true"] { color: #f5d77e; }
+.gif-ghost { display: block; height: 110px; background: var(--gold-soft); animation: blink 1.4s infinite; }
+.gif-ghost:nth-child(even) { height: 150px; }
+.gif-ghost.tile { height: 104px; }
+.gif-empty { padding: 40px 16px; text-align: center; color: var(--muted); }
+.gif-empty b { display: block; color: var(--ink); margin-bottom: 4px; }
+.gif-more { padding: 10px; text-align: center; font-size: 12px; color: var(--faint); }
+.gif-msg { display: inline-block; margin: 3px 0; }
+.gif-msg img { display: block; max-width: min(300px, 100%); max-height: 260px; border: 1px solid var(--line); }
+.msg .star.on { color: var(--gold); }
+@media (prefers-reduced-motion: reduce) { .gif-ghost { animation: none; } }
 .joinbar { display: flex; gap: 14px; align-items: center; justify-content: center; flex-wrap: wrap; padding: 14px 18px 16px; border-top: 1px dashed var(--line); color: var(--muted); font-size: 13px; }
 .verifybar { padding-top: 10px; padding-bottom: 10px; }
 .verify-form { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; justify-content: center; width: 100%; }
@@ -221,6 +263,7 @@ dialog .wrap { padding: 22px 24px; display: flex; flex-direction: column; gap: 4
   .msg { padding-right: 0; }
   .msg .acts { visibility: visible; position: static; justify-content: flex-end; }
   .msg.ping { margin-left: -6px; padding-left: 4px; }
+  .gifs { right: 8px; width: calc(100% - 16px); height: min(460px, 70dvh); }
   .toast { bottom: 18px; }
 }
 </style>
@@ -301,7 +344,7 @@ dialog .wrap { padding: 22px 24px; display: flex; flex-direction: column; gap: 4
 </dialog>
 
 <div class="toast" id="toast" role="status" hidden></div>
-<footer class="keybar" aria-label="Keyboard shortcuts"><span><kbd>n</kbd>New room</span><span><kbd>m</kbd>Message someone</span><span id="key-k" hidden><kbd>k</kbd>Connections</span><span><kbd>f</kbd>Search</span><span><kbd>/</kbd>Message</span><span><kbd>↵</kbd>Send</span><span><kbd>⇧↵</kbd>New line</span><span><kbd>↑</kbd>Edit last</span><span><kbd>@</kbd>Mention</span><span><kbd>esc</kbd>Rooms</span><span><kbd>g</kbd>then a key from the menu to jump</span><a class="end" href="/logout" data-key="o"><kbd>g o</kbd>Sign out</a></footer>
+<footer class="keybar" aria-label="Keyboard shortcuts"><span><kbd>n</kbd>New room</span><span><kbd>m</kbd>Message someone</span><span id="key-k" hidden><kbd>k</kbd>Connections</span><span><kbd>f</kbd>Search</span><span><kbd>/</kbd>Message</span><span id="key-gif" hidden><kbd>ctrl G</kbd>GIFs</span><span><kbd>↵</kbd>Send</span><span><kbd>⇧↵</kbd>New line</span><span><kbd>↑</kbd>Edit last</span><span><kbd>@</kbd>Mention</span><span><kbd>esc</kbd>Rooms</span><span><kbd>g</kbd>then a key from the menu to jump</span><a class="end" href="/logout" data-key="o"><kbd>g o</kbd>Sign out</a></footer>
 <script src="/keys.js" defer></script>
 <script type="module" src="/chat/app.js"></script>
 </body>

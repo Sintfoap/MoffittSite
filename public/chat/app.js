@@ -9,6 +9,7 @@
 // rooms are decrypted and encrypted here, in this browser (e2ee.js).
 
 import { Vault, textOf, textContent, editContent } from "/chat/e2ee.js";
+import { setupGifs, gifsReady, isGifMessage, gifMessageHtml, isFavorite, toggleFavorite, isOpen as gifsOpen, toggleGifs, closeGifs, onGifClick, onGifInput, onGifKey } from "/chat/gifs.js";
 
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -107,6 +108,10 @@ async function loadRooms() {
   const s = await api("GET", "/state");
   me = s.user; rooms = s.rooms; reactions = s.reactions || []; online = new Set(s.online || []);
   bridges = s.bridges || { allowed: false };
+  setupGifs(s.gifs, { api, send: sendMessage, toast });
+  const gifButton = $("#gif-open");
+  if (gifButton) gifButton.hidden = !gifsReady();
+  $("#key-gif").hidden = !gifsReady();
   $("#connections-open").hidden = $("#key-k").hidden = !bridges.allowed;
   renderRooms();
   const shown = open && rooms.find(r => r.id === open.id), count = $("#show-members");
@@ -204,8 +209,10 @@ function renderRoomShell(room) {
       ? `<form class="composer" id="composer">
           <span class="prompt" aria-hidden="true">&gt;</span>
           <textarea id="text" rows="1" maxlength="2000" placeholder="Message ${esc(roomTitle(room))}" aria-label="Message" autocomplete="off"></textarea>
+          <button class="gif-btn" type="button" id="gif-open" aria-label="GIFs (Ctrl+G)" title="GIFs (Ctrl+G)" aria-haspopup="dialog" aria-expanded="false"${gifsReady() ? "" : " hidden"}>GIF</button>
           <button class="btn" type="submit">Send</button>
           <ul class="suggest" id="suggest" role="listbox" aria-label="People to mention" hidden></ul>
+          <div class="gifs" id="gifs" role="dialog" aria-label="GIFs" hidden></div>
         </form>`
       : `<div class="joinbar">You're looking at this room. Join it to post. <button class="btn" id="join">Join room</button></div>`}`;
 }
@@ -258,9 +265,10 @@ function messageHtml(m) {
   const canReact = open.joined && !m.pending && !open.bridge;
   const picker = pickerFor === m.id
     ? `<div class="picker" role="menu">${reactions.map(e => `<button class="link" data-react="${esc(e)}" data-mid="${m.id}" role="menuitem">${esc(e)}</button>`).join("")}</div>` : "";
-  return `<div class="text" title="${esc(time(m.created_at))}">${linkify(m.body)}${m.edited_at ? `<span class="edited" title="Edited ${esc(time(m.edited_at))}"> (edited)</span>` : ""}</div>
+  const gif = !m.deleted && isGifMessage(m.body);
+  return `<div class="text" title="${esc(time(m.created_at))}">${gif ? gifMessageHtml(m) : linkify(m.body)}${m.edited_at ? `<span class="edited" title="Edited ${esc(time(m.edited_at))}"> (edited)</span>` : ""}</div>
     ${chips || picker ? `<div class="reacts">${chips}${picker}</div>` : ""}
-    <div class="acts">${canReact ? `<button class="link" data-pick="${m.id}" aria-label="React">React</button>` : ""}${m.can_edit && !m.pending ? `<button class="link" data-editmsg="${m.id}">Edit</button>` : ""}${m.can_delete ? `<button class="link del" data-del="${m.id}" aria-label="Delete message">Delete</button>` : ""}</div>`;
+    <div class="acts">${gif && gifsReady() && !m.pending ? `<button class="link star${isFavorite(m.body.trim()) ? " on" : ""}" data-favgif="${m.id}" aria-label="${isFavorite(m.body.trim()) ? "Remove GIF from favorites" : "Add GIF to favorites"}">★</button>` : ""}${canReact ? `<button class="link" data-pick="${m.id}" aria-label="React">React</button>` : ""}${m.can_edit && !m.pending ? `<button class="link" data-editmsg="${m.id}">Edit</button>` : ""}${m.can_delete ? `<button class="link del" data-del="${m.id}" aria-label="Delete message">Delete</button>` : ""}</div>`;
 }
 
 function renderLog({ toBottom = false, keepFrom = null } = {}) {
@@ -319,8 +327,16 @@ async function pollRoom() {
 
 $("#room").addEventListener("click", async e => {
   const t = e.target;
+  if (t.closest("#gifs")) return onGifClick(e);
   try {
-    if (t.id === "back") closeRoom();
+    if (t.id === "gif-open") toggleGifs();
+    else if (t.closest("[data-favgif]")) {
+      const m = open.messages.get(Number(t.closest("[data-favgif]").dataset.favgif)), img = t.closest(".msg")?.querySelector(".gif-msg img");
+      const on = await toggleFavorite({ url: m.body.trim(), width: img?.naturalWidth || null, height: img?.naturalHeight || null });
+      toast(on ? "Added to your favorite GIFs." : "Removed from your favorite GIFs.");
+      renderLog();
+    }
+    else if (t.id === "back") closeRoom();
     else if (t.id === "join") { await api("POST", `/rooms/${open.id}/join`); await loadRooms(); await openRoom(open.id); }
     else if (t.id === "leave") {
       if (!confirm("Leave this room? You can join again any time.")) return;
@@ -422,12 +438,19 @@ $("#room").addEventListener("submit", async e => {
   e.preventDefault();
   const box = $("#text"), body = box.value.trim();
   if (!body || !open) return;
+  box.value = ""; grow(box);
+  sendMessage(body, { box });
+});
+
+// Sends a message to the open room. `box` gets the text back if it fails.
+// (The GIF picker sends through here too, leaving the message line alone.)
+async function sendMessage(body, { box = null } = {}) {
+  if (!open) return;
   const id = open.id;
   // Shown straight away, then swapped for the real one.
   typingSent = 0;
   const temp = { id: Number.MAX_SAFE_INTEGER + tempId--, body, created_at: Math.floor(Date.now() / 1000), author: me.username, author_name: me.name, mine: true, pending: true };
   open.messages.set(temp.id, temp);
-  box.value = ""; grow(box);
   renderLog({ toBottom: true });
   try {
     const room = rooms.find(r => r.id === id);
@@ -439,14 +462,15 @@ $("#room").addEventListener("submit", async e => {
     open.messages.set(m.id, m);
     renderLog({ toBottom: true });
   } catch (err) {
-    if (open?.id === id) { open.messages.delete(temp.id); renderLog(); if (!box.value) { box.value = body; grow(box); } }
+    if (open?.id === id) { open.messages.delete(temp.id); renderLog(); if (box?.isConnected && !box.value) { box.value = body; grow(box); } }
     toast(err.message);
   }
-});
+}
 
 // Enter sends; Shift+Enter starts a new line; ↑ in an empty box edits your
 // last message. While an @name is being typed, ↑/↓ pick and Tab or Enter fills it in.
 $("#room").addEventListener("keydown", e => {
+  if (onGifKey(e)) return;
   const box = e.target;
   if (box.id === "text" && !$("#suggest").hidden) {
     if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); moveSuggest(e.key === "ArrowDown" ? 1 : -1); return; }
@@ -464,9 +488,16 @@ $("#room").addEventListener("keydown", e => {
     else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); stopEdit(); }
   } else if (e.key === "Escape" && pickerFor != null) { e.stopPropagation(); pickerFor = null; renderLog(); }
 });
+// A GIF that finishes loading at the bottom of the log keeps the log at the bottom.
+$("#room").addEventListener("load", e => {
+  const log = $("#log");
+  if (!e.target.matches?.(".gif-msg img") || !log) return;
+  if (log.scrollHeight - log.scrollTop - log.clientHeight - e.target.offsetHeight < 80) log.scrollTop = log.scrollHeight;
+}, true);
 const grow = box => { box.style.height = "auto"; box.style.height = Math.min(box.scrollHeight + 2, 160) + "px"; };
 let typingSent = 0;
 $("#room").addEventListener("input", e => {
+  if (onGifInput(e)) return;
   if (e.target.id === "text") {
     grow(e.target); suggest(e.target);
     // Let the others know, at most every few seconds.
@@ -510,6 +541,7 @@ $("#room").addEventListener("mousedown", e => {
   if (li) { e.preventDefault(); pickSuggest(Number(li.dataset.i)); }
 });
 document.addEventListener("click", e => {
+  if (gifsOpen() && e.target.isConnected && !e.target.closest("#gifs, #gif-open")) closeGifs({ focus: false });
   if (pickerFor != null && !e.target.closest(".picker, [data-pick]")) { pickerFor = null; renderLog(); }
 });
 
@@ -643,6 +675,11 @@ $("#new").addEventListener("click", () => editRoom());
 
 // The key bar's keys: n new room, / the message line, esc back to the room list.
 document.addEventListener("keydown", e => {
+  // Ctrl+G opens and closes the GIF picker, as in Discord.
+  if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "g" && $("#composer") && gifsReady() && !document.querySelector("dialog[open]")) {
+    e.preventDefault(); toggleGifs(); return;
+  }
+  if (gifsOpen() && !e.defaultPrevented && onGifKey(e)) return;
   if (e.metaKey || e.ctrlKey || e.altKey || document.querySelector("dialog[open]")) return;
   const typing = e.target.matches?.("input, textarea");
   if (e.defaultPrevented) return;
