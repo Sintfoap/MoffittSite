@@ -55,7 +55,7 @@ Checkbox:focus > .toggle--label {{ text-style: underline; background: {BG} 0%; }
 Checkbox > .toggle--button {{ background: {FIELD}; color: {FIELD}; }}
 Checkbox.-on > .toggle--button {{ color: {GOLD}; }}
 Label.lbl {{ color: {MUTED}; margin-top: 1; }}
-VerticalScroll, OptionList {{ scrollbar-size-vertical: 1; scrollbar-background: {BG}; scrollbar-color: {LINE}; scrollbar-color-hover: {GOLD_DIM}; scrollbar-color-active: {GOLD}; }}
+VerticalScroll, OptionList, ListView {{ scrollbar-size-vertical: 1; scrollbar-background: {BG}; scrollbar-color: {LINE}; scrollbar-color-hover: {GOLD_DIM}; scrollbar-color-active: {GOLD}; }}
 OptionList {{ background: {BG}; border: none; padding: 0; }}
 OptionList:focus {{ border: none; background-tint: {BG} 0%; }}
 OptionList > .option-list--option-highlighted {{ background: {PANEL}; text-style: none; }}
