@@ -1,9 +1,13 @@
 // GIFs for chat, after Discord's picker: search, trending, categories and
-// favorites. They come from KLIPY, the provider Discord moved to when
-// Google closed Tenor's API, through KLIPY's Tenor-compatible API (v2:
-// /search, /featured, /categories). The API key stays here on the server
-// (the GIF_API_KEY secret); without it the picker is off. GIF_API_BASE
-// points it somewhere else that speaks the same API.
+// favorites, from one of two services. The site asks them, so the API key
+// stays here on the server; without a key the picker is off.
+//
+//   GIPHY (the GIPHY_API_KEY secret): its own API, /v1/gifs/search, /trending
+//     and /categories. Used whenever that key is set.
+//   KLIPY (the GIF_API_KEY secret): the provider Discord moved to when Google
+//     closed Tenor's API, through KLIPY's Tenor-compatible API (v2: /search,
+//     /featured, /categories). GIF_API_BASE points it somewhere else that
+//     speaks the same API.
 //
 // A GIF is sent as an ordinary message whose whole text is the GIF's link,
 // so it reaches other platforms (Matrix, …) and the terminal as a link. The
@@ -14,14 +18,12 @@
 
 import { db, now } from "./db.js";
 
-const BASE = "https://api.klipy.com/v2";
 // Hosts (and their subdomains) that GIFs are shown from.
 const HOSTS = "klipy.com tenor.com giphy.com";
 const PAGE = 30, MAX_Q = 100, MAX_FAVORITES = 200, MAX_URL = 500, MAX_TITLE = 140;
 const TIMEOUT = 8000;
 
 export const gifHosts = env => String(env.GIF_HOSTS || HOSTS).split(/[\s,]+/).filter(Boolean).map(h => h.toLowerCase());
-export const gifsReady = env => !!env.GIF_API_KEY;
 
 // For the chat page's CSP: where its pictures may come from.
 export const gifImageSources = env => gifHosts(env).flatMap(h => [`https://${h}`, `https://*.${h}`]);
@@ -36,67 +38,107 @@ export function isGif(env, url) {
   return gifHosts(env).some(h => host === h || host.endsWith("." + h)) && /\.(gif|webp)$/i.test(u.pathname);
 }
 
-export function gifInfo(env) {
-  return { ready: gifsReady(env), hosts: gifHosts(env), provider: "KLIPY" };
-}
-
-async function provider(env, path, params) {
-  const url = new URL((env.GIF_API_BASE || BASE).replace(/\/+$/, "") + path);
-  for (const [k, v] of Object.entries({ key: env.GIF_API_KEY, client_key: "sintfoap", media_filter: "gif,tinygif,mediumgif,nanogif", contentfilter: "medium", ...params })) {
-    if (v != null && v !== "") url.searchParams.set(k, String(v));
-  }
+async function ask(url, params) {
+  for (const [k, v] of Object.entries(params)) if (v != null && v !== "") url.searchParams.set(k, String(v));
   let res;
   try { res = await fetch(url, { signal: AbortSignal.timeout(TIMEOUT), cf: { cacheTtl: 300, cacheEverything: true } }); }
   catch { return { failed: "the GIF service couldn't be reached; try again" }; }
   if (!res.ok) {
-    console.error("GIF service:", res.status, path);
+    console.error("GIF service:", res.status, url.pathname);
     return { failed: `the GIF service answered ${res.status}` };
   }
   try { return await res.json(); } catch { return { failed: "the GIF service sent something unreadable" }; }
 }
 
-// One result as the site hands it on: the GIF to send, a smaller one to show
-// in the picker, and its shape so the grid can be laid out before it loads.
-function gifOut(env, r) {
-  const f = r?.media_formats || {};
-  const full = [f.gif, f.mediumgif].find(x => isGif(env, x?.url));
-  const small = [f.tinygif, f.nanogif, f.mediumgif, f.gif].find(x => isGif(env, x?.url));
-  if (!full) return null;
-  const [width, height] = (full.dims?.length === 2 ? full.dims : small?.dims) || [];
-  return {
-    id: String(r.id ?? ""), title: String(r.content_description || r.title || "").slice(0, MAX_TITLE),
-    url: full.url, preview: (small || full).url,
-    width: Number(width) > 0 ? Math.round(width) : null, height: Number(height) > 0 ? Math.round(height) : null,
-  };
+const dim = v => Number(v) > 0 ? Math.round(Number(v)) : null;
+const title = v => String(v || "").slice(0, MAX_TITLE);
+
+// Each service as the rest of this file uses it. A result is
+// {id, title, url (the GIF to send), preview (a smaller one for the picker),
+// width, height} (its shape, so the grid can be laid out before it loads).
+const PROVIDERS = {
+  giphy: {
+    name: "GIPHY",
+    call: (env, path, params) => ask(new URL("https://api.giphy.com/v1/gifs" + path), { api_key: env.GIPHY_API_KEY, ...params }),
+    // GIPHY's links carry tracking parameters; the GIF is the same without them.
+    clean: url => { try { const u = new URL(url); u.search = ""; return u.href; } catch { return url; } },
+    async search(env, q, pos) {
+      const offset = /^\d{1,4}$/.test(pos) ? Number(pos) : 0;
+      const data = await this.call(env, q ? "/search" : "/trending", { q, offset, limit: PAGE, rating: "pg-13", bundle: "messaging_non_clips" });
+      if (data.failed) return data;
+      const results = (data.data || []).map(r => {
+        const im = r?.images || {};
+        const full = [im.original, im.downsized, im.fixed_width].map(x => x && { ...x, url: this.clean(x.url) }).find(x => isGif(env, x?.url));
+        const small = [im.fixed_width, im.fixed_width_downsampled, im.fixed_width_small, im.downsized].map(x => x && { ...x, url: this.clean(x.url) }).find(x => isGif(env, x?.url));
+        if (!full) return null;
+        return { id: String(r.id ?? ""), title: title(r.title), url: full.url, preview: (small || full).url,
+          width: dim(full.width) ?? dim(small?.width), height: dim(full.height) ?? dim(small?.height) };
+      }).filter(Boolean);
+      const p = data.pagination || {}, nextAt = Number(p.offset || offset) + Number(p.count || 0);
+      // GIPHY stops at an offset of 4999.
+      return { results, next: results.length && nextAt < Math.min(Number(p.total_count) || 0, 4999) ? String(nextAt) : null };
+    },
+    async categories(env) {
+      const data = await this.call(env, "/categories", {});
+      if (data.failed) return data;
+      return (data.data || []).map(c => {
+        const preview = [c?.gif?.images?.fixed_width, c?.gif?.images?.downsized, c?.gif?.images?.original].map(x => x && this.clean(x.url)).find(u => isGif(env, u));
+        return { name: String(c?.name || ""), query: String(c?.name || ""), preview: preview || null };
+      });
+    },
+  },
+  klipy: {
+    name: "KLIPY",
+    call: (env, path, params) => ask(new URL((env.GIF_API_BASE || "https://api.klipy.com/v2").replace(/\/+$/, "") + path),
+      { key: env.GIF_API_KEY, client_key: "sintfoap", media_filter: "gif,tinygif,mediumgif,nanogif", contentfilter: "medium", ...params }),
+    async search(env, q, pos) {
+      const data = await this.call(env, q ? "/search" : "/featured", { q, pos, limit: PAGE });
+      if (data.failed) return data;
+      const results = (data.results || []).map(r => {
+        const f = r?.media_formats || {};
+        const full = [f.gif, f.mediumgif].find(x => isGif(env, x?.url));
+        const small = [f.tinygif, f.nanogif, f.mediumgif, f.gif].find(x => isGif(env, x?.url));
+        if (!full) return null;
+        const [width, height] = (full.dims?.length === 2 ? full.dims : small?.dims) || [];
+        return { id: String(r.id ?? ""), title: title(r.content_description || r.title), url: full.url, preview: (small || full).url, width: dim(width), height: dim(height) };
+      }).filter(Boolean);
+      return { results, next: data.next ? String(data.next) : null };
+    },
+    async categories(env) {
+      const data = await this.call(env, "/categories", { type: "featured" });
+      if (data.failed) return data;
+      return (data.tags || []).map(t => ({
+        name: String(t.name || t.searchterm || "").replace(/^#/, ""),
+        query: String(t.searchterm || t.name || "").replace(/^#/, ""),
+        preview: isGif(env, t.image) ? t.image : null,
+      }));
+    },
+  },
+};
+
+const providerFor = env => env.GIPHY_API_KEY ? PROVIDERS.giphy : env.GIF_API_KEY ? PROVIDERS.klipy : null;
+export const gifsReady = env => !!providerFor(env);
+
+export function gifInfo(env) {
+  return { ready: gifsReady(env), hosts: gifHosts(env), provider: providerFor(env)?.name ?? null };
 }
 
-function results(env, data) {
-  if (data.failed) return data;
-  return { results: (data.results || []).map(r => gifOut(env, r)).filter(Boolean), next: data.next ? String(data.next) : null };
-}
-
-const off = { unavailable: "GIFs aren't set up on this site yet: an admin needs to add the GIF_API_KEY secret" };
+const off = { unavailable: "GIFs aren't set up on this site yet: an admin needs to add the GIPHY_API_KEY (or GIF_API_KEY, for KLIPY) secret" };
 
 // Search when there's a query, otherwise what's trending.
 export async function gifSearch(env, user, { q, pos }) {
-  if (!gifsReady(env)) return off;
-  q = String(q ?? "").trim().slice(0, MAX_Q);
-  pos = String(pos ?? "").slice(0, 100);
-  return results(env, await provider(env, q ? "/search" : "/featured", { q, pos, limit: PAGE }));
+  const p = providerFor(env);
+  if (!p) return off;
+  return p.search(env, String(q ?? "").trim().slice(0, MAX_Q), String(pos ?? "").slice(0, 100));
 }
 
 // Discord's category tiles: a name, the search it runs, and a picture.
 export async function gifCategories(env) {
-  if (!gifsReady(env)) return off;
-  const data = await provider(env, "/categories", { type: "featured" });
-  if (data.failed) return data;
-  return {
-    categories: (data.tags || []).map(t => ({
-      name: String(t.name || t.searchterm || "").replace(/^#/, "").slice(0, 60),
-      query: String(t.searchterm || t.name || "").replace(/^#/, "").slice(0, MAX_Q),
-      preview: isGif(env, t.image) ? t.image : null,
-    })).filter(c => c.name && c.query).slice(0, 40),
-  };
+  const p = providerFor(env);
+  if (!p) return off;
+  const list = await p.categories(env);
+  if (list.failed) return list;
+  return { categories: list.map(c => ({ ...c, name: c.name.slice(0, 60), query: c.query.slice(0, MAX_Q) })).filter(c => c.name && c.query).slice(0, 40) };
 }
 
 // ── favorites ─────────────────────────────────────────────────────────────

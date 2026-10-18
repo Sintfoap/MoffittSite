@@ -31,7 +31,7 @@ src/             the Worker: runs only for the paths in run_worker_first
   drift.js         Drift storage: collections and items per account
   store.js         the plugin store: drafts, review queue, approved plugins
   chat.js          chat: rooms, members, messages
-  gifs.js          chat's GIF picker: search, trending and categories from KLIPY, and favorites
+  gifs.js          chat's GIF picker: search, trending and categories from GIPHY (or KLIPY), and favorites
   push.js          sending Web Push: encryption (RFC 8291) and VAPID signing, with WebCrypto
   notify.js        notifications: settings, browsers, Chat's pushes and Drift's reminders
   bridges.js       chat connections: other platforms' rooms in chat, with sealed credentials
@@ -269,12 +269,14 @@ A store plugin's view can return HTML from `render(ctx)`, or be interactive like
 
 ### GIFs
 
-GIFs come from [KLIPY](https://klipy.com), the service Discord moved to when Google shut down Tenor's API in June 2026, through KLIPY's Tenor-compatible API (`/v2/search`, `/v2/featured`, `/v2/categories`; `src/gifs.js`). The browser never talks to KLIPY's API: the site asks on its behalf, so the key stays on the server.
+GIFs come from [GIPHY](https://developers.giphy.com) (`/v1/gifs/search`, `/trending`, `/categories`), or from [KLIPY](https://klipy.com), the service Discord moved to when Google shut down Tenor's API in June 2026, through KLIPY's Tenor-compatible API (`/v2/search`, `/v2/featured`, `/v2/categories`). Both are in `src/gifs.js`. The browser never talks to either API: the site asks on its behalf, so the key stays on the server, and the picker says which service it's using ("Powered by GIPHY").
 
-- **Turning it on:** get an API key from KLIPY's partner panel (partner.klipy.com → API Keys), then **Workers & Pages → moffittsite → Settings → Variables and Secrets → Add**, type **Secret**, name `GIF_API_KEY`. Without it the GIF button is hidden and the terminal says GIFs aren't set up. `GIF_API_BASE` (a variable) points it at another service with the same API, and `GIF_HOSTS` changes where GIFs may be shown from (default `klipy.com tenor.com giphy.com` and their subdomains).
+- **Turning it on with GIPHY:** at developers.giphy.com, sign in, **Create an App**, choose **API** (not SDK), and copy its API key. Then **Workers & Pages → moffittsite → Settings → Variables and Secrets → Add**, type **Secret**, name `GIPHY_API_KEY`. A new GIPHY key is a beta key, limited to 100 requests an hour; GIPHY's dashboard has an **Upgrade to Production** request for more.
+- **Or with KLIPY:** an API key from KLIPY's partner panel (partner.klipy.com → API Keys) as the secret `GIF_API_KEY`. `GIF_API_BASE` (a variable) points it at another service with the same API. If both keys are set, GIPHY is used.
+- Without either key the GIF button is hidden and the terminal says GIFs aren't set up. `GIF_HOSTS` changes where GIFs may be shown from (default `klipy.com tenor.com giphy.com` and their subdomains).
 - **Sending** a GIF posts an ordinary message whose whole text is the GIF's link, so it counts toward the message rate, can be deleted like any message, and reaches Matrix rooms and the terminal as a link. The chat page shows a message like that as the picture, but only for `https` links to `.gif` or `.webp` files on `GIF_HOSTS`. The page's CSP lets it load pictures from those hosts and nowhere else, and they're loaded without a referrer.
 - **Favorites** are kept per account in D1 (up to 200), so the web page and the terminal share them. Deleting an account deletes them.
-- Search results use KLIPY's `medium` content filter.
+- Search results are rated PG-13 on GIPHY, and use KLIPY's `medium` content filter there. GIPHY's tracking parameters are dropped from the links that are sent.
 
 ### Connections to other platforms
 

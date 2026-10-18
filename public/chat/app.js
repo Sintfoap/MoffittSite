@@ -274,6 +274,8 @@ async function openRoom(id) {
   renderLog({ toBottom: true });
   renderPresence();
   renderRooms();
+  // A room opened from a link or a key may be below the fold of a long list.
+  document.querySelector(`.side [data-room="${CSS.escape(id)}"]`)?.scrollIntoView({ block: "nearest" });
   decryptOpen().catch(err => toast(err.message));
   if (open.joined && matchMedia("(min-width: 761px)").matches) $("#text")?.focus();
 }

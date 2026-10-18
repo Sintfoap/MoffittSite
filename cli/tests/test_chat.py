@@ -293,6 +293,27 @@ def test_room_list_shows_mentions():
     assert str(RoomItem.label(room, True)) == "# general"
 
 
+def test_a_long_room_list_scrolls_and_long_names_keep_their_badges():
+    api = FakeChatApi()
+    for i in range(40):
+        api.add_room(f"r{i}", f"room-{i}" + ("-with-a-name-far-too-long-for-the-column" if i == 30 else ""), joined=i < 25)
+    api.rooms["r30"]["unread"] = 0
+
+    async def t(app, pilot):
+        lv = app.query_one("#rooms")
+        assert lv.max_scroll_y > 0
+        lv.focus()
+        lv.index = 30
+        await pilot.pause()
+        item = next(i for i in app.query("RoomItem") if i.room["id"] == "r30")
+        assert item.region.height == 1 and lv.scrollable_content_region.contains_region(item.region)
+        name = str(item.query_one(".name").render())
+        assert name.startswith("# room-30-with") and name.endswith("…") and len(name) == item.query_one(".name").size.width and str(item.query_one(".badges").render()) == "  1"
+        # The column keeps its width, with a one-cell scrollbar.
+        assert app.query_one("#side").size.width == 30 and lv.styles.scrollbar_size_vertical == 1
+    run_chat(api, t)
+
+
 def test_private_rooms_dms_search_and_presence():
     api = FakeChatApi()
     api.add_room("r_a", "general")
@@ -336,7 +357,7 @@ def test_private_rooms_dms_search_and_presence():
         head = str(app.query_one("#head").render())
         assert "direct message with @kim" in head and "online" in head
         item = next(i for i in app.query("RoomItem") if i.room["id"] == app.open["id"])
-        assert str(item.query_one("Label").render()).startswith("@ Kim ●")
+        assert str(item.query_one(".name").render()) == "@ Kim" and str(item.query_one(".badges").render()) == " ●"
 
         await type_line(pilot, "/who")
         assert "Members" in shown(app) and "@sandra" in shown(app)
