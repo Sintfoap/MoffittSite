@@ -32,6 +32,8 @@ export const IMAGE_TYPES = ["image/gif", "image/png", "image/jpeg", "image/webp"
 // A long message from elsewhere is cut to this many characters.
 const MAX_BODY = 4000;
 export const ENCRYPTED_NOTE = "🔒 Encrypted message";
+// The app id the site's pushers are registered under.
+export const PUSH_APP = "xyz.sintfoap.chat";
 
 // Only what chat shows: messages, edits and deletions, and the state that
 // names a room. No presence, receipts, typing or account data.
@@ -226,6 +228,21 @@ export const matrix = {
       token: creds.token, body: method === "GET" ? undefined : body ?? {},
       query: q ? Object.fromEntries(new URLSearchParams(q)) : undefined,
     });
+  },
+
+  // A pusher: the homeserver POSTs to `url` (a Matrix push gateway address,
+  // …/_matrix/push/v1/notify) whenever an event arrives that this account's
+  // push rules say should notify, the way it tells Element's phone app.
+  // Only the event's id is sent; the site syncs to read it.
+  async setPusher(creds, key, url) {
+    await call(creds.base, "POST", "/_matrix/client/v3/pushers/set", { token: creds.token, body: {
+      kind: "http", app_id: PUSH_APP, pushkey: key, app_display_name: "sintfoap.xyz", device_display_name: "sintfoap.xyz notifications",
+      lang: "en", data: { url, format: "event_id_only" }, append: true,
+    } });
+  },
+
+  async removePusher(creds, key) {
+    await call(creds.base, "POST", "/_matrix/client/v3/pushers/set", { token: creds.token, body: { kind: null, app_id: PUSH_APP, pushkey: key } });
   },
 
   // A picture: uploaded to the homeserver, then sent as an image message,

@@ -8,26 +8,33 @@
 // What gets pushed (each a setting, see DEFAULTS):
 //   Chat   a direct message, an @mention of you, or (off by default) any new
 //          message in a room you've joined. Not while you have that room open.
+//   Chat connections  a message in a room from another platform (Matrix)
+//          that your notification settings there say is worth one. The
+//          platform tells the site (a pusher, see src/bridges.js); with no
+//          pusher, the cron's syncs push what they bring in. Encrypted
+//          messages say only who sent them: their keys are in your browser.
 //   Drift  a reminder before a timed item starts (drift_lead minutes), and at
 //          8am on the day of an all-day one. Done and deleted items don't
 //          remind. Times are read in your time zone, which the page sends.
 //
-// Chat pushes go out when the message is posted; Drift reminders come from a
-// cron trigger every five minutes (scheduled() in src/worker.js).
+// Chat pushes go out when the message is posted; Drift reminders, and the
+// syncs and pusher upkeep for connections, come from a cron trigger every
+// five minutes (scheduled() in src/worker.js).
 
 import { db, now } from "./db.js";
 import { sameOrigin } from "./account.js";
 import { withRail } from "./pages.js";
 import { sha256, fromB64url } from "./crypto.js";
 import { configured, pushEndpoint, send } from "./push.js";
+import { BRIDGE_AREA, bridgeReady, syncConnection, connectionForPushKey, setPusher, dropPusher } from "./bridges.js";
 
 export class BadRequest extends Error {}
 const fail = msg => { throw new BadRequest(msg); };
 
-export const DEFAULTS = { chat_dms: true, chat_mentions: true, chat_rooms: false, drift_events: true, drift_lead: 15, tz: "UTC" };
+export const DEFAULTS = { chat_dms: true, chat_mentions: true, chat_rooms: false, chat_bridges: true, drift_events: true, drift_lead: 15, tz: "UTC" };
 // Minutes before a timed Drift item that its reminder can come.
 export const LEADS = [0, 5, 10, 15, 30, 60, 1440];
-const FLAGS = ["chat_dms", "chat_mentions", "chat_rooms", "drift_events"];
+const FLAGS = ["chat_dms", "chat_mentions", "chat_rooms", "chat_bridges", "drift_events"];
 const MAX_DEVICES = 10;
 const DROP_AFTER = 5;           // refusals in a row before a device is forgotten
 const BODY = 180;               // characters of a message shown in its notification
@@ -61,9 +68,9 @@ async function getPrefs(d, userId) {
 }
 
 function putPrefs(d, userId, p) {
-  return d.prepare(`INSERT INTO push_prefs (user_id, chat_dms, chat_mentions, chat_rooms, drift_events, drift_lead, tz, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET chat_dms = excluded.chat_dms, chat_mentions = excluded.chat_mentions,
-    chat_rooms = excluded.chat_rooms, drift_events = excluded.drift_events, drift_lead = excluded.drift_lead, tz = excluded.tz, updated_at = excluded.updated_at`)
+  return d.prepare(`INSERT INTO push_prefs (user_id, ${FLAGS.join(", ")}, drift_lead, tz, updated_at)
+    VALUES (?, ${FLAGS.map(() => "?").join(", ")}, ?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET
+    ${[...FLAGS, "drift_lead", "tz", "updated_at"].map(f => `${f} = excluded.${f}`).join(", ")}`)
     .bind(userId, ...FLAGS.map(f => p[f] ? 1 : 0), p.drift_lead, p.tz, now());
 }
 
@@ -100,7 +107,7 @@ export async function state(env, user) {
     public_key: configured(env) ? env.VAPID_PUBLIC_KEY : null,
     prefs: await getPrefs(d, user.id),
     devices: await devicesOf(d, user.id),
-    apps: { chat: user.areas.has("chat"), drift: user.areas.has("todo") },
+    apps: { chat: user.areas.has("chat"), drift: user.areas.has("todo"), bridges: user.areas.has("chat") && user.areas.has(BRIDGE_AREA) },
     leads: LEADS,
   };
 }
@@ -221,6 +228,104 @@ export async function chatPushes(env, { room, author, message, hereSince }) {
     else if (room.kind === "dm" ? p.chat_dms : p.chat_rooms) groups[room.kind === "dm" ? "dm" : "room"].push(p.id);
   }
   await Promise.all(Object.entries(groups).map(([k, list]) => deliver(env, d, list, kinds[k], { urgency: "high", ttl: 3600 })));
+}
+
+// ── messages from connected platforms ──────────────────────────────────────
+
+// Pushes these new messages from a connection's rooms to its owner, if they
+// want them and don't have the room open. Each message at most once.
+async function bridgePushes(env, d, conn, news) {
+  if (!news.length) return 0;
+  const [p] = await reachable(d, [conn.user_id], BRIDGE_AREA);
+  if (!p?.chat_bridges) return 0;
+  const { results: open } = await d.prepare("SELECT room FROM chat_presence WHERE user_id = ? AND seen_at > ?").bind(conn.user_id, now() - 30).all();
+  const here = new Set(open.map(r => r.room));
+  const byRoom = new Map();
+  for (const m of news) {
+    if (here.has(m.room.id)) continue;
+    const claim = await d.prepare("INSERT OR IGNORE INTO push_sent (user_id, key, sent_at) VALUES (?, ?, ?)")
+      .bind(conn.user_id, `bridge:${m.room.id}:${m.id}`, now()).run();
+    if (!claim.meta.changes) continue;
+    if (!byRoom.has(m.room.id)) byRoom.set(m.room.id, []);
+    byRoom.get(m.room.id).push(m);
+  }
+  let sent = 0;
+  // One notification per room: the latest message, and how many came.
+  for (const list of byRoom.values()) {
+    const m = list.at(-1), room = m.room.name || m.sender_name;
+    const text = m.encrypted ? "sent an encrypted message" : clip(m.body);
+    const line = room === m.sender_name ? (m.encrypted ? `${m.sender_name} ${text}` : text) : `${m.sender_name}${m.encrypted ? " " : ": "}${text}`;
+    const body = list.length > 1 ? `${list.length} new messages. ${line}` : line;
+    sent += (await deliver(env, d, [conn.user_id], { title: room, body, url: `/chat/#${m.room.id}`, tag: `chat-${m.room.id}` }, { urgency: "high", ttl: 3600 })).sent;
+  }
+  return sent;
+}
+
+// The message with this platform id in one of the connection's rooms, as bridgePushes takes it.
+async function bridgedMessage(d, conn, extId) {
+  const m = await d.prepare(`SELECT m.ext_id, m.ext_name, m.body, m.encrypted, m.user_id, r.id AS room_id, r.name AS room_name
+    FROM chat_messages m JOIN chat_rooms r ON r.id = m.room WHERE r.connection = ? AND m.ext_id = ? AND m.deleted = 0`).bind(conn.id, extId).first();
+  if (!m) return null;
+  if (m.user_id === conn.user_id) return { mine: true };
+  return { room: { id: m.room_id, name: m.room_name }, id: m.ext_id, sender_name: m.ext_name || "Someone", body: m.body, encrypted: !!m.encrypted };
+}
+
+// POST /_matrix/push/v1/notify: a homeserver telling a pusher about an event.
+// Answered at once (with any keys it should forget); the sync and the push
+// happen after, through `later`.
+export async function pushGateway(request, env, later = p => p) {
+  const json = obj => new Response(JSON.stringify(obj), { headers: { "Content-Type": "application/json" } });
+  if (request.method !== "POST") return new Response(JSON.stringify({ errcode: "M_UNRECOGNIZED" }), { status: 405 });
+  let body;
+  try { body = JSON.parse((await request.text()).slice(0, 64 * 1024)); } catch { body = null; }
+  const n = body?.notification;
+  if (!n || !Array.isArray(n.devices)) return new Response(JSON.stringify({ errcode: "M_BAD_JSON" }), { status: 400 });
+  const d = await db(env);
+  const rejected = [], conns = [];
+  for (const dev of n.devices.slice(0, 10)) {
+    const conn = await connectionForPushKey(env, d, dev?.pushkey);
+    if (conn && conn.pusher_at) conns.push(conn); else rejected.push(dev?.pushkey);
+  }
+  // No event: just an unread count changing. Nothing to show.
+  if (typeof n.event_id === "string" && conns.length) {
+    await later(Promise.all(conns.map(async conn => {
+      await syncConnection(env, d, conn, { force: true });
+      let m = await bridgedMessage(d, conn, n.event_id);
+      // Another sync may be bringing it in at this moment.
+      if (!m) { await new Promise(r => setTimeout(r, 1500)); m = await bridgedMessage(d, conn, n.event_id); }
+      if (m && !m.mine) await bridgePushes(env, d, conn, [m]);
+    })).catch(e => console.error("push gateway failed:", e)));
+  }
+  return json({ rejected });
+}
+
+// Run by the cron: keeps a pusher on every connection whose owner wants
+// these notifications (and takes it off the others), and syncs them. A
+// connection whose platform wouldn't take a pusher has what its sync brought
+// pushed instead.
+export async function bridgeUpkeep(env) {
+  if (!configured(env) || !bridgeReady(env)) return 0;
+  const d = await db(env);
+  const { results: conns } = await d.prepare("SELECT * FROM chat_connections WHERE status = 'ok'").all();
+  if (!conns.length) return 0;
+  const want = new Set((await reachable(d, [...new Set(conns.map(c => c.user_id))], BRIDGE_AREA)).filter(p => p.chat_bridges).map(p => p.id));
+  const url = new URL("/_matrix/push/v1/notify", env.SITE_URL || "https://sintfoap.xyz").href;
+  let sent = 0;
+  for (const conn of conns) {
+    try {
+      if (!want.has(conn.user_id)) {
+        if (conn.pusher_at) await dropPusher(env, d, conn);
+        continue;
+      }
+      if (!conn.pusher_at) {
+        const why = await setPusher(env, d, conn, url);
+        if (!why) conn.pusher_at = now();
+      }
+      const news = await syncConnection(env, d, conn);
+      if (!conn.pusher_at) sent += await bridgePushes(env, d, conn, news);
+    } catch (e) { console.error("connection upkeep failed:", e); }
+  }
+  return sent;
 }
 
 // ── Drift reminders ────────────────────────────────────────────────────────

@@ -18,7 +18,8 @@ from .look import BAD, FAINT, INK, MUTED, Page, attempt, plural
 
 LEADS = [0, 5, 10, 15, 30, 60, 1440]   # minutes; LEADS in src/notify.js
 CHAT = [("chat_dms", "Direct messages"), ("chat_mentions", "When someone @mentions you"),
-        ("chat_rooms", "Every message in rooms you've joined (not while you have the room open)")]
+        ("chat_rooms", "Every message in rooms you've joined (not while you have the room open)"),
+        ("chat_bridges", "Messages from your connections (Matrix), as your settings there would notify you")]
 
 
 def lead_label(m: int) -> str:
@@ -103,7 +104,8 @@ class NotificationsPage(Page):
         self.query_one("#chat-prefs").display = apps["chat"]
         self.query_one("#drift-prefs").display = apps["drift"]
         self.query_one("#no-apps").display = not (apps["chat"] or apps["drift"])
-        for key in ("chat_dms", "chat_mentions", "chat_rooms", "drift_events"):
+        self.query_one("#chat_bridges").display = bool(apps.get("bridges"))
+        for key in ("chat_dms", "chat_mentions", "chat_rooms", "chat_bridges", "drift_events"):
             box = self.query_one(f"#{key}", Checkbox)
             if box.value != p[key]:
                 with box.prevent(Checkbox.Changed):

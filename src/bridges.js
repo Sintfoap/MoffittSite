@@ -15,7 +15,9 @@
 //     sendEncrypted(creds, room, content) → message id,
 //     and for pictures (optional): sendImage(creds, room, {bytes, mimetype, name, width, height}) → message id,
 //     upload(creds, bytes, mimetype, name) → media address, download(creds, address) → {bytes, mimetype}
-//     cryptoRequest(creds, method, path, body) → the platform's answer }
+//     cryptoRequest(creds, method, path, body) → the platform's answer
+//     and, for push notifications (optional):
+//     setPusher(creds, key, url), removePusher(creds, key) }
 // Adding a platform means writing one of those and listing it in PROVIDERS;
 // the API, the web page and the terminal build their forms from `fields`.
 //
@@ -32,9 +34,15 @@
 // claims a connection's keys (proving itself after with a key only it has),
 // takes what each sync brought for them from an inbox, and has its key
 // requests passed on. Encrypted messages are kept as they came.
+//
+// For push notifications (src/notify.js), a connection whose owner has them
+// on gets a pusher on the platform: the homeserver tells the site when a
+// message arrives that the owner's own notification settings there say is
+// worth a notification, and the site syncs and pushes it. Its key names the
+// connection and is signed with CHAT_BRIDGE_KEY, so nothing else can pose as it.
 
 import { db, now } from "./db.js";
-import { randomBytes, hex, sha256, seal, unseal } from "./crypto.js";
+import { randomBytes, hex, sha256, seal, unseal, b64url } from "./crypto.js";
 import { matrix, ProviderError, ENCRYPTED_NOTE } from "./matrix.js";
 
 export { ProviderError, ENCRYPTED_NOTE };
@@ -125,6 +133,7 @@ export async function removeConnection(env, user, id, deleteRoom) {
   const conn = await getConnection(d, user, id);
   if (!conn) return null;
   const creds = await credsOf(env, conn);
+  if (creds && conn.pusher_at) await dropPusher(env, d, conn).catch(() => {});
   if (creds) await PROVIDERS[conn.provider]?.disconnect(creds).catch(() => {});
   const { results } = await d.prepare("SELECT id FROM chat_rooms WHERE connection = ?").bind(conn.id).all();
   for (const r of results) await deleteRoom(env, user, r.id, { force: true });
@@ -135,7 +144,7 @@ export async function removeConnection(env, user, id, deleteRoom) {
   return { deleted: true };
 }
 
-async function credsOf(env, conn) {
+export async function credsOf(env, conn) {
   if (!bridgeReady(env)) return null;
   const text = await unseal(env.CHAT_BRIDGE_KEY, context(conn), conn.secret);
   return text ? JSON.parse(text) : null;
@@ -149,28 +158,31 @@ const setError = (d, conn, error) =>
 const localRoomId = async (conn, extId) => "r_" + (await sha256(`bridge:${conn.id}:${extId}`)).slice(0, 16);
 
 // Brings in what changed on the platform since the last sync. Skipped if this
-// connection synced a moment ago (unless forced), or is broken.
+// connection synced a moment ago (unless forced), or is broken. Returns the
+// new messages from other people it brought in (none on the first sync, which
+// is history), for notifications: [{room: {id, name}, id, sender_name, body, encrypted}].
 export async function syncConnection(env, d, conn, { force = false } = {}) {
-  if (!conn || (conn.status === "error" && !force)) return;
+  if (!conn || (conn.status === "error" && !force)) return [];
   const t = now();
   const claimed = await d.prepare("UPDATE chat_connections SET tried_at = ? WHERE id = ? AND tried_at <= ?")
     .bind(t, conn.id, force ? t : t - SYNC_EVERY).run();
-  if (!claimed.meta.changes) return;
+  if (!claimed.meta.changes) return [];
   const provider = PROVIDERS[conn.provider];
   const creds = await credsOf(env, conn);
-  if (!provider || !creds) return setError(d, conn, "its sign-in can't be read here any more; connect it again");
+  if (!provider || !creds) { await setError(d, conn, "its sign-in can't be read here any more; connect it again"); return []; }
   // (Connections made before encryption came in.)
   if (!conn.can_encrypt && provider.canEncrypt?.(creds)) await d.prepare("UPDATE chat_connections SET can_encrypt = 1 WHERE id = ?").bind(conn.id).run();
   let out;
   try { out = await provider.sync(creds, conn.cursor); }
   catch (e) {
-    if (!(e instanceof ProviderError)) { console.error("chat sync failed:", e); return; }
+    if (!(e instanceof ProviderError)) { console.error("chat sync failed:", e); return []; }
     // A sign-in that stopped working stays broken until it's redone; anything else is tried again next time.
-    if (e.auth) return setError(d, conn, e.message);
+    if (e.auth) { await setError(d, conn, e.message); return []; }
     await d.prepare("UPDATE chat_connections SET error = ? WHERE id = ?").bind(e.message, conn.id).run();
-    return;
+    return [];
   }
-  for (const r of out.rooms) await applyRoom(env, d, conn, r, !conn.cursor);
+  const news = [];
+  for (const r of out.rooms) news.push(...await applyRoom(env, d, conn, r, !conn.cursor));
   // Only a browser holding the keys can use what came for them.
   if (out.crypto && conn.crypto_owner) {
     const { to_device, changed, left, otk_counts, fallback } = out.crypto;
@@ -186,6 +198,7 @@ export async function syncConnection(env, d, conn, { force = false } = {}) {
   }
   await d.prepare("UPDATE chat_connections SET cursor = ?, status = 'ok', error = NULL, synced_at = ? WHERE id = ?")
     .bind(out.cursor ?? conn.cursor, now(), conn.id).run();
+  return news;
 }
 
 // Syncs every working connection someone has (for their room list).
@@ -206,7 +219,7 @@ async function applyRoom(env, d, conn, r, initial) {
   const existing = await d.prepare("SELECT id, name, topic FROM chat_rooms WHERE id = ?").bind(id).first();
   if (r.left) {
     if (existing) await dropRoom(d, id);
-    return;
+    return [];
   }
   const t = now();
   const stmts = [];
@@ -248,6 +261,10 @@ async function applyRoom(env, d, conn, r, initial) {
     stmts.push(d.prepare("UPDATE chat_members SET read_seq = (SELECT seq FROM chat_rooms WHERE id = ?) WHERE room = ? AND user_id = ?").bind(id, id, conn.user_id));
   }
   if (stmts.length) await d.batch(stmts);
+  if (initial) return [];
+  const name = (await d.prepare("SELECT name FROM chat_rooms WHERE id = ?").bind(id).first())?.name ?? "";
+  return r.events.filter(e => e.type === "message" && !e.mine)
+    .map(e => ({ room: { id, name }, id: e.id, sender_name: e.sender_name, body: e.body, encrypted: !!e.encrypted }));
 }
 
 async function dropRoom(d, id) {
@@ -333,4 +350,44 @@ export async function cryptoOp(env, user, id, op, body, fail) {
     }
   }
   return null;
+}
+
+// ── pushers (src/notify.js decides when a connection should have one) ──────
+
+const MAC_INFO = "sintfoap pusher v1\0";
+async function mac(env, connId) {
+  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(MAC_INFO + env.CHAT_BRIDGE_KEY), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  return b64url(new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(connId))));
+}
+
+// The key a connection's pusher is registered with: its id and a signature.
+export const pushKey = async (env, conn) => `${conn.id}.${await mac(env, conn.id)}`;
+
+// The connection a pusher key names, if the signature is right.
+export async function connectionForPushKey(env, d, key) {
+  if (!bridgeReady(env)) return null;
+  const [id, sig] = String(key ?? "").split(".");
+  if (!CONNECTION_ID.test(id) || !sig || sig !== await mac(env, id)) return null;
+  return d.prepare("SELECT * FROM chat_connections WHERE id = ?").bind(id).first();
+}
+
+// Registers the connection's pusher on the platform, pointing at `url`.
+// Returns null, or why it couldn't (and pushes then rely on the cron's syncs).
+export async function setPusher(env, d, conn, url) {
+  const provider = PROVIDERS[conn.provider], creds = await credsOf(env, conn);
+  if (!provider?.setPusher || !creds) return "this platform can't tell the site about new messages";
+  try { await provider.setPusher(creds, await pushKey(env, conn), url); }
+  catch (e) {
+    if (!(e instanceof ProviderError)) throw e;
+    if (e.auth) await setError(d, conn, e.message);
+    return e.message;
+  }
+  await d.prepare("UPDATE chat_connections SET pusher_at = ? WHERE id = ?").bind(now(), conn.id).run();
+  return null;
+}
+
+export async function dropPusher(env, d, conn) {
+  const provider = PROVIDERS[conn.provider], creds = await credsOf(env, conn);
+  await d.prepare("UPDATE chat_connections SET pusher_at = 0 WHERE id = ?").bind(conn.id).run();
+  if (provider?.removePusher && creds) await provider.removePusher(creds, await pushKey(env, conn));
 }

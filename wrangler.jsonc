@@ -14,7 +14,7 @@
       "/todo", "/todo/*", "/plugins", "/plugins/*", "/sandbox/*", "/chat", "/chat/*",
       "/login", "/login/*", "/signup", "/logout",
       "/dashboard", "/dashboard/*", "/account", "/account/*", "/admin", "/admin/*",
-      "/notifications", "/notifications/*"
+      "/notifications", "/notifications/*", "/_matrix/push/v1/notify"
     ]
   },
 
@@ -36,7 +36,10 @@
     "MAIL_FROM": "Sintfoap <no-reply@sintfoap.xyz>",
     // Who push services contact about our notifications (VAPID "sub"). Push
     // stays off until the VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY secrets are set.
-    "PUSH_CONTACT": "https://sintfoap.xyz"
+    "PUSH_CONTACT": "https://sintfoap.xyz",
+    // The site's own address, for links that other services call back
+    // (Matrix pushers: <SITE_URL>/_matrix/push/v1/notify).
+    "SITE_URL": "https://sintfoap.xyz"
   },
   // Also needed, set as a secret (not here): ADMIN_CLAIM_CODE, which lets one
   // account claim admin while there is none. See README.
@@ -54,11 +57,13 @@
       "MAX_USERS": "0",
       "PASSWORD_ITERATIONS": "100000",
       "MAIL_FROM": "Sintfoap <no-reply@sintfoap.xyz>",
-      "PUSH_CONTACT": "https://sintfoap.xyz"
+      "PUSH_CONTACT": "https://sintfoap.xyz",
+      "SITE_URL": "https://sintfoap.xyz"
     }
   },
 
-  // Drift's notification reminders (scheduled() in src/worker.js).
+  // Drift's notification reminders, and syncing chat connections for theirs
+  // (scheduled() in src/worker.js).
   "triggers": { "crons": ["*/5 * * * *"] },
 
   // Accounts and todo lists (Storage & Databases → D1 → moffittsite).

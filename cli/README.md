@@ -114,7 +114,7 @@ Start a message with `//` to send one that begins with `/`. GIFs show as `GIF` a
 
 ## Notifications
 
-The same settings as `/notifications/`: what Chat and Drift push to you (direct messages, @mentions, every message in rooms you've joined, Drift reminders and how long before), and the list of browsers they go to. `space` switches a setting, Remove takes a browser off the list, and `t` sends a test to all of them. A terminal can't receive push notifications itself, so turning them on for a browser or phone happens there: `w` opens the page.
+The same settings as `/notifications/`: what Chat and Drift push to you (direct messages, @mentions, every message in rooms you've joined, messages from your Matrix connections, Drift reminders and how long before), and the list of browsers they go to. `space` switches a setting, Remove takes a browser off the list, and `t` sends a test to all of them. A terminal can't receive push notifications itself, so turning them on for a browser or phone happens there: `w` opens the page.
 
 ## Account settings
 
