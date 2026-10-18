@@ -191,7 +191,7 @@ export class Vault {
 
   // Message content → the encrypted content to send to a room, after
   // making sure everyone's devices in it have the room's key.
-  encrypt(roomId, content) {
+  encrypt(roomId, content, type = "m.room.message") {
     return this.lock(async () => {
       const { lib } = this;
       const { response } = await this.ask("request", { method: "GET", path: `rooms/${encodeURIComponent(roomId)}/joined_members` });
@@ -203,8 +203,8 @@ export class Vault {
       const claim = await this.machine.getMissingSessions(users());
       if (claim) await this.send(claim);
       for (const r of await this.machine.shareRoomKey(new lib.RoomId(roomId), users(), new lib.EncryptionSettings())) await this.send(r);
-      const out = JSON.parse(await this.machine.encryptRoomEvent(new lib.RoomId(roomId), "m.room.message", JSON.stringify(content)));
-      // What an edit replaces stays readable, as Matrix has it.
+      const out = JSON.parse(await this.machine.encryptRoomEvent(new lib.RoomId(roomId), type, JSON.stringify(content)));
+      // What an edit replaces, or a reaction is on, stays readable, as Matrix has it.
       if (content["m.relates_to"] && !out["m.relates_to"]) out["m.relates_to"] = content["m.relates_to"];
       return out;
     });
@@ -223,6 +223,7 @@ export function textOf(content, senderName) {
 }
 
 export const textContent = text => ({ msgtype: "m.text", body: text });
+export const reactionContent = (eventId, emoji) => ({ "m.relates_to": { rel_type: "m.annotation", event_id: eventId, key: emoji } });
 export const editContent = (eventId, text) => ({
   msgtype: "m.text", body: "* " + text, "m.new_content": { msgtype: "m.text", body: text },
   "m.relates_to": { rel_type: "m.replace", event_id: eventId },

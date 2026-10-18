@@ -382,7 +382,7 @@ def test_chat_connects_matrix_and_talks_in_its_rooms(real_site):
             await type_(pilot, line)
             await pilot.press("enter")
             await settle(pilot, 0.5)
-        assert "aren't sent to other platforms" in str(page.query_one("#status").render())
+        assert "reacted 🎉 to Sam" in str(page.query_one("#status").render()), str(page.query_one("#status").render())
         await type_(pilot, "/disconnect 2")
         await pilot.press("enter")
         await settle(pilot)

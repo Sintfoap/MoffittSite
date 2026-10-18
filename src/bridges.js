@@ -8,7 +8,8 @@
 //     sync(creds, cursor) → {cursor, rooms} what changed since the last sync
 //     send(creds, room, text) → message id
 //     edit(creds, room, message id, text)
-//     remove(creds, room, message id)
+//     remove(creds, room, message id)        a message, or a reaction
+//     react(creds, room, message id, emoji) → the reaction's id
 //     disconnect(creds)                     undo whatever connect made there
 //     and, for end-to-end encryption (optional):
 //     canEncrypt(creds), device(creds) → {user_id, device_id},
@@ -236,9 +237,21 @@ async function applyRoom(env, d, conn, r, initial) {
       // Only the person who wrote a message can edit it, as Matrix has it.
       stmts.push(bump, d.prepare(`UPDATE chat_messages SET body = ?, edited_at = ?, seq = (SELECT seq FROM chat_rooms WHERE id = ?)
         WHERE room = ? AND ext_id = ? AND ext_sender = ? AND deleted = 0 AND encrypted = 0`).bind(e.body, e.at, id, id, e.target, e.sender));
+    } else if (e.type === "reaction") {
+      const who = e.mine ? conn.user_id : "~" + e.sender;
+      stmts.push(bump,
+        d.prepare(`INSERT OR IGNORE INTO chat_reactions (message, user_id, emoji, created_at, ext_id, ext_name)
+          SELECT id, ?, ?, ?, ?, ? FROM chat_messages WHERE room = ? AND ext_id = ? AND deleted = 0`).bind(who, e.key, e.at, e.id, e.sender_name, id, e.target),
+        d.prepare("UPDATE chat_messages SET seq = (SELECT seq FROM chat_rooms WHERE id = ?) WHERE room = ? AND ext_id = ?").bind(id, id, e.target));
     } else if (e.type === "delete") {
-      stmts.push(bump, d.prepare(`UPDATE chat_messages SET deleted = 1, body = '', seq = (SELECT seq FROM chat_rooms WHERE id = ?)
-        WHERE room = ? AND ext_id = ? AND deleted = 0`).bind(id, id, e.target));
+      // What went is a message (and its reactions with it), or a reaction.
+      const reactedTo = "(SELECT message FROM chat_reactions WHERE ext_id = ? AND message IN (SELECT id FROM chat_messages WHERE room = ?))";
+      stmts.push(bump,
+        d.prepare(`UPDATE chat_messages SET seq = (SELECT seq FROM chat_rooms WHERE id = ?) WHERE id IN ${reactedTo}`).bind(id, e.target, id),
+        d.prepare("DELETE FROM chat_reactions WHERE ext_id = ? AND message IN (SELECT id FROM chat_messages WHERE room = ?)").bind(e.target, id),
+        d.prepare("DELETE FROM chat_reactions WHERE message IN (SELECT id FROM chat_messages WHERE room = ? AND ext_id = ?)").bind(id, e.target),
+        d.prepare(`UPDATE chat_messages SET deleted = 1, body = '', seq = (SELECT seq FROM chat_rooms WHERE id = ?)
+          WHERE room = ? AND ext_id = ? AND deleted = 0`).bind(id, id, e.target));
     }
   }
   // The first sync brings in recent history, which isn't news to anyone.
@@ -251,6 +264,7 @@ async function applyRoom(env, d, conn, r, initial) {
 async function dropRoom(d, id) {
   await d.batch([
     d.prepare("DELETE FROM chat_presence WHERE room = ?").bind(id),
+    d.prepare("DELETE FROM chat_reactions WHERE message IN (SELECT id FROM chat_messages WHERE room = ?)").bind(id),
     d.prepare("DELETE FROM chat_messages WHERE room = ?").bind(id),
     d.prepare("DELETE FROM chat_members WHERE room = ?").bind(id),
     d.prepare("DELETE FROM chat_rooms WHERE id = ?").bind(id),

@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { Browser, makeEnv, grantApps, sqlOne } from "./helpers.mjs";
 import { FakeMatrix } from "./fake-matrix.mjs";
 import * as lib from "../public/chat/vendor/matrix-crypto/node.mjs";
-import { Vault, textOf, textContent, editContent, encryptSecret, encodeRecoveryKey } from "../public/chat/e2ee.js";
+import { Vault, textOf, textContent, editContent, reactionContent, encryptSecret, encodeRecoveryKey } from "../public/chat/e2ee.js";
 
 const ROOM = "!secret:matrix.test";
 let hs;
@@ -64,8 +64,8 @@ async function onMatrix(user = "@sam:matrix.test", device = "SAMDEV", token = "s
     const item = { id: ++n, to_device: s.to_device?.events ?? [], changed: s.device_lists?.changed ?? [], left: [] };
     return { items: item.to_device.length || item.changed.length ? [item] : [], counts };
   } });
-  const say = async (content) => {
-    const enc = await vault.encrypt(ROOM, content);
+  const say = async (content, type) => {
+    const enc = await vault.encrypt(ROOM, content, type);
     return (await call("PUT", `rooms/${encodeURIComponent(ROOM)}/send/m.room.encrypted/t${++n}`, enc)).event_id;
   };
   // What Sam's Element shows: each message's text, edits applied.
@@ -228,4 +228,34 @@ test("a Security Key verifies the site's session, and older messages come from t
   await api(ryan, "POST", `/rooms/${room.id}/messages`, { encrypted: await vault.encrypt(ROOM, textContent("backed up")) });
   await vault.pump();
   assert.equal(Object.keys(hs.backups[0].rooms[ROOM]).length, 2, "the site's own room key went into the backup");
+});
+
+test("reactions in an encrypted room are encrypted too, and go both ways", async () => {
+  const { ryan, conn } = await setup();
+  const vault = await siteVault(ryan, conn);
+  const sam = await samOnMatrix();
+  const first = await sam.say(textContent("pizza tonight?"));
+  await sam.say(reactionContent(first, "🍕"), "m.reaction");
+  await syncNow(ryan, conn);
+  const room = (await api(ryan, "GET", "/state")).json.rooms.find(r => r.encrypted);
+  const [m] = (await api(ryan, "GET", `/rooms/${room.id}/messages`)).json.messages;
+  assert.deepEqual(m.reactions.map(r => [r.emoji, r.names]), [["🍕", "Sam"]], "what a reaction is on, and its emoji, are outside the encryption");
+
+  // From here it needs the browser to encrypt it, as Element does.
+  const plain = await api(ryan, "POST", `/rooms/${room.id}/messages/${m.id}/reactions`, { emoji: "👍", on: true });
+  assert.equal(plain.status, 403);
+  assert.match(plain.json.error, /browser that holds its keys/);
+  const mismatched = await vault.encrypt(ROOM, reactionContent(m.ext_id, "🎉"), "m.reaction");
+  assert.equal((await api(ryan, "POST", `/rooms/${room.id}/messages/${m.id}/reactions`, { emoji: "👍", on: true, encrypted: mismatched })).status, 400);
+  const out = await api(ryan, "POST", `/rooms/${room.id}/messages/${m.id}/reactions`,
+    { emoji: "👍", on: true, encrypted: await vault.encrypt(ROOM, reactionContent(m.ext_id, "👍"), "m.reaction") });
+  assert.equal(out.status, 200);
+  assert.deepEqual(out.json.reactions.map(r => [r.emoji, r.mine]), [["🍕", false], ["👍", true]]);
+  const sent = hs.events.at(-1).event;
+  assert.equal(sent.type, "m.room.encrypted", "sent encrypted");
+  assert.deepEqual(sent.content["m.relates_to"], { rel_type: "m.annotation", event_id: m.ext_id, key: "👍" });
+  await sam.read();
+  // Taking it back is a redaction, which isn't encrypted, so it needs no keys.
+  await api(ryan, "POST", `/rooms/${room.id}/messages/${m.id}/reactions`, { emoji: "👍", on: false });
+  assert.equal(hs.events.at(-1).event.type, "m.room.redaction");
 });

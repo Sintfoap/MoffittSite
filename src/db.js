@@ -183,6 +183,10 @@ const SCHEMA = [
      user_id    TEXT NOT NULL,
      emoji      TEXT NOT NULL,
      created_at INTEGER NOT NULL,
+     -- Reactions in bridge rooms: the reaction's id there, and who it's from.
+     -- user_id is the owner's for their own, and "~" + their id there for others'.
+     ext_id     TEXT,
+     ext_name   TEXT,
      PRIMARY KEY (message, user_id, emoji)
    )`,
   `CREATE INDEX IF NOT EXISTS chat_reactions_user ON chat_reactions (user_id)`,
@@ -236,6 +240,7 @@ const SCHEMA = [
 const AFTER_COLUMNS = [
   `CREATE INDEX IF NOT EXISTS chat_rooms_bridge ON chat_rooms (connection, ext_id)`,
   `CREATE UNIQUE INDEX IF NOT EXISTS chat_messages_ext ON chat_messages (room, ext_id) WHERE ext_id IS NOT NULL`,
+  `CREATE INDEX IF NOT EXISTS chat_reactions_ext ON chat_reactions (ext_id) WHERE ext_id IS NOT NULL`,
 ];
 
 // Columns added after a table first shipped. CREATE TABLE IF NOT EXISTS
@@ -243,6 +248,7 @@ const AFTER_COLUMNS = [
 const ADDED_COLUMNS = {
   users: ["email TEXT", "email_verified INTEGER NOT NULL DEFAULT 0"],
   chat_messages: ["posted_seq INTEGER", "edited_at INTEGER", "ext_id TEXT", "ext_sender TEXT", "ext_name TEXT", "encrypted INTEGER NOT NULL DEFAULT 0", "ext_raw TEXT"],
+  chat_reactions: ["ext_id TEXT", "ext_name TEXT"],
   chat_connections: ["can_encrypt INTEGER NOT NULL DEFAULT 0", "crypto_owner TEXT", "crypto_counts TEXT"],
   chat_rooms: ["kind TEXT NOT NULL DEFAULT 'open'", "connection TEXT", "ext_id TEXT", "encrypted INTEGER NOT NULL DEFAULT 0"],
 };

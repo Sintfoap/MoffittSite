@@ -38,7 +38,7 @@ const filter = limit => JSON.stringify({
     account_data: { not_types: ["*"] },
     state: { lazy_load_members: true, types: STATE_TYPES },
     timeline: { limit, lazy_load_members: true,
-      types: ["m.room.message", "m.room.encrypted", "m.room.redaction", "m.room.name", "m.room.topic", "m.room.canonical_alias", "m.room.encryption"] },
+      types: ["m.room.message", "m.room.encrypted", "m.reaction", "m.room.redaction", "m.room.name", "m.room.topic", "m.room.canonical_alias", "m.room.encryption"] },
   },
 });
 
@@ -236,6 +236,14 @@ export const matrix = {
     } });
   },
 
+  // A reaction: an annotation of the message with the emoji as its key.
+  async react(creds, roomId, eventId, key) {
+    const out = await call(creds.base, "PUT", `/_matrix/client/v3/rooms/${room(roomId)}/send/m.reaction/${txn()}`,
+      { token: creds.token, body: { "m.relates_to": { rel_type: "m.annotation", event_id: eventId, key } } });
+    return out.event_id;
+  },
+
+  // Deletes a message, or takes back a reaction (both are redactions).
   async remove(creds, roomId, eventId) {
     await call(creds.base, "PUT", `/_matrix/client/v3/rooms/${room(roomId)}/redact/${encodeURIComponent(eventId)}/${txn()}`,
       { token: creds.token, body: {} });
@@ -257,6 +265,17 @@ function textOf(content, senderName) {
     : dropReplyQuote(body);
   out = out.replace(/[\u0000-\u0009\u000b-\u001f\u007f]/g, " ").trim();
   return out.length > MAX_BODY ? out.slice(0, MAX_BODY) + "…" : out;
+}
+
+// A reaction → {target, key}. In an encrypted room it's encrypted too, but
+// what it annotates (the emoji included) is outside the encryption, as
+// Matrix has it, so it reads the same.
+export function reactionOf(e) {
+  if (e.type !== "m.reaction" && e.type !== "m.room.encrypted") return null;
+  const rel = e.content?.["m.relates_to"];
+  if (rel?.rel_type !== "m.annotation" || typeof rel.event_id !== "string" || typeof rel.key !== "string") return null;
+  const key = rel.key.replace(/[\u0000-\u001f\u007f]/g, "").trim();
+  return key && key.length <= 32 ? { target: rel.event_id, key } : null;
 }
 
 function joinedRoom(id, r, me) {
@@ -288,6 +307,8 @@ function joinedRoom(id, r, me) {
     if (e.type === "m.room.redaction") {
       const target = e.redacts ?? c.redacts;
       if (target) out.events.push({ type: "delete", target });
+    } else if (reactionOf(e)) {
+      out.events.push({ type: "reaction", id: e.event_id, ...reactionOf(e), sender: e.sender, sender_name: who(e.sender), mine: e.sender === me, at });
     } else if (e.type === "m.room.encrypted") {
       // Kept as it came, for the browser with the keys. Edits say what they
       // replace outside the encryption, as Matrix has it.

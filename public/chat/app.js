@@ -8,7 +8,7 @@
 // each connection; what you send there goes to that platform. Encrypted
 // rooms are decrypted and encrypted here, in this browser (e2ee.js).
 
-import { Vault, textOf, textContent, editContent } from "/chat/e2ee.js";
+import { Vault, textOf, textContent, editContent, reactionContent } from "/chat/e2ee.js";
 
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -255,7 +255,9 @@ function messageHtml(m) {
   }
   const chips = (m.reactions || []).map(r =>
     `<button class="chip" data-react="${esc(r.emoji)}" data-mid="${m.id}" aria-pressed="${r.mine}" title="${esc(r.names)}">${esc(r.emoji)} <b>${r.count}</b></button>`).join("");
-  const canReact = open.joined && !m.pending && !open.bridge;
+  // (In a bridge room, reactions go to the platform: an encrypted room's only from the browser with its keys.)
+  const room = open.bridge && rooms.find(r => r.id === open.id);
+  const canReact = open.joined && !m.pending && (!room || !room.encrypted || keysHere(room) === "ready");
   const picker = pickerFor === m.id
     ? `<div class="picker" role="menu">${reactions.map(e => `<button class="link" data-react="${esc(e)}" data-mid="${m.id}" role="menuitem">${esc(e)}</button>`).join("")}</div>` : "";
   return `<div class="text" title="${esc(time(m.created_at))}">${linkify(m.body)}${m.edited_at ? `<span class="edited" title="Edited ${esc(time(m.edited_at))}"> (edited)</span>` : ""}</div>
@@ -353,7 +355,14 @@ $("#room").addEventListener("click", async e => {
       const b = t.closest("[data-react]"), mid = Number(b.dataset.mid), emoji = b.dataset.react;
       const has = open.messages.get(mid)?.reactions?.some(r => r.emoji === emoji && r.mine);
       pickerFor = null;
-      const m = await api("POST", `/rooms/${open.id}/messages/${mid}/reactions`, { emoji, on: !has });
+      const room = rooms.find(r => r.id === open.id), target = open.messages.get(mid);
+      const body = { emoji, on: !has };
+      if (!has && room?.encrypted) {
+        if (keysHere(room) !== "ready") throw new Error("Turn encryption on in this room to react here.");
+        body.encrypted = await (await vaultFor(room.connection)).encrypt(room.ext_room, reactionContent(target.ext_id, emoji), "m.reaction");
+      }
+      const m = await api("POST", `/rooms/${open.id}/messages/${mid}/reactions`, body);
+      if (target?.decrypted) Object.assign(m, { body: target.body, decrypted: true, shownRaw: target.shownRaw });
       open.messages.set(m.id, m);
       renderLog();
     }

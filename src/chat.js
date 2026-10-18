@@ -165,10 +165,10 @@ function messageOut(m, user, room, reactions = []) {
     mine, can_edit: !m.deleted && mine && (!locked || !!m.ext_raw), can_delete: !m.deleted && (mine || canManage(room, user)),
     mentions_me: !m.deleted && !mine && !bridged(room) && mentioned(m.body).includes(user.username),
     reactions: m.deleted ? [] : reactions,
-    ...(bridged(room) ? { external: !!outside, encrypted: locked } : {}),
-    // As it came, for the browser to decrypt; body is only a note.
-    // (After an edit, raw is the edit; ext_id is still the message's own id there.)
-    ...(locked && m.ext_raw && !m.deleted ? { raw: m.ext_raw, ext_id: m.ext_id } : {}),
+    // ext_id: its id there (what an edit or reaction made in the browser points to).
+    ...(bridged(room) ? { external: !!outside, encrypted: locked, ext_id: m.ext_id ?? null } : {}),
+    // As it came, for the browser to decrypt; body is only a note. (After an edit, it's the edit.)
+    ...(locked && m.ext_raw && !m.deleted ? { raw: m.ext_raw } : {}),
   };
 }
 
@@ -178,7 +178,7 @@ async function reactionsFor(d, user, room, lo, hi) {
   if (lo == null) return out;
   const { results } = await d.prepare(`
     SELECT message, emoji, COUNT(*) AS n, MAX(user_id = ?) AS mine, GROUP_CONCAT(name, ', ') AS names
-    FROM (SELECT r.rowid AS k, r.message, r.emoji, r.user_id, COALESCE(u.display_name, 'Deleted account') AS name
+    FROM (SELECT r.rowid AS k, r.message, r.emoji, r.user_id, COALESCE(u.display_name, r.ext_name, 'Deleted account') AS name
           FROM chat_reactions r JOIN chat_messages m ON m.id = r.message LEFT JOIN users u ON u.id = r.user_id
           WHERE m.room = ? AND r.message BETWEEN ? AND ? ORDER BY r.rowid)
     GROUP BY message, emoji ORDER BY message, MIN(k)`).bind(user.id, room.id, lo, hi).all();
@@ -575,29 +575,49 @@ export async function editMessage(env, user, roomId, messageId, body) {
   return oneMessage(d, user, room, messageId);
 }
 
-// Members add or take back a reaction: {emoji, on: true|false}.
+// Members add or take back a reaction: {emoji, on: true|false}. In a bridge
+// room it goes to the platform, and any emoji will do (people there aren't
+// limited to these); in an encrypted one, adding also takes {encrypted}:
+// the reaction the browser encrypted.
 export async function react(env, user, roomId, messageId, body) {
   if (!isObj(body)) fail("body must be a JSON object");
-  for (const k of Object.keys(body)) if (!["emoji", "on"].includes(k)) fail(`unknown field ${JSON.stringify(k)}`);
-  if (!REACTIONS.includes(body.emoji)) fail(`emoji must be one of ${REACTIONS.join(" ")}`);
+  for (const k of Object.keys(body)) if (!["emoji", "on", "encrypted"].includes(k)) fail(`unknown field ${JSON.stringify(k)}`);
   if (typeof body.on !== "boolean") fail("on must be true or false");
   const d = await db(env);
   const { room, member } = await load(d, user, roomId);
   if (!room) return null;
-  const m = await d.prepare("SELECT deleted FROM chat_messages WHERE id = ? AND room = ?").bind(messageId, room.id).first();
+  const anyEmoji = bridged(room) && typeof body.emoji === "string" && body.emoji.length >= 1 && body.emoji.length <= 32 && !/[\u0000-\u001f\u007f]/.test(body.emoji);
+  if (!REACTIONS.includes(body.emoji) && !anyEmoji) fail(`emoji must be one of ${REACTIONS.join(" ")}`);
+  const m = await d.prepare("SELECT deleted, ext_id FROM chat_messages WHERE id = ? AND room = ?").bind(messageId, room.id).first();
   if (!m || m.deleted) return null;
   if (!member) return { forbidden: "join the room to react in it" };
-  if (bridged(room)) return { forbidden: "reactions aren't sent to other platforms yet" };
-  const had = await d.prepare("SELECT 1 AS x FROM chat_reactions WHERE message = ? AND user_id = ? AND emoji = ?").bind(messageId, user.id, body.emoji).first();
-  if (!!had !== body.on) {
-    await d.batch([
-      d.prepare("UPDATE chat_rooms SET seq = seq + 1 WHERE id = ?").bind(room.id),
-      body.on
-        ? d.prepare("INSERT OR IGNORE INTO chat_reactions (message, user_id, emoji, created_at) VALUES (?, ?, ?, ?)").bind(messageId, user.id, body.emoji, now())
-        : d.prepare("DELETE FROM chat_reactions WHERE message = ? AND user_id = ? AND emoji = ?").bind(messageId, user.id, body.emoji),
-      d.prepare("UPDATE chat_messages SET seq = (SELECT seq FROM chat_rooms WHERE id = ?) WHERE id = ?").bind(room.id, messageId),
-    ]);
-  }
+  const had = await d.prepare("SELECT ext_id FROM chat_reactions WHERE message = ? AND user_id = ? AND emoji = ?").bind(messageId, user.id, body.emoji).first();
+  if (!!had === body.on) return oneMessage(d, user, room, messageId);
+  let extId = null;
+  if (bridged(room)) {
+    if (!m.ext_id) return { forbidden: "this message can't be reacted to from here" };
+    let done;
+    if (!body.on) {
+      done = had.ext_id ? await onPlatform(env, d, user, room, (p, creds) => p.remove(creds, room.ext_id, had.ext_id)) : { ok: true };
+    } else if (room.encrypted) {
+      const c = body.encrypted, rel = isObj(c) ? c["m.relates_to"] : null;
+      if (!isObj(c)) return { forbidden: "this room is end-to-end encrypted: react from the chat page in the browser that holds its keys" };
+      if (typeof c.algorithm !== "string" || typeof c.ciphertext !== "string" || JSON.stringify(c).length > LIMITS.encrypted) fail("encrypted must be encrypted content");
+      if (rel?.rel_type !== "m.annotation" || rel.event_id !== m.ext_id || rel.key !== body.emoji) fail("the reaction must say it's this emoji on this message");
+      done = await onPlatform(env, d, user, room, (p, creds) => p.sendEncrypted(creds, room.ext_id, c));
+    } else {
+      done = await onPlatform(env, d, user, room, (p, creds) => p.react(creds, room.ext_id, m.ext_id, body.emoji));
+    }
+    if (done.error) return { failed: done.error };
+    if (body.on) extId = done.ok;
+  } else if (body.encrypted !== undefined) fail("only end-to-end encrypted rooms take encrypted reactions");
+  await d.batch([
+    d.prepare("UPDATE chat_rooms SET seq = seq + 1 WHERE id = ?").bind(room.id),
+    body.on
+      ? d.prepare("INSERT OR IGNORE INTO chat_reactions (message, user_id, emoji, created_at, ext_id) VALUES (?, ?, ?, ?, ?)").bind(messageId, user.id, body.emoji, now(), extId)
+      : d.prepare("DELETE FROM chat_reactions WHERE message = ? AND user_id = ? AND emoji = ?").bind(messageId, user.id, body.emoji),
+    d.prepare("UPDATE chat_messages SET seq = (SELECT seq FROM chat_rooms WHERE id = ?) WHERE id = ?").bind(room.id, messageId),
+  ]);
   return oneMessage(d, user, room, messageId);
 }
 

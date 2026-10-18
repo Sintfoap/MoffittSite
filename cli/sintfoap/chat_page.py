@@ -709,8 +709,6 @@ class ChatPage(Page):
 
     async def react(self, name: str) -> None:
         o = self.open
-        if (self.room() or {}).get("kind") == "bridge":
-            return self.status("Reactions aren't sent to other platforms yet.", bad=True)
         emoji = REACTION_NAMES.get(name.lower(), name)
         if emoji not in self.reactions:
             return self.status("Usage: /react NAME, one of +1 heart laugh tada wow sad eyes pray", bad=True)
@@ -721,6 +719,8 @@ class ChatPage(Page):
         if not target:
             return self.status("There's nothing here to react to yet.", bad=True)
         on = not any(r["emoji"] == emoji and r["mine"] for r in target.get("reactions", []))
+        if on and (self.room() or {}).get("encrypted"):
+            return self.status("This room is end-to-end encrypted: react from the web chat page, where its keys are.", bad=True)
         m = await self.call(self.api.chat_react, o["id"], target["id"], emoji, on)
         if m and self.open is o:
             o["messages"][m["id"]] = m

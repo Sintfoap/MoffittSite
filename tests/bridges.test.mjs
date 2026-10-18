@@ -140,7 +140,6 @@ test("sending, editing and deleting go to Matrix", async () => {
   const theirs = (await api(ryan, "GET", `/rooms/${room.id}/messages`)).json.messages.find(m => m.external);
   assert.equal(theirs.can_delete, false, "the room's owner here can't delete other people's messages there");
   assert.equal((await api(ryan, "DELETE", `/rooms/${room.id}/messages/${theirs.id}`)).status, 403);
-  assert.equal((await api(ryan, "POST", `/rooms/${room.id}/messages/${theirs.id}/reactions`, { emoji: "👍", on: true })).status, 403);
 
   assert.equal((await api(ryan, "DELETE", `/rooms/${room.id}/messages/${sent.json.id}`)).status, 200);
   assert.equal(hs.events.at(-1).event.type, "m.room.redaction");
@@ -149,6 +148,47 @@ test("sending, editing and deleting go to Matrix", async () => {
   assert.equal((await api(ryan, "PATCH", `/rooms/${room.id}`, { name: "x" })).status, 403);
   assert.equal((await api(ryan, "POST", `/rooms/${room.id}/leave`)).status, 403);
   assert.equal((await api(ryan, "DELETE", `/rooms/${room.id}`)).status, 403);
+});
+
+test("reactions go both ways: Matrix's show here, and yours are sent there", async () => {
+  const { env } = setup();
+  const ryan = await person(env, "ryan", "chat-bridges");
+  const conn = (await connect(ryan)).json;
+  const room = (await api(ryan, "GET", "/state")).json.rooms[0];
+  const [old] = (await api(ryan, "GET", `/rooms/${room.id}/messages`)).json.messages;
+  const target = hs.events.find(e => e.event.content.body === "old news").event.event_id;
+
+  // Sam reacts in Element, with an emoji the site's picker doesn't have.
+  const samsHeart = hs.react("!fam:matrix.test", "@sam:matrix.test", target, "❤️");
+  hs.react("!fam:matrix.test", "@sam:matrix.test", target, "🦀");
+  await syncNow(ryan, conn.id);
+  let m = (await api(ryan, "GET", `/rooms/${room.id}/messages?since=${old.seq}`)).json.messages.find(x => x.id === old.id);
+  assert.deepEqual(m.reactions.map(r => [r.emoji, r.count, r.mine, r.names]), [["❤️", 1, false, "Sam"], ["🦀", 1, false, "Sam"]]);
+
+  // Ryan adds one, and joins Sam's crab: both go to Matrix as reactions.
+  m = (await api(ryan, "POST", `/rooms/${room.id}/messages/${old.id}/reactions`, { emoji: "👍", on: true })).json;
+  m = (await api(ryan, "POST", `/rooms/${room.id}/messages/${old.id}/reactions`, { emoji: "🦀", on: true })).json;
+  assert.deepEqual(m.reactions.map(r => [r.emoji, r.count, r.mine]), [["❤️", 1, false], ["🦀", 2, true], ["👍", 1, true]]);
+  assert.deepEqual(hs.reactions("!fam:matrix.test", target).sort(), [["@ryan:matrix.test", "👍"], ["@ryan:matrix.test", "🦀"], ["@sam:matrix.test", "❤️"], ["@sam:matrix.test", "🦀"]]);
+  // Their echoes don't count twice.
+  await syncNow(ryan, conn.id);
+  m = (await api(ryan, "GET", `/rooms/${room.id}/messages`)).json.messages.find(x => x.id === old.id);
+  assert.deepEqual(m.reactions.map(r => [r.emoji, r.count]), [["❤️", 1], ["🦀", 2], ["👍", 1]]);
+
+  // Taking one back redacts it there; Sam taking his back shows here.
+  await api(ryan, "POST", `/rooms/${room.id}/messages/${old.id}/reactions`, { emoji: "👍", on: false });
+  assert.ok(!hs.reactions("!fam:matrix.test", target).some(([, k]) => k === "👍"));
+  hs.redact("!fam:matrix.test", "@sam:matrix.test", samsHeart);
+  await syncNow(ryan, conn.id);
+  m = (await api(ryan, "GET", `/rooms/${room.id}/messages`)).json.messages.find(x => x.id === old.id);
+  assert.deepEqual(m.reactions.map(r => [r.emoji, r.count]), [["🦀", 2]]);
+
+  // Anything that isn't an emoji-sized bit of text is refused.
+  assert.equal((await api(ryan, "POST", `/rooms/${room.id}/messages/${old.id}/reactions`, { emoji: "x".repeat(40), on: true })).status, 400);
+  // A message deleted on Matrix takes its reactions with it.
+  hs.redact("!fam:matrix.test", "@sam:matrix.test", target);
+  await syncNow(ryan, conn.id);
+  assert.equal(sql(env, "SELECT * FROM chat_reactions").length, 0);
 });
 
 test("encrypted rooms come in as they are; a pasted token can't hold keys, so they stay read-only", async () => {

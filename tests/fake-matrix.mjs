@@ -57,6 +57,18 @@ export class FakeMatrix {
   edit(room, sender, target, body) {
     return this.say(room, sender, "* " + body, { "m.new_content": { msgtype: "m.text", body }, "m.relates_to": { rel_type: "m.replace", event_id: target } });
   }
+  react(room, sender, target, key) {
+    const event = { type: "m.reaction", event_id: `$e${++this.n}`, sender, origin_server_ts: Date.now(),
+      content: { "m.relates_to": { rel_type: "m.annotation", event_id: target, key } } };
+    this.events.push({ room, event });
+    return event.event_id;
+  }
+  // Reactions on a message that haven't been taken back: [[sender, key]].
+  reactions(room, target) {
+    const gone = new Set(this.events.filter(e => e.event.type === "m.room.redaction").map(e => e.event.redacts));
+    return this.events.filter(e => e.room === room && e.event.type === "m.reaction" && !gone.has(e.event.event_id)
+      && e.event.content["m.relates_to"].event_id === target).map(e => [e.event.sender, e.event.content["m.relates_to"].key]);
+  }
   redact(room, sender, target) {
     this.events.push({ room, event: { type: "m.room.redaction", event_id: `$e${++this.n}`, sender, redacts: target, origin_server_ts: Date.now(), content: {} } });
   }
@@ -114,7 +126,7 @@ export class FakeMatrix {
       if (!r) return json({ errcode: "M_FORBIDDEN", error: "not in room" }, 403);
       return json({ joined: Object.fromEntries([...r.members].map(([id, name]) => [id, { display_name: name }])) });
     }
-    m = path.match(/^\/_matrix\/client\/v3\/rooms\/([^/]+)\/send\/(m\.room\.message|m\.room\.encrypted)\/([^/]+)$/);
+    m = path.match(/^\/_matrix\/client\/v3\/rooms\/([^/]+)\/send\/(m\.room\.message|m\.room\.encrypted|m\.reaction)\/([^/]+)$/);
     if (m && req.method === "PUT") {
       const room = decodeURIComponent(m[1]);
       if (!this.rooms.has(room)) return json({ errcode: "M_FORBIDDEN", error: "not in room" }, 403);
