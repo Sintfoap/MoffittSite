@@ -31,8 +31,14 @@ export const APPS = [
   { id: "admin", area: "admin", name: "Admin", href: "/admin", icon: "admin", key: "a", blurb: "Accounts, access and resets.", group: "account" },
   { id: "plugins", area: "plugins", name: "Plugin store", href: "/plugins/", icon: "plugins", key: "p", blurb: "Find, write and share plugins for Drift." },
   { id: "chat", area: "chat", name: "Chat", href: "/chat/", icon: "chat", key: "c", blurb: "Rooms to talk in with everyone else here." },
+  // A part of another app: it has its own toggle on the admin page, but no
+  // place of its own in the menu or on the dashboard (see `parent`).
+  { id: "chat-bridges", area: "chat-bridges", parent: "chat", name: "Chat connections", href: "/chat/#connections", icon: "chat",
+    blurb: "Bring your Matrix rooms into Chat." },
   { id: "notifications", area: "notifications", name: "Notifications", href: "/notifications/", icon: "bell", key: "n", blurb: "Alerts on your phone or computer for Chat and Drift.", group: "account" },
 ];
+// The apps that are places of their own: the menu, the dashboard's cards.
+export const PLACES = APPS.filter(a => !a.parent);
 
 export const AREAS = APPS.map(a => a.area);                                // every area the site knows about
 export const DEFAULT_AREAS = APPS.filter(a => a.onForNew).map(a => a.area); // what a new account can use

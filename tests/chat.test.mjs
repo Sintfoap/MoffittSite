@@ -31,7 +31,7 @@ test("the chat page needs a signed-in account and is on the dashboard", async ()
   const page = await b.get("/chat/");
   assert.equal(page.status, 200);
   assert.match(page.headers.get("Cache-Control"), /no-store/);
-  assert.match(page.headers.get("Content-Security-Policy"), /script-src 'self'(;|$)/);
+  assert.match(page.headers.get("Content-Security-Policy"), /script-src 'self' 'wasm-unsafe-eval'(;|$)/);
   assert.match((await b.get("/dashboard")).text, /href="\/chat\/"/);
 
   // Without the area there's no card and no access.

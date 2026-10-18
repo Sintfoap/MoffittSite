@@ -1,7 +1,7 @@
 // The site's navigation, owned by the dashboard: what the side rail shows on
 // every signed-in page (server pages, Drift, the plugin store, chat) and what
 // the terminal UI offers. Pages never list their own entries; they render this.
-import { APPS } from "./auth.js";
+import { PLACES } from "./auth.js";
 
 // Until an account has finished setting up (a new password, or two-factor for
 // an admin), the site only offers its settings, so that's all the menu shows.
@@ -15,8 +15,8 @@ export function siteNav(user) {
   const app = a => ({ id: a.id, label: a.name, href: a.href, icon: a.icon, key: a.key });
   return [
     ...(ready ? [{ id: "home", label: "Home", href: "/dashboard", icon: "home", key: "h", group: "site" }] : []),
-    ...APPS.filter(a => a.group !== "account" && can(a)).map(a => ({ ...app(a), group: "site" })),
+    ...PLACES.filter(a => a.group !== "account" && can(a)).map(a => ({ ...app(a), group: "site" })),
     { id: "account", label: "Settings", href: "/account", icon: "account", key: "s", group: "account" },
-    ...APPS.filter(a => a.group === "account" && can(a)).map(a => ({ ...app(a), group: "account" })),
+    ...PLACES.filter(a => a.group === "account" && can(a)).map(a => ({ ...app(a), group: "account" })),
   ];
 }

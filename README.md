@@ -33,6 +33,8 @@ src/             the Worker: runs only for the paths in run_worker_first
   chat.js          chat: rooms, members, messages
   push.js          sending Web Push: encryption (RFC 8291) and VAPID signing, with WebCrypto
   notify.js        notifications: settings, browsers, Chat's pushes and Drift's reminders
+  bridges.js       chat connections: other platforms' rooms in chat, with sealed credentials
+  matrix.js        the Matrix provider for those
   vendor/uqr.mjs   QR codes for two-factor setup (MIT)
 cli/             the `sintfoap` command: sign in from a terminal; dashboard, Drift, plugin store and settings as a terminal UI
 apps/todo-esque/ the original Drift app (Python engine, terminal UI, CLI)
@@ -114,6 +116,8 @@ If adding an email fails, the account page shows Resend's reason, and the Worker
 2. Add an entry to `APPS` in `src/auth.js` with its own `area` (usually its id), `icon` and `g` `key`. That puts it on the dashboard, the side rail, the terminal's menu and the admin page's toggles. It's off for everyone, existing and new accounts alike; only apps marked `onForNew` are given to new accounts.
 3. In `src/worker.js`, route those paths through `protect(request, env, areaOf("<id>"), user => ...)`, the same way `/chat` is.
 4. Turn it on for people from `/admin`.
+
+A feature inside an app that should have its own toggle, but no place in the menu (Chat connections, say), is an `APPS` entry with `parent` set to its app's id. `PLACES` in `src/auth.js` is the list without those.
 
 The plugin store and chat used to come with Drift's area. The first time the Worker runs against a database, `SPLIT_FROM_TODO` in `src/db.js` gives them to everyone who had Drift (once; `area_splits` records it), so nobody lost access when they got their own toggles.
 
@@ -244,10 +248,36 @@ A store plugin's view can return HTML from `render(ctx)`, or be interactive like
 | GET | `/chat/api/rooms/<id>/search` | `?q=<text>` |
 | POST | `/chat/api/rooms/<id>/typing` | (members) |
 | GET | `/chat/api/rooms/<id>/messages` | `?since=<seq>` for changes, `?before=<message id>` for older pages; also says who's `here` and `typing` |
-| POST | `/chat/api/rooms/<id>/messages` | `{body}` (members) |
-| PATCH | `/chat/api/rooms/<id>/messages/<message id>` | `{body}` (author) |
+| POST | `/chat/api/rooms/<id>/messages` | `{body}` (members), or `{encrypted}` in an encrypted bridge room: content the browser encrypted |
+| PATCH | `/chat/api/rooms/<id>/messages/<message id>` | `{body}` (author), or `{encrypted}` as above, an `m.replace` edit of that message |
 | DELETE | `/chat/api/rooms/<id>/messages/<message id>` | (author, room owner or admin) |
 | POST | `/chat/api/rooms/<id>/messages/<message id>/reactions` | `{emoji, on}`: add (`true`) or take back (`false`) a reaction (members) |
+| GET | `/chat/api/connections` | (your connections to other platforms; needs Chat connections) |
+| POST | `/chat/api/connections` | `{provider, ...its fields}`, e.g. `{provider: "matrix", homeserver, token}`: connect, and sync once |
+| DELETE | `/chat/api/connections/<id>` | remove it and its rooms |
+| POST | `/chat/api/connections/<id>/sync` | sync now, and try again if it had stopped working |
+| POST | `/chat/api/connections/<id>/crypto/claim` | `{key}`: this browser holds the connection's encryption keys (only if no other does) → `{device}` |
+| POST | `/chat/api/connections/<id>/crypto/inbox` | `{key, ack}`: what syncs brought for the keys, after taking back up to `ack` → `{items, counts}` |
+| POST | `/chat/api/connections/<id>/crypto/request` | `{key, method, path, body}`: one of the key requests encryption needs, passed on to Matrix → `{response}` |
+
+### Connections to other platforms
+
+Chat can also bring in your rooms from other chat platforms, so you read and answer them in the same place. **Matrix** is the first (Element and any other Matrix app use the same rooms); others plug in the same way. It's its own toggle on `/admin`, **Chat connections**, off for everyone until an admin turns it on. It has no place of its own in the menu: it's the **Connections** button (`k`) on the chat page, and `/connect` in the terminal.
+
+- **Connecting Matrix:** your homeserver (`matrix.org`, or your own; `.well-known` is followed the way Element does) and either an access token (Element: *Settings → Help & About → Access token*) or your Matrix username and password. A password is used once, to sign in a new session called `sintfoap.xyz`, and is never stored; that session is signed out when you remove the connection. A token you paste is left alone when you remove it, since it's probably Element's own.
+- **Rooms** you're in there show up under a heading for the platform, marked `~`. Only you see them, admins included. Messages from people there are shown with their names there; yours, sent from here or from Element, are yours. Unread counts, history and search work as in any room.
+- **Sending, editing and deleting** your messages go to Matrix (edits as Matrix edits, deletions as redactions), and edits and deletions made there show up here. Reactions, renaming, leaving and adding people stay on the platform for now.
+- **End-to-end encrypted rooms** (Element's default for direct messages) work on the chat page, with the keys kept in your browser and never on the site. Open one and choose **Turn on encryption here**: the browser makes keys for the connection's session with Matrix's own crypto library (the one Element uses, vendored in `public/chat/vendor/matrix-crypto`), and from then on decrypts what comes in and encrypts what you send or edit before the site sees it. The site only passes things along: encrypted messages as they came, the to-device messages each sync brings (other people's devices sharing room keys), and the key requests the browser makes (`public/chat/e2ee.js`, `cryptoOp` in `src/bridges.js`). Some limits:
+  - It needs a connection made with your **username and password**, so the site has a session of its own to hold keys. A pasted access token belongs to another app's session, whose keys are in that app, so its encrypted rooms stay read-only.
+  - **One browser** holds a connection's keys: the one that turned encryption on. Others say where the keys are. To move them, remove the connection and connect it again. Clearing the browser's site data loses them the same way.
+  - **Verify with Security Key** (in the room, once encryption is on) does what Element's option of the same name does: your Security Key or Security Phrase opens your account's secret storage, here in the browser (it's never sent to the site). The site's session is then signed with your cross-signing key, so Element and other apps show it as verified, and it takes your key backup's key: messages it was never given keys for, such as ones from before it was connected, are unlocked from the backup, and keys for new ones are backed up too. This needs Secure Backup set up on the account (Element: *Settings → Security & Privacy*).
+  - Only messages the site has brought in can be shown: the latest 20 per room when you connected, and everything after.
+  - The **terminal** shows encrypted messages as "Encrypted message" and sends to those rooms from the web page only, since the keys are in the browser.
+- **Syncing** happens while chat is open: the room list and the open room each ask the platform what changed (at most every 2 seconds per connection, with Matrix's `/sync` and no waiting). Nothing runs in the background, so when you come back after a long time a busy room may show only its latest messages. A token that stops working marks the connection with the reason; **Sync now** tries again.
+- **Credentials** (the access token, never the password) are encrypted with AES-GCM before they're stored, under a key from the `CHAT_BRIDGE_KEY` secret and bound to their account, so the database alone doesn't give them away. Without the secret, nothing can be connected. To set it: **Workers & Pages → moffittsite → Settings → Variables and Secrets → Add**, type **Secret**, name `CHAT_BRIDGE_KEY`, value a long random string (e.g. from `openssl rand -base64 32`). Changing it later means everyone reconnects.
+- **Deleting an account** deletes its connections and their rooms. (Sessions the site signed in on Matrix stay signed in there; end them from Element's session list.)
+
+**Adding a platform:** write `src/<platform>.js` with the shape described at the top of `src/bridges.js` (`fields`, `connect`, `sync`, `send`, `edit`, `remove`, `disconnect`, and for encryption `canEncrypt`, `device`, `sendEncrypted`, `cryptoRequest`) and add it to `PROVIDERS` there. The connect form on the web page and in the terminal is built from its `fields`, so nothing else changes.
 
 ## Notifications
 

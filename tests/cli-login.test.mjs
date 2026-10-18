@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Browser, makeEnv, sqlOne, run, enable2fa, grantApps } from "./helpers.mjs";
-import { APPS } from "../src/auth.js";
+import { PLACES } from "../src/auth.js";
 
 // A terminal: no Origin header, no cookie jar; it sends its token as the session cookie.
 class Terminal extends Browser {
@@ -161,7 +161,7 @@ test("the terminal dashboard shows what /dashboard does", async () => {
   assert.equal(d.site, "https://sintfoap.test");
   assert.deepEqual(d.user, { username: "ryan", display_name: "Ryan M", admin: false });
   // The same apps, in the same order, as the web dashboard shows this account.
-  assert.deepEqual(d.apps.map(a => [a.name, a.url]), APPS.filter(a => ["drift", "plugins", "chat"].includes(a.id)).map(a => [a.name, "https://sintfoap.test" + a.href]));
+  assert.deepEqual(d.apps.map(a => [a.name, a.url]), PLACES.filter(a => ["drift", "plugins", "chat"].includes(a.id)).map(a => [a.name, "https://sintfoap.test" + a.href]));
   assert.ok(d.apps.some(a => a.name === "Drift"));
   assert.equal(d.account.two_factor, false);
   assert.equal(d.account.sessions, 2, "the browser and the terminal");

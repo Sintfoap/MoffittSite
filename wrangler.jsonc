@@ -40,6 +40,8 @@
   },
   // Also needed, set as a secret (not here): ADMIN_CLAIM_CODE, which lets one
   // account claim admin while there is none. See README.
+  // CHAT_BRIDGE_KEY, also a secret, encrypts the tokens people give Chat to
+  // connect their other chat platforms (Matrix). Without it connections are off.
 
   // Branch builds run `wrangler preview`, which takes its settings from here.
   // Previews have no database, so signing in there fails closed.

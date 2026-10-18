@@ -6,7 +6,7 @@ import { db, now } from "./db.js";
 import { randomToken, safeEqual } from "./crypto.js";
 import { renderSVG } from "./vendor/uqr.mjs";
 import {
-  AuthError, APPS, getUser, createUser, setPassword, checkLogin, checkSignupAllowed, recordSignup,
+  AuthError, APPS, PLACES, getUser, createUser, setPassword, checkLogin, checkSignupAllowed, recordSignup,
   createSession, currentSession, endSession, endUserSessions, sessionCookie, clearCookie,
   startTotp, otpauthUri, confirmTotp, replaceRecoveryCodes, disableTotp, checkSecondFactor, recoveryCodesLeft, resetWithRecoveryCode,
   adminExists, cleanDisplayName, clientIp,
@@ -262,7 +262,7 @@ async function dashboard(request, env) {
     catch (e) { console.error("dashboard agenda failed:", e); }
   }
   return html(dashboardPage({
-    user, apps: APPS.filter(a => user.areas.has(a.area)), sessionCount, recoveryLeft: await recoveryCodesLeft(env, user.id),
+    user, apps: PLACES.filter(a => user.areas.has(a.area)), sessionCount, recoveryLeft: await recoveryCodesLeft(env, user.id),
     agenda: agendaData, installs: drift ? (await installed(env, user.id)).length : null, mail: mailReady(env),
     greeting: hour < 5 ? "Good evening" : hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening",
     dateLabel: label,
@@ -517,6 +517,12 @@ async function admin(request, env, me, pathname, method) {
           d.prepare("DELETE FROM drift_items WHERE owner = ?").bind(target.id),
           d.prepare("DELETE FROM drift_collections WHERE owner = ?").bind(target.id),
           d.prepare("DELETE FROM drift_shares WHERE owner = ? OR user_id = ?").bind(target.id, target.id),
+          // Their connections to other platforms go, with the rooms they brought in.
+          ...["chat_messages", "chat_members", "chat_presence"].map(t =>
+            d.prepare(`DELETE FROM ${t} WHERE room IN (SELECT id FROM chat_rooms WHERE kind = 'bridge' AND owner = ?)`).bind(target.id)),
+          d.prepare("DELETE FROM chat_rooms WHERE kind = 'bridge' AND owner = ?").bind(target.id),
+          d.prepare("DELETE FROM chat_crypto_inbox WHERE connection IN (SELECT id FROM chat_connections WHERE user_id = ?)").bind(target.id),
+          d.prepare("DELETE FROM chat_connections WHERE user_id = ?").bind(target.id),
           // Their chat messages go; rooms they made stay, for admins to manage.
           d.prepare("DELETE FROM chat_reactions WHERE user_id = ? OR message IN (SELECT id FROM chat_messages WHERE user_id = ?)").bind(target.id, target.id),
           d.prepare("DELETE FROM chat_mentions WHERE user_id = ? OR message IN (SELECT id FROM chat_messages WHERE user_id = ?)").bind(target.id, target.id),

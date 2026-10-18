@@ -187,6 +187,13 @@ def _get(path: str) -> dict:
     return data
 
 
+def _get_list(path: str) -> list:
+    data = api("GET", path)
+    if not isinstance(data, list):
+        raise SiteError("the site sent something unexpected")
+    return data
+
+
 def site_url(path: str = "") -> str:
     info = load_login()
     return (info["site"] if info else clean_site(None)) + path
@@ -318,7 +325,8 @@ def review(plugin_id: str, version: int, decision: str, note: str = "") -> dict:
 # /chat/api/ (src/chat.js)
 
 def chat_state() -> dict:
-    """{user, rooms, online, reactions}: every room you can see, with kind, joined, unread, mentions and manage."""
+    """{user, rooms, online, reactions, bridges}: every room you can see, with kind, joined, unread, mentions and
+    manage; bridges says whether you can connect other platforms, and which."""
     return _get("/chat/api/state")
 
 
@@ -348,7 +356,7 @@ def chat_react(room: str, message_id: int, emoji: str, on: bool = True) -> dict:
 
 def chat_members(room: str) -> list:
     """[{username, name, joined_at, owner}] for a room."""
-    return _get(f"/chat/api/rooms/{_q(room)}/members")
+    return _get_list(f"/chat/api/rooms/{_q(room)}/members")
 
 
 def chat_create(name: str, topic: str = "", private: bool = False) -> dict:
@@ -365,7 +373,7 @@ def chat_dm(username: str) -> dict:
 
 def chat_people() -> list:
     """[{username, name, online}]: everyone else who can use chat."""
-    return _get("/chat/api/people")
+    return _get_list("/chat/api/people")
 
 
 def chat_add(room: str, username: str) -> list:
@@ -409,6 +417,28 @@ def admin_access() -> dict:
 def set_access(user_id: str, app: str, on: bool) -> dict:
     """Turns one app on or off for an account; the same as admin_access() after."""
     return api("POST", "/admin/api/access", {"user_id": user_id, "app": app, "on": bool(on)})
+
+
+# Connections to other chat platforms (src/bridges.js): their rooms show up
+# in chat_state as rooms of kind "bridge".
+
+def chat_connections() -> list:
+    """[{id, provider, network, label, status, error, rooms, synced_at}]: your connections."""
+    return _get_list("/chat/api/connections")
+
+
+def chat_connect(provider: str, fields: dict) -> dict:
+    """Connects an account on another platform ({homeserver, token} for Matrix, say); returns the connection."""
+    return api("POST", "/chat/api/connections", {"provider": provider, **fields})
+
+
+def chat_disconnect(connection: str) -> dict:
+    return api("DELETE", f"/chat/api/connections/{_q(connection)}")
+
+
+def chat_sync(connection: str) -> dict:
+    """Syncs a connection now (and tries again if it had stopped working); returns it."""
+    return api("POST", f"/chat/api/connections/{_q(connection)}/sync")
 
 
 # ──────────────────────────── notifications ─────────────────────────────────

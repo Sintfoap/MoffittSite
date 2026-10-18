@@ -269,7 +269,7 @@ def test_admins_switch_apps_on_and_off_in_the_terminal(admin_site):
         page = app.screen
         assert type(page).__name__ == "AdminPage"
         apps = [a["id"] for a in page.data["apps"]]
-        assert apps == ["drift", "admin", "plugins", "chat", "notifications"]
+        assert apps == ["drift", "admin", "plugins", "chat", "chat-bridges", "notifications"]
         # A switch for every app on every account; your own admin one can't be turned off.
         assert len(page.boxes) == len(apps) * len(page.data["users"])
         me = next(i for i, u in enumerate(page.data["users"]) if u["you"])
@@ -401,6 +401,49 @@ def test_chat_makes_a_room_and_posts_to_the_real_site(real_site):
     [m] = site.chat_messages(room["id"])["messages"]
     assert m["body"] == "first post, edited" and m["edited_at"], "edited, and the second post deleted"
     assert [(r["emoji"], r["count"], r["mine"]) for r in m["reactions"]] == [("🎉", 1, True)]
+
+
+
+def test_chat_connects_matrix_and_talks_in_its_rooms(real_site):
+    async def bridge(app, pilot):
+        page = app.screen
+        assert page.bridges["allowed"] and page.bridges["ready"]
+        await type_(pilot, "/connect")
+        await pilot.press("enter")
+        await settle(pilot)
+        assert type(app.screen).__name__ == "ConnectDialog"
+        assert app.screen.query_one("#f-token").password, "secrets are typed hidden"
+        await type_(pilot, "matrix.test")
+        await pilot.press("enter")
+        await type_(pilot, "syt_good")
+        await pilot.press("enter", "enter", "enter")
+        await settle(pilot, 1.5)
+        assert type(app.screen).__name__ == "ChatPage"
+        assert "@ryan:matrix.test" in str(page.query_one("#messages").render()), str(page.query_one("#status").render())
+        room = next(r for r in page.rooms if r["kind"] == "bridge")
+        assert room["name"] == "Family"
+        await page.open_room(room["id"])
+        await settle(pilot)
+        assert "dinner at six?" in str(page.query_one("#messages").render())
+        assert "on Matrix as @ryan:matrix.test" in str(page.query_one("#head").render())
+        await type_(pilot, "on my way")
+        await pilot.press("enter")
+        await settle(pilot, 0.5)
+        for line in ("/edit on my way!", "/react tada"):
+            await type_(pilot, line)
+            await pilot.press("enter")
+            await settle(pilot, 0.5)
+        assert "aren't sent to other platforms" in str(page.query_one("#status").render())
+        await type_(pilot, "/disconnect 2")
+        await pilot.press("enter")
+        await settle(pilot)
+    run_app("chat", bridge)
+    room = next(r for r in site.chat_state()["rooms"] if r["kind"] == "bridge")
+    msgs = site.chat_messages(room["id"])["messages"]
+    assert [(m["body"], m["mine"]) for m in msgs] == [("dinner at six?", False), ("on my way!", True)]
+    [c] = site.chat_connections()
+    site.chat_disconnect(c["id"])
+    assert not any(r["kind"] == "bridge" for r in site.chat_state()["rooms"])
 
 
 # ── the rules, without a site ──────────────────────────────────────────────

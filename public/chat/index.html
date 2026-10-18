@@ -66,7 +66,7 @@ button.link:hover { color: var(--gold); }
 .side-buttons .btn { padding: 8px 6px; }
 .side .panel { flex: 1; overflow-y: auto; padding: 14px 12px; }
 .side h2 { margin: 0 6px 6px; font: 400 11px var(--mono); letter-spacing: 3px; text-transform: uppercase; color: var(--faint); }
-.side section + section { margin-top: 16px; }
+.side section + section, .side section + #bridged section, #bridged section + section, #bridged + section { margin-top: 16px; }
 .rooms { display: flex; flex-direction: column; gap: 1px; }
 .rooms button { position: relative; display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; border: 0; border-left: 2px solid transparent;
   background: none; padding: 5px 8px; color: var(--muted); cursor: pointer; }
@@ -76,6 +76,9 @@ button.link:hover { color: var(--gold); }
 .rooms .name::before { content: "# "; color: var(--faint); font-weight: 400; }
 .rooms .private .name::before { content: "🔒 "; font-size: 11px; }
 .rooms .dm .name::before { content: none; }
+.rooms .bridge .name::before { content: "~ "; color: var(--faint); font-weight: 400; }
+.rooms .e2e { font-size: 10.5px; letter-spacing: 1px; color: var(--faint); }
+.side-buttons .wide { grid-column: 1 / -1; }
 .dot { display: inline-block; width: 7px; height: 7px; flex: none; border: 1px solid var(--faint); border-radius: 50%; margin-right: 8px; vertical-align: 1px; }
 .dot.on { background: var(--good); border-color: var(--good); }
 .rooms .n { font-size: 11.5px; font-weight: 700; padding: 0 6px; background: var(--gold); color: var(--on-gold); }
@@ -91,6 +94,7 @@ button.link:hover { color: var(--gold); }
 .room-head h2::before { content: "# "; color: var(--gold); }
 .room-head h2.private::before { content: "🔒 "; font-size: 12px; }
 .room-head h2.dm::before { content: "@ "; }
+.room-head h2.bridge::before { content: "~ "; }
 .room-head p { margin: 0; font-size: 12.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .room-head .back { display: none; }
 .log { flex: 1; overflow-y: auto; padding: 8px 18px 12px; display: flex; flex-direction: column; scrollbar-color: var(--line) transparent; }
@@ -124,6 +128,7 @@ button.link:hover { color: var(--gold); }
 .edit-actions span { margin-right: auto; }
 .edit-actions .btn { padding: 4px 12px; }
 .msg.pending { opacity: .5; }
+.msg.locked .text { font-style: italic; color: var(--faint); }
 .log .empty, .welcome { margin: auto; text-align: center; color: var(--muted); padding: 24px; max-width: 420px; }
 .log .empty b, .welcome b { display: block; color: var(--ink); margin-bottom: 4px; }
 
@@ -157,6 +162,11 @@ mark { background: var(--gold); color: var(--on-gold); }
   background: var(--field); border: 1px solid var(--line-2); border-radius: 0; color: var(--ink); }
 .composer textarea:focus { outline: 2px solid var(--gold); outline-offset: 1px; }
 .joinbar { display: flex; gap: 14px; align-items: center; justify-content: center; flex-wrap: wrap; padding: 14px 18px 16px; border-top: 1px dashed var(--line); color: var(--muted); font-size: 13px; }
+.verifybar { padding-top: 10px; padding-bottom: 10px; }
+.verify-form { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; justify-content: center; width: 100%; }
+.verify-form input { flex: 1 1 260px; max-width: 420px; padding: 6px 10px; background: var(--field); border: 1px solid var(--line-2); border-radius: 0; color: var(--ink); }
+.verify-form input:focus { outline: 2px solid var(--gold); outline-offset: 1px; }
+.verify-note { width: 100%; text-align: center; margin: 0; color: var(--faint); font-size: 12px; }
 
 /* dialogs */
 dialog { border: 1px solid var(--line-2); border-radius: 0; background: var(--panel); color: var(--ink); padding: 0; width: min(480px, calc(100vw - 32px)); }
@@ -183,6 +193,17 @@ dialog li.none { color: var(--faint); }
 .actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 18px; }
 .actions .spacer { flex: 1; }
 .error { color: var(--bad); font-size: 13px; margin: 8px 0 0; }
+dialog .help { margin: 0 0 6px; font-size: 12.5px; color: var(--muted); }
+dialog select { width: 100%; padding: 8px 10px; font: 14px var(--mono); color: var(--ink); background: var(--field); border: 1px solid var(--line-2); border-radius: 0; }
+#connections { flex: none; max-height: none; }
+#connections li { flex-wrap: wrap; gap: 4px 10px; }
+#connections li .what { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+#connections li .what span { display: block; margin: 0; }
+#connections li .bad { color: var(--bad); }
+dialog .wrap { padding: 22px 24px; display: flex; flex-direction: column; gap: 4px; max-height: 90vh; overflow-y: auto; }
+#connect-form { padding: 0; gap: 0; margin-top: 10px; border-top: 1px dashed var(--line); }
+#connect-form h3 { margin: 14px 0 4px; font: 700 13px var(--mono); }
+#connect-form .or { margin: 10px 0 0; font-size: 12px; color: var(--faint); }
 
 .toast { position: fixed; left: 50%; bottom: 52px; transform: translateX(-50%); padding: 8px 14px; background: var(--panel); border: 1px solid var(--line-2);
   border-left: 3px solid var(--gold); color: var(--ink); font-size: 13px; }
@@ -212,10 +233,12 @@ dialog li.none { color: var(--faint); }
   <h1>Rooms</h1>
   <div class="layout">
     <aside class="side">
-      <div class="side-buttons"><button class="btn" id="new">+ Room</button><button class="btn quiet" id="dm">+ Message</button></div>
+      <div class="side-buttons"><button class="btn" id="new">+ Room</button><button class="btn quiet" id="dm">+ Message</button>
+        <button class="btn quiet wide" id="connections-open" hidden>Connections</button></div>
       <div class="panel">
         <section><h2>Your rooms</h2><div class="rooms" id="joined"></div></section>
         <section><h2>Direct messages</h2><div class="rooms" id="dms"></div></section>
+        <div id="bridged"></div>
         <section><h2>Other rooms</h2><div class="rooms" id="others"></div></section>
       </div>
     </aside>
@@ -259,8 +282,26 @@ dialog li.none { color: var(--faint); }
   </form>
 </dialog>
 
+<dialog id="connections-dialog">
+  <div class="wrap">
+    <h2>Connections</h2>
+    <p class="help">Bring your rooms from other chat platforms in here, to read and answer them alongside the site's. Only you see them.</p>
+    <ul id="connections"></ul>
+    <p class="error" id="connections-off" hidden></p>
+    <form id="connect-form" hidden>
+      <h3>Connect an account</h3>
+      <label for="connect-provider" id="connect-provider-label">Platform</label><select id="connect-provider"></select>
+      <p class="help" id="connect-help"></p>
+      <div id="connect-fields"></div>
+      <p class="error" id="connect-error" hidden></p>
+      <div class="actions"><button type="button" class="btn quiet" id="connections-close">Close</button><span class="spacer"></span><button type="submit" class="btn" id="connect-save">Connect</button></div>
+    </form>
+    <div class="actions" id="connections-only-close" hidden><span class="spacer"></span><button type="button" class="btn quiet" id="connections-close-2">Close</button></div>
+  </div>
+</dialog>
+
 <div class="toast" id="toast" role="status" hidden></div>
-<footer class="keybar" aria-label="Keyboard shortcuts"><span><kbd>n</kbd>New room</span><span><kbd>m</kbd>Message someone</span><span><kbd>f</kbd>Search</span><span><kbd>/</kbd>Message</span><span><kbd>↵</kbd>Send</span><span><kbd>⇧↵</kbd>New line</span><span><kbd>↑</kbd>Edit last</span><span><kbd>@</kbd>Mention</span><span><kbd>esc</kbd>Rooms</span><span><kbd>g</kbd>then a key from the menu to jump</span><a class="end" href="/logout" data-key="o"><kbd>g o</kbd>Sign out</a></footer>
+<footer class="keybar" aria-label="Keyboard shortcuts"><span><kbd>n</kbd>New room</span><span><kbd>m</kbd>Message someone</span><span id="key-k" hidden><kbd>k</kbd>Connections</span><span><kbd>f</kbd>Search</span><span><kbd>/</kbd>Message</span><span><kbd>↵</kbd>Send</span><span><kbd>⇧↵</kbd>New line</span><span><kbd>↑</kbd>Edit last</span><span><kbd>@</kbd>Mention</span><span><kbd>esc</kbd>Rooms</span><span><kbd>g</kbd>then a key from the menu to jump</span><a class="end" href="/logout" data-key="o"><kbd>g o</kbd>Sign out</a></footer>
 <script src="/keys.js" defer></script>
 <script type="module" src="/chat/app.js"></script>
 </body>

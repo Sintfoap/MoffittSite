@@ -99,6 +99,9 @@ The same rooms as `/chat/`: the list on the left, the open room on the right, an
 | `/add NAME` `/remove NAME` | add someone to a private room, or take them out (its owner) |
 | `/dm NAME` | open your direct messages with someone; `tab` completes names |
 | `/who` | who's in the room, and who's online (●) |
+| `/connections` | your connections to other platforms (Matrix); their rooms are in the list marked `~` |
+| `/connect` | connect an account there; the form is the website's, with secrets typed hidden |
+| `/disconnect N` `/sync [N]` | remove connection N, or sync now (and retry one that stopped working) |
 | `/search TEXT` | find messages in the room; `esc` or `/search` on its own goes back |
 | `/rename NAME` `/topic TEXT` | change the open room (its owner, or an admin) |
 | `/delete` | delete your last message in the open room |

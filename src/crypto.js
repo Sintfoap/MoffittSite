@@ -24,6 +24,31 @@ export function safeEqual(a, b) {
   return diff === 0;
 }
 
+// ── secrets kept for someone (chat connections' tokens) ───────────────────
+// AES-256-GCM under a key derived from a Worker secret. `context` (say, the
+// owner's id) is bound in as associated data, so a sealed value copied onto
+// another row or account won't open there. Stored as "v1.<iv>.<ciphertext>".
+async function sealKey(secret) {
+  const raw = await crypto.subtle.digest("SHA-256", enc.encode("sintfoap seal v1\0" + secret));
+  return crypto.subtle.importKey("raw", raw, "AES-GCM", false, ["encrypt", "decrypt"]);
+}
+
+export async function seal(secret, context, text) {
+  const iv = randomBytes(12);
+  const out = await crypto.subtle.encrypt({ name: "AES-GCM", iv, additionalData: enc.encode(context) }, await sealKey(secret), enc.encode(text));
+  return `v1.${b64url(iv)}.${b64url(new Uint8Array(out))}`;
+}
+
+// The text, or null if it doesn't open (wrong key, wrong context, or tampered with).
+export async function unseal(secret, context, sealed) {
+  const [v, iv, data] = String(sealed ?? "").split(".");
+  if (v !== "v1" || !iv || !data) return null;
+  try {
+    const out = await crypto.subtle.decrypt({ name: "AES-GCM", iv: fromB64url(iv), additionalData: enc.encode(context) }, await sealKey(secret), fromB64url(data));
+    return new TextDecoder().decode(out);
+  } catch { return null; }
+}
+
 // ── passwords ──────────────────────────────────────────────────────────────
 // Stored as "pbkdf2-sha256$<iterations>$<salt>$<hash>". The iteration count
 // travels with each hash, so it can be raised later without breaking old ones
