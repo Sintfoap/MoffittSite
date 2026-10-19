@@ -11,6 +11,7 @@ sintfoap — sintfoap.xyz from the terminal.
   sintfoap notifications      what's pushed to your browsers and phone
   sintfoap recipes            Recipe box: recipes, scaled, onto a Drift shopping list
   sintfoap admin              which apps each account can use (admins)
+  sintfoap app                the Android app: a QR code to scan, and the download
   sintfoap books [--plain]    the book club pick: read about the books and vote (no sign-in needed)
   sintfoap whoami
   sintfoap logout             ends this terminal's session on the site
@@ -64,6 +65,19 @@ def plain_books(data: dict) -> None:
     print(f"  {C['dim']}Vote with  sintfoap books  in a terminal, or at {site.site_url('/books/')}{C['r']}\n")
 
 
+def app_info(data: dict) -> None:
+    """Where to get the Android app: a QR code for the phone, and the links."""
+    print(f"\n  {C['gold']}THE PHONE APP{C['r']}  {C['dim']}scan with your phone's camera{C['r']}\n")
+    for line in data["qr"].rstrip("\n").split("\n"):
+        print("  " + line)
+    print(f"\n  {C['gold']}{data['page']}{C['r']}")
+    if data.get("version"):
+        print(f"  Version {data['version']}: {C['dim']}{data['url']}{C['r']}")
+    else:
+        print(f"  {C['dim']}No APK yet. Install it from Chrome instead: {data['page'].removesuffix('/app')}/m/, then ⋮ → Install app.{C['r']}")
+    print()
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="sintfoap", description="sintfoap.xyz from the terminal")
     sub = ap.add_subparsers(dest="cmd")
@@ -81,6 +95,7 @@ def main(argv=None):
     bk.add_argument("--plain", action="store_true", help="print them instead of opening the terminal UI")
     ch = sub.add_parser("chat", help="chat rooms")
     ch.add_argument("room", nargs="?", help="a room to open, by name")
+    sub.add_parser("app", help="the Android app: a QR code to scan, and the download")
     sub.add_parser("whoami")
     sub.add_parser("logout")
     args = ap.parse_args(argv)
@@ -103,6 +118,8 @@ def main(argv=None):
             else:
                 from .books_page import run as run_books
                 run_books()
+        elif cmd == "app":
+            app_info(site.app_release())
         elif cmd == "whoami":
             me = site.whoami()
             print(f"  {me['username']} ({me['display_name']}) on {me['site']}")

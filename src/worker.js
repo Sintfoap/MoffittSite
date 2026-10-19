@@ -8,7 +8,9 @@
 // src/store.js) and /chat (src/chat.js) each need their own app turned on for
 // the account on the admin page, and so do /notifications (src/notify.js) and
 // /recipes, the Recipe box (src/recipes.js).
-// /login/cli is signing in from a terminal (src/cli.js). /_matrix/push/v1/notify
+// /login/cli is signing in from a terminal (src/cli.js). /app and
+// /.well-known/assetlinks.json are the Android app's download page, release
+// check and domain link (src/phone.js). /_matrix/push/v1/notify
 // is where Matrix homeservers tell the site about new messages for
 // notifications (src/notify.js). scheduled() is the cron trigger in
 // wrangler.jsonc: Drift's reminders, and syncing chat connections.
@@ -18,6 +20,7 @@ import { plugins, installed, install, uninstall, PLUGIN_ID, SANDBOX_CSP } from "
 import { protect, handleAuth, AUTH_PATHS, sameOrigin } from "./account.js";
 import { currentSession, areaOf } from "./auth.js";
 import { handleCli, CLI_PATHS } from "./cli.js";
+import { handlePhone, PHONE_PATHS } from "./phone.js";
 import { withRail } from "./pages.js";
 import { chat } from "./chat.js";
 import { recipes } from "./recipes.js";
@@ -76,6 +79,7 @@ export default {
     if (pathname === "/_matrix/push/v1/notify") return pushGateway(request, env, ctx ? p => ctx.waitUntil(p) : undefined);
     if (pathname === "/login/status") return loginStatus(request, env);
     if (CLI_PATHS.test(pathname)) return handleCli(request, env);
+    if (PHONE_PATHS.test(pathname)) return handlePhone(request, env);
     if (AUTH_PATHS.test(pathname)) return handleAuth(request, env);
     return env.ASSETS.fetch(request);
   },
