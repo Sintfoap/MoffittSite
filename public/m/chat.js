@@ -114,7 +114,7 @@ function messageHtml({ m, first }) {
     : linkify(m.body);
   const reacts = (m.reactions || []).map(r => `<button class="react" data-react="${esc(r.emoji)}" data-mid="${m.id}" aria-pressed="${r.mine}">${esc(r.emoji)} <b>${r.count}</b></button>`).join("");
   return `<div class="msg${m.mine ? " mine" : ""}${first ? " first" : ""}${m.mentions_me ? " ping" : ""}${m.pending ? " pending" : ""}" data-id="${m.id}">
-    ${first && !m.mine ? `<div class="who">${esc(m.author_name)}</div>` : ""}
+    ${first && !m.mine ? `<span class="av" aria-hidden="true">${esc((m.author_name || m.author || "?")[0].toUpperCase())}</span><div class="who">${esc(m.author_name)}</div>` : ""}
     <div class="bubble">${m.reply ? `<div class="quote">${quoteOf(m.reply)}</div>` : ""}<div class="text">${content}</div>
       <span class="at">${m.edited_at ? "edited · " : ""}${time(m.created_at)}</span></div>
     ${reacts ? `<div class="reacts">${reacts}</div>` : ""}</div>`;

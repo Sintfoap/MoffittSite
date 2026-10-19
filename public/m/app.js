@@ -33,7 +33,7 @@ export function updateChatBadge(n = app.chatUnread || 0) {
   if (b) { b.hidden = !n; b.textContent = n > 99 ? "99+" : n; }
 }
 
-let current = null;
+let current = null, entering;
 async function route() {
   const [tab, ...rest] = (location.hash.slice(1) || "home").split("/");
   const id = SCREENS[tab] && (tab === "home" || tab === "more" || app.has.has(tab)) ? tab : "home";
@@ -43,6 +43,10 @@ async function route() {
   main.scrollTop = 0;
   document.body.dataset.screen = id;
   document.body.classList.remove("focus");
+  // The new screen eases in; redraws within a screen don't.
+  main.classList.add("enter");
+  clearTimeout(entering);
+  entering = setTimeout(() => main.classList.remove("enter"), 400);
   try {
     current = await SCREENS[id]();
     await current.show(main, rest.map(decodeURIComponent), app);
