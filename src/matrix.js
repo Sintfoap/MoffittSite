@@ -253,6 +253,20 @@ export const matrix = {
     } });
   },
 
+  // One message by its id, read from the homeserver's store rather than a
+  // sync, the way Element's phone app reads the event a push names: a busy
+  // homeserver (matrix.org) can push before its syncs have the event. As
+  // sync has it ({type: "message", ...}), or null for anything else.
+  async message(creds, roomId, eventId) {
+    const e = await call(creds.base, "GET", `/_matrix/client/v3/rooms/${room(roomId)}/event/${encodeURIComponent(eventId)}`, { token: creds.token });
+    if (typeof e?.sender !== "string" || e.event_id !== eventId) return null;
+    const member = await call(creds.base, "GET", `/_matrix/client/v3/rooms/${room(roomId)}/state/m.room.member/${encodeURIComponent(e.sender)}`,
+      { token: creds.token }).catch(() => null);
+    const state = member?.displayname ? [{ type: "m.room.member", state_key: e.sender, content: member }] : [];
+    return joinedRoom(roomId, { state: { events: state }, timeline: { events: [e] } }, creds.user_id).events
+      .find(x => x.type === "message" && x.id === eventId) ?? null;
+  },
+
   async removePusher(creds, key) {
     await call(creds.base, "POST", "/_matrix/client/v3/pushers/set", { token: creds.token, body: { kind: null, app_id: PUSH_APP, pushkey: key } });
   },

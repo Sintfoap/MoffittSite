@@ -26,7 +26,7 @@ import { sameOrigin } from "./account.js";
 import { withRail } from "./pages.js";
 import { sha256, fromB64url } from "./crypto.js";
 import { configured, pushEndpoint, send } from "./push.js";
-import { BRIDGE_AREA, bridgeReady, syncConnection, connectionForPushKey, setPusher, dropPusher } from "./bridges.js";
+import { BRIDGE_AREA, bridgeReady, syncConnection, connectionForPushKey, fetchMessage, setPusher, dropPusher } from "./bridges.js";
 
 export class BadRequest extends Error {}
 const fail = msg => { throw new BadRequest(msg); };
@@ -41,6 +41,7 @@ const BODY = 180;               // characters of a message shown in its notifica
 const ALL_DAY_AT = "08:00";     // when an all-day item reminds, local time
 const LATE = 15 * 60_000;       // a reminder the cron missed still goes out this late
 const KEEP_SENT = 3 * 86400;    // seconds push_sent remembers a reminder
+const WAIT_FOR = 3600;          // seconds a pushed Matrix message no sync has brought in is waited for
 
 const isObj = v => v && typeof v === "object" && !Array.isArray(v);
 
@@ -270,6 +271,24 @@ async function bridgedMessage(d, conn, extId) {
   return { room: { id: m.room_id, name: m.room_name }, id: m.ext_id, sender_name: m.ext_name || "Someone", body: m.body, encrypted: !!m.encrypted };
 }
 
+// Pushes the messages the homeserver told the site about that no sync or
+// read had yet, once a sync has brought them in. Ones that never come are
+// given up on after WAIT_FOR.
+async function pendingPushes(env, d, conn) {
+  const prefix = `wait:${conn.id}:`;
+  const { results } = await d.prepare("SELECT key, sent_at FROM push_sent WHERE user_id = ? AND substr(key, 1, ?) = ?")
+    .bind(conn.user_id, prefix.length, prefix).all();
+  if (!results.length) return 0;
+  const found = [], done = [];
+  for (const r of results) {
+    const m = await bridgedMessage(d, conn, r.key.slice(prefix.length));
+    if (m || r.sent_at < now() - WAIT_FOR) done.push(r.key);
+    if (m && !m.mine) found.push(m);
+  }
+  if (done.length) await d.batch(done.map(k => d.prepare("DELETE FROM push_sent WHERE user_id = ? AND key = ?").bind(conn.user_id, k)));
+  return bridgePushes(env, d, conn, found);
+}
+
 // POST /_matrix/push/v1/notify: a homeserver telling a pusher about an event.
 // Answered at once (with any keys it should forget); the sync and the push
 // happen after, through `later`.
@@ -290,10 +309,14 @@ export async function pushGateway(request, env, later = p => p) {
   if (typeof n.event_id === "string" && conns.length) {
     await later(Promise.all(conns.map(async conn => {
       await syncConnection(env, d, conn, { force: true });
-      let m = await bridgedMessage(d, conn, n.event_id);
-      // Another sync may be bringing it in at this moment.
-      if (!m) { await new Promise(r => setTimeout(r, 1500)); m = await bridgedMessage(d, conn, n.event_id); }
+      await pendingPushes(env, d, conn);
+      // A busy homeserver can push before its syncs have the event (nothing
+      // else syncs while chat is closed), so it's read from there directly.
+      const m = await bridgedMessage(d, conn, n.event_id) ?? await fetchMessage(env, d, conn, n.room_id, n.event_id);
       if (m && !m.mine) await bridgePushes(env, d, conn, [m]);
+      // Still nowhere: the next sync that brings it in pushes it.
+      else if (!m) await d.prepare("INSERT OR IGNORE INTO push_sent (user_id, key, sent_at) VALUES (?, ?, ?)")
+        .bind(conn.user_id, `wait:${conn.id}:${n.event_id}`, now()).run();
     })).catch(e => console.error("push gateway failed:", e)));
   }
   return json({ rejected });
@@ -322,7 +345,7 @@ export async function bridgeUpkeep(env) {
         if (!why) conn.pusher_at = now();
       }
       const news = await syncConnection(env, d, conn);
-      if (!conn.pusher_at) sent += await bridgePushes(env, d, conn, news);
+      sent += conn.pusher_at ? await pendingPushes(env, d, conn) : await bridgePushes(env, d, conn, news);
     } catch (e) { console.error("connection upkeep failed:", e); }
   }
   return sent;
