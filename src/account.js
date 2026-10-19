@@ -6,12 +6,13 @@ import { db, now } from "./db.js";
 import { randomToken, safeEqual } from "./crypto.js";
 import { renderSVG } from "./vendor/uqr.mjs";
 import {
-  AuthError, APPS, PLACES, getUser, createUser, setPassword, checkLogin, checkSignupAllowed, recordSignup,
+  AuthError, APPS, PLACES, areaOf, getUser, createUser, setPassword, checkLogin, checkSignupAllowed, recordSignup,
   createSession, currentSession, endSession, endUserSessions, sessionCookie, clearCookie,
   startTotp, otpauthUri, confirmTotp, replaceRecoveryCodes, disableTotp, checkSecondFactor, recoveryCodesLeft, resetWithRecoveryCode,
   adminExists, cleanDisplayName, clientIp,
   setEmail, confirmEmail, startEmailReset, emailResetUser, resetWithEmailToken,
 } from "./auth.js";
+import { createKey, listKeys, revokeKey } from "./apikeys.js";
 import { mailReady, sendMail, MailError } from "./mail.js";
 import { agenda, visitorNow } from "./drift.js";
 import { installed } from "./store.js";
@@ -280,8 +281,9 @@ async function account(request, env, pathname, method) {
     if (user.must_change_pw) return html(changePasswordRequiredPage({ user, error: extra.error }), { status });
     const d = await db(env);
     const sessionCount = (await d.prepare("SELECT COUNT(*) AS n FROM sessions WHERE user_id = ? AND stage = 'full'").bind(user.id).first()).n;
+    const hasDrift = user.areas.has(areaOf("drift"));
     return html(accountPage({
-      user, sessionCount, recoveryLeft: await recoveryCodesLeft(env, user.id), mail: mailReady(env),
+      user, sessionCount, apiKeys: hasDrift ? await listKeys(env, user.id) : null, keyNonce: randomToken(12), origin: new URL(request.url).origin, recoveryLeft: await recoveryCodesLeft(env, user.id), mail: mailReady(env),
       adminNeeds2fa: user.areas.has("admin") && !user.totp_secret, ...extra,
     }), { status });
   };
@@ -356,6 +358,19 @@ async function account(request, env, pathname, method) {
       try { await checkLogin(env, request, user.username, f.password); }
       catch (e) { return fail(passwordError(e)); }
       return show({ recoveryCodes: await replaceRecoveryCodes(env, user.id), notice: "New recovery codes made. Any old ones no longer work." });
+
+    // Keys let an AI agent act as you in Drift, so they need the password too.
+    case "/account/apikeys":
+      try {
+        if (!user.areas.has(areaOf("drift"))) throw new AuthError("Your account doesn't have Drift.", { status: 403 });
+        await checkLogin(env, request, user.username, f.password);
+        const made = await createKey(env, user.id, f.name, f.nonce);
+        return show({ newKey: { key: made.key, name: String(f.name).trim() } });
+      } catch (e) { return fail(passwordError(e)); }
+
+    case "/account/apikeys/revoke":
+      await revokeKey(env, user.id, String(f.id ?? ""));
+      return show({ notice: "Key revoked." });
 
     case "/account/2fa/disable":
       try {
@@ -525,6 +540,7 @@ async function admin(request, env, me, pathname, method) {
           d.prepare("DELETE FROM store_versions WHERE plugin_id IN (SELECT id FROM store_plugins WHERE owner = ?)").bind(target.id),
           d.prepare("DELETE FROM store_plugins WHERE owner = ?").bind(target.id),
           d.prepare("DELETE FROM drift_installs WHERE owner = ?").bind(target.id),
+          d.prepare("DELETE FROM api_keys WHERE user_id = ?").bind(target.id),
           d.prepare("DELETE FROM recovery_codes WHERE user_id = ?").bind(target.id),
           d.prepare("DELETE FROM email_tokens WHERE user_id = ?").bind(target.id),
           d.prepare("DELETE FROM user_areas WHERE user_id = ?").bind(target.id),

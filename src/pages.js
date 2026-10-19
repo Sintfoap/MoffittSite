@@ -402,7 +402,7 @@ export function dashboardPage({ user, apps, sessionCount, recoveryLeft, agenda, 
     ${today ? `<div class="section-title">Apps</div>${appCards}` : ""}`, { user, wide: true, here: "home" });
 }
 
-export function accountPage({ user, error, notice, recoveryLeft, sessionCount, setup, recoveryCodes, adminNeeds2fa, mail }) {
+export function accountPage({ user, error, notice, recoveryLeft, sessionCount, setup, recoveryCodes, adminNeeds2fa, mail, apiKeys, newKey, keyNonce, origin }) {
   const isAdmin = user.areas.has("admin");
   let twofa;
   if (setup) {
@@ -445,8 +445,24 @@ export function accountPage({ user, error, notice, recoveryLeft, sessionCount, s
         <button class="${recoveryLeft ? "quiet" : ""}" type="submit">${recoveryLeft ? "Make new recovery codes" : "Make recovery codes"}</button>
         ${recoveryLeft ? `<p class="hint">This replaces the ones you have.</p>` : ""}
       </form>`;
+  const when = t => t ? new Date(t * 1000).toISOString().slice(0, 10) : "never";
+  const keys = apiKeys ? `<section class="card" id="apikeys"><h2>API keys</h2>
+      ${newKey ? `<div class="msg good" role="status"><p>Key <strong>${esc(newKey.name)}</strong> is ready. Copy it now: it won't be shown again.</p>
+        <p class="mono" style="word-break:break-all">${esc(newKey.key)}</p>
+        <p>To add it to Claude Code:</p>
+        <p class="mono" style="word-break:break-all">claude mcp add --transport http drift ${esc(origin)}/mcp --header "Authorization: Bearer ${esc(newKey.key)}"</p></div>` : ""}
+      <p>Give an AI agent a key and it can use Drift as you: read and change your items and collections, share them, and add plugins. Treat a key like a password. Changing your password doesn't revoke keys; revoke them here. Setup instructions for the agent are in <a href="/llm.txt">llm.txt</a>. Its MCP address is <span class="mono">${esc(origin)}/mcp</span>.</p>
+      ${apiKeys.length ? `<table><tr><th>Name</th><th>Key</th><th>Made</th><th>Last used</th><th></th></tr>${apiKeys.map(k => `<tr>
+        <td>${esc(k.name)}</td><td class="mono">${esc(k.prefix)}…</td><td>${when(k.created_at)}</td><td>${when(k.last_used)}</td>
+        <td><form method="post" action="/account/apikeys/revoke"><input type="hidden" name="id" value="${esc(k.id_hash)}"><button class="danger small" type="submit">Revoke</button></form></td></tr>`).join("")}</table>` : `<p class="hint">No keys yet.</p>`}
+      <form method="post" action="/account/apikeys">
+        <input type="hidden" name="nonce" value="${esc(keyNonce)}">
+        <label for="kn">Name</label><input id="kn" type="text" name="name" maxlength="60" placeholder="e.g. my assistant" required>
+        <label for="kp">Password</label><input id="kp" type="password" name="password" autocomplete="current-password" required>
+        <button type="submit">Make a key</button>
+      </form></section>` : "";
   const sections = [["security", "Two-factor"], ["recovery", "Recovery codes"], ...(mail ? [["email", "Email"]] : []),
-    ["profile", "Profile"], ["password", "Password"], ["sessions", "Sessions"]];
+    ["profile", "Profile"], ["password", "Password"], ["sessions", "Sessions"], ...(apiKeys ? [["apikeys", "API keys"]] : [])];
   return page("Account settings", `
     <div class="kicker">Account settings</div><h1>${esc(user.display_name)}</h1>
     ${msg(error)}${msg(notice, "good")}
@@ -485,6 +501,7 @@ export function accountPage({ user, error, notice, recoveryLeft, sessionCount, s
     <section class="card" id="sessions"><h2>Sessions</h2>
       <p>Signed in on ${sessionCount} device${sessionCount === 1 ? "" : "s"}, including this one.</p>
       <form method="post" action="/account/sessions"><button class="quiet" type="submit">Sign out everywhere else</button></form></section>
+    ${keys ? `<div class="group">Agents</div>${keys}` : ""}
     </div></div>`, { user, wide: true, here: "account" });
 }
 

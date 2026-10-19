@@ -15,7 +15,7 @@
       "/login", "/login/*", "/signup", "/logout",
       "/dashboard", "/dashboard/*", "/account", "/account/*", "/admin", "/admin/*",
       "/notifications", "/notifications/*", "/recipes", "/recipes/*", "/_matrix/push/v1/notify",
-      "/books/api", "/books/api/*", "/app", "/app/*", "/.well-known/assetlinks.json"
+      "/mcp", "/books/api", "/books/api/*", "/app", "/app/*", "/.well-known/assetlinks.json"
     ]
   },
 
