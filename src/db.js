@@ -104,6 +104,16 @@ const SCHEMA = [
      created_at INTEGER NOT NULL,
      expires_at INTEGER NOT NULL
    )`,
+  // API keys people give to AI agents for the MCP server (src/apikeys.js, src/mcp.js).
+  `CREATE TABLE IF NOT EXISTS api_keys (
+     id_hash    TEXT PRIMARY KEY,                  -- SHA-256 of the key
+     user_id    TEXT NOT NULL,
+     name       TEXT NOT NULL,                     -- what the person called it
+     prefix     TEXT NOT NULL,                     -- the key's first characters, to recognise it
+     created_at INTEGER NOT NULL,
+     last_used  INTEGER
+   )`,
+  `CREATE INDEX IF NOT EXISTS api_keys_user ON api_keys (user_id)`,
   // The plugin store (src/store.js): shared Drift plugins and their reviewed versions.
   `CREATE TABLE IF NOT EXISTS store_plugins (
      id         TEXT PRIMARY KEY,                  -- lowercase letters; also its key in Drift's item.meta
