@@ -7,6 +7,7 @@ public/          the website, served as static files
   index.html       homepage
   keys.js          the signed-in pages' g-chord shortcuts (g h, g d, g p, g s, g a, g o)
   friends/         Friends & Associates page
+  books/           Book suggestions: public, no sign-in; anyone can vote (app.js talks to /books/api)
   todo/            Drift (signed-in users only)
     app.js           the page: collections, views, item dialog
     lib.js           dates and quick-add parsing
@@ -35,6 +36,7 @@ src/             the Worker: runs only for the paths in run_worker_first
   gifs.js          chat's GIF picker: search, trending and categories from GIPHY (or KLIPY), and favorites
   push.js          sending Web Push: encryption (RFC 8291) and VAPID signing, with WebCrypto
   notify.js        notifications: settings, browsers, Chat's pushes and Drift's reminders
+  books.js         the book suggestions' list and votes (/books/api), and who voted for admins
   bridges.js       chat connections: other platforms' rooms in chat, with sealed credentials
   matrix.js        the Matrix provider for those
   vendor/uqr.mjs   QR codes for two-factor setup (MIT)
@@ -111,6 +113,15 @@ Email goes out through [Resend](https://resend.com) (free for up to 3,000 emails
 4. The sender address is `MAIL_FROM` in `wrangler.jsonc` (`Sintfoap <no-reply@sintfoap.xyz>`). Change it there if you want a different one; it must be on the verified domain.
 
 If adding an email fails, the account page shows Resend's reason, and the Worker's logs (**moffittsite → Observability**) have the full error. The usual one is that the domain isn't verified yet: until it is, Resend refuses every send from `sintfoap.xyz`.
+
+## Book suggestions
+
+`/books/` is a public page, apart from the rest of the site: no sign-in, no side rail, its own look. It lists the books in `BOOKS` (`src/books.js`) with a description and places to get each, and anyone can vote for one. To change the books, edit that list; keep a book's `id` the same, since votes are stored under it.
+
+- **One vote per browser**, tied to a random id in a cookie (`__Host-bv`). It can be moved to another book or taken back. Clearing cookies or using another browser gives another vote; one network address can cast 10 new votes a day.
+- **Who voted:** browsers can't tell a website the computer's name, so each vote keeps what the site can see: the name the voter typed (optional), their account if they're signed in, their IP address, browser and system (from the User-Agent; the terminal's includes the computer's name), Cloudflare's guess at their city, and when. Admins see this under **Book votes** on `/admin` and can remove a vote.
+- **Terminal:** `sintfoap books` shows the same page and votes from the terminal, signed in or not; admins also see who voted there.
+- It's public, so it isn't in `APPS` and has no per-account toggle on `/admin`. Only `/books/api` runs the Worker.
 
 ## Adding another app
 
