@@ -386,9 +386,12 @@ def chat_remove(room: str, username: str) -> list:
     return api("DELETE", f"/chat/api/rooms/{_q(room)}/members/{_q(username)}")
 
 
-def chat_search(room: str, text: str) -> dict:
-    """{more, messages}: messages in a room containing text, newest first."""
-    return _get(f"/chat/api/rooms/{_q(room)}/search?q={_q(text)}")
+def chat_search(room: str, text: str, months: int | None = None) -> dict:
+    """{more, messages, since, platform?, platform_error?}: messages in a room containing text, newest
+    first, from the last `months` months (any time without it). In a room from Matrix, Matrix's own
+    search finds history not brought in yet: those have id None and on_platform set."""
+    back = f"&months={int(months)}" if months is not None else ""
+    return _get(f"/chat/api/rooms/{_q(room)}/search?q={_q(text)}{back}")
 
 
 def chat_typing(room: str) -> dict:

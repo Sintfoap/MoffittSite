@@ -355,6 +355,7 @@ function renderRoomShell(room) {
     </header>
     <form class="searchbar" id="searchbar" hidden>
       <input id="search-q" type="search" maxlength="100" placeholder="Search ${esc(roomTitle(room))}" aria-label="Search this room" autocomplete="off">
+      <select id="search-months" aria-label="How far back to search">${SEARCH_BACK.map(([n, label]) => `<option value="${n}"${n === searchMonths ? " selected" : ""}>${label}</option>`).join("")}</select>
       <button class="btn quiet" type="submit">Find</button>
       <button class="link" type="button" id="search-close">Close</button>
     </form>
@@ -600,6 +601,8 @@ $("#room").addEventListener("click", async e => {
     else if (t.id === "search-open") openSearch();
     else if (t.id === "search-close") closeSearch();
     else if (t.closest("[data-jump]")) await jumpTo(Number(t.closest("[data-jump]").dataset.jump));
+    else if (t.closest("[data-jump-ext]")) { const b = t.closest("[data-jump-ext]"); await jumpTo(null, { ext: b.dataset.jumpExt, at: Number(b.dataset.at) }); }
+    else if (t.id === "search-further") await runSearch({ further: true });
     else if (t.id === "older") {
       const oldest = Math.min(...open.messages.keys());
       const data = await api("GET", `/rooms/${open.id}/messages?before=${oldest}`);
@@ -852,8 +855,15 @@ function renderPresence() {
 }
 
 // ── searching the open room ──────────────────────────────────────────────
+// Back a few months, or any time. In a room from Matrix its own search finds
+// what hasn't been brought in yet; an encrypted one is searched here, in the
+// browser with its keys, by reading back through its history.
 
-let searching = null;   // {q, results, more} while results are showing
+const SEARCH_BACK = [[0, "Any time"], [1, "Past month"], [3, "Past 3 months"], [6, "Past 6 months"], [12, "Past year"], [24, "Past 2 years"]];
+// Pages of an encrypted room's history one search reads, at most.
+const LOCKED_PAGES = 20;
+let searchMonths = 0;
+let searching = null;   // {q, messages, more, ...} while results are showing
 function openSearch() {
   const bar = $("#searchbar");
   bar.hidden = false;
@@ -866,33 +876,91 @@ function closeSearch() {
   if (bar) bar.hidden = true;
   renderLog({ toBottom: true });
 }
-async function runSearch() {
-  const q = $("#search-q").value.trim();
+async function runSearch({ further = false } = {}) {
+  const q = further ? searching.q : $("#search-q").value.trim();
+  searchMonths = Number($("#search-months")?.value ?? 0);
   if (q.length < 2) return toast("Search for at least 2 characters.");
+  const room = rooms.find(r => r.id === open.id), id = open.id;
   try {
-    const data = await api("GET", `/rooms/${open.id}/search?q=${encodeURIComponent(q)}`);
+    let data;
+    if (room?.encrypted) {
+      if (keysHere(room) !== "ready") return toast("This room is end-to-end encrypted: search it in the browser that holds its keys.");
+      $("#log").innerHTML = `<div class="results-head">Reading back through this room for “${esc(q)}”…</div>`;
+      data = await searchLocked(q, searchMonths);
+    } else {
+      data = await api("GET", `/rooms/${id}/search?q=${encodeURIComponent(q)}&months=${searchMonths}`);
+    }
+    if (open?.id !== id) return;
     searching = { q, ...data };
     renderResults();
   } catch (err) { toast(err.message); }
 }
-function renderResults() {
-  const log = $("#log"), { q, messages: found, more } = searching;
-  const mark = text => linkify(text).replace(new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/[&<>"']/g, c => esc(c)), "gi"), x => `<mark>${x}</mark>`);
-  log.innerHTML = `<div class="results-head">${found.length ? `${found.length}${more ? "+" : ""} message${found.length === 1 ? "" : "s"} with “${esc(q)}”, newest first` : `Nothing here says “${esc(q)}”.`}</div>` +
-    found.map(m => `<button class="result" data-jump="${m.id}"><span class="who">${esc(m.author_name)}<span class="at">${esc(day(m.created_at))} ${time(m.created_at)}</span></span><span class="text">${mark(m.body)}</span></button>`).join("");
-  log.scrollTop = 0;
-}
-// Shows a message from the results in the room, loading older pages until it's there.
-async function jumpTo(id) {
-  for (let i = 0; i < 40 && !open.messages.has(id) && open.more; i++) {
+// An encrypted room's history, read back to `months` ago (a few pages at a
+// time: "Search further back" reads more), decrypted and searched here.
+async function searchLocked(q, months) {
+  const since = months ? monthsAgo(months) : 0;
+  const oldest = () => Math.min(...[...open.messages.values()].map(m => m.created_at));
+  for (let i = 0; i < LOCKED_PAGES && open.more && oldest() >= since; i++) {
     const data = await api("GET", `/rooms/${open.id}/messages?before=${Math.min(...open.messages.keys())}`);
     for (const m of await readable(data.messages)) open.messages.set(m.id, m);
     open.more = data.more;
   }
+  await decryptAll();
+  const lower = q.toLowerCase();
+  const found = [...open.messages.values()]
+    .filter(m => !m.deleted && m.decrypted && m.created_at >= since && m.body.toLowerCase().includes(lower))
+    .sort((a, b) => b.created_at - a.created_at || b.id - a.id);
+  // How far back it read, when that isn't as far as was asked.
+  const short = open.more && oldest() >= since;
+  return { messages: found.slice(0, 50), more: found.length > 50, since: since || null, read_back: short ? oldest() : null };
+}
+// Every message in the open (encrypted) room that hasn't been decrypted yet.
+async function decryptAll() {
+  const room = keyedRoom();
+  if (!room) return;
+  const vault = await vaultFor(room.connection), shelf = await shelfFor(room.connection);
+  await vault.pump();
+  const list = [...open.messages.values()].filter(m => m.raw && !(m.shownRaw === m.raw && m.decrypted));
+  const got = await Promise.all(list.map(m => vault.decrypt(m.raw)));
+  list.forEach((m, i) => { if (got[i]) { read(m, got[i]); shelf?.put(eventId(m.raw), got[i]); } });
+}
+function monthsAgo(n) {
+  const t = new Date();
+  t.setUTCMonth(t.getUTCMonth() - n);
+  t.setUTCHours(0, 0, 0, 0);
+  return Math.floor(t / 1000);
+}
+function renderResults() {
+  const log = $("#log"), { q, messages: found, more, since, platform, platform_error, read_back } = searching;
+  const mark = text => linkify(text).replace(new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/[&<>"']/g, c => esc(c)), "gi"), x => `<mark>${x}</mark>`);
+  const when = since ? ` since ${esc(day(since))}` : "";
+  const notes = [
+    platform ? `Includes ${esc(platform)}'s own search, so history not loaded here yet is found too.` : "",
+    platform_error ? `Only what's here was searched: ${esc(platform_error)}` : "",
+    read_back ? `Read back to ${esc(day(read_back))} so far. <button class="link" type="button" id="search-further">Search further back</button>` : "",
+  ].filter(Boolean);
+  log.innerHTML = `<div class="results-head">${found.length ? `${found.length}${more ? "+" : ""} message${found.length === 1 ? "" : "s"} with “${esc(q)}”${when}, newest first` : `Nothing${when} says “${esc(q)}”.`}</div>` +
+    (notes.length ? `<p class="results-note">${notes.join(" ")}</p>` : "") +
+    found.map(m => `<button class="result" ${m.id != null ? `data-jump="${m.id}"` : `data-jump-ext="${esc(m.ext_id)}" data-at="${m.created_at}"`}><span class="who">${esc(m.author_name)}<span class="at">${esc(day(m.created_at))} ${time(m.created_at)}</span>${m.on_platform ? `<span class="where">ON ${esc((platform || "").toUpperCase())}</span>` : ""}</span><span class="text">${mark(m.body)}</span></button>`).join("");
+  log.scrollTop = 0;
+}
+// Shows a message from the results in the room, loading older pages until
+// it's there (for one only on the platform so far, that brings it in).
+async function jumpTo(id, { ext = null, at = null } = {}) {
+  const there = () => ext ? [...open.messages.values()].find(m => m.ext_id === ext)?.id : open.messages.has(id) ? id : undefined;
+  if (ext) toast("Bringing in history from " + (searching?.platform || "the platform") + "…");
+  for (let i = 0; i < 40 && there() === undefined && open.more; i++) {
+    const data = await api("GET", `/rooms/${open.id}/messages?before=${Math.min(...open.messages.keys())}`);
+    for (const m of await readable(data.messages)) open.messages.set(m.id, m);
+    open.more = data.more;
+    // Gone past when it was said: it isn't coming.
+    if (ext && at != null && Math.min(...[...open.messages.values()].map(m => m.created_at)) < at - 60) break;
+  }
+  id = there();
   searching = null;
   $("#searchbar").hidden = true;
   renderLog();
-  const el = $(`#log .msg[data-id="${id}"]`);
+  const el = id !== undefined && $(`#log .msg[data-id="${id}"]`);
   if (!el) return toast("That message is too far back to show.");
   el.scrollIntoView({ block: "center" });
   el.classList.add("found");

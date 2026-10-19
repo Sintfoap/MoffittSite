@@ -169,6 +169,10 @@ button.link:hover { color: var(--gold); }
 .searchbar input { flex: 1; min-width: 0; padding: 6px 10px; background: var(--field); border: 1px solid var(--line-2); border-radius: 0; color: var(--ink); }
 .searchbar input:focus { outline: 2px solid var(--gold); outline-offset: 1px; }
 .searchbar .btn { padding: 6px 12px; }
+.searchbar select { padding: 6px 8px; font: 13px var(--mono); color: var(--ink); background: var(--field); border: 1px solid var(--line-2); border-radius: 0; }
+.searchbar select:focus { outline: 2px solid var(--gold); outline-offset: 1px; }
+.results-note { margin: 0 0 8px; font-size: 12px; color: var(--faint); }
+.result .where { margin-left: 10px; font-weight: 400; font-size: 11px; letter-spacing: 1px; color: var(--gold); }
 .results-head { margin: 10px 0 6px; font-size: 12px; letter-spacing: 1px; color: var(--faint); }
 .result { display: block; width: 100%; text-align: left; padding: 8px 10px; margin: 0 -10px; border: 0; border-left: 2px solid transparent; background: none; cursor: pointer; }
 .result:hover, .result:focus-visible { background: var(--gold-soft); border-left-color: var(--gold); }
@@ -293,6 +297,8 @@ dialog .wrap { padding: 22px 24px; display: flex; flex-direction: column; gap: 4
   body:not(.in-room) .room { display: none; }
   .room-head .back { display: inline-block; }
   .msg { padding-right: 0; }
+  .searchbar { flex-wrap: wrap; }
+  .searchbar input { flex-basis: 100%; }
   .msg .acts { visibility: visible; position: static; justify-content: flex-end; }
   .msg.ping { margin-left: -6px; padding-left: 4px; }
   .gifs { right: 8px; width: calc(100% - 16px); height: min(460px, 70dvh); }

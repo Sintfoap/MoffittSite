@@ -14,6 +14,8 @@
 //     startDm(creds, their id, {encrypted}) → {id, name}   (optional) a direct message there
 //     history(creds, room, from) → {events, from}   (optional) older events, oldest
 //                                           first, as sync has them, and where to go on from (null: the start)
+//     search(creds, room, text, next) → {messages, next}   (optional) the platform's own search
+//                                           of a room, newest first, a page at a time (messages as history has them)
 //     typing(creds, room, on)               (optional) "typing…" there
 //     receipt(creds, room, message id)      (optional) read up to here
 //     disconnect(creds)                     undo whatever connect made there
