@@ -16,6 +16,7 @@ public/          the website, served as static files
   sandbox/         the frame store plugins run in
   chat/            chat rooms (signed-in Drift users); gifs.js is the GIF picker, emoji-picker.js the full reaction picker (emoji.js)
   notifications/   turning push notifications on, and what they're for
+  recipes/         Recipe box (signed-in users with it turned on); scale.js scales ingredient lines, shared with the Worker
   sw.js            the service worker that shows push notifications
   site.webmanifest, icons/   so the site can be added to a phone's home screen
   favicon.svg, favicon.ico   the browser tab icon (the same emblem as icons/)
@@ -35,10 +36,11 @@ src/             the Worker: runs only for the paths in run_worker_first
   gifs.js          chat's GIF picker: search, trending and categories from GIPHY (or KLIPY), and favorites
   push.js          sending Web Push: encryption (RFC 8291) and VAPID signing, with WebCrypto
   notify.js        notifications: settings, browsers, Chat's pushes and Drift's reminders
+  recipes.js       Recipe box: recipes read from a link's schema.org data, and their ingredients sent to a Drift list
   bridges.js       chat connections: other platforms' rooms in chat, with sealed credentials
   matrix.js        the Matrix provider for those
   vendor/uqr.mjs   QR codes for two-factor setup (MIT)
-cli/             the `sintfoap` command: sign in from a terminal; dashboard, Drift, plugin store and settings as a terminal UI
+cli/             the `sintfoap` command: sign in from a terminal; dashboard, Drift, plugin store, chat, Recipe box and settings as a terminal UI
 apps/todo-esque/ the original Drift app (Python engine, terminal UI, CLI)
 tests/           node --no-warnings --test tests/*.test.mjs  (the CLI's: cd cli && python -m pytest tests)
 wrangler.jsonc   Worker configuration (name, static files, variables, database)

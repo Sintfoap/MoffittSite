@@ -497,3 +497,42 @@ def remove_device(device_id: str) -> dict:
 def send_test() -> dict:
     """Pushes a test notification to all your browsers; notify_state() plus {sent, failed}."""
     return api("POST", "/notifications/api/test")
+
+
+# ───────────────────────────── recipe box ───────────────────────────────────
+# /recipes/api/ (src/recipes.js)
+
+def recipes() -> dict:
+    """{recipes, lists, drift}: your recipes, the Drift lists you can send ingredients to, and whether you have Drift."""
+    return _get("/recipes/api/recipes")
+
+
+def save_recipe_from(url: str) -> dict:
+    """Reads the recipe on a web page and saves it."""
+    return api("POST", "/recipes/api/recipes", {"url": url})
+
+
+def add_recipe(fields: dict) -> dict:
+    """{title, servings, yield, time, ingredients, steps, notes, source}; ingredients and steps are lists or text, a line each."""
+    return api("POST", "/recipes/api/recipes", fields)
+
+
+def update_recipe(recipe_id: str, changes: dict) -> dict:
+    return api("PATCH", f"/recipes/api/recipes/{_q(recipe_id)}", changes)
+
+
+def delete_recipe(recipe_id: str) -> dict:
+    return api("DELETE", f"/recipes/api/recipes/{_q(recipe_id)}")
+
+
+def shop(recipe_id: str, lines: list[int], servings: float | None = None, factor: float | None = None,
+         list_id: str | None = None) -> dict:
+    """Sends those ingredients (by index), scaled, to a Drift list (your Shopping list without list_id); {list, added}."""
+    body: dict[str, Any] = {"lines": lines}
+    if servings is not None:
+        body["servings"] = servings
+    if factor is not None:
+        body["factor"] = factor
+    if list_id:
+        body["list"] = list_id
+    return api("POST", f"/recipes/api/recipes/{_q(recipe_id)}/shop", body)

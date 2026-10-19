@@ -334,6 +334,43 @@ export async function updateCollection(env, owner, id, changes) {
   return getRow(d, "drift_collections", owner, id, toCollection);
 }
 
+// ── lists other apps add to ────────────────────────────────────────────────
+// Recipe box sends ingredients here (src/recipes.js).
+
+export const SHOPPING = "Shopping list";
+
+// The collections you can add items to: yours, then ones shared with you to edit.
+export async function writableCollections(env, user) {
+  const d = await db(env);
+  const own = (await rows(d, "drift_collections", user.id)).map(toCollection).filter(c => !c.deleted)
+    .sort((a, b) => a.order - b.order || a.created.localeCompare(b.created));
+  const { results } = await d.prepare(`SELECT c.id, c.data, c.updated, u.username, u.display_name FROM drift_shares s
+    JOIN drift_collections c ON c.owner = s.owner AND c.id = s.collection JOIN users u ON u.id = s.owner
+    WHERE s.user_id = ? AND s.role = 'edit' AND u.disabled = 0`).bind(user.id).all();
+  const shared = results.map(r => ({ ...toCollection(r), owner_name: r.display_name || r.username })).filter(c => !c.deleted)
+    .sort((a, b) => a.name.localeCompare(b.name));
+  return [...own.map(c => ({ id: c.id, name: c.name, owner_name: null })), ...shared.map(c => ({ id: c.id, name: c.name, owner_name: c.owner_name }))];
+}
+
+// Adds each line as a checklist item to collection `id`, or when there's none,
+// to your collection called "Shopping list" (made if you don't have one).
+export async function addToList(env, user, id, titles, notes = "") {
+  let list;
+  if (id) {
+    list = (await writableCollections(env, user)).find(c => c.id === id);
+    if (!list) fail("that list isn't one you can add to");
+  } else {
+    list = (await writableCollections(env, user)).find(c => !c.owner_name && c.name.toLowerCase() === SHOPPING.toLowerCase());
+    if (!list) list = await createCollection(env, user.id, { name: SHOPPING, plugins: ["checklist", "list"], view: "checklist" });
+  }
+  let added = 0;
+  for (const title of titles) {
+    await createItem(env, user, { title, notes, collection: list.id, meta: { checklist: { done: false, priority: 0 } } });
+    added++;
+  }
+  return { list: { id: list.id, name: list.name }, added };
+}
+
 // ── the old todo list ──────────────────────────────────────────────────────
 // Tasks from before collections and plugins (table todo_tasks) become items:
 // each project becomes a collection (no project → "Inbox"), done and priority

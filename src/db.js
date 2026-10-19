@@ -295,6 +295,14 @@ const SCHEMA = [
      created_at INTEGER NOT NULL
    )`,
   `CREATE INDEX IF NOT EXISTS chat_crypto_inbox_conn ON chat_crypto_inbox (connection, id)`,
+  // Recipe box (src/recipes.js): each account's saved recipes. data is JSON.
+  `CREATE TABLE IF NOT EXISTS recipes (
+     owner   TEXT NOT NULL,          -- user id
+     id      TEXT NOT NULL,          -- "r_" + random hex
+     data    TEXT NOT NULL,
+     updated TEXT NOT NULL,
+     PRIMARY KEY (owner, id)
+   )`,
 ];
 
 // Indexes on columns that ADDED_COLUMNS may have only just added.

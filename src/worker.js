@@ -6,7 +6,8 @@
 // homepage's sign-in link, and /todo, which needs a signed-in account with the
 // "todo" area before the page or API is served. /plugins (the plugin store,
 // src/store.js) and /chat (src/chat.js) each need their own app turned on for
-// the account on the admin page, and so does /notifications (src/notify.js).
+// the account on the admin page, and so do /notifications (src/notify.js) and
+// /recipes, the Recipe box (src/recipes.js).
 // /login/cli is signing in from a terminal (src/cli.js). /_matrix/push/v1/notify
 // is where Matrix homeservers tell the site about new messages for
 // notifications (src/notify.js). scheduled() is the cron trigger in
@@ -17,6 +18,7 @@ import { currentSession, areaOf } from "./auth.js";
 import { handleCli, CLI_PATHS } from "./cli.js";
 import { withRail } from "./pages.js";
 import { chat } from "./chat.js";
+import { recipes } from "./recipes.js";
 import { notifications, driftReminders, pushGateway, bridgeUpkeep } from "./notify.js";
 import { state, version, createItem, updateItem, createCollection, updateCollection, shareCollection, unshareCollection, readJson, BadRequest, ID } from "./drift.js";
 
@@ -56,6 +58,13 @@ export default {
     }
     if (pathname.startsWith("/notifications/")) {
       return protect(request, env, areaOf("notifications"), user => notifications(request, env, user, pathname));
+    }
+    if (pathname === "/recipes") {
+      url.pathname = "/recipes/";
+      return Response.redirect(url.toString(), 308);
+    }
+    if (pathname.startsWith("/recipes/")) {
+      return protect(request, env, areaOf("recipes"), user => recipes(request, env, user, pathname));
     }
     // The frame store plugins run in. It holds no data and needs no sign-in.
     if (pathname.startsWith("/sandbox/")) return sandbox(request, env);

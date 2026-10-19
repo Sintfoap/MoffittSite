@@ -35,6 +35,7 @@ export const APPS = [
   // place of its own in the menu or on the dashboard (see `parent`).
   { id: "chat-bridges", area: "chat-bridges", parent: "chat", name: "Chat connections", href: "/chat/#connections", icon: "chat",
     blurb: "Bring your Matrix rooms into Chat." },
+  { id: "recipes", area: "recipes", name: "Recipe box", href: "/recipes/", icon: "recipes", key: "r", blurb: "Save recipes from any link, scale them, and shop for them in Drift." },
   { id: "notifications", area: "notifications", name: "Notifications", href: "/notifications/", icon: "bell", key: "n", blurb: "Alerts on your phone or computer for Chat and Drift.", group: "account" },
 ];
 // The apps that are places of their own: the menu, the dashboard's cards.
