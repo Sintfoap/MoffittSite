@@ -2,7 +2,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { Browser, makeEnv, sql, sqlOne, run } from "./helpers.mjs";
+import { Browser, makeEnv, sql, sqlOne, run, ORIGIN } from "./helpers.mjs";
+import worker from "../src/worker.js";
 import { TOOL_NAMES } from "../src/mcp.js";
 
 const PW = "correct horse battery";
@@ -34,6 +35,9 @@ test("a missing, malformed, unknown or revoked key is refused", async () => {
     const r = await a.raw(ping, { auth });
     assert.equal(r.status, 401, String(auth));
     assert.match(r.headers.get("WWW-Authenticate"), /^Bearer/);
+    assert.equal(r.json.jsonrpc, "2.0");
+    assert.equal(r.json.error.code, -32001);
+    assert.match(r.json.error.message, /API key/);
   }
   assert.equal((await a.raw(ping)).status, 200);
   const { id_hash } = sqlOne(env, "SELECT id_hash FROM api_keys");
@@ -45,7 +49,9 @@ test("the key's owner must still be allowed to use Drift", async () => {
   const env = makeEnv(), a = await agent(env, "ryan");
   const ping = { jsonrpc: "2.0", id: 1, method: "ping" };
   run(env, "UPDATE users SET must_change_pw = 1");
-  assert.equal((await a.raw(ping)).status, 403);
+  const refused = await a.raw(ping);
+  assert.equal(refused.status, 403);
+  assert.equal(refused.json.error.code, -32002);
   run(env, "UPDATE users SET must_change_pw = 0, disabled = 1");
   assert.equal((await a.raw(ping)).status, 403);
   run(env, "UPDATE users SET disabled = 0");
@@ -69,6 +75,7 @@ test("only POST is allowed", async () => {
     const r = await a.raw(undefined, { method });
     assert.equal(r.status, 405);
     assert.equal(r.headers.get("Allow"), "POST");
+    assert.equal(r.json.error.message, "method not allowed");
   }
 });
 
@@ -100,12 +107,74 @@ test("protocol: initialize, ping, tools/list, notifications, errors, batches", a
 
 test("bad JSON and oversize bodies get clean errors", async () => {
   const a = await agent(makeEnv(), "ryan");
-  const bad = await a.b.req("POST", "/mcp", { origin: null, cookie: null, headers: { Authorization: "Bearer " + a.key, "Content-Type": "application/json" }, body: undefined });
-  assert.ok([400].includes(bad.status));
-  assert.equal(bad.json.error.code, -32700);
+  const send = (body, headers = {}) => worker.fetch(new Request(ORIGIN + "/mcp", { method: "POST", body, headers: { Authorization: "Bearer " + a.key, ...headers } }), a.env);
+  const bad = await send("{nope");
+  assert.equal(bad.status, 400);
+  assert.equal((await bad.json()).error.code, -32700);
+  const empty = await send("");
+  assert.equal(empty.status, 400);
+
   const big = await a.raw({ jsonrpc: "2.0", id: 1, method: "ping", params: { pad: "x".repeat(70 * 1024) } });
   assert.equal(big.status, 413);
   assert.equal(big.json.error.code, -32600);
+  // A declared size over the limit is refused without reading the body.
+  const declared = await send("{}", { "Content-Length": String(70 * 1024) });
+  assert.equal(declared.status, 413);
+});
+
+test("drift_get_state can narrow by collection, drop notes, and page through items", async () => {
+  const a = await agent(makeEnv(), "ryan");
+  const inbox = (await a.call("drift_get_state")).collections[0].id;
+  const other = (await a.call("drift_create_collection", { name: "Other" })).id;
+  for (let i = 1; i <= 5; i++) await a.call("drift_create_item", { title: "item " + i, collection: i === 5 ? other : inbox, notes: "notes " + i });
+  const all = await a.call("drift_get_state");
+  assert.equal(all.items.length, 5);
+  assert.equal(all.total_items, 5);
+  assert.equal(all.next_cursor, undefined, "everything fit on one page");
+  assert.ok(all.items.every(i => i.notes === i.title.replace("item", "notes")));
+
+  const only = await a.call("drift_get_state", { collection: other });
+  assert.deepEqual(only.items.map(i => i.title), ["item 5"]);
+  assert.equal(only.collections.length, 2, "collections are always complete");
+
+  const bare = await a.call("drift_get_state", { include_notes: false });
+  assert.ok(bare.items.every(i => !("notes" in i)));
+
+  // Pages follow next_cursor until it runs out, with no repeats or gaps.
+  const seen = [];
+  let cursor;
+  for (let n = 0; n < 5; n++) {
+    const page = await a.call("drift_get_state", { limit: 2, ...(cursor ? { cursor } : {}) });
+    assert.equal(page.total_items, 5);
+    seen.push(...page.items.map(i => i.id));
+    cursor = page.next_cursor;
+    if (!cursor) break;
+  }
+  assert.equal(seen.length, 5);
+  assert.equal(new Set(seen).size, 5);
+  assert.deepEqual(seen, all.items.map(i => i.id), "same order as an unpaged read");
+
+  assert.match((await a.call("drift_get_state", { limit: 0 })).error, /limit must be/);
+  assert.match((await a.call("drift_get_state", { limit: 501 })).error, /limit must be/);
+  assert.match((await a.call("drift_get_state", { limit: "2" })).error, /limit must be/);
+  assert.match((await a.call("drift_get_state", { cursor: "abc" })).error, /cursor must be/);
+  assert.match((await a.call("drift_get_state", { collection: "c_ffffffffff" })).error, /collection not found/);
+  assert.match((await a.call("drift_get_state", { collection: "nope" })).error, /collection must be/);
+  assert.deepEqual((await a.call("drift_get_state", { cursor: "99" })).items, []);
+});
+
+test("using a key records last_used, but not on every call", async () => {
+  const env = makeEnv(), a = await agent(env, "ryan");
+  assert.equal(sqlOne(env, "SELECT last_used FROM api_keys").last_used, null);
+  await a.rpc("ping");
+  const first = sqlOne(env, "SELECT last_used FROM api_keys").last_used;
+  assert.ok(first > 0);
+  run(env, "UPDATE api_keys SET last_used = ?", first - 60);
+  await a.rpc("ping");
+  assert.equal(sqlOne(env, "SELECT last_used FROM api_keys").last_used, first - 60, "recent use isn't rewritten");
+  run(env, "UPDATE api_keys SET last_used = ?", first - 3600);
+  await a.rpc("ping");
+  assert.ok(sqlOne(env, "SELECT last_used FROM api_keys").last_used >= first, "stale use is refreshed");
 });
 
 test("items: create, read, update, delete and restore", async () => {

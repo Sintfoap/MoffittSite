@@ -72,3 +72,34 @@ test("deleting an account deletes its keys", async () => {
   assert.ok(res.status < 400, "admin delete worked: " + res.status);
   assert.equal(sql(env, "SELECT * FROM api_keys").length, 0);
 });
+
+test("sending the same form twice makes one key", async () => {
+  const env = makeEnv(), b = await signedIn(env, "ryan");
+  const nonce = (await b.get("/account")).text.match(/name="nonce" value="([^"]+)"/)[1];
+  assert.equal((await b.post("/account/apikeys", { name: "a", password: PW, nonce })).status, 200);
+  const again = await b.post("/account/apikeys", { name: "a", password: PW, nonce });
+  assert.equal(again.status, 409);
+  assert.match(again.text, /already made/);
+  assert.ok(!keyOf(again), "the key isn't shown a second time");
+  assert.equal(sql(env, "SELECT * FROM api_keys").length, 1);
+  // Each page load gets its own nonce, so a fresh form works.
+  const next = (await b.get("/account")).text.match(/name="nonce" value="([^"]+)"/)[1];
+  assert.notEqual(next, nonce);
+  assert.equal((await b.post("/account/apikeys", { name: "b", password: PW, nonce: next })).status, 200);
+});
+
+test("requests made at once can't get past the ten-key limit", async () => {
+  const env = makeEnv(), b = await signedIn(env, "ryan");
+  const results = await Promise.all(Array.from({ length: 14 }, (_, i) => b.post("/account/apikeys", { name: "k" + i, password: PW })));
+  assert.equal(results.filter(r => r.status === 200).length, 10);
+  assert.equal(sql(env, "SELECT * FROM api_keys").length, 10);
+});
+
+test("the account page gives the full MCP address and a ready-to-run command", async () => {
+  const env = makeEnv(), b = await signedIn(env, "ryan");
+  const page = await b.get("/account");
+  assert.match(page.text, /https:\/\/sintfoap\.test\/mcp/);
+  const made = await b.post("/account/apikeys", { name: "a", password: PW });
+  const key = keyOf(made);
+  assert.ok(made.text.includes(`claude mcp add --transport http drift https://sintfoap.test/mcp --header "Authorization: Bearer ${key}"`), "command with the key");
+});

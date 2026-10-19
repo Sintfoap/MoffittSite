@@ -283,7 +283,7 @@ async function account(request, env, pathname, method) {
     const sessionCount = (await d.prepare("SELECT COUNT(*) AS n FROM sessions WHERE user_id = ? AND stage = 'full'").bind(user.id).first()).n;
     const hasDrift = user.areas.has(areaOf("drift"));
     return html(accountPage({
-      user, sessionCount, apiKeys: hasDrift ? await listKeys(env, user.id) : null, recoveryLeft: await recoveryCodesLeft(env, user.id), mail: mailReady(env),
+      user, sessionCount, apiKeys: hasDrift ? await listKeys(env, user.id) : null, keyNonce: randomToken(12), origin: new URL(request.url).origin, recoveryLeft: await recoveryCodesLeft(env, user.id), mail: mailReady(env),
       adminNeeds2fa: user.areas.has("admin") && !user.totp_secret, ...extra,
     }), { status });
   };
@@ -364,7 +364,7 @@ async function account(request, env, pathname, method) {
       try {
         if (!user.areas.has(areaOf("drift"))) throw new AuthError("Your account doesn't have Drift.", { status: 403 });
         await checkLogin(env, request, user.username, f.password);
-        const made = await createKey(env, user.id, f.name);
+        const made = await createKey(env, user.id, f.name, f.nonce);
         return show({ newKey: { key: made.key, name: String(f.name).trim() } });
       } catch (e) { return fail(passwordError(e)); }
 

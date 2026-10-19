@@ -21,17 +21,45 @@ const DAY = /^\d{4}-\d{2}-\d{2}$/;
 
 const reply = (obj, status = 200, headers = {}) =>
   new Response(JSON.stringify(obj), { status, headers: { "Content-Type": "application/json", "Cache-Control": "no-store", ...headers } });
-const denied = (status, error) => reply({ error }, status, status === 401 ? { "WWW-Authenticate": 'Bearer realm="drift"' } : {});
 const rpcError = (id, code, message) => ({ jsonrpc: "2.0", id: id ?? null, error: { code, message } });
+// Refusals before any message is read are JSON-RPC errors too, so a client can show the reason.
+const CODES = { 401: -32001, 403: -32002, 405: -32600, 413: -32600, 500: -32603 };
+const denied = (status, message, headers = {}) =>
+  reply(rpcError(null, CODES[status], message), status, status === 401 ? { "WWW-Authenticate": 'Bearer realm="drift"', ...headers } : headers);
 
 // ── what a tool can fail with, in words the model can act on ───────────────
 class ToolError extends Error {}
 const fail = msg => { throw new ToolError(msg); };
 const found = v => v ?? fail("not found");
-const needId = (args, prefix) => { const id = String(args.id ?? ""); if (!ID.test(id) || !id.startsWith(prefix + "_")) fail(`id must be a ${prefix === "i" ? "item" : "collection"} id like ${prefix}_0123456789`); return id; };
+const needId = (args, prefix, key = "id") => {
+  const id = String(args[key] ?? "");
+  if (!ID.test(id) || !id.startsWith(prefix + "_")) fail(`${key} must be ${prefix === "i" ? "an item" : "a collection"} id like ${prefix}_0123456789`);
+  return id;
+};
 const rest = ({ id, ...fields }) => fields;
 
 // ── tools ──────────────────────────────────────────────────────────────────
+const PAGE_DEFAULT = 200, PAGE_MAX = 500;
+
+async function getState(env, user, a) {
+  const limit = a.limit ?? PAGE_DEFAULT;
+  if (!Number.isInteger(limit) || limit < 1 || limit > PAGE_MAX) fail(`limit must be a whole number from 1 to ${PAGE_MAX}`);
+  const cursor = a.cursor ?? "0";
+  if (!/^\d{1,9}$/.test(String(cursor))) fail("cursor must be a next_cursor from a previous result");
+  const s = await state(env, user);
+  let items = s.items;
+  if (a.collection != null) {
+    const id = needId(a, "c", "collection");
+    if (!s.collections.some(c => c.id === id)) fail("collection not found");
+    items = items.filter(it => it.collection === id);
+  }
+  items = [...items].sort((x, y) => x.created.localeCompare(y.created) || x.id.localeCompare(y.id));
+  const from = Number(cursor), page = items.slice(from, from + limit);
+  const out = { ...s, items: a.include_notes === false ? page.map(({ notes, ...it }) => it) : page, total_items: items.length };
+  if (from + limit < items.length) out.next_cursor = String(from + limit);
+  return out;
+}
+
 const obj = (properties, required = []) => ({ type: "object", properties, required, additionalProperties: false });
 const idProp = (what, prefix) => ({ type: "string", description: `${what} id, like ${prefix}_0123456789 (from drift_get_state)` });
 
@@ -54,8 +82,16 @@ const COLLECTION_FIELDS = {
 };
 
 const TOOLS = [
-  { name: "drift_get_state", description: "Read everything: your collections (with who they're shared with and your role in each), all items, built-in and store plugins, and your username. Call this first to learn the ids.",
-    inputSchema: obj({}), run: (env, user) => state(env, user) },
+  { name: "drift_get_state", description: "Read your collections (with who they're shared with and your role in each), items, built-in and store plugins, and your username. Call this first to learn the ids. " +
+      `Items come ${PAGE_DEFAULT} at a time in a stable order: when the result has next_cursor, call again with that cursor for more. ` +
+      "To keep results small, pass collection to get only one collection's items, include_notes: false to leave out notes, or a smaller limit. Collections and plugins are always complete. " +
+      "Items can change between pages; the version field changes whenever your data does.",
+    inputSchema: obj({
+      collection: idProp("Only return items in this collection;", "c"),
+      include_notes: { type: "boolean", description: "Whether items include their notes. Default true." },
+      limit: { type: "integer", minimum: 1, maximum: PAGE_MAX, description: `Items per page. Default ${PAGE_DEFAULT}, at most ${PAGE_MAX}.` },
+      cursor: { type: "string", description: "The next_cursor from the previous page." },
+    }), run: getState },
   { name: "drift_get_agenda", description: "Events (items with an event start, not ticked done) that are late or due on a day.",
     inputSchema: obj({ day: { type: "string", description: "YYYY-MM-DD, the date to treat as today." } }, ["day"]),
     run: (env, user, a) => DAY.test(String(a.day)) ? agenda(env, user, a.day) : fail("day must be YYYY-MM-DD") },
@@ -153,20 +189,21 @@ async function authenticate(env, request) {
   if (user.disabled) return { res: denied(403, "this account is disabled") };
   if (user.must_change_pw || (user.areas.has("admin") && !user.totp_secret)) return { res: denied(403, "finish setting up your account first") };
   if (!user.areas.has(areaOf("drift"))) return { res: denied(403, "no access to Drift") };
-  await touchKey(env, key.id_hash);
+  await touchKey(env, key);
   return { user };
 }
 
 export async function mcp(request, env) {
-  if (request.method !== "POST") return reply({ error: "method not allowed" }, 405, { Allow: "POST" });
+  if (request.method !== "POST") return denied(405, "method not allowed", { Allow: "POST" });
   if (request.headers.get("Origin")) return denied(403, "browser requests are refused");
   let auth;
   try { auth = await authenticate(env, request); }
   catch (e) { console.error("mcp auth failed:", e); return denied(500, "server error"); }
   if (auth.res) return auth.res;
 
+  if (Number(request.headers.get("Content-Length") || 0) > MAX_BODY) return denied(413, "request too large");
   const text = await request.text();
-  if (text.length > MAX_BODY) return reply(rpcError(null, -32600, "request too large"), 413);
+  if (text.length > MAX_BODY) return denied(413, "request too large");
   let body;
   try { body = JSON.parse(text); } catch { return reply(rpcError(null, -32700, "parse error"), 400); }
 

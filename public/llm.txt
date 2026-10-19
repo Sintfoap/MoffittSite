@@ -14,7 +14,9 @@ other Drift users, and add store plugins. You act as that person.
 - Other clients: add a remote/HTTP MCP server with that URL and header.
 
 Requests that carry an `Origin` header (browsers) are refused, and cookies are
-ignored. GET and DELETE on /mcp return 405.
+ignored. GET and DELETE on /mcp return 405. Refusals (401 bad or missing key,
+403 account not allowed, 405, 413 body over 64 KB) are JSON-RPC error bodies.
+After making a key the account page shows a ready-to-run `claude mcp add` command.
 
 ## Getting a key (the person does this)
 
@@ -49,11 +51,17 @@ access, or is deleted.
   role `edit` (add and change items) or `view` (read only). Shared collections
   appear in your state with your `role`. Items can only move between
   collections with the same owner.
-- Ids shown in drift_get_state are the only ids to use. Call it first.
+- Ids shown in drift_get_state are the only ids to use. Call it first. (For a big account, read it
+  a collection at a time with include_notes false, then fetch notes only where you need them.)
 
 ## Tools
 
-- drift_get_state                 Everything: collections (with shares and your role), items, plugins, store plugins.
+- drift_get_state                 {collection?, include_notes?, limit?, cursor?}  Collections (with shares and your role),
+                                  items, plugins, store plugins. Collections and plugins are always complete; items come
+                                  in pages of 200 (limit up to 500). When the result has `next_cursor`, call again with
+                                  it as `cursor` for the next page; `total_items` is the count. Pass `collection` for
+                                  one collection's items, `include_notes: false` to leave notes out. `version` changes
+                                  whenever the person's data does, so check it if items may have changed between pages.
 - drift_get_agenda {day}          Events due or late on `day` (YYYY-MM-DD).
 - drift_create_item               {title, collection, notes?, tags?, meta?}
 - drift_update_item               {id, title?, notes?, tags?, collection?, meta?, deleted?}  Only sent fields change; each meta slice is replaced whole.

@@ -111,9 +111,11 @@ const SCHEMA = [
      name       TEXT NOT NULL,                     -- what the person called it
      prefix     TEXT NOT NULL,                     -- the key's first characters, to recognise it
      created_at INTEGER NOT NULL,
-     last_used  INTEGER
+     last_used  INTEGER,
+     nonce      TEXT                               -- from the form that made it, so a resubmitted form makes no second key
    )`,
   `CREATE INDEX IF NOT EXISTS api_keys_user ON api_keys (user_id)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS api_keys_nonce ON api_keys (user_id, nonce) WHERE nonce IS NOT NULL`,
   // The plugin store (src/store.js): shared Drift plugins and their reviewed versions.
   `CREATE TABLE IF NOT EXISTS store_plugins (
      id         TEXT PRIMARY KEY,                  -- lowercase letters; also its key in Drift's item.meta
