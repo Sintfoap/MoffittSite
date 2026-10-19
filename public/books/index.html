@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Book Suggestions</title>
-<meta name="description" content="Four books, one vote: help pick what gets read next.">
+<title>Book Club Pick</title>
+<meta name="description" content="Four books, one vote: help the book club pick what we read next.">
 <link rel="icon" href="/favicon.ico" sizes="32x32"><link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
@@ -80,12 +80,12 @@
 <body>
 <main>
   <header>
-    <div class="kicker">Book suggestions</div>
-    <h1>What should I read next?</h1>
-    <p class="lede">Four books I'm choosing between. Read a little about each, then vote for the one you think I should pick. You can change your vote any time.</p>
+    <div class="kicker">Book club</div>
+    <h1>What should we read next?</h1>
+    <p class="lede">Four books for the club to choose between. Read a little about each, then vote for the one you'd like us to read. You can change your vote any time.</p>
     <form class="who" id="who" onsubmit="return false">
       <label for="name">Your name (optional)</label>
-      <input id="name" name="name" maxlength="60" autocomplete="name" placeholder="So I know who voted">
+      <input id="name" name="name" maxlength="60" autocomplete="name" placeholder="So the club knows who voted">
     </form>
     <div class="status" id="status" role="status" aria-live="polite"></div>
   </header>
@@ -93,7 +93,7 @@
   <section class="books" id="books" aria-label="Books"><p class="status">Loading the books…</p></section>
 
   <footer>
-    <p>One vote per browser. Votes record the name you give, plus your IP address, browser and rough location, so I can tell votes apart.</p>
+    <p>One vote per browser. Votes record the name you give, plus your IP address, browser and rough location, so votes can be told apart.</p>
     <p><a href="/">sintfoap.xyz</a></p>
   </footer>
 </main>

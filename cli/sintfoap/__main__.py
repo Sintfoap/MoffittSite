@@ -11,7 +11,7 @@ sintfoap — sintfoap.xyz from the terminal.
   sintfoap notifications      what's pushed to your browsers and phone
   sintfoap recipes            Recipe box: recipes, scaled, onto a Drift shopping list
   sintfoap admin              which apps each account can use (admins)
-  sintfoap books [--plain]    the book suggestions: read about them and vote (no sign-in needed)
+  sintfoap books [--plain]    the book club pick: read about the books and vote (no sign-in needed)
   sintfoap whoami
   sintfoap logout             ends this terminal's session on the site
 """
@@ -51,8 +51,8 @@ def plain(data: dict) -> None:
 
 
 def plain_books(data: dict) -> None:
-    """The book suggestions as text, with the votes so far."""
-    print(f"\n  {C['gold']}BOOK SUGGESTIONS{C['r']}  {C['dim']}{data['total']} vote{'s' * (data['total'] != 1)} so far{C['r']}\n")
+    """The book club pick as text, with the votes so far."""
+    print(f"\n  {C['gold']}BOOK CLUB{C['r']}  {C['dim']}{data['total']} vote{'s' * (data['total'] != 1)} so far{C['r']}\n")
     for b in data["books"]:
         mine = f"  {C['grn']}✓ your vote{C['r']}" if b["id"] == data.get("mine") else ""
         series = f"  {C['dim']}{b['series']}{C['r']}" if b.get("series") else ""
@@ -77,7 +77,7 @@ def main(argv=None):
                        ("recipes", "Recipe box: recipes, scaled, onto a Drift shopping list"),
                        ("admin", "which apps each account can use (admins)")):
         sub.add_parser(page, help=what)
-    bk = sub.add_parser("books", help="the book suggestions: read about them and vote (no sign-in needed)")
+    bk = sub.add_parser("books", help="the book club pick: read about the books and vote (no sign-in needed)")
     bk.add_argument("--plain", action="store_true", help="print them instead of opening the terminal UI")
     ch = sub.add_parser("chat", help="chat rooms")
     ch.add_argument("room", nargs="?", help="a room to open, by name")
