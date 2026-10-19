@@ -81,6 +81,12 @@ class FakeChatApi:
         m.update(reactions=rs, seq=self.seq[room])
         return dict(m)
 
+    def chat_emoji(self):
+        return {"quick": ["👍", "❤️", "😂", "🎉", "😮", "😢", "👀", "🙏"], "aliases": {"😂": "laugh lol"},
+                "groups": [{"name": "Smileys & Emotion", "emoji": [["😂", "face with tears of joy"], ["🤔", "thinking face"], ["❤️", "red heart"]]},
+                           {"name": "Animals & Nature", "emoji": [["🦀", "crab"], ["🐙", "octopus"]]},
+                           {"name": "Food & Drink", "emoji": [["🍕", "pizza"], ["🥨", "pretzel"]]}]}
+
     def chat_members(self, room):
         return [{"username": u, "name": u.title(), "joined_at": 0, "owner": False} for u in ("ryan", "sam", "sandra", "kim")]
 
@@ -274,8 +280,46 @@ def test_edit_react_and_mentions():
         assert "🎉 1" in shown(app)
         await type_line(pilot, "/react tada")
         assert api.msgs[0]["reactions"] == [], "the same again takes it back"
+        # Beyond the quick ones: any of the site's emoji, by name.
         await type_line(pilot, "/react pizza")
-        assert "Usage: /react" in str(app.query_one("#status").render())
+        assert [r["emoji"] for r in api.msgs[0]["reactions"]] == ["🍕"]
+        await type_line(pilot, "/react thinking")
+        assert [r["emoji"] for r in api.msgs[0]["reactions"]] == ["🍕", "🤔"], "the first whose name starts so"
+        box.value = "/react 🍕"
+        await pilot.press("enter")
+        await pilot.pause()
+        assert [r["emoji"] for r in api.msgs[0]["reactions"]] == ["🤔"], "the emoji itself works too, and again takes it back"
+        await type_line(pilot, "/react zebra")
+        assert "no emoji called 'zebra'" in str(app.query_one("#status").render())
+
+        # /react on its own opens the full picker: the quick ones, then the groups; typing searches.
+        await type_line(pilot, "/react")
+        await pilot.pause()
+        picker = app.app.screen
+        assert type(picker).__name__ == "EmojiPicker"
+        rows = [str(r.query_one("Label").render()) for r in picker.query("#emoji-list ListItem")]
+        assert rows[0].startswith("👍") and "Animals & Nature" in rows[-2], rows
+        await type_line(pilot, "cra")
+        await pilot.pause()
+        assert type(app.app.screen).__name__ == "ChatPage"
+        assert [r["emoji"] for r in api.msgs[0]["reactions"]] == ["🤔", "🦀"]
+        # A group lists its emoji; esc goes back, and again closes.
+        await pilot.press("ctrl+r")
+        await pilot.pause()
+        picker = app.app.screen
+        picker.query_one("#emoji-list").focus()
+        picker.query_one("#emoji-list").index = 9      # the quick 8, then the first two groups
+        await pilot.press("enter")
+        await pilot.pause()
+        assert "Animals & Nature" in str(picker.query_one("#emoji-title").render())
+        assert [str(r.query_one("Label").render()).split()[0] for r in picker.query("#emoji-list ListItem")] == ["🦀", "🐙"]
+        assert "✓ yours" in str(picker.query("#emoji-list ListItem").first().query_one("Label").render())
+        await pilot.press("escape")
+        await pilot.pause()
+        assert "React to Sam" in str(picker.query_one("#emoji-title").render())
+        await pilot.press("escape")
+        await pilot.pause()
+        assert type(app.app.screen).__name__ == "ChatPage" and [r["emoji"] for r in api.msgs[0]["reactions"]] == ["🤔", "🦀"]
 
         # Tab after @ completes a name from the room; with two choices it fills in what they share.
         for ch in "hi @k":

@@ -222,7 +222,7 @@ test("@mentions are flagged for the person mentioned and counted until read", as
   assert.equal((await api(sam, "GET", "/state")).json.rooms[0].mentions, 0);
 });
 
-test("members react to messages from a short list", async () => {
+test("members react to messages with any of the site's emoji", async () => {
   const env = makeEnv();
   const josh = await signedIn(env, "josh"), sam = await signedIn(env, "sam"), kim = await signedIn(env, "kim");
   const room = (await api(josh, "POST", "/rooms", { name: "Reacts" })).json.id;
@@ -230,9 +230,11 @@ test("members react to messages from a short list", async () => {
   const m = (await say(josh, room, "pizza tonight?")).json;
   const react = (b, emoji, on = true) => api(b, "POST", `/rooms/${room}/messages/${m.id}/reactions`, { emoji, on });
   const { seq } = (await api(josh, "GET", `/rooms/${room}/messages`)).json;
+  const state0 = (await api(sam, "GET", "/state")).json;
 
   assert.equal((await react(kim, "👍")).status, 403, "join first");
-  assert.equal((await react(sam, "🍕")).status, 400);
+  assert.equal((await react(sam, "pizza")).status, 400, "an emoji, not a word");
+  assert.equal((await react(sam, "👍🏽")).status, 400, "not one the picker offers (skin tones are left out)");
   assert.equal((await api(sam, "POST", `/rooms/${room}/messages/${m.id}/reactions`, { emoji: "👍" })).status, 400);
   assert.equal((await react(sam, "👍")).status, 200);
   await react(sam, "👍");   // twice is still once
@@ -245,6 +247,14 @@ test("members react to messages from a short list", async () => {
   assert.equal((await api(josh, "GET", "/state")).json.rooms[0].unread, 0, "reactions aren't unread messages");
 
   assert.deepEqual((await react(sam, "🎉", false)).json.reactions.map(x => x.emoji), ["👍"]);
+  // Beyond the quick row: anything from the full picker's list.
+  const all = (await api(sam, "GET", "/emoji")).json;
+  assert.deepEqual(all.quick, state0.reactions);
+  assert.ok(all.groups.length > 5 && all.groups.flatMap(g => g.emoji).length > 1500);
+  assert.ok(all.groups[0].emoji.some(([e, name]) => e === "🤣" && name === "rolling on the floor laughing"));
+  assert.equal((await react(sam, "🍕")).status, 200);
+  assert.deepEqual((await react(josh, "🦀")).json.reactions.map(x => x.emoji), ["👍", "🍕", "🦀"]);
+  assert.equal((await api(sam, "POST", "/emoji", {})).status, 405);
   assert.equal((await api(sam, "POST", `/rooms/${room}/messages/${m.id}/reactions`, undefined)).status, 400);
   assert.equal((await api(sam, "GET", `/rooms/${room}/members/1/reactions`)).status, 404);
 
