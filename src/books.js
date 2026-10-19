@@ -40,7 +40,7 @@ export const BOOKS = [
     series: "Galaxy's Edge: Savage Wars, book 2",
     author: "Jason Anspach and Nick Cole",
     year: 2020,
-    blurb: "The Coalition is reeling. New Vega and its worlds have fallen to the Savage marines, post-human warlords who rule as gods, though their alliance is shaky and rival tribes of the Uplifted still fight for control. Humanity's best hope is a new fighting force, the Legion, and only a sliver of the recruits who go through Tyrus Rechs's brutal training make it. Military science fiction set long before the main Galaxy's Edge books; it follows Savage Wars (book 1).",
+    blurb: "Military science fiction told from an unusual side: much of the book puts you inside the heads of the Savage marines, post-human soldiers who believe they are gods and see the humans they hunt as something lesser. Set against the humans trying to hold the line, the same war reads very differently depending on whose eyes you're behind. The prose leans lyrical, lingering on both the beauty and the horror of battle. It's part of a series, but it stands well on its own; no background needed.",
     links: shops("Gods & Legionnaires Anspach Cole", [
       { label: "Audible", url: "https://www.audible.com/pd/B084MLYMCZ" },
     ]),
