@@ -356,5 +356,15 @@ Push stays off, and the page says so, until the site has a VAPID key pair.
 
 It's plain static files in `public/m/`, no build step. `drift-logic.js` and `chat-logic.js` hold its rules without any DOM, reusing Drift's own `public/todo/lib.js` and plugins, and are what `tests/phone-app.test.mjs` checks.
 
+- **The Android app** is a small APK in `android/` that opens `/m/` full screen in Chrome (a Trusted Web Activity), so it updates with every deploy like the site does. The APK itself rarely changes (its icon, name or permissions). When it does, push a tag `app-v<N>`, with N one higher than last time. `.github/workflows/android.yml` then builds it as version N and attaches it to a GitHub Release as `sintfoap.apk`. The app opens `/m/?app=<N>`, and Home and More offer the download once `/app/latest.json` (src/phone.js) names a newer N. `/app` is the download page, with a QR code to scan from a computer, and `sintfoap app` prints the same QR code in a terminal.
 - **Install it** from Chrome on Android: open `sintfoap.xyz/m/`, then ⋮ → **Install app**. It has its own manifest (`/m/app.webmanifest`, scoped to `/m/`), so it installs as its own app next to the full site. New versions arrive with every deploy.
 - **Not yet in it:** end-to-end encrypted Matrix rooms (read and sent on the full chat page, where their keys are), the plugin store, notification settings and admin. More links to each.
+
+### Setting up the Android app's signing key (once)
+
+The APK must always be signed with the same key, or phones refuse to update it, so the key lives in the repository's secrets.
+
+1. **Make the key** on any computer with Java: `keytool -genkeypair -v -keystore sintfoap.jks -alias sintfoap -keyalg RSA -keysize 2048 -validity 10000`. Use the same password for the store and the key. Keep `sintfoap.jks` and the password somewhere safe; losing them means uninstalling and reinstalling the app once.
+2. **Add three repository secrets** under **Settings → Secrets and variables → Actions**: `ANDROID_KEYSTORE_B64` (the output of `base64 -w0 sintfoap.jks`), `ANDROID_KEYSTORE_PASSWORD`, and `ANDROID_KEY_ALIAS` (`sintfoap`).
+3. **Tell the site the key's fingerprint.** `keytool -list -v -keystore sintfoap.jks` prints a `SHA256:` line. Add it to the Worker as a **Text** variable named `ANDROID_CERT_SHA256`. It's public, so it doesn't need to be a secret. That turns on `/.well-known/assetlinks.json`, which is what lets the app open without a browser bar. Each release's build summary prints the fingerprint too, to check against.
+4. **Release:** `git tag app-v1 && git push origin app-v1`. The APK appears at `/app` a few minutes after the build finishes.

@@ -1,0 +1,59 @@
+name: Android app
+
+# The APK in android/: a test build for every change to it, and a signed
+# release when a tag app-v<N> is pushed (N is the version, a whole number that
+# goes up each time). The release is what /app and the phone app's update
+# banner offer (src/phone.js). Signing needs these repository secrets (README,
+# "Phone app"): ANDROID_KEYSTORE_B64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS.
+
+on:
+  push:
+    tags: ["app-v*"]
+  pull_request:
+    paths: ["android/**", ".github/workflows/android.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+
+      - name: Test build
+        if: ${{ !startsWith(github.ref, 'refs/tags/app-v') }}
+        run: gradle -p android assembleDebug
+
+      - name: Release build
+        if: ${{ startsWith(github.ref, 'refs/tags/app-v') }}
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          version="${GITHUB_REF_NAME#app-v}"
+          [[ "$version" =~ ^[0-9]{1,6}$ ]] || { echo "::error::tags look like app-v3, got $GITHUB_REF_NAME"; exit 1; }
+          [ -n "$KEYSTORE_B64" ] || { echo "::error::the ANDROID_KEYSTORE_B64 secret isn't set (see the README's Phone app section)"; exit 1; }
+          export ANDROID_KEYSTORE="$RUNNER_TEMP/release.jks"
+          echo "$KEYSTORE_B64" | base64 -d > "$ANDROID_KEYSTORE"
+          gradle -p android assembleRelease -PappVersion="$version"
+          cp android/app/build/outputs/apk/release/app-release.apk sintfoap.apk
+          # The fingerprint the site's ANDROID_CERT_SHA256 must match.
+          keytool -printcert -jarfile sintfoap.apk | grep -m1 "SHA256:" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish the release
+        if: ${{ startsWith(github.ref, 'refs/tags/app-v') }}
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "sintfoap for Android ${{ github.ref_name }}"
+          files: sintfoap.apk
+          generate_release_notes: true

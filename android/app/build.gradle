@@ -1,0 +1,60 @@
+// The Android app: a Trusted Web Activity that opens the site's phone app
+// (public/m/) full screen in Chrome. See src/phone.js and the README.
+//
+//   gradle -p android assembleDebug                         a test build
+//   gradle -p android assembleRelease -PappVersion=3        version 3, signed with the key in
+//                                                           ANDROID_KEYSTORE / _PASSWORD / ANDROID_KEY_ALIAS
+//                                                           (what .github/workflows/android.yml does for a tag app-v3)
+plugins {
+    id "com.android.application"
+}
+
+def site = (project.findProperty("site") ?: "https://sintfoap.xyz").toString()
+def host = new URI(site).host
+def version = (project.findProperty("appVersion") ?: "1").toString().toInteger()
+
+android {
+    namespace "xyz.sintfoap.app"
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "xyz.sintfoap.app"
+        minSdk 21
+        targetSdk 34
+        versionCode version
+        versionName version.toString()
+        // The phone app learns which version it's in from ?app=, to offer updates.
+        resValue "string", "launch_url", "${site}/m/?app=${version}"
+        resValue "string", "host", host
+        resValue "string", "asset_statements",
+            "[{\\\"relation\\\": [\\\"delegate_permission/common.handle_all_urls\\\"], \\\"target\\\": {\\\"namespace\\\": \\\"web\\\", \\\"site\\\": \\\"${site}\\\"}}]"
+        manifestPlaceholders = [host: host]
+    }
+
+    signingConfigs {
+        release {
+            if (System.getenv("ANDROID_KEYSTORE")) {
+                storeFile file(System.getenv("ANDROID_KEYSTORE"))
+                storePassword System.getenv("ANDROID_KEYSTORE_PASSWORD")
+                keyAlias System.getenv("ANDROID_KEY_ALIAS")
+                keyPassword System.getenv("ANDROID_KEYSTORE_PASSWORD")
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            if (System.getenv("ANDROID_KEYSTORE")) signingConfig signingConfigs.release
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+dependencies {
+    implementation "com.google.androidbrowserhelper:androidbrowserhelper:2.5.0"
+}

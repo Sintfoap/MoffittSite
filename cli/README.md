@@ -17,6 +17,7 @@ sintfoap                    # signs you in the first time, then opens your dashb
 | `sintfoap notifications` | what's pushed to your browsers and phone, and where |
 | `sintfoap recipes` | Recipe box: your recipes, scaled, and sent to a Drift shopping list |
 | `sintfoap admin` | which apps each account can use (admins) |
+| `sintfoap app` | the Android app: a QR code to scan with your phone, and the download link |
 | `sintfoap books [--plain]` | the book club pick: read about the books and vote; no sign-in needed |
 | `sintfoap login` | shows a code and opens the site; approve it there |
 | `sintfoap dashboard --plain` | the dashboard as text, for scripts and pipes |

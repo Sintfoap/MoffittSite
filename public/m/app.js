@@ -49,6 +49,31 @@ async function route() {
   } catch (e) { failed(e); }
 }
 
+// The Android app (android/, src/phone.js) opens /m/?app=<its version>. Kept,
+// so the app can say when a newer APK is out.
+const APP_KEY = "m:apk-version";
+function apkVersion() {
+  const q = new URLSearchParams(location.search).get("app");
+  try {
+    if (/^\d{1,6}$/.test(q || "")) { localStorage.setItem(APP_KEY, q); history.replaceState(null, "", "/m/" + location.hash); }
+    return +localStorage.getItem(APP_KEY) || null;
+  } catch { return /^\d{1,6}$/.test(q || "") ? +q : null; }
+}
+async function checkForUpdate() {
+  app.apk = apkVersion();
+  if (!app.apk) return;
+  try {
+    const latest = await api("GET", "/app/latest.json");
+    if (latest.version > app.apk) { app.update = latest; showUpdate(); }
+  } catch {}
+}
+function showUpdate() {
+  const u = app.update, el = $("#update");
+  if (!u || !el) return;
+  el.innerHTML = `<a class="card nudge update" href="${esc(u.url)}"><b>A new version of the app is ready</b>
+    <span>Version ${u.version}. Tap to download it, then open the download to install it over this one. Your data stays put.</span></a>`;
+}
+
 async function boot() {
   try { app.dash = await api("GET", "/login/cli/dashboard"); }
   catch (e) {
@@ -64,6 +89,7 @@ async function boot() {
   app.has = new Set(app.dash.nav.map(n => n.id));
   addEventListener("hashchange", route);
   route();
+  checkForUpdate();
   if (app.has.has("chat")) import("./chat.js").then(c => c.watchUnread(app)).catch(() => {});
   // The site's service worker shows push notifications (Notifications, on the full site).
   navigator.serviceWorker?.register("/sw.js").catch(() => {});
@@ -78,9 +104,10 @@ async function showHome(main) {
   const d = app.dash;
   main.innerHTML = `<header class="hero"><p class="kicker">${esc(new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" }))}</p>
     <h1>${esc(greeting())}, ${esc(d.user.display_name)}</h1></header>
-    <div id="homeDrift"></div><div id="homeChat"></div>
+    <div id="update"></div><div id="homeDrift"></div><div id="homeChat"></div>
     ${!d.account.two_factor ? `<a class="card nudge" href="/account"><b>Turn on two-factor sign-in</b><span>It keeps your account safe if your password ever leaks. Set it up on the full site.</span></a>` : ""}`;
   const jobs = [];
+  showUpdate();
   if (app.has.has("drift")) jobs.push(import("./drift.js").then(m => m.homeCard($("#homeDrift"), app)));
   if (app.has.has("chat")) jobs.push(import("./chat.js").then(m => m.homeCard($("#homeChat"), app)));
   if (!jobs.length) $("#homeDrift").innerHTML = `<div class="empty"><p>No apps are turned on for your account yet. An admin can turn them on.</p></div>`;
@@ -111,7 +138,10 @@ async function showMore(main) {
       <a class="li act" href="/dashboard">Open the full site ${icon("link", 16)}</a>
       <a class="li act bad" href="/logout">Sign out ${icon("out", 16)}</a>
     </div>
-    <p class="fine">sintfoap phone app</p>`;
+    <div id="update"></div>
+    ${app.apk ? `<p class="fine">sintfoap for Android, version ${app.apk}${app.update ? "" : " · up to date"}</p>`
+      : `<div class="card list"><a class="li act" href="/app">Get the Android app ${icon("link", 16)}</a></div><p class="fine">sintfoap phone app</p>`}`;
+  showUpdate();
   $("#nameForm").addEventListener("submit", async e => {
     e.preventDefault();
     try {

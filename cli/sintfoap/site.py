@@ -204,6 +204,15 @@ def whoami() -> dict:
     return {**_get("/login/cli/me"), "site": load_login()["site"]}
 
 
+def app_release() -> dict:
+    """{version, name, url, published_at, page, qr}: the newest Android app. No sign-in needed. See src/phone.js."""
+    base = site_url()
+    status, data = call(base, "GET", "/app/latest.json")
+    if status != 200 or not isinstance(data, dict):
+        raise _error(status, data)
+    return data
+
+
 def dashboard() -> dict:
     """{site, user, apps, account}: what /dashboard shows. See src/cli.js."""
     return _get("/login/cli/dashboard")

@@ -10,7 +10,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import pytest
 
 from sintfoap import site
-from sintfoap.__main__ import plain
+from sintfoap.__main__ import plain, app_info
 
 
 def dashboard_data(origin, **account):
@@ -66,6 +66,8 @@ class FakeSite(BaseHTTPRequestHandler):
         self._send(404)
 
     def do_GET(self):
+        if self.path == "/app/latest.json":   # no sign-in needed (src/phone.js)
+            return self._send(200, self.state["release"])
         if not self._signed_in():
             return self._send(401, {"error": "not signed in"})
         if self.path == "/login/cli/me":
@@ -80,7 +82,8 @@ def fake(monkeypatch):
     monkeypatch.setenv("XDG_CONFIG_HOME", tempfile.mkdtemp())
     srv = ThreadingHTTPServer(("127.0.0.1", 0), FakeSite)
     origin = f"http://127.0.0.1:{srv.server_port}"
-    FakeSite.state = {"polls": 0, "deny": False, "session": False, "dashboard": dashboard_data(origin)}
+    FakeSite.state = {"polls": 0, "deny": False, "session": False, "dashboard": dashboard_data(origin),
+                       "release": {"version": None, "page": origin + "/app", "qr": "█▀▀█\n█▄▄█\n"}}
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     yield origin
     srv.shutdown()
@@ -137,6 +140,16 @@ def test_plain_dashboard(fake, capsys):
     assert "Welcome, Ryan M" in out
     assert "Drift" in out and fake + "/todo/" in out
     assert "Two-factor is on" in out and "2 devices" in out and "7 recovery codes left" in out
+
+
+def test_app_shows_a_qr_code_and_the_download_without_signing_in(fake, monkeypatch, capsys):
+    monkeypatch.setenv("SINTFOAP_SITE", fake)
+    app_info(site.app_release())
+    out = capsys.readouterr().out
+    assert "█▀▀█" in out and fake + "/app" in out and fake + "/m/" in out
+    FakeSite.state["release"].update(version=4, url="https://github.com/x/sintfoap.apk")
+    app_info(site.app_release())
+    assert "Version 4: https://github.com/x/sintfoap.apk" in capsys.readouterr().out
 
 
 def run_tui(test):
