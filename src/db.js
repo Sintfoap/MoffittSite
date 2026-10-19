@@ -147,7 +147,12 @@ const SCHEMA = [
      -- owner's connections; only that owner is in it.
      connection TEXT,                              -- chat_connections.id
      ext_id     TEXT,                              -- the room's id there
-     encrypted  INTEGER NOT NULL DEFAULT 0         -- end-to-end encrypted there, so read-only here
+     encrypted  INTEGER NOT NULL DEFAULT 0,        -- end-to-end encrypted there, so read-only here
+     ext_typing TEXT,                              -- JSON [names]: who's typing there, as of ext_typing_at
+     ext_typing_at INTEGER,
+     ext_read   TEXT,                              -- the message there we last said we'd read up to
+     ext_back   TEXT,                              -- where older history there starts ('' once it's all here)
+     ext_invite TEXT                               -- JSON {by}: you're invited there and haven't joined yet
    )`,
   `CREATE TABLE IF NOT EXISTS chat_members (
      room      TEXT NOT NULL,
@@ -174,6 +179,7 @@ const SCHEMA = [
      ext_name   TEXT,
      encrypted  INTEGER NOT NULL DEFAULT 0,        -- arrived encrypted, so body is only a note saying so
      ext_raw    TEXT,                              -- an encrypted message as it came (its latest edit), for the browser with the keys
+     reply_to   INTEGER,                           -- the message this one answers, if it's a reply
      ext_media  TEXT                               -- a picture it carries, as JSON {mxc, mimetype, width, height, name}
    )`,
   `CREATE INDEX IF NOT EXISTS chat_messages_room ON chat_messages (room, id)`,
@@ -184,6 +190,10 @@ const SCHEMA = [
      user_id    TEXT NOT NULL,
      emoji      TEXT NOT NULL,
      created_at INTEGER NOT NULL,
+     -- Reactions in bridge rooms: the reaction's id there, and who it's from.
+     -- user_id is the owner's for their own, and "~" + their id there for others'.
+     ext_id     TEXT,
+     ext_name   TEXT,
      PRIMARY KEY (message, user_id, emoji)
    )`,
   `CREATE INDEX IF NOT EXISTS chat_reactions_user ON chat_reactions (user_id)`,
@@ -203,6 +213,15 @@ const SCHEMA = [
      PRIMARY KEY (room, user_id)
    )`,
   `CREATE INDEX IF NOT EXISTS chat_presence_user ON chat_presence (user_id, seen_at)`,
+  // How far people on another platform have read a bridge room ("Seen by").
+  `CREATE TABLE IF NOT EXISTS chat_ext_reads (
+     room     TEXT NOT NULL,
+     ext_user TEXT NOT NULL,                       -- their id there
+     ext_name TEXT NOT NULL,
+     ext_id   TEXT NOT NULL,                       -- the event there they've read up to
+     at       INTEGER NOT NULL,
+     PRIMARY KEY (room, ext_user)
+   )`,
   // Each account's starred GIFs for the chat GIF picker (src/gifs.js).
   `CREATE TABLE IF NOT EXISTS chat_gif_favorites (
      user_id  TEXT NOT NULL,
@@ -282,16 +301,18 @@ const SCHEMA = [
 const AFTER_COLUMNS = [
   `CREATE INDEX IF NOT EXISTS chat_rooms_bridge ON chat_rooms (connection, ext_id)`,
   `CREATE UNIQUE INDEX IF NOT EXISTS chat_messages_ext ON chat_messages (room, ext_id) WHERE ext_id IS NOT NULL`,
+  `CREATE INDEX IF NOT EXISTS chat_reactions_ext ON chat_reactions (ext_id) WHERE ext_id IS NOT NULL`,
 ];
 
 // Columns added after a table first shipped. CREATE TABLE IF NOT EXISTS
 // leaves an existing table alone, so older databases get them here.
 const ADDED_COLUMNS = {
   users: ["email TEXT", "email_verified INTEGER NOT NULL DEFAULT 0"],
-  chat_messages: ["posted_seq INTEGER", "edited_at INTEGER", "ext_id TEXT", "ext_sender TEXT", "ext_name TEXT", "encrypted INTEGER NOT NULL DEFAULT 0", "ext_raw TEXT", "ext_media TEXT"],
+  chat_messages: ["posted_seq INTEGER", "edited_at INTEGER", "ext_id TEXT", "ext_sender TEXT", "ext_name TEXT", "encrypted INTEGER NOT NULL DEFAULT 0", "ext_raw TEXT", "reply_to INTEGER", "ext_media TEXT"],
+  chat_reactions: ["ext_id TEXT", "ext_name TEXT"],
   chat_connections: ["can_encrypt INTEGER NOT NULL DEFAULT 0", "crypto_owner TEXT", "crypto_counts TEXT", "pusher_at INTEGER NOT NULL DEFAULT 0"],
   push_prefs: ["chat_bridges INTEGER NOT NULL DEFAULT 1"],
-  chat_rooms: ["kind TEXT NOT NULL DEFAULT 'open'", "connection TEXT", "ext_id TEXT", "encrypted INTEGER NOT NULL DEFAULT 0"],
+  chat_rooms: ["kind TEXT NOT NULL DEFAULT 'open'", "connection TEXT", "ext_id TEXT", "encrypted INTEGER NOT NULL DEFAULT 0", "ext_typing TEXT", "ext_typing_at INTEGER", "ext_read TEXT", "ext_back TEXT", "ext_invite TEXT"],
 };
 
 async function addMissingColumns(d) {

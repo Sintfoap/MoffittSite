@@ -518,7 +518,9 @@ async function admin(request, env, me, pathname, method) {
           d.prepare("DELETE FROM drift_collections WHERE owner = ?").bind(target.id),
           d.prepare("DELETE FROM drift_shares WHERE owner = ? OR user_id = ?").bind(target.id, target.id),
           // Their connections to other platforms go, with the rooms they brought in.
-          ...["chat_messages", "chat_members", "chat_presence"].map(t =>
+          d.prepare(`DELETE FROM chat_reactions WHERE message IN (SELECT m.id FROM chat_messages m JOIN chat_rooms r ON r.id = m.room
+            WHERE r.kind = 'bridge' AND r.owner = ?)`).bind(target.id),
+          ...["chat_messages", "chat_members", "chat_presence", "chat_ext_reads"].map(t =>
             d.prepare(`DELETE FROM ${t} WHERE room IN (SELECT id FROM chat_rooms WHERE kind = 'bridge' AND owner = ?)`).bind(target.id)),
           d.prepare("DELETE FROM chat_rooms WHERE kind = 'bridge' AND owner = ?").bind(target.id),
           d.prepare("DELETE FROM chat_crypto_inbox WHERE connection IN (SELECT id FROM chat_connections WHERE user_id = ?)").bind(target.id),

@@ -18,6 +18,8 @@
 // It takes the library and a post(op, body) function rather than reaching
 // for them, so the tests run it in Node against a stand-in homeserver.
 
+import { fromHtml, messageContent, editContent } from "./format.js";
+
 export class Vault {
   constructor(lib, machine, post, key) {
     this.lib = lib; this.machine = machine; this.post = post; this.key = key;
@@ -86,10 +88,123 @@ export class Vault {
           this.backup = { key, version: info.version };
         }
       }
-      this.cache.clear(); this.tried.clear();
+      this.forgetMisses(); this.tried.clear();
       await this.flush();
       return { verified: !!status.hasSelfSigning, backup: !!this.backup };
     });
+  }
+
+  // ── verifying with another of your devices (emoji) ───────────────────
+  // As Element's "Verify with another device": this session asks your other
+  // sessions (or one of them asks it), both show the same seven emoji, and
+  // once you say they match on both, each trusts the other. Your other
+  // session then signs this one with your cross-signing key and, asked,
+  // shares the key backup's key, as a Security Key would.
+
+  // Asks your other sessions to verify this one.
+  requestVerification() {
+    return this.lock(async () => {
+      // (Knowing your other sessions first, to ask them.)
+      await this.machine.updateTrackedUsers([new this.lib.UserId(this.device.user_id)]);
+      await this.flush();
+      const identity = await this.machine.getIdentity(new this.lib.UserId(this.device.user_id));
+      if (!identity) throw new Error("your account has no cross-signing set up yet, so there's nothing to verify against; Element sets it up");
+      const [, out] = await identity.requestVerification([this.lib.VerificationMethod.SasV1]);
+      await this.send(out);
+      await this.flush();
+    });
+  }
+
+  // Where each verification with your own sessions is, for showing:
+  // [{id, state, by_us, other_device, emoji}] where state is "requested"
+  // (waiting for the other side, or for you to accept), "ready", "compare"
+  // (emoji: [{symbol, name}] to compare), "waiting" (you said they match;
+  // the other side hasn't yet), "done" or "cancelled".
+  // It also takes the next step itself where no one needs asking.
+  verifications() {
+    return this.lock(async () => {
+      const { lib } = this, P = lib.VerificationRequestPhase, out = [];
+      // (Ones that finished leave the library's list; they're kept here to say how they ended.)
+      this.flows ??= new Map();
+      for (const req of await this.machine.getVerificationRequests(new lib.UserId(this.device.user_id))) {
+        if (req.isSelfVerification()) this.flows.set(req.flowId, req);
+      }
+      for (const req of this.flows.values()) {
+        const phase = req.phase();
+        let sas = req.getVerification?.();
+        if (sas && !(sas instanceof lib.Sas)) sas = null;
+        // We asked and they're ready: start comparing emoji. They started it: go along.
+        if (phase === P.Ready && req.weStarted() && !sas) {
+          const started = await req.startSas();
+          if (started) { sas = started[0]; await this.send(started[1]); }
+        }
+        if (sas && !sas.weStarted() && !sas.hasBeenAccepted()) { const r = sas.accept(); if (r) await this.send(r); }
+        const done = req.isDone() || sas?.isDone();
+        if (done && !this.verified?.has(req.flowId)) await this.afterVerified(req.flowId);
+        const emoji = sas?.emoji?.();
+        out.push({
+          id: req.flowId, by_us: req.weStarted(), other_device: req.otherDeviceId?.toString() ?? null,
+          state: req.isCancelled() || sas?.isCancelled() ? "cancelled" : done ? "done"
+            : sas?.haveWeConfirmed() ? "waiting" : emoji ? "compare"
+            : phase === P.Requested || phase === P.Created ? "requested" : "ready",
+          ...(emoji ? { emoji: emoji.map(e => ({ symbol: e.symbol, name: e.description })) } : {}),
+        });
+      }
+      await this.flush();
+      return out;
+    });
+  }
+
+  // Accepting a request from another session; then the emoji match, or don't.
+  acceptVerification(id) { return this.onRequest(id, async req => req.acceptWithMethods([this.lib.VerificationMethod.SasV1])); }
+  confirmVerification(id) {
+    return this.onRequest(id, async req => {
+      const sas = req.getVerification?.();
+      for (const r of sas ? await sas.confirm() : []) await this.send(r);
+    });
+  }
+  cancelVerification(id) { return this.onRequest(id, async req => (req.getVerification?.() ?? req).cancel()); }
+  onRequest(id, fn) {
+    return this.lock(async () => {
+      const req = await this.machine.getVerificationRequest(new this.lib.UserId(this.device.user_id), id);
+      if (!req) throw new Error("that verification has gone; start again");
+      const r = await fn(req);
+      if (r) await this.send(r);
+      await this.flush();
+    });
+  }
+
+  // Verified with another session: ask it for the secrets a Security Key
+  // would open (it answers once it trusts this one), and take them as they come.
+  async afterVerified(id) {
+    (this.verified ??= new Set()).add(id);
+    await this.machine.requestMissingSecretsIfNeeded();
+  }
+
+  // Secrets your other sessions sent: the cross-signing keys (the library
+  // takes those itself; then this session signs itself with them) and the
+  // key backup's key.
+  async takeSecrets() {
+    const { lib } = this, me = this.device.user_id;
+    const status = await this.machine.crossSigningStatus();
+    if (status.hasSelfSigning && !this.signedSelf) {
+      const device = await this.machine.getDevice(new lib.UserId(me), new lib.DeviceId(this.device.device_id));
+      if (device && !device.isCrossSignedByOwner()) await this.send(await device.verify());
+      this.signedSelf = true;
+    }
+    if (this.backup) return;
+    const keys = await this.machine.getSecretsFromInbox("m.megolm_backup.v1");
+    for (const secret of keys ?? []) {
+      const key = lib.BackupDecryptionKey.fromBase64(secret);
+      let info = null;
+      try { info = (await this.ask("request", { method: "GET", path: "room_keys/version" })).response; } catch { /* no backup */ }
+      if (info?.auth_data?.public_key !== key.megolmV1PublicKey.publicKeyBase64) continue;
+      await this.machine.saveBackupDecryptionKey(key, info.version);
+      await this.machine.enableBackupV1(info.auth_data.public_key, info.version);
+      this.backup = { key, version: info.version };
+      this.forgetMisses(); this.tried.clear();
+    }
+    await this.machine.deleteSecretsFromInbox("m.megolm_backup.v1");
   }
 
   // A room key from the backup, for one message this session missed.
@@ -106,6 +221,11 @@ export class Vault {
     const session = JSON.parse(key.decryptV1(d.ephemeral, d.mac, d.ciphertext));
     await this.machine.importBackedUpRoomKeys(new Map([[new lib.RoomId(event.room_id), new Map([[sid, session]])]]), () => {}, version);
     return true;
+  }
+
+  // New keys came in: what couldn't be read may be now. (What could stays read.)
+  forgetMisses() {
+    for (const [raw, c] of this.cache) if (!c) this.cache.delete(raw);
   }
 
   // One thing at a time: the library's requests have to be answered in order.
@@ -134,7 +254,7 @@ export class Vault {
           await this.machine.receiveSyncChanges(JSON.stringify(it.to_device), lists, otk, fallback);
         }
         got = true;
-        if (items.length) { ack = items.at(-1).id; this.cache.clear(); }
+        if (items.length) { ack = items.at(-1).id; this.forgetMisses(); await this.takeSecrets(); }
         await this.flush();
         if (!items.length) break;
       }
@@ -191,7 +311,7 @@ export class Vault {
 
   // Message content → the encrypted content to send to a room, after
   // making sure everyone's devices in it have the room's key.
-  encrypt(roomId, content) {
+  encrypt(roomId, content, type = "m.room.message") {
     return this.lock(async () => {
       const { lib } = this;
       const { response } = await this.ask("request", { method: "GET", path: `rooms/${encodeURIComponent(roomId)}/joined_members` });
@@ -203,30 +323,99 @@ export class Vault {
       const claim = await this.machine.getMissingSessions(users());
       if (claim) await this.send(claim);
       for (const r of await this.machine.shareRoomKey(new lib.RoomId(roomId), users(), new lib.EncryptionSettings())) await this.send(r);
-      const out = JSON.parse(await this.machine.encryptRoomEvent(new lib.RoomId(roomId), "m.room.message", JSON.stringify(content)));
-      // What an edit replaces stays readable, as Matrix has it.
+      const out = JSON.parse(await this.machine.encryptRoomEvent(new lib.RoomId(roomId), type, JSON.stringify(content)));
+      // What an edit replaces, or a reaction is on, stays readable, as Matrix has it.
       if (content["m.relates_to"] && !out["m.relates_to"]) out["m.relates_to"] = content["m.relates_to"];
       return out;
     });
   }
 }
 
-// Decrypted content → the text chat shows, as the site does for plain rooms.
+// ── what this browser has already read ────────────────────────────────────
+// Decrypting takes the crypto library, which is large to load, so what was
+// read once is kept: event id → decrypted content, in IndexedDB, sealed with
+// AES-GCM under a key made from the connection's own browser key (the same
+// key that locks the library's store). A chat then opens with its messages
+// already readable, and the library only has to read the new ones.
+//
+// rows: where the sealed rows go, {get(ids) → Map, put(id, value)}; left
+// out, IndexedDB (and where there's none, nowhere: nothing is kept).
+
+export class Shelf {
+  constructor(aes, rows) { this.aes = aes; this.rows = rows; }
+
+  static async open(hexKey, { name, rows } = {}) {
+    const bytes = Uint8Array.from(hexKey.match(/../g), h => parseInt(h, 16));
+    const ikm = await subtle().importKey("raw", bytes, "HKDF", false, ["deriveKey"]);
+    const aes = await subtle().deriveKey({ name: "HKDF", hash: "SHA-256", salt: new Uint8Array(32), info: new TextEncoder().encode("sintfoap-e2ee-read") },
+      ikm, { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
+    return new Shelf(aes, rows ?? await idbRows(name));
+  }
+
+  // event ids → Map of the ones kept, to their decrypted content.
+  async get(ids) {
+    const out = new Map();
+    if (!ids.length) return out;
+    let rows;
+    try { rows = await this.rows.get(ids); } catch { return out; }
+    await Promise.all([...rows].map(async ([id, { iv, data }]) => {
+      try { out.set(id, JSON.parse(new TextDecoder().decode(await subtle().decrypt({ name: "AES-GCM", iv, additionalData: new TextEncoder().encode(id) }, this.aes, data)))); }
+      catch { /* sealed under another key: skip it */ }
+    }));
+    return out;
+  }
+
+  async put(id, content) {
+    if (!id || !content) return;
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const data = new Uint8Array(await subtle().encrypt({ name: "AES-GCM", iv, additionalData: new TextEncoder().encode(id) },
+      this.aes, new TextEncoder().encode(JSON.stringify(content))));
+    try { await this.rows.put(id, { iv, data }); } catch { /* full, or private mode: it's only a shortcut */ }
+  }
+}
+
+async function idbRows(name) {
+  const none = { get: async () => new Map(), put: async () => {} };
+  if (!name || !globalThis.indexedDB) return none;
+  const db = await new Promise(resolve => {
+    const req = indexedDB.open(name, 1);
+    req.onupgradeneeded = () => req.result.createObjectStore("read");
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = req.onblocked = () => resolve(null);
+  });
+  if (!db) return none;
+  const done = tx => new Promise((ok, fail) => { tx.oncomplete = () => ok(); tx.onerror = tx.onabort = () => fail(tx.error); });
+  return {
+    async get(ids) {
+      const tx = db.transaction("read"), store = tx.objectStore("read"), out = new Map();
+      for (const id of ids) { const r = store.get(id); r.onsuccess = () => { if (r.result) out.set(id, r.result); }; }
+      await done(tx);
+      return out;
+    },
+    async put(id, value) {
+      const tx = db.transaction("read", "readwrite");
+      tx.objectStore("read").put(value, id);
+      await done(tx);
+    },
+  };
+}
+
+// Decrypted content → the text chat shows, as the site does for plain rooms
+// (src/matrix.js): formatting as the Markdown it stands for.
 export function textOf(content, senderName) {
   const c = content?.["m.new_content"] ?? content;
-  const body = typeof c?.body === "string" ? c.body : "";
+  const html = c?.format === "org.matrix.custom.html" && typeof c.formatted_body === "string" && fromHtml(c.formatted_body);
+  const body = html || (typeof c?.body === "string" ? c.body : "");
   const kind = c?.msgtype;
   const out = kind === "m.emote" ? `* ${senderName} ${body}`
     : ["m.image", "m.file", "m.video", "m.audio"].includes(kind) ? `[${kind.slice(2)}] ${body}`
-    : body.replace(/^(> .*\n)+\n/, "");
+    : html ? body : body.replace(/^(> .*\n)+\n/, "");
   return out.replace(/[\u0000-\u0009\u000b-\u001f\u007f]/g, " ").trim();
 }
 
-export const textContent = text => ({ msgtype: "m.text", body: text });
-export const editContent = (eventId, text) => ({
-  msgtype: "m.text", body: "* " + text, "m.new_content": { msgtype: "m.text", body: text },
-  "m.relates_to": { rel_type: "m.replace", event_id: eventId },
-});
+export const textContent = messageContent;
+export const reactionContent = (eventId, emoji) => ({ "m.relates_to": { rel_type: "m.annotation", event_id: eventId, key: emoji } });
+export { editContent };
 
 // ── secret storage (what a Security Key opens) ────────────────────────────
 // As the Matrix spec has it: m.secret_storage.v1.aes-hmac-sha2. Each secret

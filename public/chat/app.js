@@ -8,7 +8,8 @@
 // each connection; what you send there goes to that platform. Encrypted
 // rooms are decrypted and encrypted here, in this browser (e2ee.js).
 
-import { Vault, textOf, textContent, editContent, encryptAttachment, decryptAttachment, imageOf, imageContent } from "/chat/e2ee.js";
+import { Vault, Shelf, textOf, textContent, editContent, reactionContent, encryptAttachment, decryptAttachment, imageOf, imageContent } from "/chat/e2ee.js";
+import { toHtml } from "/chat/format.js";
 import { setupGifs, gifsReady, isGifMessage, gifMessageHtml, isFavorite, toggleFavorite, isOpen as gifsOpen, toggleGifs, closeGifs, onGifClick, onGifInput, onGifKey } from "/chat/gifs.js";
 
 const $ = s => document.querySelector(s);
@@ -26,6 +27,7 @@ let open = null;          // { id, seq, more, joined, messages: Map(id → messa
 let busy = false;         // a poll is in flight
 let editingId = null, editDraft = "";   // the message being edited in place
 let pickerFor = null;     // the message whose reaction picker is open
+let replyingTo = null;    // the message the next one you send answers
 let bridges = { allowed: false };   // whether you can connect other platforms, and which
 
 // ── end-to-end encryption ────────────────────────────────────────────────
@@ -34,6 +36,7 @@ let bridges = { allowed: false };   // whether you can connect other platforms, 
 // locks the store), and the crypto library's store in IndexedDB.
 
 const vaults = new Map();   // connection id → Promise<Vault>
+const ready = new Map();    // connection id → Vault, once it's open
 const keyName = conn => `sintfoap-e2ee:${conn}`;
 const storedKey = conn => { try { return localStorage.getItem(keyName(conn)); } catch { return null; } };
 let crypto$ = null;         // the library, loaded the first time it's needed (it's large)
@@ -53,7 +56,7 @@ function vaultFor(conn, { create = false } = {}) {
       post: (op, body) => api("POST", `/connections/${conn}/crypto/${op}`, body) });
   })();
   vaults.set(conn, made);
-  made.catch(() => vaults.delete(conn));
+  made.then(v => ready.set(conn, v), () => vaults.delete(conn));
   return made;
 }
 
@@ -61,29 +64,125 @@ function vaultFor(conn, { create = false } = {}) {
 // the keys yet), "elsewhere" (another browser does), or "token" (it can't).
 const keysHere = r => !r.can_encrypt ? "token" : storedKey(r.connection) ? "ready" : r.keys_held ? "elsewhere" : "off";
 
-// Decrypts the open room's encrypted messages that haven't been yet (or
-// changed: an edit brings new ones), after taking any keys that arrived.
-async function decryptOpen() {
-  const room = open && rooms.find(r => r.id === open.id);
-  if (!room?.encrypted || keysHere(room) !== "ready") return;
-  const id = open.id, vault = await vaultFor(room.connection);
-  await vault.pump();
-  showVerify(await vault.status());
-  let changed = false;
-  for (const m of open?.id === id ? open.messages.values() : []) {
-    if (!m.raw || m.shownRaw === m.raw && m.decrypted) continue;
-    const c = await vault.decrypt(m.raw);
-    if (open?.id !== id) return;
-    const note = (await vault.status()).backup
-      ? "🔒 Can't decrypt this one: its key isn't in your key backup, or hasn't arrived yet."
-      : "🔒 Can't decrypt this one yet. Verify with your Security Key to unlock older messages.";
-    const body = c ? textOf(c, m.author_name) : note;
-    if (m.body !== body || m.shownRaw !== m.raw) { m.body = body; changed = true; }
-    const pic = c && imageOf(c);
-    m.media = pic ? { ...pic, url: mediaPath(id, pic.mxc) } : null;
-    m.decrypted = !!c; m.shownRaw = m.raw;
+// What this browser read before, kept sealed (e2ee.js, Shelf), so a chat
+// opens with its messages readable instead of decrypting them all again.
+const shelves = new Map();  // connection id → Promise<Shelf | null>
+function shelfFor(conn) {
+  if (shelves.has(conn)) return shelves.get(conn);
+  const key = storedKey(conn);
+  if (!key) return Promise.resolve(null);
+  const made = Shelf.open(key, { name: `sintfoap-e2ee-read-${conn}` }).catch(() => null);
+  shelves.set(conn, made);
+  return made;
+}
+const eventId = raw => { try { return JSON.parse(raw).event_id || null; } catch { return null; } };
+// The open room, when it's encrypted and its keys are in this browser.
+const keyedRoom = () => { const r = open && rooms.find(r => r.id === open.id); return r?.encrypted && keysHere(r) === "ready" ? r : null; };
+const read = (m, content, roomId = open?.id) => {
+  const pic = imageOf(content);
+  return Object.assign(m, { body: textOf(content, m.author_name), media: pic ? { ...pic, url: mediaPath(roomId, pic.mxc) } : null,
+    decrypted: true, decrypting: false, failed: false, shownRaw: m.raw });
+};
+
+const lockedNote = vault => vault.backup
+  ? "🔒 Can't decrypt this one: its key isn't in your key backup, or hasn't arrived yet."
+  : "🔒 Can't decrypt this one yet. Verify with your Security Key to unlock older messages.";
+
+// Messages from the server, before they're shown: in an encrypted room the
+// server only has "Encrypted message", so each one takes the text it had
+// when it was last shown, or what this browser read before. Any still
+// unread say so quietly until decryptOpen gets to them.
+async function readable(list, roomId = open?.id) {
+  const room = rooms.find(r => r.id === roomId);
+  if (!room?.encrypted || keysHere(room) !== "ready") return list;
+  const rest = [];
+  for (const m of list) {
+    if (!m.raw) continue;
+    const had = open?.id === roomId && open.messages.get(m.id);
+    if (had?.shownRaw === m.raw && (had.decrypted || had.failed)) Object.assign(m, { body: had.body, media: had.media, decrypted: had.decrypted, failed: had.failed, shownRaw: m.raw });
+    else rest.push({ m, had });
   }
-  if (changed) renderLog();
+  // (And what replies answer, when that's encrypted too.)
+  const quoted = list.filter(m => m.reply?.raw && !m.reply.decrypted);
+  for (const m of quoted) {
+    const had = open?.id === roomId && open.messages.get(m.reply.id);
+    if (had?.decrypted && had.raw === m.reply.raw) Object.assign(m.reply, { body: had.body, decrypted: true });
+  }
+  const ids = [...rest.map(({ m }) => m.raw), ...quoted.filter(m => !m.reply.decrypted).map(m => m.reply.raw)].map(eventId).filter(Boolean);
+  const kept = await (await shelfFor(room.connection))?.get(ids) ?? new Map();
+  for (const m of quoted) {
+    const c = !m.reply.decrypted && kept.get(eventId(m.reply.raw));
+    if (c) Object.assign(m.reply, { body: textOf(c, m.reply.author_name), decrypted: true });
+  }
+  for (const { m, had } of rest) {
+    const c = kept.get(eventId(m.raw));
+    if (c) read(m, c, roomId);
+    // (One already found to be unreadable says so straight away.)
+    else if (ready.get(room.connection)?.cache.get(m.raw) === null) Object.assign(m, { body: lockedNote(ready.get(room.connection)), failed: true, shownRaw: m.raw });
+    // (An edit keeps showing the text it replaces until the new one's read.)
+    else Object.assign(m, had?.decrypted ? { body: had.body } : { body: "Decrypting…", decrypting: true });
+  }
+  return list;
+}
+
+// Messages still to be read → as many read as can be in a moment (taking
+// any keys that came with them first), so they appear readable rather than
+// filling in. What's left, decryptOpen gets to.
+async function readSoon(list, roomId) {
+  const room = rooms.find(r => r.id === roomId), waiting = list.filter(m => m.decrypting);
+  if (!waiting.length || !room) return;
+  const work = (async () => {
+    const vault = await vaultFor(room.connection), shelf = await shelfFor(room.connection);
+    await vault.pump();
+    await Promise.all(waiting.map(async m => {
+      const c = await vault.decrypt(m.raw);
+      if (c) { read(m, c, roomId); shelf?.put(eventId(m.raw), c); }
+    }));
+  })().catch(() => {});
+  await Promise.race([work, new Promise(r => setTimeout(r, 1000))]);
+}
+
+// Decrypts the open room's messages that haven't been yet (or changed: an
+// edit brings new ones): first with the keys already here, then again after
+// taking any that arrived.
+async function decryptOpen() {
+  const room = keyedRoom();
+  if (!room) return;
+  const id = open.id, vault = await vaultFor(room.connection), shelf = await shelfFor(room.connection);
+  const pass = async last => {
+    // What encrypted replies answer.
+    let quotes = false;
+    for (const m of open?.id === id ? [...open.messages.values()].filter(m => m.reply?.raw && !m.reply.decrypted) : []) {
+      const c = await vault.decrypt(m.reply.raw);
+      if (c) { Object.assign(m.reply, { body: textOf(c, m.reply.author_name), decrypted: true }); quotes = true; }
+    }
+    if (quotes && open?.id === id) renderLog();
+    const list = open?.id === id ? [...open.messages.values()].filter(m => m.raw && !(m.shownRaw === m.raw && m.decrypted)) : [];
+    if (!list.length) return;
+    const got = await Promise.all(list.map(m => vault.decrypt(m.raw)));
+    if (open?.id !== id) return;
+    let changed = false;
+    const note = last && lockedNote(vault);
+    list.forEach((m, i) => {
+      if (got[i]) { read(m, got[i]); shelf?.put(eventId(m.raw), got[i]); changed = true; }
+      else if (last && (m.body !== note || !m.failed)) { Object.assign(m, { body: note, failed: true, decrypting: false, shownRaw: m.raw }); changed = true; }
+    });
+    if (changed) renderLog();
+  };
+  await pass(false);
+  await vault.pump();
+  if (open?.id !== id) return;
+  const flows = await vault.verifications();
+  if (open?.id !== id) return;
+  showFlows(flows, vault);
+  showVerify(await vault.status());
+  await pass(true);
+}
+
+// Starts loading the crypto library and keys as soon as the page knows
+// there's an encrypted room they're for, rather than when one is opened.
+function warmKeys() {
+  for (const r of rooms) if (r.encrypted && keysHere(r) === "ready") { vaultFor(r.connection)?.catch(() => {}); shelfFor(r.connection); }
 }
 
 // ── pictures from bridge rooms ───────────────────────────────────────────
@@ -144,6 +243,7 @@ async function loadRooms() {
   $("#key-gif").hidden = !gifsReady();
   $("#connections-open").hidden = $("#key-k").hidden = !bridges.allowed;
   renderRooms();
+  warmKeys();
   const shown = open && rooms.find(r => r.id === open.id), count = $("#show-members");
   if (shown && count) count.textContent = `${shown.members} member${shown.members === 1 ? "" : "s"}`;
   // The open room was deleted by its owner.
@@ -155,7 +255,7 @@ const NETWORK = { matrix: "Matrix" };
 
 function renderRooms() {
   const row = r => `<button data-room="${esc(r.id)}" aria-current="${open?.id === r.id}" title="${esc(r.topic || r.name)}" class="${r.kind}">
-    ${r.kind === "dm" ? `<span class="dot${online.has(r.with) ? " on" : ""}" title="${online.has(r.with) ? "Online" : "Away"}"></span>` : ""}<span class="name">${esc(r.name)}</span>${r.encrypted ? `<span class="e2e" title="End-to-end encrypted${keysHere(r) === "ready" ? ", with the keys in this browser" : ": turn encryption on in the room to read it"}">E2E</span>` : ""}${r.mentions && open?.id !== r.id ? `<span class="n at" title="You were mentioned">@${r.mentions > 1 ? r.mentions : ""}</span>` : ""}${r.unread && open?.id !== r.id ? `<span class="n">${r.unread > 99 ? "99+" : r.unread}</span>` : ""}
+    ${r.kind === "dm" ? `<span class="dot${online.has(r.with) ? " on" : ""}" title="${online.has(r.with) ? "Online" : "Away"}"></span>` : ""}<span class="name">${esc(r.name)}</span>${r.invite ? `<span class="n invite" title="${esc(r.invite.by)} invited you">invite</span>` : ""}${r.encrypted ? `<span class="e2e" title="End-to-end encrypted${keysHere(r) === "ready" ? ", with the keys in this browser" : ": turn encryption on in the room to read it"}">E2E</span>` : ""}${r.mentions && open?.id !== r.id ? `<span class="n at" title="You were mentioned">@${r.mentions > 1 ? r.mentions : ""}</span>` : ""}${r.unread && open?.id !== r.id ? `<span class="n">${r.unread > 99 ? "99+" : r.unread}</span>` : ""}
     ${r.joined ? "" : `<span class="count">${r.members}</span>`}</button>`;
   const joined = rooms.filter(r => r.joined), others = rooms.filter(r => !r.joined);
   const dms = joined.filter(r => r.kind === "dm");
@@ -167,7 +267,7 @@ function renderRooms() {
   // (Who you are there only when one platform has two connections.)
   const networks = [...vias.values()].map(list => list[0].provider);
   $("#bridged").innerHTML = [...vias.values()].map(([r, ...rest]) =>
-    `<section><h2 title="${esc(r.via)}">${esc(NETWORK[r.provider] || r.provider)}${networks.filter(n => n === r.provider).length > 1 ? ` · ${esc(String(r.via).replace(/^@/, "").split(":")[0])}` : ""}</h2>
+    `<section><h2 title="${esc(r.via)}">${esc(NETWORK[r.provider] || r.provider)}${networks.filter(n => n === r.provider).length > 1 ? ` · ${esc(String(r.via).replace(/^@/, "").split(":")[0])}` : ""}<button class="link add" data-newdm="${esc(r.connection)}" data-network="${esc(NETWORK[r.provider] || r.provider)}" title="Message someone on ${esc(NETWORK[r.provider] || r.provider)}" aria-label="Message someone on ${esc(NETWORK[r.provider] || r.provider)}">+</button></h2>
       <div class="rooms">${[r, ...rest].map(row).join("")}</div></section>`).join("");
   $("#others").innerHTML = others.map(row).join("") || `<p class="none">${rooms.length ? "You're in every room." : "No rooms yet. Make the first one."}</p>`;
   const total = joined.reduce((n, r) => n + (open?.id === r.id ? 0 : r.unread), 0);
@@ -176,9 +276,36 @@ function renderRooms() {
 }
 
 document.querySelector(".side").addEventListener("click", e => {
+  const dm = e.target.closest("[data-newdm]");
+  if (dm) return newBridgeDm(dm.dataset.newdm, dm.dataset.network);
   const b = e.target.closest("[data-room]");
   if (b) location.hash = b.dataset.room;
 });
+
+// A direct message with someone on another platform, by their id there.
+function newBridgeDm(conn, network) {
+  const d = $("#mdm-dialog"), can = rooms.some(r => r.connection === conn && r.can_encrypt);
+  d.dataset.conn = conn;
+  $("#mdm-title").textContent = `Message someone on ${network}`;
+  $("#mdm-user").value = ""; $("#mdm-error").hidden = true;
+  $("#mdm-encrypted").checked = !!can; $("#mdm-encrypted-row").hidden = !can;
+  d.showModal();
+  $("#mdm-user").focus();
+}
+$("#mdm-form").addEventListener("submit", async e => {
+  e.preventDefault();
+  const d = $("#mdm-dialog"), save = $("#mdm-save");
+  save.disabled = true; save.textContent = "Starting…";
+  try {
+    const out = await api("POST", `/connections/${d.dataset.conn}/dm`, { user: $("#mdm-user").value.trim(),
+      ...($("#mdm-encrypted-row").hidden ? {} : { encrypted: $("#mdm-encrypted").checked }) });
+    d.close();
+    await loadRooms();
+    location.hash = out.id;
+  } catch (err) { $("#mdm-error").textContent = err.message; $("#mdm-error").hidden = false; }
+  finally { save.disabled = false; save.textContent = "Start"; }
+});
+$("#mdm-cancel").addEventListener("click", () => $("#mdm-dialog").close());
 
 // ── the open room ────────────────────────────────────────────────────────
 
@@ -194,14 +321,18 @@ async function openRoom(id) {
   const room = rooms.find(r => r.id === id);
   if (!room) { closeRoom(); return; }
   const data = await api("GET", `/rooms/${id}/messages`);
+  await readable(data.messages, id);
   open = { id, seq: data.seq, more: data.more, joined: data.joined, messages: new Map(data.messages.map(m => [m.id, m])), members: [],
-           here: data.here || [], typing: data.typing || [], bridge: room.kind === "bridge" };
+           here: data.here || [], typing: data.typing || [], reads: data.reads || [], bridge: room.kind === "bridge" };
+  replyingTo = null;
   editingId = pickerFor = null; hideSuggest(); searching = null;
   room.unread = 0; room.mentions = 0;
   // For completing @names as you type.
   api("GET", `/rooms/${id}/members`).then(list => { if (open?.id === id) open.members = list; }).catch(() => {});
   document.body.classList.add("in-room");
   renderRoomShell(room);
+  await readSoon(data.messages, id);
+  if (open?.id !== id) return;
   renderLog({ toBottom: true });
   renderPresence();
   renderRooms();
@@ -220,7 +351,7 @@ function renderRoomShell(room) {
       ${room.kind === "dm" || room.kind === "bridge" ? "" : `<button class="link" id="show-members">${room.members} member${room.members === 1 ? "" : "s"}</button>`}
       ${room.kind === "private" && open.joined ? `<button class="link" id="add-people">Add people</button>` : ""}
       ${room.manage ? `<button class="link" id="edit-room">Edit</button>` : ""}
-      ${open.joined && room.kind !== "dm" && room.kind !== "bridge" ? `<button class="link" id="leave">Leave</button>` : ""}
+      ${open.joined && room.kind !== "dm" && !room.invite ? `<button class="link" id="leave">Leave</button>` : ""}
     </header>
     <form class="searchbar" id="searchbar" hidden>
       <input id="search-q" type="search" maxlength="100" placeholder="Search ${esc(roomTitle(room))}" aria-label="Search this room" autocomplete="off">
@@ -230,15 +361,18 @@ function renderRoomShell(room) {
     <div class="log" id="log"></div>
     <div class="presence" id="presence" aria-live="polite"></div>
     ${room.encrypted && keysHere(room) === "ready" ? `<div class="joinbar verifybar" id="verifybar" hidden>
-        <span id="verify-why"></span><button class="btn quiet" type="button" id="verify-open">Verify with Security Key</button>
+        <span id="verify-why"></span><button class="btn quiet" type="button" id="verify-device">Verify with another device</button><button class="btn quiet" type="button" id="verify-open">Verify with Security Key</button>
+        <div class="verify-flow" id="verify-flow" hidden aria-live="polite"></div>
         <form id="verify-form" class="verify-form" hidden>
           <input id="verify-key" type="password" autocomplete="off" spellcheck="false" placeholder="Security Key or Security Phrase" aria-label="Security Key or Security Phrase">
           <button class="btn" type="submit">Verify</button><button class="link" type="button" id="verify-cancel">Cancel</button>
           <p class="verify-note">It's used here in your browser to open your account's secret storage, and never sent to the site.</p>
         </form></div>` : ""}
-    ${room.encrypted && keysHere(room) !== "ready" ? encryptionBar(room)
+    ${room.invite ? `<div class="joinbar">${esc(room.invite.by)} invited you to this ${esc(NETWORK[room.provider] || room.provider)} room. <button class="btn" id="join">Accept</button> <button class="btn quiet" id="decline">Decline</button></div>`
+      : room.encrypted && keysHere(room) !== "ready" ? encryptionBar(room)
       : open.joined
-      ? `<form class="composer" id="composer">
+      ? `<div class="replybar" id="replybar" hidden><span id="reply-what"></span><button class="link" type="button" id="reply-cancel" aria-label="Don't reply">✕</button></div>
+        <form class="composer" id="composer">
           <span class="prompt" aria-hidden="true">&gt;</span>
           <textarea id="text" rows="1" maxlength="2000" placeholder="Message ${esc(roomTitle(room))}" aria-label="Message" autocomplete="off"></textarea>
           <button class="gif-btn" type="button" id="gif-open" aria-label="GIFs (Ctrl+G)" title="GIFs (Ctrl+G)" aria-haspopup="dialog" aria-expanded="false"${gifsReady() ? "" : " hidden"}>GIF</button>
@@ -258,7 +392,52 @@ function showVerify({ verified, backup }) {
   $("#verify-why").textContent = verified
     ? "This session is verified, but your account has no key backup to unlock older messages from."
     : "This session isn't verified yet, so Matrix apps flag it and older messages stay locked.";
-  $("#verify-open").hidden = verified || !$("#verify-form").hidden;
+  const busy = !$("#verify-form").hidden || !$("#verify-flow").hidden;
+  $("#verify-open").hidden = verified || busy;
+  $("#verify-device").hidden = verified || busy;
+  if (!$("#verify-flow").hidden) bar.hidden = false;
+}
+
+// Verifying with another of your sessions (e2ee.js, verifications): what's
+// happening, and what you can do about it, in the verify bar.
+let flowShown = null;           // the verification on show
+const flowsEnded = new Set();   // ones already said to have ended
+function showFlows(flows, vault) {
+  const el = $("#verify-flow");
+  if (!el) return;
+  for (const f of flows.filter(f => f.state === "done" || f.state === "cancelled")) {
+    if (flowsEnded.has(f.id)) continue;
+    flowsEnded.add(f.id);
+    if (f.id === flowShown) toast(f.state === "done" ? "Verified. This session now trusts your other one." : "Verification cancelled.");
+  }
+  const f = flows.filter(f => !flowsEnded.has(f.id)).at(-1);
+  if (f) flowShown = f.id;        // kept after it ends, so its end is said
+  el.hidden = !f;
+  if (!f) { el.innerHTML = ""; return; }
+  const html = {
+    requested: f.by_us
+      ? `<p>Accept the request in Element (or another Matrix app) on one of your other devices.</p><button class="link" data-flow="cancel">Cancel</button>`
+      : `<p>Another of your sessions${f.other_device ? ` (${esc(f.other_device)})` : ""} wants to verify this one.</p><button class="btn" data-flow="accept">Accept</button> <button class="link" data-flow="cancel">Decline</button>`,
+    ready: `<p>Starting…</p><button class="link" data-flow="cancel">Cancel</button>`,
+    compare: `<p>Do these match what your other session shows, in the same order?</p>
+      <ol class="emoji">${(f.emoji || []).map(e => `<li><span>${esc(e.symbol)}</span>${esc(e.name)}</li>`).join("")}</ol>
+      <button class="btn" data-flow="confirm">They match</button> <button class="btn quiet" data-flow="cancel">They don't match</button>`,
+    waiting: `<p>Waiting for your other session to confirm…</p>`,
+  }[f.state];
+  // (Only redrawn when it changes, so a button isn't swapped out from under a click.)
+  if (el.dataset.at !== f.id + f.state) { el.innerHTML = html; el.dataset.at = f.id + f.state; }
+  el.onclick = async e => {
+    const b = e.target.closest("[data-flow]");
+    if (!b) return;
+    b.disabled = true;
+    try {
+      const op = { accept: "acceptVerification", confirm: "confirmVerification", cancel: "cancelVerification" }[b.dataset.flow];
+      await vault[op](f.id);
+      await decryptOpen();
+    } catch (err) { toast(err.message); b.disabled = false; }
+  };
+  const bar = $("#verifybar");
+  if (bar) bar.hidden = false;
 }
 
 function encryptionBar(room) {
@@ -278,12 +457,17 @@ const day = t => {
   if (d.toDateString() === y.toDateString()) return "Yesterday";
   return d.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric", year: d.getFullYear() === today.getFullYear() ? undefined : "numeric" });
 };
-// Plain text with web links made clickable and @names picked out. Everything
-// is escaped first. (The same @name rule as the site's, in src/chat.js.)
-const linkify = s => esc(s)
-  .replace(/\bhttps?:\/\/[^\s<]+[^\s<.,;:!?)"'\]]/g, u => `<a href="${u}" target="_blank" rel="noopener noreferrer">${u}</a>`)
-  .replace(/(^|[^\w@.\/])@([a-z0-9][a-z0-9_-]{2,31})(?![\w-])/gi, (all, pre, name) =>
-    `${pre}<span class="mention${name.toLowerCase() === me.username ? " you" : ""}">@${name}</span>`);
+// A message's text with its formatting (format.js), web links made
+// clickable and @names picked out. Everything is escaped first. (The same
+// @name rule as the site's, in src/chat.js.)
+const linkify = s => toHtml(s, {
+  newline: "\n",
+  link: (u, t) => `<a href="${u}" target="_blank" rel="noopener noreferrer">${t}</a>`,
+  mention: name => `<span class="mention${name.toLowerCase() === me.username ? " you" : ""}">@${name}</span>`,
+});
+// A reply's quote of what it answers: one line, without the formatting marks.
+const quoteOf = r => !r.id ? `<span class="gone">Deleted message</span>`
+  : `<b>${esc(r.author_name)}</b> ${esc(String(r.body).replace(/\s+/g, " ").replace(/(\*\*|~~|`+|^> )/g, ""))}`;
 
 function messageHtml(m) {
   if (m.id === editingId) {
@@ -294,14 +478,24 @@ function messageHtml(m) {
   }
   const chips = (m.reactions || []).map(r =>
     `<button class="chip" data-react="${esc(r.emoji)}" data-mid="${m.id}" aria-pressed="${r.mine}" title="${esc(r.names)}">${esc(r.emoji)} <b>${r.count}</b></button>`).join("");
-  const canReact = open.joined && !m.pending && !open.bridge;
+  // (In a bridge room, reactions go to the platform: an encrypted room's only from the browser with its keys.)
+  const room = open.bridge && rooms.find(r => r.id === open.id);
+  const canReact = open.joined && !m.pending && (!room || !room.encrypted || keysHere(room) === "ready");
   const picker = pickerFor === m.id
     ? `<div class="picker" role="menu">${reactions.map(e => `<button class="link" data-react="${esc(e)}" data-mid="${m.id}" role="menuitem">${esc(e)}</button>`).join("")}</div>` : "";
   const gif = !m.deleted && isGifMessage(m.body), pic = !m.deleted && !gif && m.media;
-  return `<div class="text" title="${esc(time(m.created_at))}">${gif ? gifMessageHtml(m) : pic ? pictureHtml(m.media) : linkify(m.body)}${m.edited_at ? `<span class="edited" title="Edited ${esc(time(m.edited_at))}"> (edited)</span>` : ""}</div>
+  const seen = open.reads?.filter(r => r.message === m.id).map(r => r.name);
+  return `${m.reply ? `<button class="quote" ${m.reply.id ? `data-jump="${m.reply.id}"` : "disabled"} title="Go to the message this answers">${quoteOf(m.reply)}</button>` : ""}<div class="text" title="${esc(time(m.created_at))}">${gif ? gifMessageHtml(m) : pic ? pictureHtml(m.media) : linkify(m.body)}${m.edited_at ? `<span class="edited" title="Edited ${esc(time(m.edited_at))}"> (edited)</span>` : ""}</div>
     ${chips || picker ? `<div class="reacts">${chips}${picker}</div>` : ""}
-    <div class="acts">${gif && gifsReady() && !m.pending ? `<button class="link star${isFavorite(m.body.trim()) ? " on" : ""}" data-favgif="${m.id}" aria-label="${isFavorite(m.body.trim()) ? "Remove GIF from favorites" : "Add GIF to favorites"}">★</button>` : ""}${canReact ? `<button class="link" data-pick="${m.id}" aria-label="React">React</button>` : ""}${m.can_edit && !m.pending && !m.media ? `<button class="link" data-editmsg="${m.id}">Edit</button>` : ""}${m.can_delete ? `<button class="link del" data-del="${m.id}" aria-label="Delete message">Delete</button>` : ""}</div>`;
+    ${seen?.length ? `<div class="seen">Seen by ${esc(names(seen))}</div>` : ""}
+    <div class="acts">${canReply(m) ? `<button class="link" data-reply="${m.id}">Reply</button>` : ""}${gif && gifsReady() && !m.pending ? `<button class="link star${isFavorite(m.body.trim()) ? " on" : ""}" data-favgif="${m.id}" aria-label="${isFavorite(m.body.trim()) ? "Remove GIF from favorites" : "Add GIF to favorites"}">★</button>` : ""}${canReact ? `<button class="link" data-pick="${m.id}" aria-label="React">React</button>` : ""}${m.can_edit && !m.pending ? `<button class="link" data-editmsg="${m.id}">Edit</button>` : ""}${m.can_delete ? `<button class="link del" data-del="${m.id}" aria-label="Delete message">Delete</button>` : ""}</div>`;
 }
+
+// You can answer a message that's here for good (and, in a bridge room, there too).
+const canReply = m => open.joined && !m.pending && !m.deleted && (!open.bridge || m.ext_id) && $("#composer");
+
+// A message still being decrypted is shown quietly; one that can't be, as locked.
+const lockClass = m => m.raw && keyedRoom() ? (m.failed ? " locked" : m.decrypting ? " decrypting" : "") : m.encrypted && !m.decrypted ? " locked" : "";
 
 function renderLog({ toBottom = false, keepFrom = null } = {}) {
   const log = $("#log");
@@ -314,7 +508,7 @@ function renderLog({ toBottom = false, keepFrom = null } = {}) {
     const d = day(m.created_at);
     if (d !== lastDay) { html += `<div class="day">${esc(d)}</div>`; lastDay = d; prev = null; }
     const first = !prev || prev.author !== m.author || m.created_at - prev.created_at > GROUP_SECONDS;
-    html += `<div class="msg${first ? " first" : ""}${m.mine ? " mine" : ""}${m.pending ? " pending" : ""}${m.mentions_me ? " ping" : ""}${m.encrypted && !m.decrypted ? " locked" : ""}" data-id="${m.id}">
+    html += `<div class="msg${first ? " first" : ""}${m.mine ? " mine" : ""}${m.pending ? " pending" : ""}${m.mentions_me ? " ping" : ""}${lockClass(m)}" data-id="${m.id}">
       ${first ? `<div class="who">${esc(m.author_name)}<span class="at">${time(m.created_at)}</span></div>` : ""}
       ${messageHtml(m)}
     </div>`;
@@ -344,7 +538,11 @@ async function pollRoom() {
     if (open.bridge && data.messages.length) loadRooms().catch(() => {});
     const people = JSON.stringify([data.here, data.typing]);
     if (people !== JSON.stringify([open.here, open.typing])) { open.here = data.here || []; open.typing = data.typing || []; renderPresence(); }
+    if (data.reads && JSON.stringify(data.reads) !== JSON.stringify(open.reads)) { open.reads = data.reads; if (!data.messages.length) renderLog(); }
     if (data.messages.length) {
+      await readable(data.messages, id);
+      await readSoon(data.messages, id);
+      if (open?.id !== id) return;
       for (const m of data.messages) open.messages.set(m.id, m);
       if (editingId && open.messages.get(editingId)?.deleted) editingId = null;
       open.seq = Math.max(open.seq, data.seq);
@@ -370,9 +568,13 @@ $("#room").addEventListener("click", async e => {
     }
     else if (t.id === "back") closeRoom();
     else if (t.id === "join") { await api("POST", `/rooms/${open.id}/join`); await loadRooms(); await openRoom(open.id); }
-    else if (t.id === "leave") {
-      if (!confirm("Leave this room? You can join again any time.")) return;
-      await api("POST", `/rooms/${open.id}/leave`); await loadRooms(); await openRoom(open.id);
+    else if (t.id === "leave" || t.id === "decline") {
+      const room = rooms.find(r => r.id === open.id);
+      if (t.id === "leave" && !confirm(room?.kind === "bridge"
+        ? `Leave ${room.name} on ${NETWORK[room.provider] || room.provider}? It goes from here too, and you'd need inviting back to a private one.`
+        : "Leave this room? You can join again any time.")) return;
+      const out = await api("POST", `/rooms/${open.id}/leave`); await loadRooms();
+      if (out.gone) closeRoom(); else await openRoom(open.id);
     }
     else if (t.id === "e2ee-on") {
       t.disabled = true; t.textContent = "Making keys…";
@@ -382,9 +584,17 @@ $("#room").addEventListener("click", async e => {
       toast("Encryption is on in this browser. Messages sent from now on can be read here.");
       await loadRooms(); open = null; await openRoom(room.id);
     }
+    else if (t.id === "verify-device") {
+      const room = rooms.find(r => r.id === open.id);
+      t.disabled = true;
+      try { await (await vaultFor(room.connection)).requestVerification(); await decryptOpen(); }
+      finally { t.disabled = false; }
+    }
     else if (t.id === "verify-open") { $("#verify-form").hidden = false; t.hidden = true; $("#verify-key").focus(); }
     else if (t.id === "verify-cancel") { $("#verify-form").hidden = true; $("#verify-open").hidden = false; $("#verify-key").value = ""; }
     else if (t.id === "edit-room") editRoom(rooms.find(r => r.id === open.id));
+    else if (t.dataset.reply) startReply(Number(t.dataset.reply));
+    else if (t.id === "reply-cancel") stopReply();
     else if (t.id === "show-members") showMembers();
     else if (t.id === "add-people") pickPerson("add");
     else if (t.id === "search-open") openSearch();
@@ -393,15 +603,22 @@ $("#room").addEventListener("click", async e => {
     else if (t.id === "older") {
       const oldest = Math.min(...open.messages.keys());
       const data = await api("GET", `/rooms/${open.id}/messages?before=${oldest}`);
-      for (const m of data.messages) open.messages.set(m.id, m);
+      for (const m of await readable(data.messages)) open.messages.set(m.id, m);
       open.more = data.more;
       renderLog({ keepFrom: $("#log").scrollTop });
+      decryptOpen().catch(() => {});
     }
     else if (t.closest("[data-react]")) {
       const b = t.closest("[data-react]"), mid = Number(b.dataset.mid), emoji = b.dataset.react;
       const has = open.messages.get(mid)?.reactions?.some(r => r.emoji === emoji && r.mine);
       pickerFor = null;
-      const m = await api("POST", `/rooms/${open.id}/messages/${mid}/reactions`, { emoji, on: !has });
+      const room = rooms.find(r => r.id === open.id), target = open.messages.get(mid);
+      const body = { emoji, on: !has };
+      if (!has && room?.encrypted) {
+        if (keysHere(room) !== "ready") throw new Error("Turn encryption on in this room to react here.");
+        body.encrypted = await (await vaultFor(room.connection)).encrypt(room.ext_room, reactionContent(target.ext_id, emoji), "m.reaction");
+      }
+      const m = await readable([await api("POST", `/rooms/${open.id}/messages/${mid}/reactions`, body)]).then(([m]) => m);
       open.messages.set(m.id, m);
       renderLog();
     }
@@ -437,12 +654,13 @@ async function saveEdit(form) {
   const id = Number(form.dataset.edit), body = form.querySelector("textarea").value.trim();
   if (!body) return toast("A message can't be empty. Delete it instead.");
   try {
-    const old = open.messages.get(id), room = rooms.find(r => r.id === open.id);
+    const old = open.messages.get(id), room = rooms.find(r => r.id === open.id), content = editContent(old?.ext_id, body);
     const m = await api("PATCH", `/rooms/${open.id}/messages/${id}`, old?.raw && room?.encrypted
-      ? { encrypted: await (await vaultFor(room.connection)).encrypt(room.ext_room, editContent(old.ext_id, body)) } : { body });
+      ? { encrypted: await (await vaultFor(room.connection)).encrypt(room.ext_room, content) } : { body });
+    // (You know what you wrote: it needn't be decrypted to show it.)
+    if (m.raw) { read(m, content); (await shelfFor(room.connection))?.put(eventId(m.raw), content); }
     open.messages.set(m.id, m);
     stopEdit();
-    decryptOpen().catch(() => {});
   } catch (err) { toast(err.message); }
 }
 
@@ -454,7 +672,7 @@ async function verifySession(form) {
   try {
     const out = await (await vaultFor(room.connection)).unlock(secret);
     input.value = ""; form.hidden = true;
-    for (const m of open.messages.values()) m.decrypted = false;   // try them all again
+    for (const m of open.messages.values()) if (m.failed) m.shownRaw = null;   // try the locked ones again
     toast(out.backup ? "Verified. Older messages are coming in from your key backup." : "Verified. Your account has no key backup, so older messages stay locked.");
     await decryptOpen();
   } catch (err) { toast(err.message); }
@@ -471,8 +689,26 @@ $("#room").addEventListener("submit", async e => {
   const box = $("#text"), body = box.value.trim();
   if (!body || !open) return;
   box.value = ""; grow(box);
-  sendMessage(body, { box });
+  sendMessage(body, { box, reply: replyingTo });
+  stopReply({ focus: false });
 });
+
+// Replying: the bar over the message line says to what, until it's sent.
+function startReply(id) {
+  const m = open?.messages.get(id);
+  if (!m || !canReply(m)) return;
+  replyingTo = id;
+  const bar = $("#replybar");
+  bar.hidden = false;
+  $("#reply-what").innerHTML = `Replying to ${quoteOf({ id, author_name: m.author_name, body: m.body })}`;
+  $("#text").focus();
+}
+function stopReply({ focus = true } = {}) {
+  replyingTo = null;
+  const bar = $("#replybar");
+  if (bar) bar.hidden = true;
+  if (focus) $("#text")?.focus();
+}
 
 // A GIF for an encrypted room goes as Element sends a picture: its bytes
 // (through the site, which may fetch them) encrypted here, uploaded, and an
@@ -497,21 +733,25 @@ async function gifContent(roomId, url) {
 
 // Sends a message to the open room. `box` gets the text back if it fails.
 // (The GIF picker sends through here too, leaving the message line alone.)
-async function sendMessage(body, { box = null } = {}) {
+async function sendMessage(body, { box = null, reply = null } = {}) {
   if (!open) return;
-  const id = open.id;
+  const id = open.id, answers = reply && open.messages.get(reply);
   // Shown straight away, then swapped for the real one.
   typingSent = 0;
-  const temp = { id: Number.MAX_SAFE_INTEGER + tempId--, body, created_at: Math.floor(Date.now() / 1000), author: me.username, author_name: me.name, mine: true, pending: true };
+  const temp = { id: Number.MAX_SAFE_INTEGER + tempId--, body, created_at: Math.floor(Date.now() / 1000), author: me.username, author_name: me.name, mine: true, pending: true,
+                 reply: answers ? { id: answers.id, author_name: answers.author_name, body: answers.body } : null };
   open.messages.set(temp.id, temp);
   renderLog({ toBottom: true });
   try {
     const room = rooms.find(r => r.id === id);
-    const m = await api("POST", `/rooms/${id}/messages`, room?.encrypted
-      ? { encrypted: await (await vaultFor(room.connection)).encrypt(room.ext_room, isGifMessage(body) ? await gifContent(id, body) : textContent(body)) } : { body });
+    const content = isGifMessage(body) && !answers ? await gifContent(id, body) : textContent(body, { reply: answers?.ext_id });
+    const m = await api("POST", `/rooms/${id}/messages`, {
+      ...(room?.encrypted ? { encrypted: await (await vaultFor(room.connection)).encrypt(room.ext_room, content) } : { body }),
+      ...(answers ? { reply_to: answers.id } : {}) });
     if (open?.id !== id) return;
     open.messages.delete(temp.id);
-    if (m.raw) Object.assign(m, { body, decrypted: true, shownRaw: m.raw });
+    if (m.raw) { read(m, content); (await shelfFor(room.connection))?.put(eventId(m.raw), content); }
+    if (m.reply?.encrypted && answers?.decrypted) m.reply.body = answers.body;
     open.messages.set(m.id, m);
     renderLog({ toBottom: true });
   } catch (err) {
@@ -540,6 +780,7 @@ $("#room").addEventListener("keydown", e => {
     if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); box.form.requestSubmit(); }
     else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); stopEdit(); }
   } else if (e.key === "Escape" && pickerFor != null) { e.stopPropagation(); pickerFor = null; renderLog(); }
+  else if (box.id === "text" && e.key === "Escape" && replyingTo != null) { e.preventDefault(); e.stopPropagation(); stopReply(); }
 });
 // A GIF that finishes loading at the bottom of the log keeps the log at the bottom.
 $("#room").addEventListener("load", e => {
@@ -645,7 +886,7 @@ function renderResults() {
 async function jumpTo(id) {
   for (let i = 0; i < 40 && !open.messages.has(id) && open.more; i++) {
     const data = await api("GET", `/rooms/${open.id}/messages?before=${Math.min(...open.messages.keys())}`);
-    for (const m of data.messages) open.messages.set(m.id, m);
+    for (const m of await readable(data.messages)) open.messages.set(m.id, m);
     open.more = data.more;
   }
   searching = null;

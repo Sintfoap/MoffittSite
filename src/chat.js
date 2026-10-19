@@ -25,7 +25,8 @@ import { withRail } from "./pages.js";
 import { db, now } from "./db.js";
 import { sameOrigin } from "./account.js";
 import { randomBytes, hex, sha256 } from "./crypto.js";
-import { canBridge, bridgeInfo, listConnections, addConnection, removeConnection, syncConnection, syncAll, syncRoom, onPlatform, cryptoOp, ENCRYPTED_NOTE } from "./bridges.js";
+import { canBridge, bridgeInfo, listConnections, addConnection, removeConnection, syncConnection, syncAll, syncRoom, onPlatform, cryptoOp, backfill,
+  joinBridged, leaveBridged, startDm, ENCRYPTED_NOTE } from "./bridges.js";
 import { chatPushes } from "./notify.js";
 import { gifInfo, gifImageSources, gifSearch, gifCategories, favorites, favorite, isGif, fetchGif } from "./gifs.js";
 import { MXC, IMAGE_TYPES, MAX_MEDIA } from "./matrix.js";
@@ -37,6 +38,9 @@ const LIMITS = { name: 60, topic: 200, body: 2000, request: 16 * 1024, crypto: 5
 // Seconds: how long after a poll someone still counts as here (or online
 // anywhere), and how long "typing…" lasts after a keypress was reported.
 const HERE = 30, ONLINE = 60, TYPING = 6;
+// How long someone elsewhere counts as typing after a sync last said so
+// (the platform says when they stop; this is in case that's missed).
+const EXT_TYPING = 30;
 // At most this many messages from one person in RATE_WINDOW seconds.
 const RATE = 10, RATE_WINDOW = 10;
 const ROOM_ID = /^r_[0-9a-f]{16}$/;
@@ -112,7 +116,7 @@ const bridged = room => room.kind === "bridge";
 export async function listRooms(env, user) {
   const d = await db(env);
   const { results } = await d.prepare(`
-    SELECT r.id, r.name, r.topic, r.owner, r.seq, r.created_at, r.last_at, r.kind, r.connection, r.encrypted, r.ext_id,
+    SELECT r.id, r.name, r.topic, r.owner, r.seq, r.created_at, r.last_at, r.kind, r.connection, r.encrypted, r.ext_id, r.ext_invite,
            (SELECT u.display_name || char(31) || u.username FROM chat_members o JOIN users u ON u.id = o.user_id
               WHERE r.kind = 'dm' AND o.room = r.id AND o.user_id != ?) AS dm_with,
            (SELECT display_name FROM users WHERE users.id = r.owner) AS owner_name,
@@ -141,9 +145,11 @@ function roomOut(r, user, joined) {
     joined, unread: joined ? r.unread ?? 0 : 0, mentions: joined ? r.mentions ?? 0 : 0,
     manage: kind !== "dm" && canManage({ ...r, kind }, user),
     // Which connection a bridge room comes through, and whether it can be written to.
-    ...(kind === "bridge" ? { provider: r.provider, connection: r.connection, via: r.via, encrypted: !!r.encrypted } : {}),
+    ...(kind === "bridge" ? { provider: r.provider, connection: r.connection, via: r.via, encrypted: !!r.encrypted, can_encrypt: !!r.can_encrypt } : {}),
+    // An invite there you haven't answered: {by}.
+    ...(kind === "bridge" && r.ext_invite ? { invite: JSON.parse(r.ext_invite) } : {}),
     // For the browser with the connection's keys: the room there, and whether keys can be or are held.
-    ...(kind === "bridge" && r.encrypted ? { ext_room: r.ext_id, can_encrypt: !!r.can_encrypt, keys_held: !!r.crypto_owner } : {}),
+    ...(kind === "bridge" && r.encrypted ? { ext_room: r.ext_id, keys_held: !!r.crypto_owner } : {}),
   };
 }
 
@@ -151,9 +157,25 @@ async function oneRoom(env, user, id) {
   return (await listRooms(env, user)).find(r => r.id === id) ?? null;
 }
 
+// (With what a reply answers: its author, and the start of what it said.)
 const MESSAGE = `SELECT m.id, m.body, m.deleted, m.seq, m.created_at, m.edited_at, m.user_id, u.username, u.display_name,
-    m.ext_id, m.ext_sender, m.ext_name, m.encrypted, m.ext_raw, m.ext_media
-  FROM chat_messages m LEFT JOIN users u ON u.id = m.user_id`;
+    m.ext_id, m.ext_sender, m.ext_name, m.encrypted, m.ext_raw, m.reply_to, m.ext_media,
+    q.body AS q_body, q.deleted AS q_deleted, q.encrypted AS q_encrypted, q.ext_id AS q_ext_id, q.ext_raw AS q_raw,
+    q.user_id AS q_user, q.ext_sender AS q_sender, COALESCE(qu.display_name, q.ext_name, q.ext_sender) AS q_name
+  FROM chat_messages m LEFT JOIN users u ON u.id = m.user_id
+    LEFT JOIN chat_messages q ON q.id = m.reply_to AND q.room = m.room LEFT JOIN users qu ON qu.id = q.user_id`;
+const QUOTE = 200;
+
+// What a reply answers: {id, author_name, body, mine}, or {id: null} when
+// that message is gone (deleted, or never here).
+function replyOut(m, user) {
+  if (!m.reply_to) return null;
+  if (m.q_deleted !== 0 || m.q_body == null) return { id: null, author_name: null, body: "", mine: false };
+  return { id: m.reply_to, author_name: m.q_name || "Deleted account", mine: m.q_user === user.id,
+    body: m.q_body.length > QUOTE ? m.q_body.slice(0, QUOTE) + "…" : m.q_body,
+    // An encrypted one, for the browser to decrypt (and ext_id, to find what it read).
+    ...(m.q_encrypted ? { encrypted: true, ext_id: m.q_ext_id, ...(m.q_raw ? { raw: m.q_raw } : {}) } : {}) };
+}
 
 const mediaUrl = (room, mxc) => `/chat/api/rooms/${room.id}/media?mxc=${encodeURIComponent(mxc)}`;
 
@@ -172,10 +194,11 @@ function messageOut(m, user, room, reactions = []) {
     mine, can_edit: !m.deleted && mine && (!locked || !!m.ext_raw) && !media, can_delete: !m.deleted && (mine || canManage(room, user)),
     mentions_me: !m.deleted && !mine && !bridged(room) && mentioned(m.body).includes(user.username),
     reactions: m.deleted ? [] : reactions,
-    ...(bridged(room) ? { external: !!outside, encrypted: locked } : {}),
-    // As it came, for the browser to decrypt; body is only a note.
-    // (After an edit, raw is the edit; ext_id is still the message's own id there.)
-    ...(locked && m.ext_raw && !m.deleted ? { raw: m.ext_raw, ext_id: m.ext_id } : {}),
+    reply: m.deleted ? null : replyOut(m, user),
+    // ext_id: its id there (what an edit or reaction made in the browser points to).
+    ...(bridged(room) ? { external: !!outside, encrypted: locked, ext_id: m.ext_id ?? null } : {}),
+    // As it came, for the browser to decrypt; body is only a note. (After an edit, it's the edit.)
+    ...(locked && m.ext_raw && !m.deleted ? { raw: m.ext_raw } : {}),
     // A picture from the other platform, fetched through the site (mediaFile).
     ...(media ? { media: { url: mediaUrl(room, media.mxc), mimetype: media.mimetype, width: media.width ?? null, height: media.height ?? null, name: media.name ?? "" } } : {}),
   };
@@ -187,7 +210,7 @@ async function reactionsFor(d, user, room, lo, hi) {
   if (lo == null) return out;
   const { results } = await d.prepare(`
     SELECT message, emoji, COUNT(*) AS n, MAX(user_id = ?) AS mine, GROUP_CONCAT(name, ', ') AS names
-    FROM (SELECT r.rowid AS k, r.message, r.emoji, r.user_id, COALESCE(u.display_name, 'Deleted account') AS name
+    FROM (SELECT r.rowid AS k, r.message, r.emoji, r.user_id, COALESCE(u.display_name, r.ext_name, 'Deleted account') AS name
           FROM chat_reactions r JOIN chat_messages m ON m.id = r.message LEFT JOIN users u ON u.id = r.user_id
           WHERE m.room = ? AND r.message BETWEEN ? AND ? ORDER BY r.rowid)
     GROUP BY message, emoji ORDER BY message, MIN(k)`).bind(user.id, room.id, lo, hi).all();
@@ -236,7 +259,14 @@ export async function messages(env, user, roomId, { since, before } = {}) {
       ? d.prepare(`${MESSAGE} WHERE m.room = ? AND m.id < ? AND m.deleted = 0 ORDER BY m.id DESC LIMIT ?`).bind(room.id, before, LIMITS.page + 1)
       : d.prepare(`${MESSAGE} WHERE m.room = ? AND m.deleted = 0 ORDER BY m.id DESC LIMIT ?`).bind(room.id, LIMITS.page + 1);
     ({ results: rows } = await q.all());
-    more = rows.length > LIMITS.page;
+    // Run out of what's here in a bridge room: bring older messages in from the platform.
+    // (A few pages at most, since a page there can be all things already here.)
+    for (let i = 0; i < 3 && bridged(room) && before != null && rows.length <= LIMITS.page && room.ext_back !== ""; i++) {
+      await backfill(env, d, user, room);
+      ({ results: rows } = await q.all());
+      room = await getRoom(d, room.id);
+    }
+    more = rows.length > LIMITS.page || bridged(room) && room.ext_back !== "";
     rows = rows.slice(0, LIMITS.page).reverse();
   }
   if (member && member.read_seq < room.seq) {
@@ -248,6 +278,7 @@ export async function messages(env, user, roomId, { since, before } = {}) {
   await d.prepare(`INSERT INTO chat_presence (room, user_id, seen_at) VALUES (?, ?, ?)
     ON CONFLICT (room, user_id) DO UPDATE SET seen_at = excluded.seen_at WHERE seen_at < excluded.seen_at - 5`)
     .bind(room.id, user.id, t).run();
+  if (bridged(room)) return { ...await bridgeExtras(env, d, user, room, t), seq: room.seq, more, joined: !!member, messages: await withReactions(d, user, room, rows) };
   const { results: others } = await d.prepare(`
     SELECT u.display_name AS name, p.typing_at > ? AS typing FROM chat_presence p JOIN users u ON u.id = p.user_id
     WHERE p.room = ? AND p.user_id != ? AND (p.seen_at > ? OR p.typing_at > ?) ORDER BY u.display_name COLLATE NOCASE`)
@@ -256,6 +287,22 @@ export async function messages(env, user, roomId, { since, before } = {}) {
     seq: room.seq, more, joined: !!member, messages: await withReactions(d, user, room, rows),
     here: others.map(o => o.name), typing: others.filter(o => o.typing).map(o => o.name),
   };
+}
+
+// In a bridge room, the people there: who's typing (as the last sync said,
+// for a while), and how far each has read ("Seen by" under that message).
+// Reading it here also tells the platform you've read up to its newest message.
+async function bridgeExtras(env, d, user, room, t) {
+  const typing = room.ext_typing && room.ext_typing_at > t - EXT_TYPING ? JSON.parse(room.ext_typing) : [];
+  const { results: reads } = await d.prepare(`SELECT r.ext_name AS name, m.id AS message FROM chat_ext_reads r
+    JOIN chat_messages m ON m.room = r.room AND m.ext_id = r.ext_id WHERE r.room = ? ORDER BY r.at`).bind(room.id).all();
+  const newest = await d.prepare(`SELECT ext_id FROM chat_messages WHERE room = ? AND ext_id IS NOT NULL AND deleted = 0
+    ORDER BY id DESC LIMIT 1`).bind(room.id).first();
+  if (newest && newest.ext_id !== room.ext_read) {
+    const done = await onPlatform(env, d, user, room, (p, creds) => p.receipt?.(creds, room.ext_id, newest.ext_id));
+    if (!done.error) await d.prepare("UPDATE chat_rooms SET ext_read = ? WHERE id = ?").bind(newest.ext_id, room.id).run();
+  }
+  return { here: [], typing, reads };
 }
 
 // Usernames of everyone who's had chat open in the last minute.
@@ -307,7 +354,11 @@ export async function typing(env, user, roomId) {
   const { room, member } = await load(d, user, roomId);
   if (!room) return null;
   if (!member) return { forbidden: "join the room to post in it" };
-  if (bridged(room)) return { typing: false };     // nobody else here to tell
+  if (bridged(room)) {
+    // Told to the platform, when it has typing.
+    const done = await onPlatform(env, d, user, room, async (p, creds) => { if (!p.typing) return false; await p.typing(creds, room.ext_id, true); return true; });
+    return { typing: !!done.ok };
+  }
   const t = now();
   await d.prepare(`INSERT INTO chat_presence (room, user_id, seen_at, typing_at) VALUES (?, ?, ?, ?)
     ON CONFLICT (room, user_id) DO UPDATE SET seen_at = excluded.seen_at, typing_at = excluded.typing_at`)
@@ -417,6 +468,7 @@ export async function deleteRoom(env, user, roomId, { force = false } = {}) {
   if (!force && !canManage(room, user)) return { forbidden: "only the room's owner can delete it" };
   await d.batch([
     d.prepare("DELETE FROM chat_presence WHERE room = ?").bind(room.id),
+    d.prepare("DELETE FROM chat_ext_reads WHERE room = ?").bind(room.id),
     d.prepare("DELETE FROM chat_reactions WHERE message IN (SELECT id FROM chat_messages WHERE room = ?)").bind(room.id),
     d.prepare("DELETE FROM chat_mentions WHERE message IN (SELECT id FROM chat_messages WHERE room = ?)").bind(room.id),
     d.prepare("DELETE FROM chat_messages WHERE room = ?").bind(room.id),
@@ -430,6 +482,8 @@ export async function join(env, user, roomId) {
   const d = await db(env);
   const { room } = await load(d, user, roomId);
   if (!room) return null;
+  // In a bridge room it's accepting the invite there.
+  if (bridged(room)) return room.ext_invite ? joinBridged(env, d, user, room) : { joined: true };
   // Joining counts everything already there as read.
   await d.prepare("INSERT OR IGNORE INTO chat_members (room, user_id, joined_at, read_seq) VALUES (?, ?, ?, ?)")
     .bind(room.id, user.id, now(), room.seq).run();
@@ -441,7 +495,8 @@ export async function leave(env, user, roomId) {
   const { room } = await load(d, user, roomId);
   if (!room) return null;
   if (room.kind === "dm") return { forbidden: "you can't leave a direct message" };
-  if (bridged(room)) return { forbidden: "leave this room on its own platform" };
+  // Leaving there (or declining the invite), which takes it from here too.
+  if (bridged(room)) return leaveBridged(env, d, user, room);
   await d.batch([
     d.prepare("DELETE FROM chat_members WHERE room = ? AND user_id = ?").bind(room.id, user.id),
     d.prepare("DELETE FROM chat_presence WHERE room = ? AND user_id = ?").bind(room.id, user.id),
@@ -453,17 +508,27 @@ export async function leave(env, user, roomId) {
   return { joined: false };
 }
 
-function messageText(body) {
+function messageText(body, extra = []) {
   if (!isObj(body)) fail("body must be a JSON object");
-  for (const k of Object.keys(body)) if (k !== "body") fail(`unknown field ${JSON.stringify(k)}`);
+  for (const k of Object.keys(body)) if (k !== "body" && !extra.includes(k)) fail(`unknown field ${JSON.stringify(k)}`);
   return str("message", body.body, LIMITS.body, { required: true });
+}
+
+// {reply_to: message id}: the message in the same room a new one answers.
+async function replyTarget(d, room, body) {
+  if (body?.reply_to == null) return null;
+  if (!Number.isSafeInteger(body.reply_to)) fail("reply_to must be a message id");
+  const m = await d.prepare("SELECT id, ext_id FROM chat_messages WHERE id = ? AND room = ? AND deleted = 0").bind(body.reply_to, room.id).first();
+  if (!m) fail("the message you're replying to isn't in this room");
+  if (bridged(room) && !m.ext_id) fail("that message can't be replied to from here");
+  return m;
 }
 
 // {encrypted: content}: a message the browser already encrypted, for an
 // encrypted room. The site never sees what it says.
-function encryptedContent(body) {
+function encryptedContent(body, extra = []) {
   if (!isObj(body) || !isObj(body.encrypted)) return null;
-  for (const k of Object.keys(body)) if (k !== "encrypted") fail(`unknown field ${JSON.stringify(k)}`);
+  for (const k of Object.keys(body)) if (k !== "encrypted" && !extra.includes(k)) fail(`unknown field ${JSON.stringify(k)}`);
   const c = body.encrypted;
   if (typeof c.algorithm !== "string" || typeof c.ciphertext !== "string") fail("encrypted must be encrypted content");
   if (JSON.stringify(c).length > LIMITS.encrypted) fail("message too large");
@@ -473,23 +538,25 @@ function encryptedContent(body) {
 // `later` takes the push notifications for the new message, so they can be
 // sent after the answer (ctx.waitUntil); without it they're sent first.
 export async function post(env, user, roomId, body, later = p => p) {
-  const content = encryptedContent(body);
-  const text = content ? "" : messageText(body);
+  const content = encryptedContent(body, ["reply_to"]);
+  const text = content ? "" : messageText(body, ["reply_to"]);
   const d = await db(env);
   const { room, member } = await load(d, user, roomId);
   if (!room) return null;
   if (!member) return { forbidden: "join the room to post in it" };
+  if (room.ext_invite) return { forbidden: "accept the invite to post here" };
   const t = now();
   const { n } = await d.prepare("SELECT COUNT(*) AS n FROM chat_messages WHERE user_id = ? AND created_at > ?").bind(user.id, t - RATE_WINDOW).first();
   if (n >= RATE) return { slow: "you're sending messages too quickly; wait a few seconds" };
-  if (bridged(room)) return content ? postEncrypted(env, d, user, room, content) : postBridged(env, d, user, room, text);
+  const reply = await replyTarget(d, room, body);
+  if (bridged(room)) return content ? postEncrypted(env, d, user, room, content, reply) : postBridged(env, d, user, room, text, reply);
   if (content) fail("only end-to-end encrypted rooms take encrypted messages");
   // One transaction: take the room's next seq and give it to the new message.
   const newest = "SELECT id FROM chat_messages WHERE room = ? AND seq = (SELECT seq FROM chat_rooms WHERE id = ?)";
   await d.batch([
     d.prepare("UPDATE chat_rooms SET seq = seq + 1, last_at = ? WHERE id = ?").bind(t, room.id),
-    d.prepare("INSERT INTO chat_messages (room, user_id, body, seq, posted_seq, created_at) SELECT id, ?, ?, seq, seq, ? FROM chat_rooms WHERE id = ?")
-      .bind(user.id, text, t, room.id),
+    d.prepare("INSERT INTO chat_messages (room, user_id, body, seq, posted_seq, created_at, reply_to) SELECT id, ?, ?, seq, seq, ?, ? FROM chat_rooms WHERE id = ?")
+      .bind(user.id, text, t, reply?.id ?? null, room.id),
     ...mentionStatements(d, user, newest, [room.id, room.id], text),
     d.prepare("UPDATE chat_members SET read_seq = (SELECT seq FROM chat_rooms WHERE id = ?) WHERE room = ? AND user_id = ?")
       .bind(room.id, room.id, user.id),
@@ -503,20 +570,21 @@ export async function post(env, user, roomId, body, later = p => p) {
 
 // Sends to the platform, then keeps the message here under the id it got
 // there, so the sync that brings it back finds it already in place.
-async function postBridged(env, d, user, room, text) {
+async function postBridged(env, d, user, room, text, reply) {
   if (room.encrypted) return { forbidden: "this room is end-to-end encrypted: send to it from the chat page in the browser that holds its keys" };
   // A GIF goes as a picture where the platform takes them, as it would from
-  // their own app; if it can't be fetched it goes as its link.
-  const gif = isGif(env, text) ? await fetchGif(env, text) : null;
+  // their own app; if it can't be fetched it goes as its link. (A reply goes
+  // as text, so it can say what it answers.)
+  const gif = !reply && isGif(env, text) ? await fetchGif(env, text) : null;
   const sent = await onPlatform(env, d, user, room, async (p, creds) => ({
-    id: gif && p.sendImage ? await p.sendImage(creds, room.ext_id, gif) : await p.send(creds, room.ext_id, text), sender: creds.user_id,
+    id: gif && p.sendImage ? await p.sendImage(creds, room.ext_id, gif) : await p.send(creds, room.ext_id, text, { reply: reply?.ext_id }), sender: creds.user_id,
   }));
   if (sent.error) return { failed: sent.error };
   const t = now();
   await d.batch([
     d.prepare("UPDATE chat_rooms SET seq = seq + 1, last_at = ? WHERE id = ?").bind(t, room.id),
-    d.prepare(`INSERT OR IGNORE INTO chat_messages (room, user_id, body, seq, posted_seq, created_at, ext_id, ext_sender, ext_name)
-      SELECT id, ?, ?, seq, seq, ?, ?, ?, ? FROM chat_rooms WHERE id = ?`).bind(user.id, text, t, sent.ok.id, sent.ok.sender, user.display_name, room.id),
+    d.prepare(`INSERT OR IGNORE INTO chat_messages (room, user_id, body, seq, posted_seq, created_at, ext_id, ext_sender, ext_name, reply_to)
+      SELECT id, ?, ?, seq, seq, ?, ?, ?, ?, ? FROM chat_rooms WHERE id = ?`).bind(user.id, text, t, sent.ok.id, sent.ok.sender, user.display_name, reply?.id ?? null, room.id),
     d.prepare("UPDATE chat_members SET read_seq = (SELECT seq FROM chat_rooms WHERE id = ?) WHERE room = ? AND user_id = ?").bind(room.id, room.id, user.id),
   ]);
   const m = await d.prepare(`${MESSAGE} WHERE m.room = ? AND m.ext_id = ?`).bind(room.id, sent.ok.id).first();
@@ -524,8 +592,11 @@ async function postBridged(env, d, user, room, text) {
 }
 
 // The same, encrypted by the browser: kept as it went, for it to decrypt.
-async function postEncrypted(env, d, user, room, content) {
+async function postEncrypted(env, d, user, room, content, reply) {
   if (!room.encrypted) fail("this room isn't end-to-end encrypted");
+  // A reply says what it answers outside the encryption, as Matrix has it.
+  const answers = isObj(content["m.relates_to"]) ? content["m.relates_to"]["m.in_reply_to"]?.event_id ?? null : null;
+  if ((reply?.ext_id ?? null) !== answers) fail(reply ? "the reply must say it answers that message" : "say which message this replies to (reply_to)");
   const sent = await onPlatform(env, d, user, room, async (p, creds) => {
     if (!p.sendEncrypted) return null;
     return { id: await p.sendEncrypted(creds, room.ext_id, content), sender: creds.user_id };
@@ -536,8 +607,8 @@ async function postEncrypted(env, d, user, room, content) {
   const raw = JSON.stringify({ type: "m.room.encrypted", content, sender: sent.ok.sender, event_id: sent.ok.id, origin_server_ts: t * 1000, room_id: room.ext_id });
   await d.batch([
     d.prepare("UPDATE chat_rooms SET seq = seq + 1, last_at = ? WHERE id = ?").bind(t, room.id),
-    d.prepare(`INSERT OR IGNORE INTO chat_messages (room, user_id, body, seq, posted_seq, created_at, ext_id, ext_sender, ext_name, encrypted, ext_raw)
-      SELECT id, ?, ?, seq, seq, ?, ?, ?, ?, 1, ? FROM chat_rooms WHERE id = ?`).bind(user.id, ENCRYPTED_NOTE, t, sent.ok.id, sent.ok.sender, user.display_name, raw, room.id),
+    d.prepare(`INSERT OR IGNORE INTO chat_messages (room, user_id, body, seq, posted_seq, created_at, ext_id, ext_sender, ext_name, encrypted, ext_raw, reply_to)
+      SELECT id, ?, ?, seq, seq, ?, ?, ?, ?, 1, ?, ? FROM chat_rooms WHERE id = ?`).bind(user.id, ENCRYPTED_NOTE, t, sent.ok.id, sent.ok.sender, user.display_name, raw, reply?.id ?? null, room.id),
     d.prepare("UPDATE chat_members SET read_seq = (SELECT seq FROM chat_rooms WHERE id = ?) WHERE room = ? AND user_id = ?").bind(room.id, room.id, user.id),
   ]);
   const m = await d.prepare(`${MESSAGE} WHERE m.room = ? AND m.ext_id = ?`).bind(room.id, sent.ok.id).first();
@@ -632,29 +703,49 @@ export async function editMessage(env, user, roomId, messageId, body) {
   return oneMessage(d, user, room, messageId);
 }
 
-// Members add or take back a reaction: {emoji, on: true|false}.
+// Members add or take back a reaction: {emoji, on: true|false}. In a bridge
+// room it goes to the platform, and any emoji will do (people there aren't
+// limited to these); in an encrypted one, adding also takes {encrypted}:
+// the reaction the browser encrypted.
 export async function react(env, user, roomId, messageId, body) {
   if (!isObj(body)) fail("body must be a JSON object");
-  for (const k of Object.keys(body)) if (!["emoji", "on"].includes(k)) fail(`unknown field ${JSON.stringify(k)}`);
-  if (!REACTIONS.includes(body.emoji)) fail(`emoji must be one of ${REACTIONS.join(" ")}`);
+  for (const k of Object.keys(body)) if (!["emoji", "on", "encrypted"].includes(k)) fail(`unknown field ${JSON.stringify(k)}`);
   if (typeof body.on !== "boolean") fail("on must be true or false");
   const d = await db(env);
   const { room, member } = await load(d, user, roomId);
   if (!room) return null;
-  const m = await d.prepare("SELECT deleted FROM chat_messages WHERE id = ? AND room = ?").bind(messageId, room.id).first();
+  const anyEmoji = bridged(room) && typeof body.emoji === "string" && body.emoji.length >= 1 && body.emoji.length <= 32 && !/[\u0000-\u001f\u007f]/.test(body.emoji);
+  if (!REACTIONS.includes(body.emoji) && !anyEmoji) fail(`emoji must be one of ${REACTIONS.join(" ")}`);
+  const m = await d.prepare("SELECT deleted, ext_id FROM chat_messages WHERE id = ? AND room = ?").bind(messageId, room.id).first();
   if (!m || m.deleted) return null;
   if (!member) return { forbidden: "join the room to react in it" };
-  if (bridged(room)) return { forbidden: "reactions aren't sent to other platforms yet" };
-  const had = await d.prepare("SELECT 1 AS x FROM chat_reactions WHERE message = ? AND user_id = ? AND emoji = ?").bind(messageId, user.id, body.emoji).first();
-  if (!!had !== body.on) {
-    await d.batch([
-      d.prepare("UPDATE chat_rooms SET seq = seq + 1 WHERE id = ?").bind(room.id),
-      body.on
-        ? d.prepare("INSERT OR IGNORE INTO chat_reactions (message, user_id, emoji, created_at) VALUES (?, ?, ?, ?)").bind(messageId, user.id, body.emoji, now())
-        : d.prepare("DELETE FROM chat_reactions WHERE message = ? AND user_id = ? AND emoji = ?").bind(messageId, user.id, body.emoji),
-      d.prepare("UPDATE chat_messages SET seq = (SELECT seq FROM chat_rooms WHERE id = ?) WHERE id = ?").bind(room.id, messageId),
-    ]);
-  }
+  const had = await d.prepare("SELECT ext_id FROM chat_reactions WHERE message = ? AND user_id = ? AND emoji = ?").bind(messageId, user.id, body.emoji).first();
+  if (!!had === body.on) return oneMessage(d, user, room, messageId);
+  let extId = null;
+  if (bridged(room)) {
+    if (!m.ext_id) return { forbidden: "this message can't be reacted to from here" };
+    let done;
+    if (!body.on) {
+      done = had.ext_id ? await onPlatform(env, d, user, room, (p, creds) => p.remove(creds, room.ext_id, had.ext_id)) : { ok: true };
+    } else if (room.encrypted) {
+      const c = body.encrypted, rel = isObj(c) ? c["m.relates_to"] : null;
+      if (!isObj(c)) return { forbidden: "this room is end-to-end encrypted: react from the chat page in the browser that holds its keys" };
+      if (typeof c.algorithm !== "string" || typeof c.ciphertext !== "string" || JSON.stringify(c).length > LIMITS.encrypted) fail("encrypted must be encrypted content");
+      if (rel?.rel_type !== "m.annotation" || rel.event_id !== m.ext_id || rel.key !== body.emoji) fail("the reaction must say it's this emoji on this message");
+      done = await onPlatform(env, d, user, room, (p, creds) => p.sendEncrypted(creds, room.ext_id, c));
+    } else {
+      done = await onPlatform(env, d, user, room, (p, creds) => p.react(creds, room.ext_id, m.ext_id, body.emoji));
+    }
+    if (done.error) return { failed: done.error };
+    if (body.on) extId = done.ok;
+  } else if (body.encrypted !== undefined) fail("only end-to-end encrypted rooms take encrypted reactions");
+  await d.batch([
+    d.prepare("UPDATE chat_rooms SET seq = seq + 1 WHERE id = ?").bind(room.id),
+    body.on
+      ? d.prepare("INSERT OR IGNORE INTO chat_reactions (message, user_id, emoji, created_at, ext_id) VALUES (?, ?, ?, ?, ?)").bind(messageId, user.id, body.emoji, now(), extId)
+      : d.prepare("DELETE FROM chat_reactions WHERE message = ? AND user_id = ? AND emoji = ?").bind(messageId, user.id, body.emoji),
+    d.prepare("UPDATE chat_messages SET seq = (SELECT seq FROM chat_rooms WHERE id = ?) WHERE id = ?").bind(room.id, messageId),
+  ]);
   return oneMessage(d, user, room, messageId);
 }
 
@@ -703,6 +794,7 @@ export async function deleteMessage(env, user, roomId, messageId) {
 //   POST   /chat/api/connections                    {provider, ...its fields} → a new connection, synced once
 //   DELETE /chat/api/connections/<id>               the connection and its rooms
 //   POST   /chat/api/connections/<id>/sync          sync it now, and try again if it had stopped working
+//   POST   /chat/api/connections/<id>/dm            {user, encrypted?} → {id}: a direct message with someone there
 //   POST   /chat/api/connections/<id>/crypto/claim    {key}   this browser holds the encryption keys → {device}
 //   POST   /chat/api/connections/<id>/crypto/inbox    {key, ack?}   what syncs brought for the keys → {items, counts}
 //   POST   /chat/api/connections/<id>/crypto/request  {key, method, path, body?}   a key request, passed on → {response}
@@ -712,7 +804,7 @@ export async function deleteMessage(env, user, roomId, messageId) {
 //   GET    /chat/api/gifs/file?url=<GIF link>       a GIF's bytes, for the browser to encrypt for an encrypted room
 //   POST   /chat/api/gifs/favorites                 {gif, on}   star a GIF, or take the star off
 
-const ROUTE = /^\/chat\/api\/(state|people|dms|rooms|connections|gifs)(?:\/([^/]+)(?:\/(join|leave|members|messages|search|typing|sync|crypto|media)(?:\/([^/]+)(?:\/(reactions))?)?)?)?\/?$/;
+const ROUTE = /^\/chat\/api\/(state|people|dms|rooms|connections|gifs)(?:\/([^/]+)(?:\/(join|leave|members|messages|search|typing|sync|crypto|dm|media)(?:\/([^/]+)(?:\/(reactions))?)?)?)?\/?$/;
 
 // Messages are shown as text, never as HTML, and the page loads nothing from
 // elsewhere except fonts and GIFs from the GIF hosts (src/gifs.js).
@@ -725,7 +817,8 @@ const pageCsp = env => [
 const json = (obj, status = 200) =>
   new Response(JSON.stringify(obj), { status, headers: { "Content-Type": "application/json" } });
 
-const int = v => /^\d{1,15}$/.test(v ?? "") ? Number(v) : undefined;
+// (Messages from further back on another platform have ids below zero: bridges.js, backfill.)
+const int = v => /^-?\d{1,15}$/.test(v ?? "") ? Number(v) : undefined;
 
 export async function chat(request, env, user, pathname, ctx) {
   if (!pathname.startsWith("/chat/api/")) {
@@ -795,6 +888,10 @@ export async function chat(request, env, user, pathname, ctx) {
         if (method !== "POST") return notAllowed();
         return reply(await cryptoOp(env, user, id, extra, await readJson(request, LIMITS.crypto), fail));
       }
+      if (sub === "dm" && !extra && !action) {
+        if (method !== "POST") return notAllowed();
+        return reply(await startDm(env, user, id, await readJson(request), fail), 201);
+      }
       if (action || extra || (sub && sub !== "sync")) return notFound();
       if (sub) {
         if (method !== "POST") return notAllowed();
@@ -823,7 +920,7 @@ export async function chat(request, env, user, pathname, ctx) {
       if (method === "DELETE") return reply(await deleteRoom(env, user, id));
       return notAllowed();
     }
-    if ((action && sub !== "messages") || sub === "sync" || sub === "crypto") return notFound();
+    if ((action && sub !== "messages") || sub === "sync" || sub === "crypto" || sub === "dm") return notFound();
     if (sub === "join" || sub === "leave" || sub === "typing") {
       if (extra) return notFound();
       if (method !== "POST") return notAllowed();

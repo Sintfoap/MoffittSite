@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { Browser, makeEnv, grantApps, sqlOne } from "./helpers.mjs";
 import { FakeMatrix } from "./fake-matrix.mjs";
 import * as lib from "../public/chat/vendor/matrix-crypto/node.mjs";
-import { Vault, textOf, textContent, editContent, encryptSecret, encodeRecoveryKey, encryptAttachment, decryptAttachment, imageOf, imageContent } from "../public/chat/e2ee.js";
+import { Vault, Shelf, textOf, textContent, editContent, reactionContent, encryptSecret, encodeRecoveryKey, encryptAttachment, decryptAttachment, imageOf, imageContent } from "../public/chat/e2ee.js";
 import worker from "../src/worker.js";
 
 const ROOM = "!secret:matrix.test";
@@ -65,8 +65,8 @@ async function onMatrix(user = "@sam:matrix.test", device = "SAMDEV", token = "s
     const item = { id: ++n, to_device: s.to_device?.events ?? [], changed: s.device_lists?.changed ?? [], left: [] };
     return { items: item.to_device.length || item.changed.length ? [item] : [], counts };
   } });
-  const say = async (content) => {
-    const enc = await vault.encrypt(ROOM, content);
+  const say = async (content, type) => {
+    const enc = await vault.encrypt(ROOM, content, type);
     return (await call("PUT", `rooms/${encodeURIComponent(ROOM)}/send/m.room.encrypted/t${++n}`, enc)).event_id;
   };
   // What Sam's Element shows: each message's text, edits applied.
@@ -229,6 +229,178 @@ test("a Security Key verifies the site's session, and older messages come from t
   await api(ryan, "POST", `/rooms/${room.id}/messages`, { encrypted: await vault.encrypt(ROOM, textContent("backed up")) });
   await vault.pump();
   assert.equal(Object.keys(hs.backups[0].rooms[ROOM]).length, 2, "the site's own room key went into the backup");
+});
+
+test("reactions in an encrypted room are encrypted too, and go both ways", async () => {
+  const { ryan, conn } = await setup();
+  const vault = await siteVault(ryan, conn);
+  const sam = await samOnMatrix();
+  const first = await sam.say(textContent("pizza tonight?"));
+  await sam.say(reactionContent(first, "🍕"), "m.reaction");
+  await syncNow(ryan, conn);
+  const room = (await api(ryan, "GET", "/state")).json.rooms.find(r => r.encrypted);
+  const [m] = (await api(ryan, "GET", `/rooms/${room.id}/messages`)).json.messages;
+  assert.deepEqual(m.reactions.map(r => [r.emoji, r.names]), [["🍕", "Sam"]], "what a reaction is on, and its emoji, are outside the encryption");
+
+  // From here it needs the browser to encrypt it, as Element does.
+  const plain = await api(ryan, "POST", `/rooms/${room.id}/messages/${m.id}/reactions`, { emoji: "👍", on: true });
+  assert.equal(plain.status, 403);
+  assert.match(plain.json.error, /browser that holds its keys/);
+  const mismatched = await vault.encrypt(ROOM, reactionContent(m.ext_id, "🎉"), "m.reaction");
+  assert.equal((await api(ryan, "POST", `/rooms/${room.id}/messages/${m.id}/reactions`, { emoji: "👍", on: true, encrypted: mismatched })).status, 400);
+  const out = await api(ryan, "POST", `/rooms/${room.id}/messages/${m.id}/reactions`,
+    { emoji: "👍", on: true, encrypted: await vault.encrypt(ROOM, reactionContent(m.ext_id, "👍"), "m.reaction") });
+  assert.equal(out.status, 200);
+  assert.deepEqual(out.json.reactions.map(r => [r.emoji, r.mine]), [["🍕", false], ["👍", true]]);
+  const sent = hs.events.at(-1).event;
+  assert.equal(sent.type, "m.room.encrypted", "sent encrypted");
+  assert.deepEqual(sent.content["m.relates_to"], { rel_type: "m.annotation", event_id: m.ext_id, key: "👍" });
+  await sam.read();
+  // Taking it back is a redaction, which isn't encrypted, so it needs no keys.
+  await api(ryan, "POST", `/rooms/${room.id}/messages/${m.id}/reactions`, { emoji: "👍", on: false });
+  assert.equal(hs.events.at(-1).event.type, "m.room.redaction");
+});
+
+test("what the browser has read is kept sealed, so a chat opens readable", async () => {
+  const rows = new Map();
+  const store = { get: async ids => new Map(ids.filter(id => rows.has(id)).map(id => [id, rows.get(id)])), put: async (id, v) => { rows.set(id, v); } };
+  const shelf = await Shelf.open(hexKey("a"), { rows: store });
+  await shelf.put("$one", textContent("the door code is 4471"));
+  assert.ok(!new TextDecoder().decode(rows.get("$one").data).includes("4471"), "sealed, not kept as text");
+  assert.deepEqual([...(await shelf.get(["$one", "$two"]))], [["$one", textContent("the door code is 4471")]]);
+  // Another browser key can't open it, and a row moved to another event doesn't open either.
+  assert.equal((await (await Shelf.open(hexKey("b"), { rows: store })).get(["$one"])).size, 0);
+  rows.set("$two", rows.get("$one"));
+  assert.deepEqual([...(await shelf.get(["$two"])).keys()], []);
+  // With nowhere to keep them (no IndexedDB, as here in Node), nothing is, and nothing breaks.
+  const none = await Shelf.open(hexKey("a"), { name: "x" });
+  await none.put("$one", textContent("hi"));
+  assert.equal((await none.get(["$one"])).size, 0);
+});
+
+test("encrypted replies say what they answer outside the encryption, and formatting is encrypted with the words", async () => {
+  const { ryan, conn } = await setup();
+  const vault = await siteVault(ryan, conn);
+  const sam = await samOnMatrix();
+  const first = await sam.say(textContent("**big** news"));
+  await syncNow(ryan, conn);
+  const room = (await api(ryan, "GET", "/state")).json.rooms.find(r => r.encrypted);
+  const [m] = (await api(ryan, "GET", `/rooms/${room.id}/messages`)).json.messages;
+  await vault.pump();
+  assert.equal(textOf(await vault.decrypt(m.raw)), "**big** news");
+  assert.equal(JSON.parse(m.raw).event_id, first);
+
+  // Ryan replies from the browser; the site checks it answers that message.
+  const content = textContent("tell me _more_", { reply: m.ext_id });
+  assert.equal(content.formatted_body, "tell me <em>more</em>");
+  const wrong = await vault.encrypt(ROOM, textContent("x", { reply: "$nope" }));
+  assert.equal((await api(ryan, "POST", `/rooms/${room.id}/messages`, { encrypted: wrong, reply_to: m.id })).status, 400);
+  assert.equal((await api(ryan, "POST", `/rooms/${room.id}/messages`, { encrypted: await vault.encrypt(ROOM, content) })).status, 400, "say which it replies to");
+  const out = await api(ryan, "POST", `/rooms/${room.id}/messages`, { encrypted: await vault.encrypt(ROOM, content), reply_to: m.id });
+  assert.equal(out.status, 201);
+  assert.equal(out.json.reply.id, m.id);
+  assert.equal(out.json.reply.encrypted, true, "the browser reads what it answers");
+  assert.ok(out.json.reply.raw);
+  const sent = hs.events.at(-1).event;
+  assert.equal(sent.type, "m.room.encrypted");
+  assert.deepEqual(sent.content["m.relates_to"], { "m.in_reply_to": { event_id: m.ext_id } });
+  assert.ok(!JSON.stringify(sent).includes("more"));
+  assert.deepEqual(await sam.read(), ["**big** news", "tell me *more*"]);
+
+  // Sam's encrypted reply comes in as a reply too.
+  await sam.say(textContent("ok", { reply: out.json.ext_id }));
+  await syncNow(ryan, conn);
+  const last = (await api(ryan, "GET", `/rooms/${room.id}/messages`)).json.messages.at(-1);
+  assert.equal(last.reply.id, out.json.id);
+});
+
+test("verifying with another session by emoji, as Element does, gets the same as a Security Key", async () => {
+  const { ryan, conn } = await setup();
+  const me = "@ryan:matrix.test";
+  // Ryan's Element: cross-signing and a key backup, with the keys to both.
+  const element = await onMatrix(me, "ELEMENT", "syt_element");
+  const boot = await element.vault.machine.bootstrapCrossSigning(true);
+  if (boot.uploadKeysRequest) await element.vault.send(boot.uploadKeysRequest);
+  await element.call("POST", "keys/device_signing/upload", JSON.parse(boot.uploadSigningKeysRequest.body));
+  await element.vault.send(boot.uploadSignaturesRequest);
+  const backupKey = lib.BackupDecryptionKey.createRandomKey();
+  const pub = backupKey.megolmV1PublicKey.publicKeyBase64;
+  const { version } = await element.call("POST", "room_keys/version", { algorithm: "m.megolm_backup.v1.curve25519-aes-sha2", auth_data: { public_key: pub } });
+  await element.vault.machine.saveBackupDecryptionKey(backupKey, version);
+  await element.vault.machine.enableBackupV1(pub, version);
+  element.vault.backup = { key: backupKey, version };
+  const sam = await samOnMatrix();
+  await sam.say(textContent("from before the site"));
+  await element.vault.pump();
+
+  const vault = await siteVault(ryan, conn);
+  await syncNow(ryan, conn);
+  const room = (await api(ryan, "GET", "/state")).json.rooms.find(r => r.encrypted);
+  const [old] = (await api(ryan, "GET", `/rooms/${room.id}/messages`)).json.messages;
+  assert.equal(await vault.decrypt(old.raw), null);
+  // Both sides keep looking, as their pages poll.
+  const look = async () => {
+    await syncNow(ryan, conn); await vault.pump(); await element.vault.pump();
+    return [await vault.verifications(), await element.vault.verifications()];
+  };
+
+  // The chat page asks; Element sees it and accepts.
+  // (Element has heard of the site's session by now, as it would have.)
+  await element.vault.machine.updateTrackedUsers([new lib.UserId(me)]);
+  await element.vault.pump();
+  await vault.requestVerification();
+  let [mine, theirs] = await look();
+  assert.deepEqual(mine.map(v => [v.state, v.by_us]), [["requested", true]]);
+  assert.deepEqual(theirs.map(v => [v.state, v.by_us]), [["requested", false]]);
+  await element.vault.acceptVerification(theirs[0].id);
+  for (let i = 0; i < 6 && !(mine[0]?.emoji && theirs[0]?.emoji); i++) [mine, theirs] = await look();
+  assert.equal(mine[0].state, "compare");
+  assert.equal(mine[0].emoji.length, 7);
+  assert.deepEqual(mine[0].emoji, theirs[0].emoji, "the same emoji on both");
+  assert.ok(mine[0].emoji.every(e => e.symbol && e.name));
+
+  // They match: both say so.
+  await vault.confirmVerification(mine[0].id);
+  [mine] = await look();
+  assert.equal(mine[0].state, "waiting");
+  await element.vault.confirmVerification(theirs[0].id);
+  for (let i = 0; i < 6 && !(mine[0]?.state === "done" && (await vault.status()).backup); i++) [mine, theirs] = await look();
+  assert.equal(mine[0].state, "done");
+  // Element signed the site's session, and shared the backup's key when asked.
+  assert.deepEqual(await vault.status(), { verified: true, backup: true });
+  assert.equal(textOf(await vault.decrypt(old.raw)), "from before the site");
+  const device = await element.vault.machine.getDevice(new lib.UserId(me), new lib.DeviceId("SITE"));
+  assert.equal(device.isVerified(), true, "Element trusts it");
+  const ssk = Object.keys(hs.signing.get(me).self_signing_key.keys)[0];
+  assert.ok(hs.keys.get(`${me}|SITE`).device_keys.signatures[me][ssk], "and it's signed with the cross-signing key, so other apps trust it too");
+});
+
+test("a verification that doesn't match is cancelled on both sides", async () => {
+  const { ryan, conn } = await setup();
+  const element = await onMatrix("@ryan:matrix.test", "ELEMENT", "syt_element");
+  const boot = await element.vault.machine.bootstrapCrossSigning(true);
+  if (boot.uploadKeysRequest) await element.vault.send(boot.uploadKeysRequest);
+  await element.call("POST", "keys/device_signing/upload", JSON.parse(boot.uploadSigningKeysRequest.body));
+  await element.vault.send(boot.uploadSignaturesRequest);
+  const vault = await siteVault(ryan, conn);
+  const look = async () => { await syncNow(ryan, conn); await vault.pump(); await element.vault.pump(); return [await vault.verifications(), await element.vault.verifications()]; };
+  // This time Element asks.
+  const identity = await element.vault.machine.getIdentity(new lib.UserId("@ryan:matrix.test"));
+  await element.vault.machine.updateTrackedUsers([new lib.UserId("@ryan:matrix.test")]);
+  await element.vault.flush();
+  const [, out] = await identity.requestVerification([lib.VerificationMethod.SasV1]);
+  await element.vault.send(out);
+  let [mine, theirs] = await look();
+  assert.deepEqual(mine.map(v => [v.state, v.by_us]), [["requested", false]]);
+  await vault.acceptVerification(mine[0].id);
+  for (let i = 0; i < 6 && !(mine[0]?.emoji && theirs[0]?.emoji); i++) [mine, theirs] = await look();
+  // Element starts comparing once the page accepts? Either way, they get emoji.
+  assert.equal(mine[0].state, "compare");
+  await vault.cancelVerification(mine[0].id);
+  [mine, theirs] = await look();
+  assert.equal(mine[0].state, "cancelled");
+  assert.equal(theirs[0].state, "cancelled");
+  assert.deepEqual(await vault.status(), { verified: false, backup: false });
 });
 
 test("pictures in an encrypted room: encrypted files both ways, decrypted only in the browser", async () => {

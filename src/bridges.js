@@ -6,9 +6,16 @@
 //   { id, name, help, fields: [{name, label, secret?, required?, placeholder?}],
 //     connect(fields) → {label, creds}      check the credentials, once
 //     sync(creds, cursor) → {cursor, rooms} what changed since the last sync
-//     send(creds, room, text) → message id
+//     send(creds, room, text, {reply?}) → message id (reply: what it answers)
 //     edit(creds, room, message id, text)
-//     remove(creds, room, message id)
+//     remove(creds, room, message id)        a message, or a reaction
+//     react(creds, room, message id, emoji) → the reaction's id
+//     join(creds, room), leave(creds, room)  accept an invite; leave (or decline one)
+//     startDm(creds, their id, {encrypted}) → {id, name}   (optional) a direct message there
+//     history(creds, room, from) → {events, from}   (optional) older events, oldest
+//                                           first, as sync has them, and where to go on from (null: the start)
+//     typing(creds, room, on)               (optional) "typing…" there
+//     receipt(creds, room, message id)      (optional) read up to here
 //     disconnect(creds)                     undo whatever connect made there
 //     and, for end-to-end encryption (optional):
 //     canEncrypt(creds), device(creds) → {user_id, device_id},
@@ -209,9 +216,9 @@ export async function syncAll(env, user) {
 }
 
 // Syncs the connection a bridge room belongs to (for the open room).
-export async function syncRoom(env, user, room) {
+export async function syncRoom(env, user, room, { force = false } = {}) {
   const d = await db(env);
-  await syncConnection(env, d, await d.prepare("SELECT * FROM chat_connections WHERE id = ? AND user_id = ?").bind(room.connection, user.id).first());
+  await syncConnection(env, d, await d.prepare("SELECT * FROM chat_connections WHERE id = ? AND user_id = ?").bind(room.connection, user.id).first(), { force });
 }
 
 async function applyRoom(env, d, conn, r, initial) {
@@ -223,10 +230,12 @@ async function applyRoom(env, d, conn, r, initial) {
   }
   const t = now();
   const stmts = [];
+  // An invite: listed (at the top) until it's accepted or declined.
+  const invite = r.invite ? JSON.stringify(r.invite) : null;
   if (!existing) {
     stmts.push(
-      d.prepare(`INSERT INTO chat_rooms (id, name, topic, owner, created_at, last_at, kind, connection, ext_id, encrypted)
-        VALUES (?, ?, ?, ?, ?, ?, 'bridge', ?, ?, ?)`).bind(id, r.name || r.fallback_name || r.id, r.topic ?? "", conn.user_id, t, 0, conn.id, r.id, r.encrypted ? 1 : 0),
+      d.prepare(`INSERT INTO chat_rooms (id, name, topic, owner, created_at, last_at, kind, connection, ext_id, encrypted, ext_invite)
+        VALUES (?, ?, ?, ?, ?, ?, 'bridge', ?, ?, ?, ?)`).bind(id, r.name || r.fallback_name || r.id, r.topic ?? "", conn.user_id, t, invite ? t : 0, conn.id, r.id, r.encrypted ? 1 : 0, invite),
       d.prepare("INSERT OR IGNORE INTO chat_members (room, user_id, joined_at) VALUES (?, ?, ?)").bind(id, conn.user_id, t),
     );
   } else if (r.name !== undefined || r.topic !== undefined || r.encrypted) {
@@ -234,14 +243,16 @@ async function applyRoom(env, d, conn, r, initial) {
       // A name taken away falls back to the stand-in; a stand-in alone never replaces a name.
       .bind(r.name || (r.name === "" && r.fallback_name) || existing.name, r.topic ?? existing.topic, r.encrypted ? 1 : 0, id));
   }
+  if (existing) stmts.push(d.prepare("UPDATE chat_rooms SET ext_invite = ? WHERE id = ? AND ext_invite IS NOT ?").bind(invite, id, invite));
   for (const e of r.events) {
     const bump = d.prepare("UPDATE chat_rooms SET seq = seq + 1 WHERE id = ?").bind(id);
     if (e.type === "message") {
       stmts.push(
         d.prepare("UPDATE chat_rooms SET seq = seq + 1, last_at = MAX(last_at, ?) WHERE id = ?").bind(e.at, id),
-        d.prepare(`INSERT OR IGNORE INTO chat_messages (room, user_id, body, seq, posted_seq, created_at, ext_id, ext_sender, ext_name, encrypted, ext_raw, ext_media)
-          SELECT id, ?, ?, seq, seq, ?, ?, ?, ?, ?, ?, ? FROM chat_rooms WHERE id = ?`)
-          .bind(e.mine ? conn.user_id : "", e.body, e.at, e.id, e.sender, e.sender_name, e.encrypted ? 1 : 0, e.raw ?? null, e.media ? JSON.stringify(e.media) : null, id),
+        // (A reply to a message from before this site's history points nowhere.)
+        d.prepare(`INSERT OR IGNORE INTO chat_messages (room, user_id, body, seq, posted_seq, created_at, ext_id, ext_sender, ext_name, encrypted, ext_raw, reply_to, ext_media)
+          SELECT id, ?, ?, seq, seq, ?, ?, ?, ?, ?, ?, (SELECT id FROM chat_messages WHERE room = ? AND ext_id = ?), ? FROM chat_rooms WHERE id = ?`)
+          .bind(e.mine ? conn.user_id : "", e.body, e.at, e.id, e.sender, e.sender_name, e.encrypted ? 1 : 0, e.raw ?? null, id, e.reply ?? null, e.media ? JSON.stringify(e.media) : null, id),
       );
     } else if (e.type === "edit" && e.raw) {
       // An encrypted edit replaces what the browser decrypts.
@@ -251,10 +262,31 @@ async function applyRoom(env, d, conn, r, initial) {
       // Only the person who wrote a message can edit it, as Matrix has it.
       stmts.push(bump, d.prepare(`UPDATE chat_messages SET body = ?, edited_at = ?, seq = (SELECT seq FROM chat_rooms WHERE id = ?)
         WHERE room = ? AND ext_id = ? AND ext_sender = ? AND deleted = 0 AND encrypted = 0`).bind(e.body, e.at, id, id, e.target, e.sender));
+    } else if (e.type === "reaction") {
+      const who = e.mine ? conn.user_id : "~" + e.sender;
+      stmts.push(bump,
+        d.prepare(`INSERT OR IGNORE INTO chat_reactions (message, user_id, emoji, created_at, ext_id, ext_name)
+          SELECT id, ?, ?, ?, ?, ? FROM chat_messages WHERE room = ? AND ext_id = ? AND deleted = 0`).bind(who, e.key, e.at, e.id, e.sender_name, id, e.target),
+        d.prepare("UPDATE chat_messages SET seq = (SELECT seq FROM chat_rooms WHERE id = ?) WHERE room = ? AND ext_id = ?").bind(id, id, e.target));
     } else if (e.type === "delete") {
-      stmts.push(bump, d.prepare(`UPDATE chat_messages SET deleted = 1, body = '', seq = (SELECT seq FROM chat_rooms WHERE id = ?)
-        WHERE room = ? AND ext_id = ? AND deleted = 0`).bind(id, id, e.target));
+      // What went is a message (and its reactions with it), or a reaction.
+      const reactedTo = "(SELECT message FROM chat_reactions WHERE ext_id = ? AND message IN (SELECT id FROM chat_messages WHERE room = ?))";
+      stmts.push(bump,
+        d.prepare(`UPDATE chat_messages SET seq = (SELECT seq FROM chat_rooms WHERE id = ?) WHERE id IN ${reactedTo}`).bind(id, e.target, id),
+        d.prepare("DELETE FROM chat_reactions WHERE ext_id = ? AND message IN (SELECT id FROM chat_messages WHERE room = ?)").bind(e.target, id),
+        d.prepare("DELETE FROM chat_reactions WHERE message IN (SELECT id FROM chat_messages WHERE room = ? AND ext_id = ?)").bind(id, e.target),
+        d.prepare(`UPDATE chat_messages SET deleted = 1, body = '', seq = (SELECT seq FROM chat_rooms WHERE id = ?)
+          WHERE room = ? AND ext_id = ? AND deleted = 0`).bind(id, id, e.target));
     }
+  }
+  // Where older history starts, the first time a sync says.
+  if (r.back !== undefined) stmts.push(d.prepare("UPDATE chat_rooms SET ext_back = ? WHERE id = ? AND ext_back IS NULL").bind(r.back, id));
+  // Who's typing there, and how far people there have read.
+  if (r.typing) stmts.push(d.prepare("UPDATE chat_rooms SET ext_typing = ?, ext_typing_at = ? WHERE id = ?").bind(JSON.stringify(r.typing), t, id));
+  for (const rc of r.receipts ?? []) {
+    stmts.push(d.prepare(`INSERT INTO chat_ext_reads (room, ext_user, ext_name, ext_id, at) VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT (room, ext_user) DO UPDATE SET ext_name = excluded.ext_name, ext_id = excluded.ext_id, at = excluded.at WHERE excluded.at >= at`)
+      .bind(id, rc.user, rc.name, rc.event, rc.at));
   }
   // The first sync brings in recent history, which isn't news to anyone.
   if (initial || !existing) {
@@ -267,9 +299,90 @@ async function applyRoom(env, d, conn, r, initial) {
     .map(e => ({ room: { id, name }, id: e.id, sender_name: e.sender_name, body: e.body, encrypted: !!e.encrypted }));
 }
 
+// Accepting an invite (joining there), and leaving a room there or
+// declining an invite: the room goes from here too.
+export async function joinBridged(env, d, user, room) {
+  const done = await onPlatform(env, d, user, room, (p, creds) => p.join(creds, room.ext_id));
+  if (done.error) return { failed: done.error };
+  await d.prepare("UPDATE chat_rooms SET ext_invite = NULL WHERE id = ?").bind(room.id).run();
+  await syncRoom(env, user, room, { force: true });
+  return { joined: true };
+}
+export async function leaveBridged(env, d, user, room) {
+  const done = await onPlatform(env, d, user, room, (p, creds) => p.leave(creds, room.ext_id));
+  if (done.error) return { failed: done.error };
+  await dropRoom(d, room.id);
+  return { joined: false, gone: true };
+}
+
+// A direct message with someone on a connection's platform: {user} (their
+// id there) → the room, made there if it's new, and synced in.
+export async function startDm(env, user, connId, body, fail) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) fail("body must be a JSON object");
+  for (const k of Object.keys(body)) if (!["user", "encrypted"].includes(k)) fail(`unknown field ${JSON.stringify(k)}`);
+  if (typeof body.user !== "string" || !body.user.trim()) fail("user is required");
+  if (body.encrypted !== undefined && typeof body.encrypted !== "boolean") fail("encrypted must be true or false");
+  const d = await db(env);
+  const conn = await getConnection(d, user, connId);
+  if (!conn) return null;
+  const c = await forRoom(env, d, user, { connection: conn.id });
+  if (c.error) return { failed: c.error };
+  if (!c.provider.startDm) return { forbidden: `${c.provider.name} can't start conversations from here` };
+  // Encrypted, as Element makes them, when this connection can hold keys.
+  const encrypted = body.encrypted ?? !!c.provider.canEncrypt?.(c.creds);
+  if (encrypted && !c.provider.canEncrypt?.(c.creds)) return { forbidden: "an encrypted conversation needs a connection signed in with a username and password" };
+  let ext;
+  try { ext = await c.provider.startDm(c.creds, body.user, { encrypted }); }
+  catch (e) {
+    if (!(e instanceof ProviderError)) throw e;
+    if (e.auth) await setError(d, conn, e.message);
+    return { failed: e.message };
+  }
+  await syncConnection(env, d, await getConnection(d, user, connId), { force: true });
+  const id = await localRoomId(conn, ext.id);
+  if (!await d.prepare("SELECT 1 AS x FROM chat_rooms WHERE id = ?").bind(id).first()) return { failed: "the conversation was made there, but hasn't come through yet; sync in a moment" };
+  // Until they've joined, it may have nothing to be named for but its id: name it for them.
+  await d.prepare("UPDATE chat_rooms SET name = ? WHERE id = ? AND name = ext_id").bind(ext.name, id).run();
+  return { id };
+}
+
+// Brings in a page of a bridge room's older history, from before anything
+// here, when you scroll back past it. Those messages take ids below every
+// other (counting down from 0), so they sort before what's already here.
+// They're history, so they're neither unread nor news to a poll.
+export async function backfill(env, d, user, room) {
+  const got = await onPlatform(env, d, user, room, (p, creds) => p.history?.(creds, room.ext_id, room.ext_back || undefined));
+  if (got.error || !got.ok) return 0;
+  const { events, from } = got.ok, id = room.id;
+  const nextId = "(SELECT MIN(COALESCE(MIN(id), 0), 0) - 1 FROM chat_messages)";
+  const stmts = [];
+  // Newest first, so the oldest ends up lowest.
+  const msgs = events.filter(e => e.type === "message").reverse();
+  for (const e of msgs) {
+    stmts.push(d.prepare(`INSERT OR IGNORE INTO chat_messages (id, room, user_id, body, seq, posted_seq, created_at, ext_id, ext_sender, ext_name, encrypted, ext_raw, edited_at, ext_media)
+      SELECT ${nextId}, ?, ?, ?, 0, 0, ?, ?, ?, ?, ?, ?, ?, ?`)
+      .bind(id, e.mine ? user.id : "", e.body, e.at, e.id, e.sender, e.sender_name, e.encrypted ? 1 : 0, e.raw ?? null, e.edited_at ?? null, e.media ? JSON.stringify(e.media) : null));
+  }
+  // Then what refers to them: replies, and reactions.
+  for (const e of msgs.filter(e => e.reply)) {
+    stmts.push(d.prepare(`UPDATE chat_messages SET reply_to = (SELECT id FROM chat_messages WHERE room = ? AND ext_id = ?)
+      WHERE room = ? AND ext_id = ? AND reply_to IS NULL`).bind(id, e.reply, id, e.id));
+  }
+  for (const e of events.filter(e => e.type === "reaction")) {
+    stmts.push(d.prepare(`INSERT OR IGNORE INTO chat_reactions (message, user_id, emoji, created_at, ext_id, ext_name)
+      SELECT id, ?, ?, ?, ?, ? FROM chat_messages WHERE room = ? AND ext_id = ? AND deleted = 0`)
+      .bind(e.mine ? user.id : "~" + e.sender, e.key, e.at, e.id, e.sender_name, id, e.target));
+  }
+  stmts.push(d.prepare("UPDATE chat_rooms SET ext_back = ? WHERE id = ?").bind(from ?? "", id));
+  await d.batch(stmts);
+  return msgs.length;
+}
+
 async function dropRoom(d, id) {
   await d.batch([
     d.prepare("DELETE FROM chat_presence WHERE room = ?").bind(id),
+    d.prepare("DELETE FROM chat_ext_reads WHERE room = ?").bind(id),
+    d.prepare("DELETE FROM chat_reactions WHERE message IN (SELECT id FROM chat_messages WHERE room = ?)").bind(id),
     d.prepare("DELETE FROM chat_messages WHERE room = ?").bind(id),
     d.prepare("DELETE FROM chat_members WHERE room = ?").bind(id),
     d.prepare("DELETE FROM chat_rooms WHERE id = ?").bind(id),

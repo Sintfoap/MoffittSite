@@ -27,8 +27,25 @@ export class FakeMatrix {
     this.accountData = new Map();   // "user|type" → content
     this.backups = [];         // [{version, algorithm, auth_data, rooms: {room: {session: data}}}]
     this.signatures = [];      // every keys/signatures/upload body, to check what was signed
+    this.typed = [];           // [room, user, body] for each "typing" the site sent
+    this.receipts = [];        // [room, user, event id] for each read receipt the site sent
     this.media = new Map();    // media id → {bytes, type}; legacyMedia: no authenticated media API
     this.legacyMedia = false;
+  }
+
+  // An invite for the signed-in account to a room someone else is in.
+  invite(id, by, { name, encrypted = false, members = {} } = {}) {
+    const r = this.room(id, { name, encrypted, members });
+    r.invited = by;
+    return r;
+  }
+
+  // Ephemeral events for the next sync: who's typing, and read receipts.
+  typing(room, users) { this.ephemeral(room, { type: "m.typing", content: { user_ids: users } }); }
+  receipt(room, user, event) { this.ephemeral(room, { type: "m.receipt", content: { [event]: { "m.read": { [user]: { ts: Date.now() } } } } }); }
+  ephemeral(room, e) {
+    const r = this.rooms.get(room);
+    (r.ephemeral ??= []).push(e); r.changed = true;
   }
 
   setAccountData(user, type, content) { this.accountData.set(`${user}|${type}`, content); }
@@ -65,6 +82,18 @@ export class FakeMatrix {
   }
   edit(room, sender, target, body) {
     return this.say(room, sender, "* " + body, { "m.new_content": { msgtype: "m.text", body }, "m.relates_to": { rel_type: "m.replace", event_id: target } });
+  }
+  react(room, sender, target, key) {
+    const event = { type: "m.reaction", event_id: `$e${++this.n}`, sender, origin_server_ts: Date.now(),
+      content: { "m.relates_to": { rel_type: "m.annotation", event_id: target, key } } };
+    this.events.push({ room, event });
+    return event.event_id;
+  }
+  // Reactions on a message that haven't been taken back: [[sender, key]].
+  reactions(room, target) {
+    const gone = new Set(this.events.filter(e => e.event.type === "m.room.redaction").map(e => e.event.redacts));
+    return this.events.filter(e => e.room === room && e.event.type === "m.reaction" && !gone.has(e.event.event_id)
+      && e.event.content["m.relates_to"].event_id === target).map(e => [e.event.sender, e.event.content["m.relates_to"].key]);
   }
   redact(room, sender, target) {
     this.events.push({ room, event: { type: "m.room.redaction", event_id: `$e${++this.n}`, sender, redacts: target, origin_server_ts: Date.now(), content: {} } });
@@ -110,7 +139,10 @@ export class FakeMatrix {
     if (!who) return json({ errcode: "M_UNKNOWN_TOKEN", error: "Unknown token" }, 401);
     if (path === "/_matrix/client/v3/account/whoami") return json({ user_id: who.user, device_id: who.device });
     if (path === "/_matrix/client/v3/logout") { this.loggedOut.push(auth); return json({}); }
-    if (path === "/_matrix/client/v3/sync") return json(this.sync(url.searchParams.get("since"), who));
+    if (path === "/_matrix/client/v3/sync") {
+      const limit = JSON.parse(url.searchParams.get("filter") || "{}").room?.timeline?.limit;
+      return json(this.sync(url.searchParams.get("since"), who, { limit: this.limited ? limit : undefined }));
+    }
     if (path === "/_matrix/client/v3/pushers/set" && req.method === "POST") {
       if (this.refusePushers) return json({ errcode: "M_UNKNOWN", error: "pushers are turned off here" }, 400);
       if (body.kind === null) this.pushers.delete(body.pushkey);
@@ -128,6 +160,36 @@ export class FakeMatrix {
       const f = this.media.get(decodeURIComponent(dl[1]));
       return f ? new Response(f.bytes, { headers: { "Content-Type": f.type } }) : json({ errcode: "M_NOT_FOUND" }, 404);
     }
+    if (path === "/_matrix/client/v3/joined_rooms") return json({ joined_rooms: [...this.rooms].filter(([, r]) => !r.left && !r.invited).map(([id]) => id) });
+    let p = path.match(/^\/_matrix\/client\/v3\/profile\/([^/]+)$/);
+    if (p) {
+      const u = decodeURIComponent(p[1]), known = [...this.rooms.values()].some(r => r.members.has(u)) || (this.people ?? []).includes(u);
+      return known ? json({ displayname: u.slice(1).split(":")[0] }) : json({ errcode: "M_NOT_FOUND", error: "Profile not found" }, 404);
+    }
+    if (path === "/_matrix/client/v3/createRoom" && req.method === "POST") {
+      const id = `!new${++this.n}:matrix.test`;
+      const encrypted = (body.initial_state ?? []).some(e => e.type === "m.room.encryption");
+      const r = this.room(id, { encrypted, members: { [who.user]: "Ryan" } });
+      r.invites = body.invite ?? []; r.direct = !!body.is_direct; r.changed = true;
+      this.created = [...(this.created ?? []), { id, ...body }];
+      return json({ room_id: id });
+    }
+    p = path.match(/^\/_matrix\/client\/v3\/join\/([^/]+)$/);
+    if (p && req.method === "POST") {
+      const r = this.rooms.get(decodeURIComponent(p[1]));
+      if (!r?.invited) return json({ errcode: "M_FORBIDDEN", error: "not invited" }, 403);
+      r.invited = false; r.members.set(who.user, "Ryan"); r.changed = true; r.renamed = true;
+      return json({ room_id: decodeURIComponent(p[1]) });
+    }
+    p = path.match(/^\/_matrix\/client\/v3\/rooms\/([^/]+)\/leave$/);
+    if (p && req.method === "POST") {
+      const r = this.rooms.get(decodeURIComponent(p[1]));
+      if (!r) return json({ errcode: "M_FORBIDDEN", error: "not in room" }, 403);
+      r.left = true; r.invited = false;
+      return json({});
+    }
+    let h = path.match(/^\/_matrix\/client\/v3\/rooms\/([^/]+)\/messages$/);
+    if (h && req.method === "GET") return json(this.history(decodeURIComponent(h[1]), url.searchParams));
     if (path.startsWith("/_matrix/client/v3/keys/") || path.startsWith("/_matrix/client/v3/sendToDevice/")) return json(this.crypto(req.method, path, body, who));
     let a = path.match(/^\/_matrix\/client\/v3\/user\/([^/]+)\/account_data\/([^/]+)$/);
     if (a) {
@@ -147,7 +209,7 @@ export class FakeMatrix {
       if (!r) return json({ errcode: "M_FORBIDDEN", error: "not in room" }, 403);
       return json({ joined: Object.fromEntries([...r.members].map(([id, name]) => [id, { display_name: name }])) });
     }
-    m = path.match(/^\/_matrix\/client\/v3\/rooms\/([^/]+)\/send\/(m\.room\.message|m\.room\.encrypted)\/([^/]+)$/);
+    m = path.match(/^\/_matrix\/client\/v3\/rooms\/([^/]+)\/send\/(m\.room\.message|m\.room\.encrypted|m\.reaction)\/([^/]+)$/);
     if (m && req.method === "PUT") {
       const room = decodeURIComponent(m[1]);
       if (!this.rooms.has(room)) return json({ errcode: "M_FORBIDDEN", error: "not in room" }, 403);
@@ -156,6 +218,10 @@ export class FakeMatrix {
       this.events.push({ room, event });
       return json({ event_id: event.event_id });
     }
+    m = path.match(/^\/_matrix\/client\/v3\/rooms\/([^/]+)\/typing\/([^/]+)$/);
+    if (m && req.method === "PUT") { this.typed.push([decodeURIComponent(m[1]), decodeURIComponent(m[2]), body]); return json({}); }
+    m = path.match(/^\/_matrix\/client\/v3\/rooms\/([^/]+)\/receipt\/m\.read\/([^/]+)$/);
+    if (m && req.method === "POST") { this.receipts.push([decodeURIComponent(m[1]), who.user, decodeURIComponent(m[2])]); return json({}); }
     m = path.match(/^\/_matrix\/client\/v3\/rooms\/([^/]+)\/redact\/([^/]+)\/[^/]+$/);
     if (m && req.method === "PUT") {
       this.redact(decodeURIComponent(m[1]), who.user, decodeURIComponent(m[2]));
@@ -295,12 +361,39 @@ export class FakeMatrix {
     return out;
   }
 
-  sync(since, who) {
+  // Older history, as /messages has it: newest first, before `from` (an
+  // index into events, as sync tokens are here).
+  history(room, q) {
+    const from = q.has("from") ? Number(q.get("from")) : this.events.length, limit = Number(q.get("limit") || 10);
+    const types = JSON.parse(q.get("filter") || "{}").types;
+    const before = this.events.map((e, i) => [e, i]).filter(([e, i]) => i < from && e.room === room && (!types || types.includes(e.event.type))).reverse().slice(0, limit);
+    const redacted = new Set(this.events.filter(e => e.event.type === "m.room.redaction").map(e => e.event.redacts));
+    const chunk = before.map(([e]) => {
+      const edit = this.events.filter(x => x.event.content?.["m.relates_to"]?.rel_type === "m.replace" && x.event.content["m.relates_to"].event_id === e.event.event_id).at(-1);
+      return { ...e.event, unsigned: { ...(redacted.has(e.event.event_id) ? { redacted_because: {} } : {}), ...(edit ? { "m.relations": { "m.replace": edit.event } } : {}) } };
+    });
+    this.requests.push(["history", room, from]);
+    return { chunk, start: String(from), ...(before.length ? { end: String(before.at(-1)[1]) } : {}), state: [] };
+  }
+
+  sync(since, who, { limit } = {}) {
     const from = since ? Number(since) : 0;
-    const join = {}, leave = {};
+    const join = {}, leave = {}, invite = {};
     for (const [id, r] of this.rooms) {
+      if (r.invited) {
+        invite[id] = { invite_state: { events: [
+          ...(r.name ? [{ type: "m.room.name", state_key: "", content: { name: r.name } }] : []),
+          ...(r.encrypted ? [{ type: "m.room.encryption", state_key: "", content: {} }] : []),
+          ...[...r.members].map(([mxid, name]) => ({ type: "m.room.member", state_key: mxid, sender: mxid, content: { membership: "join", displayname: name } })),
+          { type: "m.room.member", state_key: this.user, sender: r.invited, content: { membership: "invite" } },
+        ] } };
+        continue;
+      }
       if (r.left) { if (from) leave[id] = { timeline: { events: [] } }; continue; }
-      const timeline = this.events.slice(from).filter(e => e.room === id).map(e => e.event);
+      const all = this.events.map((e, i) => [e, i]).slice(from).filter(([e]) => e.room === id);
+      // (Only the latest `limit` when asked, as a homeserver does, with where the rest begins.)
+      const shown = limit && all.length > limit ? all.slice(-limit) : all;
+      const timeline = shown.map(([e]) => e.event), prevBatch = String(shown[0]?.[1] ?? from);
       if (from && !timeline.length && !r.changed) continue;
       r.changed = false;
       const state = [];
@@ -310,9 +403,11 @@ export class FakeMatrix {
         r.renamed = false;
       }
       for (const [mxid, name] of r.members) state.push({ type: "m.room.member", state_key: mxid, content: { membership: "join", displayname: name } });
-      join[id] = { state: { events: state }, timeline: { events: timeline, limited: false },
+      const ephemeral = { events: r.ephemeral ?? [] };
+      r.ephemeral = [];
+      join[id] = { state: { events: state }, timeline: { events: timeline, limited: shown.length < all.length, prev_batch: prevBatch }, ephemeral,
         summary: { "m.heroes": [...r.members.keys()].filter(k => k !== this.user) } };
     }
-    return this.syncCrypto(who, { next_batch: String(this.events.length), rooms: { join, leave } });
+    return this.syncCrypto(who, { next_batch: String(this.events.length), rooms: { join, leave, invite } });
   }
 }

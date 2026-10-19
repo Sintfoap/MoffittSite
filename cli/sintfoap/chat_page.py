@@ -37,10 +37,13 @@ someone; tab after @ completes a name from the room.
   /new NAME | TOPIC          make a room anyone can join (the topic is optional)
   /private NAME | TOPIC      make a room only people you add can see
   /add NAME  /remove NAME    add someone to a private room, or take them out (owner)
-  /dm NAME                   a direct message with someone (tab completes names)
+  /dm NAME                   a direct message with someone (tab completes names);
+                             /dm @sam:matrix.org [N] starts one on Matrix, through connection N
+  /accept  /decline          answer an invite to a room on Matrix (/leave leaves one there)
   /who                       who's in the room, and who's online (●)
   /search TEXT               find messages in this room; /search on its own goes back
   /rename NAME  /topic TEXT  change the open room (its owner, or an admin)
+  /reply [@NAME] TEXT        answer the last message from someone else (or from NAME)
   /edit [TEXT]               change your last message (↑ on an empty line too)
   /react NAME                react to the last message from someone else, or
                              take it back: +1 heart laugh tada wow sad eyes pray
@@ -51,6 +54,7 @@ someone; tab after @ completes a name from the room.
   /connections               your connections to other platforms (Matrix), and their rooms (~)
   /connect                   connect an account there   /disconnect N   remove connection N
   /sync [N]                  sync connections now (and retry one that stopped working)
+**bold**, *italic*, ~~struck~~, `code` and "> " quotes work as they do on the web.
 tab or esc moves to the room list; enter on a room opens it. Start a message
 with // to send one that begins with /."""
 
@@ -79,16 +83,67 @@ def day(t: int) -> str:
     return f"{d:%A} {d.day} {d:%B}" + ("" if d.year == today.year else f" {d.year}")
 
 
-def body_text(body: str, me: str | None, style: str) -> Text:
-    """A message's text with @names picked out, and @you stronger still."""
-    t, at = Text(), 0
-    for m in MENTION.finditer(body):
+# The web page's formatting (public/chat/format.js): code first, then the rest.
+CODE_BLOCK = re.compile(r"```(?:[a-z0-9+-]*\n)?([\s\S]*?)```", re.IGNORECASE)
+INLINE = re.compile(r"`([^`\n]+)`|\*\*(?=\S)([^*]*?\S)\*\*|~~(?=\S)([^~]*?\S)~~"
+                    r"|(?<![\w*])\*(?=[^\s*])([^*]*?[^\s*])\*(?![\w*])|(?<!\w)_(?=[^\s_])([^_]*?[^\s_])_(?!\w)"
+                    r"|\[([^\]\n]{1,200})\]\((https?://[^\s)]+)\)")
+
+
+def _mentions(t: Text, text: str, me: str | None, style: str) -> None:
+    at = 0
+    for m in MENTION.finditer(text):
         start = m.start(2) - 1
-        t.append(body[at:start], style=style)
+        t.append(text[at:start], style=style)
         you = me and m.group(2).lower() == me
         t.append("@" + m.group(2), style=f"bold {BG} on {GOLD}" if you else f"bold {GOLD}")
         at = m.end()
-    t.append(body[at:], style=style)
+    t.append(text[at:], style=style)
+
+
+def _inline(t: Text, text: str, me: str | None, style: str) -> None:
+    at = 0
+    for m in INLINE.finditer(text):
+        _mentions(t, text[at:m.start()], me, style)
+        code, bold, struck, em, em2, label, url = m.groups()
+        if code is not None:
+            t.append(code, style=f"{GOLD_DIM} on {PANEL}")
+        elif label is not None:
+            t.append(label, style=f"{style} underline link {url}")
+        else:
+            inner = bold or struck or em or em2
+            _mentions(t, inner, me, f"{style} {'bold' if bold else 'strike' if struck else 'italic'}")
+        at = m.end()
+    _mentions(t, text[at:], me, style)
+
+
+def body_text(body: str, me: str | None, style: str) -> Text:
+    """A message's text, formatted, with @names picked out, and @you stronger still."""
+    t = Text()
+    for i, part in enumerate(CODE_BLOCK.split(body)):
+        if i % 2:
+            t.append(part.rstrip("\n"), style=f"{GOLD_DIM} on {PANEL}")
+            continue
+        for j, line in enumerate(part.split("\n")):
+            if j:
+                t.append("\n")
+            if line.startswith(">"):
+                t.append("▏", style=LINE)
+                _inline(t, line[1:].removeprefix(" "), me, MUTED)
+            else:
+                _inline(t, line, me, style)
+    return t
+
+
+def quote_text(reply: dict) -> Text:
+    """What a reply answers, on one line."""
+    t = Text("  ↳ ", style=LINE)
+    if not reply.get("id"):
+        t.append("Deleted message", style=f"italic {MUTED}")
+        return t
+    t.append(reply["author_name"] + " ", style=f"bold {MUTED}")
+    words = re.sub(r"\*\*|~~|`+|^> ", "", re.sub(r"\s+", " ", reply.get("body") or ""))
+    t.append(words[:80] + ("…" if len(words) > 80 else ""), style=MUTED)
     return t
 
 
@@ -99,8 +154,10 @@ def gif_text(url: str, style: str) -> Text:
     return t
 
 
-def render_log(messages: list[dict], more: bool, me: str | None = None, gif_hosts: list[str] | None = None) -> Text:
-    """The open room's messages as styled text, oldest first."""
+def render_log(messages: list[dict], more: bool, me: str | None = None, gif_hosts: list[str] | None = None,
+               reads: list[dict] | None = None) -> Text:
+    """The open room's messages as styled text, oldest first; reads: [{name, message}],
+    who on another platform has read up to which message."""
     t = Text()
     if more:
         t.append("  /older for earlier messages\n", style=GOLD_DIM)
@@ -115,6 +172,9 @@ def render_log(messages: list[dict], more: bool, me: str | None = None, gif_host
             t.append("\n")
             t.append(m["author_name"], style=f"bold {GOLD if m['mine'] else INK}")
             t.append(f"  {clock(m['created_at'])}\n", style=MUTED)
+        if m.get("reply"):
+            t.append_text(quote_text(m["reply"]))
+            t.append("\n")
         if m.get("mentions_me"):
             t.append("▌", style=GOLD)
         style = MUTED if m.get("pending") else INK
@@ -127,6 +187,9 @@ def render_log(messages: list[dict], more: bool, me: str | None = None, gif_host
             for r in m["reactions"]:
                 t.append(f" {r['emoji']} {r['count']} ", style=f"bold {GOLD}" if r["mine"] else MUTED)
             t.append("\n")
+        seen = [r["name"] for r in reads or [] if r["message"] == m["id"]]
+        if seen:
+            t.append(f"  seen by {_names(seen)}\n", style=MUTED)
         prev = m
     if not messages:
         t.append("\nNo messages yet.\n", style=MUTED)
@@ -190,6 +253,8 @@ class RoomItem(ListItem):
         badges = Text()
         if kind == "dm" and room.get("with") in online:
             badges.append(" ●", style=GOOD)
+        if room.get("invite"):
+            badges.append(" invite", style=f"bold {GOLD}")
         if room.get("encrypted"):
             badges.append(" e2e", style=FAINT)
         if room.get("mentions") and not is_open:
@@ -438,7 +503,7 @@ class ChatPage(Page):
             return
         self.open = {"id": room_id, "seq": data["seq"], "more": data["more"], "joined": data["joined"],
                      "messages": {m["id"]: m for m in data["messages"]}, "members": [],
-                     "here": data.get("here") or [], "typing": data.get("typing") or []}
+                     "here": data.get("here") or [], "typing": data.get("typing") or [], "reads": data.get("reads") or []}
         self.searching = None
         r = self.room()
         if r:
@@ -490,7 +555,7 @@ class ChatPage(Page):
         if kind == "bridge":
             t.append(f"   on {NETWORK.get(r.get('provider'), r.get('provider'))} as {r.get('via')}", style=MUTED)
             if r.get("encrypted"):
-                t.append("   end-to-end encrypted: read and send it on the web chat page, where its keys are", style=GOLD_DIM)
+                t.append("   end-to-end encrypted: read, send and verify it on the web chat page, where its keys are", style=GOLD_DIM)
         elif kind == "dm":
             t.append(f"   direct message with @{r.get('with') or '?'}", style=MUTED)
             if r.get("with") in self.online:
@@ -501,6 +566,8 @@ class ChatPage(Page):
             t.append("   private: /add NAME to bring people in", style=GOLD_DIM)
         if not o["joined"]:
             t.append("   not joined: /join to post", style=GOLD)
+        if r.get("invite"):
+            t.append(f"   {r['invite']['by']} invited you: /accept or /decline", style=GOLD)
         if r["topic"]:
             t.append("\n" + r["topic"], style=MUTED)
         self.query_one("#head", Static).update(t)
@@ -524,7 +591,8 @@ class ChatPage(Page):
         log = self.query_one("#log", VerticalScroll)
         near_bottom = log.max_scroll_y - log.scroll_y < 3
         shown = sorted((m for m in self.open["messages"].values() if not m["deleted"]), key=lambda m: m["id"])
-        self.query_one("#messages", Static).update(render_log(shown, self.open["more"], self.me.get("username"), self.gifs.get("hosts")))
+        self.query_one("#messages", Static).update(render_log(shown, self.open["more"], self.me.get("username"), self.gifs.get("hosts"),
+                                                              self.open.get("reads")))
         if to_bottom or near_bottom:
             self.call_after_refresh(log.scroll_end, animate=False)
 
@@ -542,6 +610,11 @@ class ChatPage(Page):
             if people != (self.open["here"], self.open["typing"]):
                 self.open["here"], self.open["typing"] = people
                 self.render_presence()
+            reads = data.get("reads") or []
+            if reads != self.open.get("reads"):
+                self.open["reads"] = reads
+                if not data["messages"]:
+                    self.render_messages()
             if not data["messages"]:
                 return
             for m in data["messages"]:
@@ -573,7 +646,7 @@ class ChatPage(Page):
         else:
             await self.send(text.removeprefix("/"))     # "//" sends a message that starts with "/"
 
-    async def send(self, text: str) -> None:
+    async def send(self, text: str, reply: dict | None = None) -> None:
         if not self.open:
             return self.status("Pick a room first.", bad=True)
         if not self.open["joined"]:
@@ -583,10 +656,11 @@ class ChatPage(Page):
         room_id = self.open["id"]
         self._typed = 0.0
         temp = {"id": float("inf"), "body": text, "created_at": int(time.time()), "author": self.me.get("username"),
-                "author_name": self.me.get("name", ""), "mine": True, "deleted": False, "pending": True}
+                "author_name": self.me.get("name", ""), "mine": True, "deleted": False, "pending": True,
+                "reply": {"id": reply["id"], "author_name": reply["author_name"], "body": reply["body"]} if reply else None}
         self.open["messages"][temp["id"]] = temp
         self.render_messages(to_bottom=True)
-        m = await self.call(self.api.chat_post, room_id, text)
+        m = await self.call(self.api.chat_post, room_id, text, *([reply["id"]] if reply else []))
         if self.open and self.open["id"] == room_id:
             self.open["messages"].pop(temp["id"], None)
             if m:
@@ -617,6 +691,9 @@ class ChatPage(Page):
         if word == "dm":
             if not rest:
                 return self.status("Usage: /dm NAME", bad=True)
+            who, _, n = rest.partition(" ")
+            if ":" in who:
+                return await self.bridge_dm(who, n.strip())
             r = await self.call(self.api.chat_dm, rest.lstrip("@"))
             if r:
                 await self.load_rooms()
@@ -624,11 +701,24 @@ class ChatPage(Page):
             return
         if not o:
             return self.status("Open a room first.", bad=True)
-        if word in ("join", "leave"):
-            if await self.call(self.api.chat_join if word == "join" else self.api.chat_leave, o["id"]) is not None:
+        if word == "reply":
+            return await self.reply(rest)
+        if word in ("join", "leave", "accept", "decline"):
+            joining = word in ("join", "accept")
+            invite = (self.room() or {}).get("invite")
+            if word in ("accept", "decline") and not invite:
+                return self.status("There's no invite to answer here.", bad=True)
+            out = await self.call(self.api.chat_join if joining else self.api.chat_leave, o["id"])
+            if out is not None:
                 await self.load_rooms()
-                await self.open_room(o["id"])
-                self.status("joined" if word == "join" else "left the room")
+                if out.get("gone"):
+                    # A room on another platform goes from here when you leave it there.
+                    self.open = None
+                    self.query_one("#messages", Static).update(Text("Left. Pick another room.", style=MUTED))
+                    self.query_one("#head", Static).update("")
+                else:
+                    await self.open_room(o["id"])
+                self.status(("accepted" if invite else "joined") if joining else ("declined" if invite else "left the room"))
         elif word in ("rename", "topic"):
             if word == "rename" and not rest:
                 return self.status("Usage: /rename NAME", bad=True)
@@ -757,10 +847,41 @@ class ChatPage(Page):
         box.focus()
         self.status("change it and press enter; esc to leave it as it was")
 
+    async def bridge_dm(self, who: str, n: str) -> None:
+        """/dm @sam:matrix.org [N]: a direct message on Matrix, through connection N (or the first)."""
+        conns = self.connections or await self.call(self.api.chat_connections) or []
+        self.connections = conns
+        if not conns:
+            return self.status("Connect a Matrix account first: /connect", bad=True)
+        if n and not (n.isdigit() and 1 <= int(n) <= len(conns)):
+            return self.status(f"There's no connection {n}: /connections lists them.", bad=True)
+        conn = conns[int(n) - 1] if n else conns[0]
+        r = await self.call(self.api.chat_bridge_dm, conn["id"], who, False)
+        if r:
+            await self.load_rooms()
+            await self.open_room(r["id"])
+            self.status(f"talking with {who} on {NETWORK.get(conn.get('provider'), conn.get('provider'))}")
+
+    async def reply(self, rest: str) -> None:
+        """/reply [@NAME] TEXT: answers the last message from someone else, or from NAME."""
+        o = self.open
+        who, _, text = rest.partition(" ") if rest.startswith("@") else ("", "", rest)
+        if not text.strip():
+            return self.status("Usage: /reply [@NAME] TEXT", bad=True)
+        bridged = (self.room() or {}).get("kind") == "bridge"
+        shown = sorted((m for m in o["messages"].values() if not m["deleted"] and not m.get("pending")
+                        and (not bridged or m.get("ext_id"))), key=lambda m: m["id"])
+        name = who[1:].lower()
+        # (Someone elsewhere goes by their name there, or the start of their id: @sam for @sam:matrix.org.)
+        named = lambda m: name in ((m["author"] or "").lower(), m["author_name"].lower(), (m["author"] or "").lower().lstrip("@").split(":")[0])  # noqa: E731
+        target = next((m for m in reversed(shown) if named(m)), None) if name \
+            else next((m for m in reversed(shown) if not m["mine"]), None)
+        if not target:
+            return self.status(f"There's no message from {who} here to reply to." if name else "There's nothing here to reply to yet.", bad=True)
+        await self.send(text.strip(), reply=target)
+
     async def react(self, name: str) -> None:
         o = self.open
-        if (self.room() or {}).get("kind") == "bridge":
-            return self.status("Reactions aren't sent to other platforms yet.", bad=True)
         emoji = REACTION_NAMES.get(name.lower(), name)
         if emoji not in self.reactions:
             return self.status("Usage: /react NAME, one of +1 heart laugh tada wow sad eyes pray", bad=True)
@@ -771,6 +892,8 @@ class ChatPage(Page):
         if not target:
             return self.status("There's nothing here to react to yet.", bad=True)
         on = not any(r["emoji"] == emoji and r["mine"] for r in target.get("reactions", []))
+        if on and (self.room() or {}).get("encrypted"):
+            return self.status("This room is end-to-end encrypted: react from the web chat page, where its keys are.", bad=True)
         m = await self.call(self.api.chat_react, o["id"], target["id"], emoji, on)
         if m and self.open is o:
             o["messages"][m["id"]] = m

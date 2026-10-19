@@ -19,6 +19,7 @@ import { b64url } from "../../src/crypto.js";
 const hs = new FakeMatrix().install();
 hs.room("!fam:matrix.test", { name: "Family", members: { "@ryan:matrix.test": "Ryan", "@sam:matrix.test": "Sam" } });
 hs.say("!fam:matrix.test", "@sam:matrix.test", "dinner at six?");
+hs.invite("!club:matrix.test", "@kim:matrix.test", { name: "Book club", members: { "@kim:matrix.test": "Kim" } });
 
 const notify = process.argv.includes("--notify");
 let vapid = {};
