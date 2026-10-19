@@ -16,6 +16,7 @@ sintfoap                    # signs you in the first time, then opens your dashb
 | `sintfoap chat [ROOM]` | chat rooms, opening ROOM if you name one |
 | `sintfoap notifications` | what's pushed to your browsers and phone, and where |
 | `sintfoap admin` | which apps each account can use (admins) |
+| `sintfoap books [--plain]` | the book suggestions: read about them and vote; no sign-in needed |
 | `sintfoap login` | shows a code and opens the site; approve it there |
 | `sintfoap dashboard --plain` | the dashboard as text, for scripts and pipes |
 | `sintfoap whoami` | which account this terminal is signed in as |
@@ -53,6 +54,19 @@ The same panels as `/dashboard`, in the site's colours: Today (overdue Drift ite
 | `q` | quit |
 
 On every page `esc` goes back, `w` opens the same page in your browser and `q` quits. `g` then a letter jumps around, as on the website: `g h` home, `g d` Drift, `g p` plugin store, `g c` chat, `g s` settings, `g n` notifications, `g a` admin, `g o` sign out.
+
+## Book suggestions
+
+The public `/books/` page: each book with its description, where to get it and its votes so far. It works without signing in. This terminal gets one vote, kept under its own id in `~/.config/sintfoap/books.json`; votes from here show the computer's name to admins. Signed in as an admin, a "Who voted" list follows the books.
+
+| Key | |
+|---|---|
+| `↑↓` `jk` | move between books |
+| `enter` / `v` | vote for it (on your vote: take it back) |
+| `u` | take your vote back |
+| `o` | where to get it: pick one to open in your browser |
+| `n` | the name your vote is under |
+| `x` | admins, on the Who voted list: remove that vote |
 
 ## Drift
 

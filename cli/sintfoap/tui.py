@@ -294,6 +294,9 @@ class SiteApp(App):
         elif name == "notifications":
             from .notifications_page import NotificationsPage
             self.push_screen(NotificationsPage())
+        elif name == "books":
+            from .books_page import BooksPage
+            self.push_screen(BooksPage())
         elif name == "chat":
             from .chat_page import ChatPage
             # The room named on the command line, the first time only.

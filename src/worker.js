@@ -11,12 +11,15 @@
 // is where Matrix homeservers tell the site about new messages for
 // notifications (src/notify.js). scheduled() is the cron trigger in
 // wrangler.jsonc: Drift's reminders, and syncing chat connections.
+// /books/api is the public book suggestions page's votes (src/books.js); anyone
+// can use it, signed in or not.
 import { plugins, installed, install, uninstall, PLUGIN_ID, SANDBOX_CSP } from "./store.js";
 import { protect, handleAuth, AUTH_PATHS, sameOrigin } from "./account.js";
 import { currentSession, areaOf } from "./auth.js";
 import { handleCli, CLI_PATHS } from "./cli.js";
 import { withRail } from "./pages.js";
 import { chat } from "./chat.js";
+import { books } from "./books.js";
 import { notifications, driftReminders, pushGateway, bridgeUpkeep } from "./notify.js";
 import { state, version, createItem, updateItem, createCollection, updateCollection, shareCollection, unshareCollection, readJson, BadRequest, ID } from "./drift.js";
 
@@ -57,6 +60,8 @@ export default {
     if (pathname.startsWith("/notifications/")) {
       return protect(request, env, areaOf("notifications"), user => notifications(request, env, user, pathname));
     }
+    // Book suggestions: public, so no sign-in (src/books.js). The page itself is public/books/.
+    if (pathname === "/books/api" || pathname.startsWith("/books/api/")) return books(request, env);
     // The frame store plugins run in. It holds no data and needs no sign-in.
     if (pathname.startsWith("/sandbox/")) return sandbox(request, env);
     if (pathname === "/_matrix/push/v1/notify") return pushGateway(request, env, ctx ? p => ctx.waitUntil(p) : undefined);

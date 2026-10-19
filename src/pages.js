@@ -489,7 +489,7 @@ export function accountPage({ user, error, notice, recoveryLeft, sessionCount, s
 
 const date = t => new Date(t * 1000).toISOString().slice(0, 10);
 
-export function adminPage({ user, users, orphans, apps, error, notice, tempPassword }) {
+export function adminPage({ user, users, orphans, apps, books = [], bookVotes = [], error, notice, tempPassword }) {
   const post = (action, label, fields, cls = "quiet small", confirm = "") =>
     `<form method="post" action="/admin/${action}">${Object.entries(fields).map(([k, v]) => `<input type="hidden" name="${k}" value="${esc(v)}">`).join("")}${confirm}<button class="${cls}" type="submit">${label}</button></form>`;
   const rows = users.map(u => {
@@ -515,6 +515,19 @@ export function adminPage({ user, users, orphans, apps, error, notice, tempPassw
       <form method="post" action="/admin/move-tasks" class="row"><input type="hidden" name="from" value="${esc(o.owner)}">
         <select name="to" aria-label="Move to">${users.map(u => `<option value="${esc(u.id)}">${esc(u.username)}</option>`).join("")}</select>
         <button class="quiet small" type="submit">Move</button></form></td></tr>`).join("")}</table></section>` : "";
+  const when = t => new Date(t * 1000).toISOString().slice(0, 16).replace("T", " ") + " UTC";
+  const tally = books.map(b => `${esc(b.title)} <b>${bookVotes.filter(v => v.book === b.id).length}</b>`).join(" · ");
+  const bookRows = `<section class="card scroll" id="book-votes"><h2>Book votes</h2>
+    <p>Votes on the public <a href="/books/">/books</a> page, newest first. Browsers don't tell websites a computer's name, so each vote shows what the site could see: the name the voter typed (if any), their account if they were signed in, their address, browser and rough location. Votes from the terminal include the computer's name. One vote per browser; a cleared cookie or another browser can vote again.</p>
+    <p class="hint">${tally}</p>
+    ${bookVotes.length ? `<table><tr><th>Book</th><th>Who</th><th>Device</th><th>Address</th><th>When</th><th></th></tr>${bookVotes.map(v => `<tr>
+      <td>${esc(v.title)}</td>
+      <td>${v.name ? `<strong>${esc(v.name)}</strong>` : `<span class="hint">no name given</span>`}${v.username ? `<br><span class="mono">${esc(v.username)}</span>` : ""}</td>
+      <td title="${esc(v.user_agent)}">${esc(v.device)}</td>
+      <td><span class="mono">${esc(v.ip)}</span>${v.place ? `<br><span class="hint">${esc(v.place)}</span>` : ""}</td>
+      <td>${when(v.updated_at)}${v.updated_at !== v.created_at ? `<br><span class="hint">first voted ${when(v.created_at)}</span>` : ""}</td>
+      <td>${post("books/remove", "Remove", { voter: v.voter })}</td></tr>`).join("")}</table>` : `<p class="hint">No votes yet.</p>`}
+  </section>`;
   return page("Admin", `
     <div class="kicker">Admin</div><h1>Accounts</h1>
     ${msg(error)}${msg(notice, "good")}
@@ -526,7 +539,8 @@ export function adminPage({ user, users, orphans, apps, error, notice, tempPassw
     </div>
     ${tempPassword ? `<div class="msg good">Temporary password for <strong>${esc(tempPassword.username)}</strong>: <span class="mono">${esc(tempPassword.password)}</span><br>Send it to them privately. They'll have to change it when they sign in, and it won't be shown again.</div>` : ""}
     <section class="card scroll"><table><tr><th>Account</th><th>Apps</th><th>Status</th><th>Actions</th></tr>${rows}</table></section>
-    ${orphanRows}`, { user, wide: true, here: "admin" });
+    ${orphanRows}
+    ${bookRows}`, { user, wide: true, here: "admin" });
 }
 
 export const adminClaimPage = ({ user, error, enabled }) => page("Become admin", `
