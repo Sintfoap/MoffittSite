@@ -188,6 +188,10 @@ export class FakeMatrix {
       r.left = true; r.invited = false;
       return json({});
     }
+    if (path === "/_matrix/client/v3/search" && req.method === "POST") {
+      if (this.noSearch) return json({ errcode: "M_UNRECOGNIZED", error: "Unrecognized request" }, 404);
+      return json(this.search(body.search_categories?.room_events ?? {}, url.searchParams.get("next_batch")));
+    }
     let h = path.match(/^\/_matrix\/client\/v3\/rooms\/([^/]+)\/messages$/);
     if (h && req.method === "GET") return json(this.history(decodeURIComponent(h[1]), url.searchParams));
     if (path.startsWith("/_matrix/client/v3/keys/") || path.startsWith("/_matrix/client/v3/sendToDevice/")) return json(this.crypto(req.method, path, body, who));
@@ -374,6 +378,30 @@ export class FakeMatrix {
     });
     this.requests.push(["history", room, from]);
     return { chunk, start: String(from), ...(before.length ? { end: String(before.at(-1)[1]) } : {}), state: [] };
+  }
+
+  // Dates an event back by some days, for searches over months.
+  backdate(id, days) {
+    const e = this.events.find(e => e.event.event_id === id);
+    e.event.origin_server_ts = Date.now() - days * 86400 * 1000;
+  }
+
+  // The server-side search, as Synapse's: every word of the term somewhere in
+  // the body (of messages, edits included), newest first, a page at a time.
+  search(q, next) {
+    this.searched = [...(this.searched ?? []), q];
+    const words = String(q.search_term ?? "").toLowerCase().split(/\s+/).filter(Boolean);
+    const rooms = q.filter?.rooms, limit = q.filter?.limit ?? 10, from = Number(next ?? 0);
+    const redacted = new Set(this.events.filter(e => e.event.type === "m.room.redaction").map(e => e.event.redacts));
+    const r = this.rooms.get(rooms?.[0]);
+    const hits = this.events.filter(e => (!rooms || rooms.includes(e.room)) && !this.rooms.get(e.room)?.encrypted && e.event.type === "m.room.message"
+      && !redacted.has(e.event.event_id) && words.every(w => String(e.event.content.body).toLowerCase().includes(w)))
+      .sort((a, b) => b.event.origin_server_ts - a.event.origin_server_ts);
+    const page = hits.slice(from, from + limit);
+    const profile = Object.fromEntries([...(r?.members ?? [])].map(([id, name]) => [id, { displayname: name }]));
+    return { search_categories: { room_events: { count: hits.length,
+      results: page.map(e => ({ rank: 1, result: e.event, context: { profile_info: profile } })),
+      ...(from + limit < hits.length ? { next_batch: String(from + limit) } : {}) } } };
   }
 
   sync(since, who, { limit } = {}) {

@@ -374,19 +374,38 @@ export const matrix = {
     } });
     const chunk = [...(data.chunk ?? [])].reverse();
     const r = joinedRoom(roomId, { state: { events: data.state ?? [] }, timeline: { events: chunk } }, creds.user_id);
-    // Edits made since: the newest one rides along with the message.
-    for (const e of r.events) {
-      const ev = chunk.find(x => x.event_id === e.id);
-      const edit = e.type === "message" && ev?.unsigned?.["m.relations"]?.["m.replace"];
-      if (edit?.sender !== ev?.sender || !edit?.content) continue;
-      const at = Math.floor((edit.origin_server_ts ?? Date.now()) / 1000);
-      if (edit.type === "m.room.encrypted" && e.encrypted) Object.assign(e, { raw: JSON.stringify({ ...edit, room_id: roomId }), edited_at: at });
-      else if (edit.type === "m.room.message" && !e.encrypted) {
-        const body = textOf(edit.content["m.new_content"] ?? edit.content, e.sender_name);
-        if (body) Object.assign(e, { body, edited_at: at });
-      }
-    }
+    withEdits(r.events, chunk, roomId);
     return { events: r.events.filter(e => e.type === "message" || e.type === "reaction"), from: data.end && data.end !== from && chunk.length ? data.end : null };
+  },
+
+  // The homeserver's own search of a room (it can't see into encrypted
+  // ones), newest first: {messages, next}, the messages as history has them
+  // and next for the page after (null when there's no more). A hit on an
+  // edit is the message it edited, as it reads now.
+  async search(creds, roomId, text, next) {
+    const data = await call(creds.base, "POST", "/_matrix/client/v3/search", { token: creds.token, query: { next_batch: next }, body: {
+      search_categories: { room_events: {
+        search_term: text, keys: ["content.body"], order_by: "recent",
+        filter: { rooms: [roomId], types: ["m.room.message"], limit: 20 },
+        event_context: { before_limit: 0, after_limit: 0, include_profile: true },
+      } },
+    } });
+    const found = data.search_categories?.room_events ?? {};
+    const results = (found.results ?? []).filter(x => x?.result?.event_id);
+    // Names as the room had them then.
+    const state = results.flatMap(x => Object.entries(x.context?.profile_info ?? {})
+      .map(([user, p]) => ({ type: "m.room.member", state_key: user, content: { displayname: p?.displayname } })));
+    const chunk = results.map(x => x.result).reverse();
+    const r = joinedRoom(roomId, { state: { events: state }, timeline: { events: chunk } }, creds.user_id);
+    withEdits(r.events, chunk, roomId);
+    const seen = new Set(), messages = [];
+    for (const e of r.events.reverse()) {
+      const hit = e.type === "edit" ? { ...e, id: e.target, edited_at: e.at } : e;
+      if ((hit.type !== "message" && hit.type !== "edit") || seen.has(hit.id)) continue;
+      seen.add(hit.id);
+      messages.push({ id: hit.id, sender: hit.sender, sender_name: hit.sender_name, mine: hit.mine, body: hit.body, at: hit.at, edited_at: hit.edited_at ?? null });
+    }
+    return { messages, next: typeof found.next_batch === "string" && found.next_batch && results.length ? found.next_batch : null };
   },
 
   // Deletes a message, or takes back a reaction (both are redactions).
@@ -395,6 +414,22 @@ export const matrix = {
       { token: creds.token, body: {} });
   },
 };
+
+// Edits made since a page of history: the newest one rides along with its
+// message (in unsigned m.relations, as the homeserver bundles it).
+function withEdits(events, chunk, roomId) {
+  for (const e of events) {
+    const ev = chunk.find(x => x.event_id === e.id);
+    const edit = e.type === "message" && ev?.unsigned?.["m.relations"]?.["m.replace"];
+    if (edit?.sender !== ev?.sender || !edit?.content) continue;
+    const at = Math.floor((edit.origin_server_ts ?? Date.now()) / 1000);
+    if (edit.type === "m.room.encrypted" && e.encrypted) Object.assign(e, { raw: JSON.stringify({ ...edit, room_id: roomId }), edited_at: at });
+    else if (edit.type === "m.room.message" && !e.encrypted) {
+      const body = textOf(edit.content["m.new_content"] ?? edit.content, e.sender_name);
+      if (body) Object.assign(e, { body, edited_at: at });
+    }
+  }
+}
 
 // "@sam:example.org" → "sam"
 const localpart = mxid => String(mxid).replace(/^@/, "").split(":")[0];
@@ -504,7 +539,7 @@ function joinedRoom(id, r, me) {
       const rel = c["m.relates_to"];
       if (rel?.rel_type === "m.replace" && rel.event_id) {
         const body = textOf(c["m.new_content"] ?? c, who(e.sender));
-        if (body) out.events.push({ type: "edit", target: rel.event_id, sender: e.sender, body, at });
+        if (body) out.events.push({ type: "edit", target: rel.event_id, sender: e.sender, sender_name: who(e.sender), mine: e.sender === me, body, at });
       } else {
         const body = textOf(c, who(e.sender));
         if (body) out.events.push({ type: "message", id: e.event_id, sender: e.sender, sender_name: who(e.sender), mine: e.sender === me, body, at, encrypted: false,

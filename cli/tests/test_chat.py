@@ -109,8 +109,14 @@ class FakeChatApi:
             raise site.SiteError("the site said: only the room's owner can take people out")
         return self.chat_members(room)
 
-    def chat_search(self, room, text):
+    def chat_search(self, room, text, months=None):
+        self.searched = (text, months)
         found = [m for m in reversed(self.msgs) if m["room"] == room and not m["deleted"] and text.lower() in m["body"].lower()]
+        if months:
+            # As a Matrix room's search answers: one found there that isn't here yet.
+            return {"more": False, "since": 1_700_000_000, "platform": "Matrix", "messages": found + [{
+                "id": None, "ext_id": "$old", "on_platform": True, "author_name": "Sam", "mine": False,
+                "created_at": 1_700_100_000, "body": f"older {text} from Matrix", "deleted": False}]}
         return {"more": False, "messages": found}
 
     def chat_typing(self, room):
@@ -336,6 +342,13 @@ def test_private_rooms_dms_search_and_presence():
 
         await type_line(pilot, "/search PIZZA")
         assert "1 message with" in shown(app) and "something else" not in shown(app)
+        assert api.searched == ("PIZZA", None)
+        # Back some months: Matrix's own search finds older history too.
+        await type_line(pilot, "/search 1y pizza")
+        assert api.searched == ("pizza", 12)
+        assert "2 messages with “pizza” since" in shown(app) and "older pizza from Matrix" in shown(app) and "on Matrix" in shown(app)
+        await type_line(pilot, "/search 6 months pizza")
+        assert api.searched == ("pizza", 6)
         await pilot.press("escape")                     # back to the room
         assert "something else" in shown(app) and app.focused.id == "input"
 
@@ -426,6 +439,7 @@ def test_site_chat_calls(fake):
     site.chat_add("r_a", "kim")
     site.chat_remove("r_a", "kim")
     site.chat_search("r_a", "pizza & beer")
+    site.chat_search("r_a", "pizza", months=6)
     site.chat_typing("r_a")
     assert site.chat_connections() == []
     site.chat_connect("matrix", {"homeserver": "matrix.org", "token": "syt_x"})
@@ -450,6 +464,7 @@ def test_site_chat_calls(fake):
         ("POST", "/chat/api/rooms/r_a/members", {"username": "kim"}),
         ("DELETE", "/chat/api/rooms/r_a/members/kim", None),
         ("GET", "/chat/api/rooms/r_a/search?q=pizza%20%26%20beer", None),
+        ("GET", "/chat/api/rooms/r_a/search?q=pizza&months=6", None),
         ("POST", "/chat/api/rooms/r_a/typing", None),
         ("GET", "/chat/api/connections", None),
         ("POST", "/chat/api/connections", {"provider": "matrix", "homeserver": "matrix.org", "token": "syt_x"}),

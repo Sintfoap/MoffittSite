@@ -352,6 +352,70 @@ test("scrolling back past what's here brings older history in from Matrix", asyn
   assert.equal((await api(ryan, "GET", `/rooms/${room.id}/messages?since=${page.seq}`)).json.messages.length, 0);
 });
 
+test("searching a Matrix room's history goes back months, through Matrix's own search", async () => {
+  const { env } = setup();
+  hs.limited = true;
+  const R = "!fam:matrix.test", sam = "@sam:matrix.test";
+  hs.backdate(hs.say(R, sam, "pizza on friday?"), 200);
+  hs.backdate(hs.say(R, sam, "pizza again, honestly"), 60);
+  const lunch = hs.say(R, sam, "lunch plans");
+  hs.backdate(lunch, 50);
+  hs.backdate(hs.edit(R, sam, lunch, "lunch: PIZZA"), 49);
+  hs.backdate(hs.say(R, sam, "tonight we eat pizza"), 40);
+  for (let i = 1; i <= 25; i++) hs.say(R, sam, `filler ${i}`);
+  hs.say(R, sam, "Pizza tonight?");
+  const ryan = await person(env, "ryan", "chat-bridges");
+  await connect(ryan);
+  const room = (await api(ryan, "GET", "/state")).json.rooms[0];
+  const find = async (q, months) => (await api(ryan, "GET", `/rooms/${room.id}/search?q=${encodeURIComponent(q)}${months == null ? "" : `&months=${months}`}`));
+
+  // Only the latest 20 are here, but Matrix finds the rest, newest first.
+  let r = (await find("pizza")).json;
+  assert.equal(r.platform, "Matrix");
+  assert.equal(r.since, null);
+  assert.deepEqual(r.messages.map(m => m.body), ["Pizza tonight?", "tonight we eat pizza", "lunch: PIZZA", "pizza again, honestly", "pizza on friday?"]);
+  assert.ok(r.messages[0].id > 0, "what's here is shown as it is here");
+  assert.deepEqual(r.messages.slice(1).map(m => [m.id, m.on_platform, m.author_name]), Array(4).fill([null, true, "Sam"]), "the rest isn't here yet");
+  assert.ok(r.messages[2].edited_at, "an edit is found as the message it changed");
+  assert.equal(r.messages[2].ext_id, lunch);
+
+  // Months back, from today.
+  assert.deepEqual((await find("pizza", 3)).json.messages.map(m => m.body), ["Pizza tonight?", "tonight we eat pizza", "lunch: PIZZA", "pizza again, honestly"]);
+  assert.deepEqual((await find("pizza", 1)).json.messages.map(m => m.body), ["Pizza tonight?"]);
+  assert.ok((await find("pizza", 1)).json.since < Date.now() / 1000 - 27 * 86400);
+  assert.equal((await find("pizza", 0)).json.messages.length, 5, "0 is any time");
+  // A phrase is found as it's written, not as words anywhere in a message.
+  assert.deepEqual((await find("pizza tonight", 6)).json.messages.map(m => m.body), ["Pizza tonight?"]);
+  for (const bad of ["-1", "61", "two"]) assert.equal((await find("pizza", bad)).status, 400, bad);
+
+  // Scrolling back brings them in; then they're found here, with ids.
+  let page = (await api(ryan, "GET", `/rooms/${room.id}/messages`)).json;
+  for (let i = 0; i < 5 && page.more; i++) page = (await api(ryan, "GET", `/rooms/${room.id}/messages?before=${page.messages[0].id}`)).json;
+  r = (await find("pizza")).json;
+  assert.equal(r.messages.length, 5);
+  assert.ok(r.messages.every(m => Number.isInteger(m.id) && !m.on_platform), "all here now, once each");
+
+  // A homeserver without search: what's here, and why there's nothing more.
+  hs.noSearch = true;
+  hs.say(R, sam, "pizza for later");
+  r = (await find("friday")).json;
+  assert.deepEqual(r.messages.map(m => m.body), ["pizza on friday?"]);
+  assert.match(r.platform_error, /Matrix said/);
+});
+
+test("an encrypted room isn't searched on Matrix, and its notes aren't matches", async () => {
+  const { env } = setup();
+  hs.room("!secret:matrix.test", { encrypted: true, members: { "@ryan:matrix.test": "Ryan", "@kim:matrix.test": "Kim" } });
+  hs.encrypted("!secret:matrix.test", "@kim:matrix.test");
+  const ryan = await person(env, "ryan", "chat-bridges");
+  await connect(ryan);
+  const room = (await api(ryan, "GET", "/state")).json.rooms.find(r => r.encrypted);
+  const r = (await api(ryan, "GET", `/rooms/${room.id}/search?q=Encrypted&months=6`)).json;
+  assert.deepEqual(r.messages, []);
+  assert.equal(r.platform, undefined);
+  assert.equal(hs.searched, undefined);
+});
+
 test("encrypted rooms come in as they are; a pasted token can't hold keys, so they stay read-only", async () => {
   const { env } = setup();
   hs.room("!secret:matrix.test", { encrypted: true, members: { "@ryan:matrix.test": "Ryan", "@kim:matrix.test": "Kim" } });

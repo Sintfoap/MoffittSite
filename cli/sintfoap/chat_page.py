@@ -41,7 +41,9 @@ someone; tab after @ completes a name from the room.
                              /dm @sam:matrix.org [N] starts one on Matrix, through connection N
   /accept  /decline          answer an invite to a room on Matrix (/leave leaves one there)
   /who                       who's in the room, and who's online (●)
-  /search TEXT               find messages in this room; /search on its own goes back
+  /search [6m|1y] TEXT       find messages in this room, from the past 6 months, a year…
+                             (any time without it; Matrix rooms search Matrix too);
+                             /search on its own goes back
   /rename NAME  /topic TEXT  change the open room (its owner, or an admin)
   /reply [@NAME] TEXT        answer the last message from someone else (or from NAME)
   /edit [TEXT]               change your last message (↑ on an empty line too)
@@ -202,15 +204,36 @@ def _names(names: list[str]) -> str:
 
 def render_results(found: dict, q: str) -> Text:
     msgs = found["messages"]
-    t = Text(f"{len(msgs)}{'+' if found.get('more') else ''} message{'' if len(msgs) == 1 else 's'} with “{q}”, newest first\n"
-             if msgs else f"Nothing here says “{q}”.\n", style=MUTED)
+    since = f" since {day(found['since'])}" if found.get("since") else ""
+    t = Text(f"{len(msgs)}{'+' if found.get('more') else ''} message{'' if len(msgs) == 1 else 's'} with “{q}”{since}, newest first\n"
+             if msgs else f"Nothing{since} says “{q}”.\n", style=MUTED)
+    if found.get("platform"):
+        t.append(f"Includes {found['platform']}'s own search, so history not loaded here yet is found too (/older brings it in).\n", style=FAINT)
+    if found.get("platform_error"):
+        t.append(f"Only what's here was searched: {found['platform_error']}\n", style=FAINT)
     for m in msgs:
         t.append(f"\n{m['author_name']}", style=f"bold {GOLD if m['mine'] else INK}")
-        t.append(f"  {day(m['created_at'])} {clock(m['created_at'])}\n", style=MUTED)
+        t.append(f"  {day(m['created_at'])} {clock(m['created_at'])}", style=MUTED)
+        if m.get("on_platform"):
+            t.append(f"  on {found.get('platform') or 'the platform'}", style=GOLD_DIM)
+        t.append("\n")
         body = Text(m["body"] + "\n", style=INK)
         body.highlight_words([q], style=f"bold {BG} on {GOLD}", case_sensitive=False)
         t.append_text(body)
     return t
+
+
+# "/search 6m pizza", "/search 1y pizza": how far back, then what to find.
+SEARCH_BACK = re.compile(r"^(\d{1,2})\s*(m|mo|months?|y|yrs?|years?)\s+(.+)$", re.IGNORECASE)
+
+
+def search_back(text: str) -> tuple[int | None, str]:
+    """'6m pizza' → (6, 'pizza'); '1y pizza' → (12, 'pizza'); 'pizza' → (None, 'pizza')."""
+    m = SEARCH_BACK.match(text)
+    if not m:
+        return None, text
+    n = int(m.group(1)) * (12 if m.group(2).lower().startswith("y") else 1)
+    return n, m.group(3).strip()
 
 
 class Clipped(Static):
@@ -778,10 +801,14 @@ class ChatPage(Page):
                 self.searching = None
                 self.status("")
                 return self.render_messages(to_bottom=True)
-            found = await self.call(self.api.chat_search, o["id"], rest)
+            if (self.room() or {}).get("encrypted"):
+                return self.status("This room is end-to-end encrypted: search it on the web chat page, where its keys are.", bad=True)
+            months, q = search_back(rest)
+            self.status("searching…")
+            found = await self.call(self.api.chat_search, o["id"], q, months)
             if found is not None and self.open is o:
-                self.searching = rest
-                self.query_one("#messages", Static).update(render_results(found, rest))
+                self.searching = q
+                self.query_one("#messages", Static).update(render_results(found, q))
                 self.query_one("#log", VerticalScroll).scroll_home(animate=False)
                 self.status("/search on its own goes back to the room")
         else:

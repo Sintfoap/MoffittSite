@@ -34,6 +34,8 @@ import { MXC, IMAGE_TYPES, MAX_MEDIA } from "./matrix.js";
 export class BadRequest extends Error {}
 const fail = msg => { throw new BadRequest(msg); };
 
+// How far back a search can go (months), and how many pages of a platform's search one takes.
+const MAX_MONTHS = 60, SEARCH_PAGES = 3;
 const LIMITS = { name: 60, topic: 200, body: 2000, request: 16 * 1024, crypto: 512 * 1024, encrypted: 64 * 1024, page: 50, rooms: 20, search: 100, results: 50 };
 // Seconds: how long after a poll someone still counts as here (or online
 // anywhere), and how long "typing…" lasts after a keypress was reported.
@@ -331,22 +333,90 @@ export async function people(env, user) {
   return results.map(p => ({ username: p.username, name: p.display_name, online: online.has(p.username) }));
 }
 
-// Messages in a room containing some text, newest first.
-export async function search(env, user, roomId, q) {
+// Messages in a room containing some text, newest first, from the last
+// `months` months (or any time, without it). In a bridge room the platform
+// is searched too, so history that hasn't been brought in yet is found: those
+// results have no id here (id: null), only ext_id, and scrolling back brings
+// them in. Encrypted messages are searched in the browser that holds their
+// keys, since here they're only a note.
+export async function search(env, user, roomId, q, { months } = {}) {
   const text = String(q ?? "").trim();
   if (text.length < 2) fail("search for at least 2 characters");
   if (text.length > LIMITS.search) fail(`search for at most ${LIMITS.search} characters`);
+  if (months != null && !(Number.isInteger(months) && months >= 0 && months <= MAX_MONTHS)) fail(`months must be a whole number from 0 to ${MAX_MONTHS}`);
   const d = await db(env);
   const { room } = await load(d, user, roomId);
   if (!room) return null;
+  const since = months ? monthsAgo(months) : 0;
   const like = "%" + text.replace(/[\\%_]/g, c => "\\" + c) + "%";
-  const { results } = await d.prepare(`${MESSAGE} WHERE m.room = ? AND m.deleted = 0 AND m.body LIKE ? ESCAPE '\\'
-    ORDER BY m.id DESC LIMIT ?`).bind(room.id, like, LIMITS.results + 1).all();
-  return {
-    more: results.length > LIMITS.results,
-    messages: results.slice(0, LIMITS.results).map(m => messageOut(m, user, room)),
-  };
+  const { results } = await d.prepare(`${MESSAGE} WHERE m.room = ? AND m.deleted = 0 AND m.encrypted = 0 AND m.created_at >= ? AND m.body LIKE ? ESCAPE '\\'
+    ORDER BY m.id DESC LIMIT ?`).bind(room.id, since, like, LIMITS.results + 1).all();
+  let found = results.slice(0, LIMITS.results).map(m => messageOut(m, user, room));
+  let more = results.length > LIMITS.results;
+  const out = { since: since || null };
+  if (bridged(room) && !room.encrypted) {
+    const there = await platformSearch(env, d, user, room, text, since);
+    if (there.error) out.platform_error = there.error;
+    else if (there.ok) {
+      out.platform = there.ok.name;
+      more ||= there.ok.more;
+      // What's here already is shown as it is here; the rest as it is there.
+      const have = new Set(found.map(m => m.ext_id));
+      const fresh = there.ok.messages.filter(e => !have.has(e.id));
+      const local = new Map();
+      if (fresh.length) {
+        const { results: rows } = await d.prepare(`${MESSAGE} WHERE m.room = ? AND m.ext_id IN (${fresh.map(() => "?").join(", ")})`)
+          .bind(room.id, ...fresh.map(e => e.id)).all();
+        for (const m of rows) local.set(m.ext_id, m);
+      }
+      for (const e of fresh) {
+        const m = local.get(e.id);
+        if (m && !m.deleted) found.push(messageOut(m, user, room));
+        else if (!m) found.push(platformMessage(e));
+      }
+      found.sort((a, b) => b.created_at - a.created_at || (b.id ?? -Infinity) - (a.id ?? -Infinity));
+      if (found.length > LIMITS.results) { found = found.slice(0, LIMITS.results); more = true; }
+    }
+  }
+  return { ...out, more, messages: found };
 }
+
+// The start of the day `months` months ago (seconds).
+function monthsAgo(months) {
+  const t = new Date(now() * 1000);
+  t.setUTCMonth(t.getUTCMonth() - months);
+  t.setUTCHours(0, 0, 0, 0);
+  return Math.floor(t / 1000);
+}
+
+// The platform's own search of a bridge room, a few pages at most, back to
+// `since`: {ok: {name, messages, more}} (null if it can't search) or {error}.
+// Only messages that really contain the text count, as they do here (a
+// platform's search can match words anywhere in a message).
+async function platformSearch(env, d, user, room, text, since) {
+  const lower = text.toLowerCase();
+  return onPlatform(env, d, user, room, async (p, creds) => {
+    if (!p.search) return null;
+    const messages = [];
+    let next, more = false;
+    for (let page = 0; page < SEARCH_PAGES; page++) {
+      const got = await p.search(creds, room.ext_id, text, next);
+      messages.push(...got.messages.filter(e => e.at >= since && e.body.toLowerCase().includes(lower)));
+      next = got.next;
+      const older = got.messages.length && got.messages.at(-1).at < since;
+      more = !!next && !older;
+      if (!more || messages.length > LIMITS.results) break;
+    }
+    return { name: p.name, messages, more };
+  });
+}
+
+// A message found on the platform that isn't here yet, shaped like one that is.
+const platformMessage = e => ({
+  id: null, seq: null, created_at: e.at, edited_at: e.edited_at ?? null, deleted: false, body: e.body,
+  author: e.sender, author_name: e.sender_name || e.sender, mine: !!e.mine, can_edit: false, can_delete: false, mentions_me: false,
+  reactions: [], reply: null, external: !e.mine, encrypted: false, ext_id: e.id, on_platform: true,
+});
 
 // Tells the room's other members you're typing, for a few seconds.
 export async function typing(env, user, roomId) {
@@ -781,7 +851,7 @@ export async function deleteMessage(env, user, roomId, messageId) {
 //   GET    /chat/api/rooms/<id>/members
 //   POST   /chat/api/rooms/<id>/members                 {username}   add someone to a private room (members)
 //   DELETE /chat/api/rooms/<id>/members/<username>      take someone out of a private room (owner, or yourself)
-//   GET    /chat/api/rooms/<id>/search?q=<text>
+//   GET    /chat/api/rooms/<id>/search?q=<text>[&months=<n>]   newest first; in a bridge room, its platform's search too
 //   POST   /chat/api/rooms/<id>/typing
 //   GET    /chat/api/rooms/<id>/messages[?since=<seq> | ?before=<message id>]   (+ who's here and typing)
 //   POST   /chat/api/rooms/<id>/messages            {body}   (members)
@@ -936,7 +1006,8 @@ export async function chat(request, env, user, pathname, ctx) {
     if (sub === "search") {
       if (extra) return notFound();
       if (method !== "GET") return notAllowed();
-      return reply(await search(env, user, id, new URL(request.url).searchParams.get("q")));
+      const q = new URL(request.url).searchParams;
+      return reply(await search(env, user, id, q.get("q"), { months: q.has("months") ? int(q.get("months")) ?? NaN : undefined }));
     }
     if (sub === "members") {
       if (extra) return method === "DELETE" ? reply(await removeMember(env, user, id, extra)) : notAllowed();
