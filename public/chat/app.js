@@ -8,6 +8,7 @@
 // each connection; what you send there goes to that platform. Encrypted
 // rooms are decrypted and encrypted here, in this browser (e2ee.js).
 
+import { pack, unpack, forget } from "/chat/carry.js";
 import { Vault, Shelf, textOf, textContent, editContent, reactionContent, encryptAttachment, decryptAttachment, imageOf, imageContent } from "/chat/e2ee.js";
 import { toHtml } from "/chat/format.js";
 import { openEmojiPicker, closeEmojiPicker, isEmojiPickerOpen } from "/chat/emoji-picker.js";
@@ -32,38 +33,85 @@ let replyingTo = null;    // the message the next one you send answers
 let bridges = { allowed: false };   // whether you can connect other platforms, and which
 
 // ── end-to-end encryption ────────────────────────────────────────────────
-// A connection's keys live in the browser that turned encryption on for it:
-// a key of its own making in localStorage (what proves it to the site, and
-// locks the store), and the crypto library's store in IndexedDB.
+// A connection's keys are made in the browser that turns encryption on for
+// it, and kept there: the crypto library's store in IndexedDB, locked with a
+// browser key in localStorage. A copy of that store, still locked, goes to
+// the site after it changes (carry.js), and the site keeps the browser key
+// sealed, so the keys follow you: opening an encrypted room in another of
+// your browsers takes them there. One browser holds them at a time, proving
+// it with a seat key of its own (browsers from before keys could move use
+// the browser key for that).
 
 const vaults = new Map();   // connection id → Promise<Vault>
 const ready = new Map();    // connection id → Vault, once it's open
 const keyName = conn => `sintfoap-e2ee:${conn}`;
-const storedKey = conn => { try { return localStorage.getItem(keyName(conn)); } catch { return null; } };
+const seatName = conn => `sintfoap-e2ee-seat:${conn}`;
+const storeName = conn => `sintfoap-e2ee-${conn}`;
+const shelfName = conn => `sintfoap-e2ee-read-${conn}`;
+const stored = name => { try { return localStorage.getItem(name); } catch { return null; } };
+const storedKey = conn => stored(keyName(conn));
+const seatOf = conn => stored(seatName(conn)) || storedKey(conn);
+const newKey = () => [...crypto.getRandomValues(new Uint8Array(32))].map(b => b.toString(16).padStart(2, "0")).join("");
+function keep(conn, key, seat) {
+  try { localStorage.setItem(keyName(conn), key); localStorage.setItem(seatName(conn), seat); }
+  catch { throw new Error("this browser won't keep the keys (is it in private mode?)"); }
+}
 let crypto$ = null;         // the library, loaded the first time it's needed (it's large)
 
 function vaultFor(conn, { create = false } = {}) {
   if (vaults.has(conn)) return vaults.get(conn);
   let key = storedKey(conn);
   if (!key && !create) return null;
-  if (!key) {
-    key = [...crypto.getRandomValues(new Uint8Array(32))].map(b => b.toString(16).padStart(2, "0")).join("");
-    try { localStorage.setItem(keyName(conn), key); } catch { throw new Error("this browser won't keep the keys (is it in private mode?)"); }
-  }
+  if (!key) { key = newKey(); keep(conn, key, newKey()); }
+  const seat = seatOf(conn);
   const made = (async () => {
     crypto$ ??= import("/chat/vendor/matrix-crypto/index.mjs").then(async lib => { await lib.initAsync(); return lib; });
     const lib = await crypto$;
-    return Vault.open(lib, { key, store: `sintfoap-e2ee-${conn}`, passphrase: key,
-      post: (op, body) => api("POST", `/connections/${conn}/crypto/${op}`, body) });
+    return Vault.open(lib, { key: seat, vault: key, store: storeName(conn), passphrase: key,
+      pack: () => pack(indexedDB, storeName(conn)),
+      post: async (op, body) => {
+        try { return await api("POST", `/connections/${conn}/crypto/${op}`, body); }
+        catch (err) { if (err.code === "elsewhere") letGo(conn); throw err; }
+      } });
   })();
   vaults.set(conn, made);
   made.then(v => ready.set(conn, v), () => vaults.delete(conn));
   return made;
 }
 
+// The keys went to another of your browsers: this one forgets its copy, and
+// takes them back when you next open an encrypted room here.
+function letGo(conn) {
+  if (!storedKey(conn)) return;
+  const v = ready.get(conn);
+  vaults.delete(conn); ready.delete(conn); shelves.delete(conn);
+  try { localStorage.removeItem(keyName(conn)); localStorage.removeItem(seatName(conn)); } catch { /* nothing kept */ }
+  (async () => {
+    await v?.close();
+    await forget(indexedDB, storeName(conn));
+    await new Promise(r => { const q = indexedDB.deleteDatabase(shelfName(conn)); q.onsuccess = q.onerror = r; });
+  })().catch(() => {});
+  loadRooms().then(() => { const r = open && rooms.find(r => r.id === open.id); if (r?.connection === conn) { open = null; return openRoom(r.id); } }).catch(() => {});
+}
+
+// Brings the keys here from wherever they are: "ok", or "busy" while
+// another of your browsers is using them (force takes them anyway).
+async function takeKeys(conn, { force = false } = {}) {
+  const seat = newKey();
+  const out = await api("POST", `/connections/${conn}/crypto/take`, { key: seat, force });
+  if (out.busy) return "busy";
+  await unpack(indexedDB, storeName(conn), out.copy);
+  keep(conn, out.vault, seat);
+  return "ok";
+}
+const takeBusy = new Set();   // connections whose keys another browser is using just now
+
 // What this browser can do in an encrypted room: "ready", "off" (nobody holds
-// the keys yet), "elsewhere" (another browser does), or "token" (it can't).
-const keysHere = r => !r.can_encrypt ? "token" : storedKey(r.connection) ? "ready" : r.keys_held ? "elsewhere" : "off";
+// the keys yet), "movable" (another of your browsers does, and they can come
+// here), "elsewhere" (another browser does, from before keys could move), or
+// "token" (it can't).
+const keysHere = r => !r.can_encrypt ? "token" : storedKey(r.connection) ? "ready"
+  : r.keys_kept ? "movable" : r.keys_held ? "elsewhere" : "off";
 
 // What this browser read before, kept sealed (e2ee.js, Shelf), so a chat
 // opens with its messages readable instead of decrypting them all again.
@@ -72,7 +120,7 @@ function shelfFor(conn) {
   if (shelves.has(conn)) return shelves.get(conn);
   const key = storedKey(conn);
   if (!key) return Promise.resolve(null);
-  const made = Shelf.open(key, { name: `sintfoap-e2ee-read-${conn}` }).catch(() => null);
+  const made = Shelf.open(key, { name: shelfName(conn) }).catch(() => null);
   shelves.set(conn, made);
   return made;
 }
@@ -221,7 +269,7 @@ async function api(method, path, body) {
   });
   if (res.status === 401) { location.href = "/login?next=" + encodeURIComponent(location.pathname); throw new Error("not signed in"); }
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw Object.assign(new Error(data.error || `request failed (${res.status})`), { status: res.status });
+  if (!res.ok) throw Object.assign(new Error(data.error || `request failed (${res.status})`), { status: res.status, code: data.code });
   return data;
 }
 
@@ -256,7 +304,7 @@ const NETWORK = { matrix: "Matrix" };
 
 function renderRooms() {
   const row = r => `<button data-room="${esc(r.id)}" aria-current="${open?.id === r.id}" title="${esc(r.topic || r.name)}" class="${r.kind}">
-    ${r.kind === "dm" ? `<span class="dot${online.has(r.with) ? " on" : ""}" title="${online.has(r.with) ? "Online" : "Away"}"></span>` : ""}<span class="name">${esc(r.name)}</span>${r.invite ? `<span class="n invite" title="${esc(r.invite.by)} invited you">invite</span>` : ""}${r.encrypted ? `<span class="e2e" title="End-to-end encrypted${keysHere(r) === "ready" ? ", with the keys in this browser" : ": turn encryption on in the room to read it"}">E2E</span>` : ""}${r.mentions && open?.id !== r.id ? `<span class="n at" title="You were mentioned">@${r.mentions > 1 ? r.mentions : ""}</span>` : ""}${r.unread && open?.id !== r.id ? `<span class="n">${r.unread > 99 ? "99+" : r.unread}</span>` : ""}
+    ${r.kind === "dm" ? `<span class="dot${online.has(r.with) ? " on" : ""}" title="${online.has(r.with) ? "Online" : "Away"}"></span>` : ""}<span class="name">${esc(r.name)}</span>${r.invite ? `<span class="n invite" title="${esc(r.invite.by)} invited you">invite</span>` : ""}${r.encrypted ? `<span class="e2e" title="End-to-end encrypted${keysHere(r) === "ready" ? ", with the keys in this browser" : keysHere(r) === "movable" ? ": open it to bring your keys here" : ": turn encryption on in the room to read it"}">E2E</span>` : ""}${r.mentions && open?.id !== r.id ? `<span class="n at" title="You were mentioned">@${r.mentions > 1 ? r.mentions : ""}</span>` : ""}${r.unread && open?.id !== r.id ? `<span class="n">${r.unread > 99 ? "99+" : r.unread}</span>` : ""}
     ${r.joined ? "" : `<span class="count">${r.members}</span>`}</button>`;
   const joined = rooms.filter(r => r.joined), others = rooms.filter(r => !r.joined);
   const dms = joined.filter(r => r.kind === "dm");
@@ -321,6 +369,11 @@ function closeRoom() {
 async function openRoom(id) {
   const room = rooms.find(r => r.id === id);
   if (!room) { closeRoom(); return; }
+  // Your keys are in another of your browsers: they come here, unless that one's using them.
+  if (room.encrypted && keysHere(room) === "movable" && !takeBusy.has(room.connection)) {
+    try { if (await takeKeys(room.connection) === "busy") takeBusy.add(room.connection); }
+    catch (err) { toast(err.message); }
+  }
   const data = await api("GET", `/rooms/${id}/messages`);
   await readable(data.messages, id);
   open = { id, seq: data.seq, more: data.more, joined: data.joined, messages: new Map(data.messages.map(m => [m.id, m])), members: [],
@@ -444,11 +497,13 @@ function showFlows(flows, vault) {
 
 function encryptionBar(room) {
   const why = {
-    token: "This room is end-to-end encrypted. To read and send here, remove this connection and connect again with your Matrix username and password: that gives the site a session of its own, whose keys stay in your browser. (A pasted access token's session keeps its keys in its own app.)",
-    elsewhere: "This room is end-to-end encrypted, and its keys are in another browser where you turned encryption on. Use that one, or remove the connection and connect again to move them here.",
-    off: "This room is end-to-end encrypted. Turn encryption on to read and send here: the keys are made and kept in this browser, never on the site.",
+    token: "This room is end-to-end encrypted. To read and send here, remove this connection and connect again with your Matrix username and password: that gives the site a session of its own, whose keys are made in your browser and follow you to your others. (A pasted access token's session keeps its keys in its own app.)",
+    movable: "This room is end-to-end encrypted, and your keys for it are in use in another of your browsers just now. Bring them here, and that one hands them over: it can read this room again once you open it there.",
+    elsewhere: "This room is end-to-end encrypted, and its keys are in the browser where you turned encryption on. Open chat there once and they'll follow you here.",
+    off: "This room is end-to-end encrypted. Turn encryption on to read and send here: the keys are made in this browser, and a locked copy is kept with your account so they follow you to your other browsers.",
   }[keysHere(room)];
-  return `<div class="joinbar">${esc(why)}${keysHere(room) === "off" ? ` <button class="btn" id="e2ee-on">Turn on encryption here</button>` : ""}</div>`;
+  const button = { off: ` <button class="btn" id="e2ee-on">Turn on encryption here</button>`, movable: ` <button class="btn" id="e2ee-take">Bring them here</button>` }[keysHere(room)] ?? "";
+  return `<div class="joinbar">${esc(why)}${button}</div>`;
 }
 
 const time = t => new Date(t * 1000).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
@@ -596,8 +651,17 @@ $("#room").addEventListener("click", async e => {
       t.disabled = true; t.textContent = "Making keys…";
       const room = rooms.find(r => r.id === open.id);
       try { await vaultFor(room.connection, { create: true }); }
-      catch (err) { try { localStorage.removeItem(keyName(room.connection)); } catch { /* nothing kept */ } throw err; }
-      toast("Encryption is on in this browser. Messages sent from now on can be read here.");
+      catch (err) { try { localStorage.removeItem(keyName(room.connection)); localStorage.removeItem(seatName(room.connection)); } catch { /* nothing kept */ } throw err; }
+      toast("Encryption is on. Messages sent from now on can be read here, and in your other browsers once you open them there.");
+      await loadRooms(); open = null; await openRoom(room.id);
+    }
+    else if (t.id === "e2ee-take") {
+      t.disabled = true; t.textContent = "Bringing them…";
+      const room = rooms.find(r => r.id === open.id);
+      try { await takeKeys(room.connection, { force: true }); }
+      catch (err) { t.disabled = false; t.textContent = "Bring them here"; throw err; }
+      takeBusy.delete(room.connection);
+      toast("Your encryption keys are here now.");
       await loadRooms(); open = null; await openRoom(room.id);
     }
     else if (t.id === "verify-device") {
@@ -897,7 +961,7 @@ async function runSearch({ further = false } = {}) {
   try {
     let data;
     if (room?.encrypted) {
-      if (keysHere(room) !== "ready") return toast("This room is end-to-end encrypted: search it in the browser that holds its keys.");
+      if (keysHere(room) !== "ready") return toast("This room is end-to-end encrypted: its keys need to be in this browser to search it.");
       $("#log").innerHTML = `<div class="results-head">Reading back through this room for “${esc(q)}”…</div>`;
       data = await searchLocked(q, searchMonths);
     } else {
@@ -1134,7 +1198,9 @@ async function showConnections() {
 }
 // Where a connection's encryption keys are, in a few words.
 const encryptionNote = c => !c.can_encrypt ? "encrypted rooms need a password sign-in"
-  : storedKey(c.id) ? "encryption keys in this browser" : c.keys_held ? "encryption keys in another browser" : "encryption not turned on yet";
+  : storedKey(c.id) ? (c.keys_kept ? "encryption keys here, and they follow you" : "encryption keys in this browser")
+  : c.keys_kept ? "encryption keys follow you: open an encrypted room to bring them here"
+  : c.keys_held ? "encryption keys in another browser (open chat there once and they'll follow you)" : "encryption not turned on yet";
 function drawProvider() {
   const sel = $("#connect-provider"), providers = bridges.providers || [];
   if (sel.options.length !== providers.length) sel.innerHTML = providers.map(p => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join("");

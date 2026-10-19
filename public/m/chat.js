@@ -2,7 +2,7 @@
 // a composer at the bottom. Reads and writes /chat/api/ (src/chat.js), like
 // the web page and the terminal, and asks for changes every few seconds.
 // End-to-end encrypted rooms (from a Matrix connection) are read and written
-// on the full chat page, where their keys are.
+// on the full chat page, which brings their keys to whichever browser opens it.
 
 import { $, esc, api, icon, toast, failed, sheet, ago, every } from "./ui.js";
 import { toHtml } from "../chat/format.js";
@@ -129,7 +129,7 @@ function drawRoom() {
   const sub = r.kind === "bridge" ? `${NETWORK[r.provider] || r.provider}${r.via ? " · " + r.via : ""}` : r.kind === "dm" ? "Direct message" : r.topic || `${r.members} members`;
   const bar = r.invite ? `<div class="joinbar">${esc(r.invite.by)} invited you to this ${esc(NETWORK[r.provider] || r.provider)} room.
       <span><button class="btn" data-join>Accept</button><button class="btn ghost" data-leave>Decline</button></span></div>`
-    : r.encrypted ? `<div class="joinbar">${icon("lock", 16)} End-to-end encrypted. Its keys stay in the browser, so read and send on the full chat page.
+    : r.encrypted ? `<div class="joinbar">${icon("lock", 16)} End-to-end encrypted. Read and send on the full chat page, and your keys will come to this browser.
       <a class="btn" href="/chat/#${esc(r.id)}">Open</a></div>`
     : !open.joined ? `<div class="joinbar">Join to post here and get it in your list. <button class="btn" data-join>Join</button></div>` : "";
   main.innerHTML = `<header class="bar room-bar"><a class="icon-btn" href="#chat" aria-label="Back to rooms">${icon("back")}</a>

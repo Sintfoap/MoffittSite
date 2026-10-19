@@ -1,11 +1,13 @@
-// End-to-end encryption for chat connections, done here in the browser so
-// the keys never leave it. Matrix's own crypto library (vendor/matrix-crypto,
-// the one Element uses) holds this connection's device keys, in this
-// browser's storage. The site only passes things along:
+// End-to-end encryption for chat connections, done here in the browser.
+// Matrix's own crypto library (vendor/matrix-crypto, the one Element uses)
+// holds this connection's device keys, in this browser's storage, locked
+// with the connection's browser key. The site only passes things along:
 //   claim    makes this browser the one that holds the keys (once)
 //   inbox    what each sync brought for them: to-device messages (room keys
 //            from other people's devices) and whose devices changed
 //   request  a key request the library wants made, sent on with the sign-in
+//   save     a copy of the keys as they are (carry.js), still locked with the
+//            browser key, so they can follow you to your other browsers
 // Encrypted messages come with `raw`, the event as it came, to decrypt here;
 // sending encrypts here first and gives the site only the result.
 //
@@ -25,21 +27,60 @@ export class Vault {
     this.lib = lib; this.machine = machine; this.post = post; this.key = key;
     this.chain = Promise.resolve();
     this.cache = new Map();   // raw → decrypted content (or null: no key for it yet)
+    this.acked = 0;           // the last inbox item the library has taken in
   }
 
-  // key: 64 hex characters only this browser knows. store: where the library
-  // keeps the keys (IndexedDB) — left out, they're only kept in memory.
-  static async open(lib, { post, key, store, passphrase }) {
-    const { device } = await post("claim", { key });
+  // key: 64 hex characters only this browser knows (its seat, which proves
+  // it's the one holding the keys). store: where the library keeps the keys
+  // (IndexedDB), locked with passphrase — left out, they're only kept in
+  // memory. vault: the browser key (the passphrase), for the site to keep
+  // sealed; pack() → a copy of the store (carry.js), sent after changes.
+  static async open(lib, { post, key, store, passphrase, vault: browserKey, pack }) {
+    const { device, saved } = await post("claim", { key, ...(browserKey ? { vault: browserKey } : {}) });
     const machine = await lib.OlmMachine.initialize(new lib.UserId(device.user_id), new lib.DeviceId(device.device_id), store, passphrase);
     const vault = new Vault(lib, machine, post, key);
     vault.device = device;
+    vault.pack = pack ?? null;
     // A backup key from an earlier unlock, kept in the library's store.
     const kept = await machine.getBackupKeys();
     if (kept?.decryptionKey && kept.backupVersion) vault.backup = { key: kept.decryptionKey, version: kept.backupVersion };
     vault.tried = new Set();   // sessions already asked of the backup
     await vault.pump();
+    // (Keys from before they could follow you: the first copy goes now.)
+    if (!saved) vault.changed();
     return vault;
+  }
+
+  // ── a copy for your other browsers ───────────────────────────────────
+  // The library's store changes as keys come and go; a moment after it does,
+  // a copy goes to the site, saying how far through the inbox it got, so
+  // whichever browser takes the keys next carries on from there.
+
+  changed() {
+    if (!this.pack || this.closed) return;
+    this.dirty = true;
+    clearTimeout(this.saving);
+    this.saving = setTimeout(() => this.save().catch(err => console.warn("keeping a copy of the keys:", err.message)), 1500);
+    this.saving.unref?.();
+  }
+
+  save() {
+    clearTimeout(this.saving);
+    return this.lock(async () => {
+      if (!this.dirty || !this.pack || this.closed) return;
+      this.dirty = false;
+      try {
+        const copy = await this.pack();
+        if (copy) await this.ask("save", { copy, ack: this.acked });
+      } catch (err) { this.dirty = true; throw err; }
+    });
+  }
+
+  // This browser stops using the keys (they've gone to another one).
+  close() {
+    this.closed = true;
+    clearTimeout(this.saving);
+    return this.lock(async () => { try { this.machine.close(); } catch { /* already */ } });
   }
 
   // {verified, backup}: whether this session is signed by the account's
@@ -220,6 +261,7 @@ export class Vault {
     if (!d) return false;
     const session = JSON.parse(key.decryptV1(d.ephemeral, d.mac, d.ciphertext));
     await this.machine.importBackedUpRoomKeys(new Map([[new lib.RoomId(event.room_id), new Map([[sid, session]])]]), () => {}, version);
+    this.changed();
     return true;
   }
 
@@ -254,7 +296,7 @@ export class Vault {
           await this.machine.receiveSyncChanges(JSON.stringify(it.to_device), lists, otk, fallback);
         }
         got = true;
-        if (items.length) { ack = items.at(-1).id; this.forgetMisses(); await this.takeSecrets(); }
+        if (items.length) { ack = this.acked = items.at(-1).id; this.forgetMisses(); await this.takeSecrets(); this.changed(); }
         await this.flush();
         if (!items.length) break;
       }
@@ -288,6 +330,7 @@ export class Vault {
     const [method, path] = route();
     const { response } = await this.ask("request", { method, path, body: JSON.parse(r.body || "{}") });
     if (r.id) await this.machine.markRequestAsSent(r.id, r.type, JSON.stringify(response));
+    this.changed();
   }
 
   // An encrypted event as it came → its decrypted content, or null when this
@@ -324,6 +367,7 @@ export class Vault {
       if (claim) await this.send(claim);
       for (const r of await this.machine.shareRoomKey(new lib.RoomId(roomId), users(), new lib.EncryptionSettings())) await this.send(r);
       const out = JSON.parse(await this.machine.encryptRoomEvent(new lib.RoomId(roomId), type, JSON.stringify(content)));
+      this.changed();
       // What an edit replaces, or a reaction is on, stays readable, as Matrix has it.
       if (content["m.relates_to"] && !out["m.relates_to"]) out["m.relates_to"] = content["m.relates_to"];
       return out;

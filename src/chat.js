@@ -27,7 +27,7 @@ import { db, now } from "./db.js";
 import { sameOrigin } from "./account.js";
 import { randomBytes, hex, sha256 } from "./crypto.js";
 import { canBridge, bridgeInfo, listConnections, addConnection, removeConnection, syncConnection, syncAll, syncRoom, onPlatform, cryptoOp, backfill,
-  joinBridged, leaveBridged, startDm, ENCRYPTED_NOTE } from "./bridges.js";
+  joinBridged, leaveBridged, startDm, ENCRYPTED_NOTE, MAX_COPY } from "./bridges.js";
 import { chatPushes } from "./notify.js";
 import { GROUPS as EMOJI_GROUPS, ALIASES as EMOJI_ALIASES } from "../public/chat/emoji.js";
 import { gifInfo, gifImageSources, gifSearch, gifCategories, favorites, favorite, isGif, fetchGif } from "./gifs.js";
@@ -38,7 +38,7 @@ const fail = msg => { throw new BadRequest(msg); };
 
 // How far back a search can go (months), and how many pages of a platform's search one takes.
 const MAX_MONTHS = 60, SEARCH_PAGES = 3;
-const LIMITS = { name: 60, topic: 200, body: 2000, request: 16 * 1024, crypto: 512 * 1024, encrypted: 64 * 1024, page: 50, rooms: 20, search: 100, results: 50 };
+const LIMITS = { name: 60, topic: 200, body: 2000, request: 16 * 1024, crypto: 512 * 1024, copy: MAX_COPY + 1024, encrypted: 64 * 1024, page: 50, rooms: 20, search: 100, results: 50 };
 // Seconds: how long after a poll someone still counts as here (or online
 // anywhere), and how long "typing…" lasts after a keypress was reported.
 const HERE = 30, ONLINE = 60, TYPING = 6;
@@ -126,7 +126,7 @@ export async function listRooms(env, user) {
            (SELECT u.display_name || char(31) || u.username FROM chat_members o JOIN users u ON u.id = o.user_id
               WHERE r.kind = 'dm' AND o.room = r.id AND o.user_id != ?) AS dm_with,
            (SELECT display_name FROM users WHERE users.id = r.owner) AS owner_name,
-           c.provider, c.label AS via, c.can_encrypt, c.crypto_owner,
+           c.provider, c.label AS via, c.can_encrypt, c.crypto_owner, c.crypto_saved_at,
            (SELECT COUNT(*) FROM chat_members m WHERE m.room = r.id) AS members,
            me.read_seq,
            (SELECT COUNT(*) FROM chat_messages x WHERE me.read_seq IS NOT NULL AND x.room = r.id
@@ -155,7 +155,7 @@ function roomOut(r, user, joined) {
     // An invite there you haven't answered: {by}.
     ...(kind === "bridge" && r.ext_invite ? { invite: JSON.parse(r.ext_invite) } : {}),
     // For the browser with the connection's keys: the room there, and whether keys can be or are held.
-    ...(kind === "bridge" && r.encrypted ? { ext_room: r.ext_id, keys_held: !!r.crypto_owner } : {}),
+    ...(kind === "bridge" && r.encrypted ? { ext_room: r.ext_id, keys_held: !!r.crypto_owner, keys_kept: !!(r.crypto_owner && r.crypto_saved_at) } : {}),
   };
 }
 
@@ -870,9 +870,11 @@ export async function deleteMessage(env, user, roomId, messageId) {
 //   DELETE /chat/api/connections/<id>               the connection and its rooms
 //   POST   /chat/api/connections/<id>/sync          sync it now, and try again if it had stopped working
 //   POST   /chat/api/connections/<id>/dm            {user, encrypted?} → {id}: a direct message with someone there
-//   POST   /chat/api/connections/<id>/crypto/claim    {key}   this browser holds the encryption keys → {device}
+//   POST   /chat/api/connections/<id>/crypto/claim    {key, vault?}   this browser holds the encryption keys → {device, kept, saved}
 //   POST   /chat/api/connections/<id>/crypto/inbox    {key, ack?}   what syncs brought for the keys → {items, counts}
 //   POST   /chat/api/connections/<id>/crypto/request  {key, method, path, body?}   a key request, passed on → {response}
+//   POST   /chat/api/connections/<id>/crypto/save     {key, copy, ack}   a copy of the keys, for your other browsers → {saved}
+//   POST   /chat/api/connections/<id>/crypto/take     {key, force?}   move the keys to this browser → {device, vault, copy} or {busy}
 //   GET    /chat/api/gifs[?q=<text>&pos=<next>]     GIFs for the picker: a search, or what's trending → {results, next}
 //   GET    /chat/api/gifs/categories                the picker's category tiles
 //   GET    /chat/api/gifs/favorites                 your starred GIFs
@@ -916,7 +918,7 @@ export async function chat(request, env, user, pathname, ctx) {
     // Turns a result from the functions above into a response.
     const reply = (out, status = 200) =>
       !out ? notFound()
-      : out.forbidden ? json({ error: out.forbidden }, 403)
+      : out.forbidden ? json({ error: out.forbidden, ...(out.code ? { code: out.code } : {}) }, 403)
       : out.slow ? json({ error: out.slow }, 429)
       // The other platform refused or couldn't be reached.
       : out.failed ? json({ error: out.failed }, 502)
@@ -964,9 +966,9 @@ export async function chat(request, env, user, pathname, ctx) {
         return method === "POST" ? reply(await addConnection(env, user, await readJson(request), fail), 201) : notAllowed();
       }
       if (sub === "crypto" && extra && !action) {
-        if (!["claim", "inbox", "request"].includes(extra)) return notFound();
+        if (!["claim", "inbox", "request", "save", "take"].includes(extra)) return notFound();
         if (method !== "POST") return notAllowed();
-        return reply(await cryptoOp(env, user, id, extra, await readJson(request, LIMITS.crypto), fail));
+        return reply(await cryptoOp(env, user, id, extra, await readJson(request, extra === "save" ? LIMITS.copy : LIMITS.crypto), fail));
       }
       if (sub === "dm" && !extra && !action) {
         if (method !== "POST") return notAllowed();

@@ -380,6 +380,17 @@ class ConnectDialog(ModalScreen[dict | None]):
         self.dismiss(None)
 
 
+def encryption_note(c: dict) -> str:
+    """Where a connection's encryption keys are, as the web page says it (the terminal never holds them)."""
+    if not c.get("can_encrypt"):
+        return "encrypted rooms need a password sign-in"
+    if c.get("keys_kept"):
+        return "encryption keys follow you to any browser you open chat in"
+    if c.get("keys_held"):
+        return "encryption keys in one browser (open chat there once and they'll follow you)"
+    return "encryption not turned on yet"
+
+
 def render_connections(conns: list[dict], bridges: dict) -> Text:
     t = Text("Connections\n", style=f"bold {INK}")
     if not bridges.get("ready", True):
@@ -390,6 +401,7 @@ def render_connections(conns: list[dict], bridges: dict) -> Text:
         t.append(c["label"], style=INK)
         if c["status"] == "ok":
             t.append(f"  {plural(c['rooms'], 'room')}", style=MUTED)
+            t.append(f"  · {encryption_note(c)}", style=MUTED)
         if c.get("error"):
             t.append(f"\n   {c['error']}", style=BAD)
         t.append("\n")
@@ -583,7 +595,7 @@ class ChatPage(Page):
         if kind == "bridge":
             t.append(f"   on {NETWORK.get(r.get('provider'), r.get('provider'))} as {r.get('via')}", style=MUTED)
             if r.get("encrypted"):
-                t.append("   end-to-end encrypted: read, send and verify it on the web chat page, where its keys are", style=GOLD_DIM)
+                t.append("   end-to-end encrypted: read, send and verify it on the web chat page, in any browser you're signed in to", style=GOLD_DIM)
         elif kind == "dm":
             t.append(f"   direct message with @{r.get('with') or '?'}", style=MUTED)
             if r.get("with") in self.online:
@@ -680,7 +692,7 @@ class ChatPage(Page):
         if not self.open["joined"]:
             return self.status("Join the room to post: /join", bad=True)
         if (self.room() or {}).get("encrypted"):
-            return self.status("This room is end-to-end encrypted, and its keys stay in your browser: send to it from the web chat page.", bad=True)
+            return self.status("This room is end-to-end encrypted, and its keys are only ever in a browser: send to it from the web chat page, in any browser you're signed in to.", bad=True)
         room_id = self.open["id"]
         self._typed = 0.0
         temp = {"id": float("inf"), "body": text, "created_at": int(time.time()), "author": self.me.get("username"),
@@ -807,7 +819,7 @@ class ChatPage(Page):
                 self.status("")
                 return self.render_messages(to_bottom=True)
             if (self.room() or {}).get("encrypted"):
-                return self.status("This room is end-to-end encrypted: search it on the web chat page, where its keys are.", bad=True)
+                return self.status("This room is end-to-end encrypted: search it on the web chat page, where its keys come to you.", bad=True)
             months, q = search_back(rest)
             self.status("searching…")
             found = await self.call(self.api.chat_search, o["id"], q, months)
@@ -951,7 +963,7 @@ class ChatPage(Page):
         o = self.open
         on = not any(r["emoji"] == emoji and r["mine"] for r in target.get("reactions", []))
         if on and (self.room() or {}).get("encrypted"):
-            return self.status("This room is end-to-end encrypted: react from the web chat page, where its keys are.", bad=True)
+            return self.status("This room is end-to-end encrypted: react from the web chat page, where its keys come to you.", bad=True)
         m = await self.call(self.api.chat_react, o["id"], target["id"], emoji, on)
         if m and self.open is o:
             o["messages"][m["id"]] = m
