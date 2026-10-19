@@ -37,10 +37,9 @@ export const BOOKS = [
   {
     id: "gods-and-legionnaires",
     title: "Gods & Legionnaires",
-    series: "Galaxy's Edge: Savage Wars, book 2",
     author: "Jason Anspach and Nick Cole",
     year: 2020,
-    blurb: "Military science fiction told from an unusual side: much of the book puts you inside the heads of the Savage marines, post-human soldiers who believe they are gods and see the humans they hunt as something lesser. Set against the humans trying to hold the line, the same war reads very differently depending on whose eyes you're behind. The prose leans lyrical, lingering on both the beauty and the horror of battle. It's part of a series, but it stands well on its own; no background needed.",
+    blurb: "Humanity is losing a war against the Savages, post-human warlords who have remade themselves into something they believe are gods, and the book spends much of its time inside their heads. You see the fighting through the eyes of Savage marines who regard the humans they hunt as lesser beings, then through the eyes of the people desperately holding the line against them. Sliding between those conflicting points of view, the same battles read as glory or as horror depending on who is telling them, and the lyrical prose dwells on both.",
     links: shops("Gods & Legionnaires Anspach Cole", [
       { label: "Audible", url: "https://www.audible.com/pd/B084MLYMCZ" },
     ]),
