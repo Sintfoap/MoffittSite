@@ -50,6 +50,29 @@ test("scaling: the cases the terminal checks too", () => {
   assert.equal(factorFor({ servings: null }, { factor: 2 }), 2);
 });
 
+// The markup on a Recipe Keeper shared recipe (recipekeeperonline.com/recipe/…).
+const KEEPER = `<html><head><title>Recipe Keeper</title></head><body><div class="recipe-details" itemscope itemtype="http://schema.org/Recipe">
+  <h2 itemprop="name">Grandma&#39;s Chili</h2>
+  <img src="/images/abc.jpg" itemprop="photo0" class="recipe-photo">
+  <div>Serves: <span itemprop="recipeYield">6</span></div>
+  <div>Prep time: <span>15 mins</span><meta content="PT15M" itemprop="prepTime"></div><meta content="PT1H" itemprop="cookTime">
+  <div>Source: <span itemprop="recipeSource">Aunt May</span></div>
+  <div class="recipe-ingredients" itemprop="recipeIngredients"><p>1 lb beef</p><div><p>2 (15 oz) cans beans</p></div><p>1 onion, diced</p></div>
+  <div class="recipe-directions" itemprop="recipeDirections"><p>1. Brown the beef.</p><p>2. Add the rest and simmer.</p></div>
+  <div itemprop="recipeNotes"><p>Better the next day.</p></div>
+</div></body></html>`;
+
+test("Recipe Keeper's shared recipes are read: its own names, every line, meta times and its photo", () => {
+  const r = parseRecipe(KEEPER, "https://recipekeeperonline.com/recipe/Ka7ZNM6UmEm7Y9zoFtaSRg");
+  assert.equal(r.title, "Grandma's Chili");
+  assert.equal(r.servings, 6);
+  assert.equal(r.time, "1 hr");
+  assert.equal(r.image, "https://recipekeeperonline.com/images/abc.jpg");
+  assert.deepEqual(r.ingredients, ["1 lb beef", "2 (15 oz) cans beans", "1 onion, diced"]);
+  assert.deepEqual(r.steps, ["Brown the beef.", "Add the rest and simmer."]);
+  assert.equal(r.notes, "Better the next day.\n\nSource: Aunt May");
+});
+
 let realFetch, pages;
 beforeEach(() => {
   realFetch = globalThis.fetch;
@@ -87,6 +110,11 @@ test("saving from a link, editing, and deleting", async () => {
   const env = makeEnv(), ryan = await cook(env);
   pages.set("https://food.test/old", { redirect: "/pancakes" });
   pages.set("https://food.test/pancakes", { html: PAGE });
+  pages.set("https://recipekeeperonline.com/recipe/Ka7ZNM6UmEm7Y9zoFtaSRg", { html: KEEPER });
+  const keeper = await api(ryan, "POST", "recipes", { url: "https://recipekeeperonline.com/recipe/Ka7ZNM6UmEm7Y9zoFtaSRg" });
+  assert.equal(keeper.status, 201, keeper.text);
+  assert.equal(keeper.json.title, "Grandma's Chili");
+  await api(ryan, "DELETE", `recipes/${keeper.json.id}`);
   const made = await api(ryan, "POST", "recipes", { url: "https://food.test/old" });
   assert.equal(made.status, 201, made.text);
   assert.equal(made.json.title, "Best Pancakes & Syrup");
