@@ -1,5 +1,5 @@
 // Book suggestions at /books: a public page (public/books/) where anyone,
-// signed in or not, can vote for the book they'd like read next.
+// signed in or not, can vote for the book they'd like the book club to read next.
 //
 //   GET    /books/api        → {books: [{id, title, author, year, blurb, links, votes}], total, mine, name}
 //   POST   /books/api/vote   {book, name?} → the same, after voting (or changing your vote)

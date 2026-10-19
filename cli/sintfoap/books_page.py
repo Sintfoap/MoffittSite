@@ -1,4 +1,4 @@
-"""Book suggestions in the terminal: the same list and votes as the public /books/ page.
+"""The book club pick in the terminal: the same list and votes as the public /books/ page.
 
 Anyone can open it, signed in or not (`sintfoap books`). This terminal gets one
 vote, like a browser, which it can move to another book or take back. Admins
@@ -116,9 +116,9 @@ class BooksPage(Page):
         yield from self.top()
         with VerticalScroll(id="body"):
             with Vertical(id="cards"):
-                yield Static("B O O K   S U G G E S T I O N S", classes="kicker")
-                yield Static(Text("What should I read next?", style=f"bold {INK}"), classes="h1")
-                yield Static(Text("Four books to choose between. Enter votes for one; you can move your vote or take it back (u). "
+                yield Static("B O O K   C L U B", classes="kicker")
+                yield Static(Text("What should we read next?", style=f"bold {INK}"), classes="h1")
+                yield Static(Text("Four books for the club to choose between. Enter votes for one; you can move your vote or take it back (u). "
                                   "n sets the name your vote is under. This page is public: no sign-in needed.", style=MUTED), classes="sub")
                 yield Static(id="status")
                 yield Vertical(id="books")
@@ -222,7 +222,7 @@ class BooksPage(Page):
 
     def action_name(self) -> None:
         self.app.push_screen(Ask("Your name", "Shown with your vote, so it's clear who voted. Leave it empty to vote without one.",
-                                 self.voter_name, "So I know who voted", ok="Save"), self.set_name)
+                                 self.voter_name, "So the club knows who voted", ok="Save"), self.set_name)
 
     @attempt
     async def set_name(self, name: str | None) -> None:
