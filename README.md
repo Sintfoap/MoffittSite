@@ -14,7 +14,7 @@ public/          the website, served as static files
     plugins/         Checklist, Events, List, Graph; one file each
   plugins/         the plugin store page (signed-in Drift users)
   sandbox/         the frame store plugins run in
-  chat/            chat rooms (signed-in Drift users); gifs.js is the GIF picker
+  chat/            chat rooms (signed-in Drift users); gifs.js is the GIF picker, emoji-picker.js the full reaction picker (emoji.js)
   notifications/   turning push notifications on, and what they're for
   sw.js            the service worker that shows push notifications
   site.webmanifest, icons/   so the site can be added to a phone's home screen

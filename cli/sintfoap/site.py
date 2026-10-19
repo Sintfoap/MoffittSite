@@ -355,6 +355,11 @@ def chat_react(room: str, message_id: int, emoji: str, on: bool = True) -> dict:
     return api("POST", f"/chat/api/rooms/{_q(room)}/messages/{int(message_id)}/reactions", {"emoji": emoji, "on": on})
 
 
+def chat_emoji() -> dict:
+    """{quick, groups: [{name, emoji: [[emoji, name]]}], aliases}: every emoji a reaction can be, for the full picker."""
+    return _get("/chat/api/emoji")
+
+
 def chat_members(room: str) -> list:
     """[{username, name, joined_at, owner}] for a room."""
     return _get_list(f"/chat/api/rooms/{_q(room)}/members")

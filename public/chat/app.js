@@ -10,6 +10,7 @@
 
 import { Vault, Shelf, textOf, textContent, editContent, reactionContent, encryptAttachment, decryptAttachment, imageOf, imageContent } from "/chat/e2ee.js";
 import { toHtml } from "/chat/format.js";
+import { openEmojiPicker, closeEmojiPicker, isEmojiPickerOpen } from "/chat/emoji-picker.js";
 import { setupGifs, gifsReady, isGifMessage, gifMessageHtml, isFavorite, toggleFavorite, isOpen as gifsOpen, toggleGifs, closeGifs, onGifClick, onGifInput, onGifKey } from "/chat/gifs.js";
 
 const $ = s => document.querySelector(s);
@@ -21,7 +22,7 @@ const GROUP_SECONDS = 5 * 60;
 
 let me = {};
 let rooms = [];
-let reactions = [];       // the emoji the site accepts
+let reactions = [];       // the quick row of reactions (the full picker has the rest)
 let online = new Set();   // usernames with chat open somewhere just now
 let open = null;          // { id, seq, more, joined, messages: Map(id → message), members: [] }
 let busy = false;         // a poll is in flight
@@ -310,7 +311,7 @@ $("#mdm-cancel").addEventListener("click", () => $("#mdm-dialog").close());
 // ── the open room ────────────────────────────────────────────────────────
 
 function closeRoom() {
-  open = null; editingId = pickerFor = null; hideSuggest(); searching = null;
+  open = null; editingId = pickerFor = null; hideSuggest(); searching = null; closeEmojiPicker();
   document.body.classList.remove("in-room");
   $("#room").innerHTML = `<div class="welcome"><b>Pick a room</b>Choose one from the list, or make a new one. Anyone signed in here can find and join your rooms.</div>`;
   if (location.hash) history.replaceState(null, "", location.pathname);
@@ -325,7 +326,7 @@ async function openRoom(id) {
   open = { id, seq: data.seq, more: data.more, joined: data.joined, messages: new Map(data.messages.map(m => [m.id, m])), members: [],
            here: data.here || [], typing: data.typing || [], reads: data.reads || [], bridge: room.kind === "bridge" };
   replyingTo = null;
-  editingId = pickerFor = null; hideSuggest(); searching = null;
+  editingId = pickerFor = null; hideSuggest(); searching = null; closeEmojiPicker();
   room.unread = 0; room.mentions = 0;
   // For completing @names as you type.
   api("GET", `/rooms/${id}/members`).then(list => { if (open?.id === id) open.members = list; }).catch(() => {});
@@ -483,13 +484,27 @@ function messageHtml(m) {
   const room = open.bridge && rooms.find(r => r.id === open.id);
   const canReact = open.joined && !m.pending && (!room || !room.encrypted || keysHere(room) === "ready");
   const picker = pickerFor === m.id
-    ? `<div class="picker" role="menu">${reactions.map(e => `<button class="link" data-react="${esc(e)}" data-mid="${m.id}" role="menuitem">${esc(e)}</button>`).join("")}</div>` : "";
+    ? `<div class="picker" role="menu">${reactions.map(e => `<button class="link" data-react="${esc(e)}" data-mid="${m.id}" role="menuitem">${esc(e)}</button>`).join("")}<button class="link more" data-moreemoji="${m.id}" role="menuitem" aria-label="More emoji" title="More emoji">+</button></div>` : "";
   const gif = !m.deleted && isGifMessage(m.body), pic = !m.deleted && !gif && m.media;
   const seen = open.reads?.filter(r => r.message === m.id).map(r => r.name);
   return `${m.reply ? `<button class="quote" ${m.reply.id ? `data-jump="${m.reply.id}"` : "disabled"} title="Go to the message this answers">${quoteOf(m.reply)}</button>` : ""}<div class="text" title="${esc(time(m.created_at))}">${gif ? gifMessageHtml(m) : pic ? pictureHtml(m.media) : linkify(m.body)}${m.edited_at ? `<span class="edited" title="Edited ${esc(time(m.edited_at))}"> (edited)</span>` : ""}</div>
     ${chips || picker ? `<div class="reacts">${chips}${picker}</div>` : ""}
     ${seen?.length ? `<div class="seen">Seen by ${esc(names(seen))}</div>` : ""}
     <div class="acts">${canReply(m) ? `<button class="link" data-reply="${m.id}">Reply</button>` : ""}${gif && gifsReady() && !m.pending ? `<button class="link star${isFavorite(m.body.trim()) ? " on" : ""}" data-favgif="${m.id}" aria-label="${isFavorite(m.body.trim()) ? "Remove GIF from favorites" : "Add GIF to favorites"}">★</button>` : ""}${canReact ? `<button class="link" data-pick="${m.id}" aria-label="React">React</button>` : ""}${m.can_edit && !m.pending ? `<button class="link" data-editmsg="${m.id}">Edit</button>` : ""}${m.can_delete ? `<button class="link del" data-del="${m.id}" aria-label="Delete message">Delete</button>` : ""}</div>`;
+}
+
+// Adds your reaction to a message, or takes it back if you'd made it.
+async function toggleReaction(mid, emoji) {
+  const has = open.messages.get(mid)?.reactions?.some(r => r.emoji === emoji && r.mine);
+  const room = rooms.find(r => r.id === open.id), target = open.messages.get(mid);
+  const body = { emoji, on: !has };
+  if (!has && room?.encrypted) {
+    if (keysHere(room) !== "ready") throw new Error("Turn encryption on in this room to react here.");
+    body.encrypted = await (await vaultFor(room.connection)).encrypt(room.ext_room, reactionContent(target.ext_id, emoji), "m.reaction");
+  }
+  const m = await readable([await api("POST", `/rooms/${open.id}/messages/${mid}/reactions`, body)]).then(([m]) => m);
+  open.messages.set(m.id, m);
+  renderLog();
 }
 
 // You can answer a message that's here for good (and, in a bridge room, there too).
@@ -612,18 +627,15 @@ $("#room").addEventListener("click", async e => {
       decryptOpen().catch(() => {});
     }
     else if (t.closest("[data-react]")) {
-      const b = t.closest("[data-react]"), mid = Number(b.dataset.mid), emoji = b.dataset.react;
-      const has = open.messages.get(mid)?.reactions?.some(r => r.emoji === emoji && r.mine);
+      const b = t.closest("[data-react]");
       pickerFor = null;
-      const room = rooms.find(r => r.id === open.id), target = open.messages.get(mid);
-      const body = { emoji, on: !has };
-      if (!has && room?.encrypted) {
-        if (keysHere(room) !== "ready") throw new Error("Turn encryption on in this room to react here.");
-        body.encrypted = await (await vaultFor(room.connection)).encrypt(room.ext_room, reactionContent(target.ext_id, emoji), "m.reaction");
-      }
-      const m = await readable([await api("POST", `/rooms/${open.id}/messages/${mid}/reactions`, body)]).then(([m]) => m);
-      open.messages.set(m.id, m);
-      renderLog();
+      await toggleReaction(Number(b.dataset.mid), b.dataset.react);
+    }
+    else if (t.dataset.moreemoji) {
+      const mid = Number(t.dataset.moreemoji), roomId = open.id, at = t.getBoundingClientRect();
+      pickerFor = null; renderLog();
+      const have = (open.messages.get(mid)?.reactions || []).filter(r => r.mine).map(r => r.emoji);
+      await openEmojiPicker(at, { have, onPick: emoji => open?.id === roomId && toggleReaction(mid, emoji).catch(err => toast(err.message)) });
     }
     else if (t.dataset.pick) { pickerFor = pickerFor === Number(t.dataset.pick) ? null : Number(t.dataset.pick); renderLog(); }
     else if (t.dataset.editmsg) startEdit(Number(t.dataset.editmsg));
@@ -840,6 +852,7 @@ $("#room").addEventListener("mousedown", e => {
 document.addEventListener("click", e => {
   if (gifsOpen() && e.target.isConnected && !e.target.closest("#gifs, #gif-open")) closeGifs({ focus: false });
   if (pickerFor != null && !e.target.closest(".picker, [data-pick]")) { pickerFor = null; renderLog(); }
+  if (isEmojiPickerOpen() && e.target.isConnected && !e.target.closest("#emoji-pick, [data-moreemoji]")) closeEmojiPicker();
 });
 
 // ── who's here ───────────────────────────────────────────────────────────

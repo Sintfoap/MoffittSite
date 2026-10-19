@@ -22,6 +22,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Footer, Input, Label, ListItem, ListView, Static
 
 from . import site
+from .emoji_picker import EmojiList, EmojiPicker
 from .gif_picker import GifPicker, is_gif
 from .look import BAD, BG, FAINT, GOLD, GOLD_DIM, GOOD, INK, LINE, MUTED, PANEL, Failed, Page, plural
 
@@ -47,8 +48,10 @@ someone; tab after @ completes a name from the room.
   /rename NAME  /topic TEXT  change the open room (its owner, or an admin)
   /reply [@NAME] TEXT        answer the last message from someone else (or from NAME)
   /edit [TEXT]               change your last message (↑ on an empty line too)
-  /react NAME                react to the last message from someone else, or
-                             take it back: +1 heart laugh tada wow sad eyes pray
+  /react [NAME]              react to the last message from someone else, or
+                             take it back: +1 heart laugh tada wow sad eyes pray,
+                             or any emoji by name (pizza, fire, red_heart…);
+                             /react on its own picks from all of them (ctrl+r)
   /delete                    delete your last message in this room
   /gif [TEXT]                pick a GIF to send, or search for one (ctrl+g)
   /star                      star the last GIF here, for your favorites (again to unstar)
@@ -421,6 +424,7 @@ class ChatPage(Page):
         Binding("ctrl+n", "new_room", "New room"),
         Binding("ctrl+u", "older", "Older"),
         Binding("ctrl+g", "gifs", "GIFs"),
+        Binding("ctrl+r", "react_pick", "React"),
         Binding("f5", "reload", "Refresh"),
     ]
 
@@ -432,6 +436,7 @@ class ChatPage(Page):
         self.rooms: list[dict] = []
         self.open: dict | None = None    # {id, seq, more, joined, messages: {id: message}, members: [...]}
         self.reactions: list[str] = list(dict.fromkeys(REACTION_NAMES.values()))
+        self.emoji: EmojiList | None = None   # every emoji the site takes, once the full picker or /react NAME needs it
         self.online: frozenset = frozenset()
         self.people: list[dict] = []        # everyone else, for /dm and /add
         self.bridges: dict = {"allowed": False}   # whether you can connect other platforms, and which
@@ -907,17 +912,43 @@ class ChatPage(Page):
             return self.status(f"There's no message from {who} here to reply to." if name else "There's nothing here to reply to yet.", bad=True)
         await self.send(text.strip(), reply=target)
 
-    async def react(self, name: str) -> None:
+    def react_target(self) -> dict | None:
+        """The message /react answers: the last from someone else, or else the last."""
         o = self.open
-        emoji = REACTION_NAMES.get(name.lower(), name)
-        if emoji not in self.reactions:
-            return self.status("Usage: /react NAME, one of +1 heart laugh tada wow sad eyes pray", bad=True)
+        if not o:
+            self.status("Open a room first.", bad=True)
+            return None
         if not o["joined"]:
-            return self.status("Join the room to react: /join", bad=True)
+            self.status("Join the room to react: /join", bad=True)
+            return None
         shown = sorted((m for m in o["messages"].values() if not m["deleted"] and not m.get("pending")), key=lambda m: m["id"])
         target = next((m for m in reversed(shown) if not m["mine"]), None) or (shown[-1] if shown else None)
         if not target:
-            return self.status("There's nothing here to react to yet.", bad=True)
+            self.status("There's nothing here to react to yet.", bad=True)
+        return target
+
+    async def load_emoji(self) -> EmojiList | None:
+        if self.emoji is None:
+            data = await self.call(self.api.chat_emoji)
+            self.emoji = EmojiList(data) if data else None
+        return self.emoji
+
+    async def react(self, name: str) -> None:
+        name = name.strip()
+        if not name:
+            return await self.action_react_pick()
+        emoji = REACTION_NAMES.get(name.lower(), name)
+        if emoji not in self.reactions:
+            every = await self.load_emoji()
+            emoji = every.find(name) if every else None
+        if not emoji:
+            return self.status(f"There's no emoji called {name!r}: /react on its own lists them all (or +1 heart laugh tada wow sad eyes pray)", bad=True)
+        target = self.react_target()
+        if target:
+            await self.toggle_reaction(target, emoji)
+
+    async def toggle_reaction(self, target: dict, emoji: str) -> None:
+        o = self.open
         on = not any(r["emoji"] == emoji and r["mine"] for r in target.get("reactions", []))
         if on and (self.room() or {}).get("encrypted"):
             return self.status("This room is end-to-end encrypted: react from the web chat page, where its keys are.", bad=True)
@@ -926,6 +957,19 @@ class ChatPage(Page):
             o["messages"][m["id"]] = m
             self.render_messages()
             self.status(f"{'reacted' if on else 'took back'} {emoji} to {target['author_name']}")
+
+    async def action_react_pick(self) -> None:
+        """The full reaction picker (emoji_picker.py), for the message /react answers."""
+        target = self.react_target()
+        if not target or not await self.load_emoji():
+            return
+        o = self.open
+
+        def picked(emoji: str | None) -> None:
+            if emoji and self.open is o:
+                self.run_worker(self.toggle_reaction(o["messages"].get(target["id"], target), emoji))
+        have = [r["emoji"] for r in target.get("reactions", []) if r["mine"]]
+        self.app.push_screen(EmojiPicker(self.emoji, have, target["author_name"]), picked)
 
     # ── GIFs ───────────────────────────────────────────────────────────
     def action_gifs(self, query: str = "") -> None:

@@ -7,7 +7,8 @@
 // a direct message is always the same two people. Whoever made a room can
 // rename or delete it; admins can too, for rooms they can see. People edit and delete
 // their own messages; a room's owner and admins can delete anyone's. Members
-// react to messages from a short list of emoji, and "@username" in a message
+// react to messages with emoji (a short list first, any of public/chat/emoji.js
+// from the full picker), and "@username" in a message
 // mentions that person, which their room list counts until they read it.
 //
 // The page polls for new messages. Every change in a room (a new, edited or
@@ -28,6 +29,7 @@ import { randomBytes, hex, sha256 } from "./crypto.js";
 import { canBridge, bridgeInfo, listConnections, addConnection, removeConnection, syncConnection, syncAll, syncRoom, onPlatform, cryptoOp, backfill,
   joinBridged, leaveBridged, startDm, ENCRYPTED_NOTE } from "./bridges.js";
 import { chatPushes } from "./notify.js";
+import { GROUPS as EMOJI_GROUPS, ALIASES as EMOJI_ALIASES } from "../public/chat/emoji.js";
 import { gifInfo, gifImageSources, gifSearch, gifCategories, favorites, favorite, isGif, fetchGif } from "./gifs.js";
 import { MXC, IMAGE_TYPES, MAX_MEDIA } from "./matrix.js";
 
@@ -46,7 +48,9 @@ const EXT_TYPING = 30;
 // At most this many messages from one person in RATE_WINDOW seconds.
 const RATE = 10, RATE_WINDOW = 10;
 const ROOM_ID = /^r_[0-9a-f]{16}$/;
+// The quick row of reactions; the full picker offers every emoji in EMOJI.
 export const REACTIONS = ["👍", "❤️", "😂", "🎉", "😮", "😢", "👀", "🙏"];
+export const EMOJI = new Set([...REACTIONS, ...EMOJI_GROUPS.flatMap(([, list]) => list.map(([e]) => e))]);
 // "@name" where name is a username (see auth.js), not part of an email address.
 const MENTION = /(^|[^\w@.])@([a-z0-9][a-z0-9_-]{2,31})(?![\w-])/gi;
 const MAX_MENTIONS = 10;
@@ -773,9 +777,9 @@ export async function editMessage(env, user, roomId, messageId, body) {
   return oneMessage(d, user, room, messageId);
 }
 
-// Members add or take back a reaction: {emoji, on: true|false}. In a bridge
-// room it goes to the platform, and any emoji will do (people there aren't
-// limited to these); in an encrypted one, adding also takes {encrypted}:
+// Members add or take back a reaction: {emoji, on: true|false}, any of EMOJI.
+// In a bridge room it goes to the platform, and any emoji will do (people
+// there aren't limited to these); in an encrypted one, adding also takes {encrypted}:
 // the reaction the browser encrypted.
 export async function react(env, user, roomId, messageId, body) {
   if (!isObj(body)) fail("body must be a JSON object");
@@ -785,7 +789,7 @@ export async function react(env, user, roomId, messageId, body) {
   const { room, member } = await load(d, user, roomId);
   if (!room) return null;
   const anyEmoji = bridged(room) && typeof body.emoji === "string" && body.emoji.length >= 1 && body.emoji.length <= 32 && !/[\u0000-\u001f\u007f]/.test(body.emoji);
-  if (!REACTIONS.includes(body.emoji) && !anyEmoji) fail(`emoji must be one of ${REACTIONS.join(" ")}`);
+  if (!EMOJI.has(body.emoji) && !anyEmoji) fail("emoji must be one of the site's emoji (GET /chat/api/emoji lists them)");
   const m = await d.prepare("SELECT deleted, ext_id FROM chat_messages WHERE id = ? AND room = ?").bind(messageId, room.id).first();
   if (!m || m.deleted) return null;
   if (!member) return { forbidden: "join the room to react in it" };
@@ -842,6 +846,7 @@ export async function deleteMessage(env, user, roomId, messageId) {
 // ── routes ─────────────────────────────────────────────────────────────────
 //
 //   GET    /chat/api/state                          you, every room you can see, who's online, and the reactions on offer
+//   GET    /chat/api/emoji                          every emoji a reaction can be, by group, for the full picker
 //   GET    /chat/api/people                         everyone who can use chat
 //   POST   /chat/api/dms                            {username} → your direct message room with them
 //   POST   /chat/api/rooms                          {name, topic, private} → a new room; you join it
@@ -874,7 +879,7 @@ export async function deleteMessage(env, user, roomId, messageId) {
 //   GET    /chat/api/gifs/file?url=<GIF link>       a GIF's bytes, for the browser to encrypt for an encrypted room
 //   POST   /chat/api/gifs/favorites                 {gif, on}   star a GIF, or take the star off
 
-const ROUTE = /^\/chat\/api\/(state|people|dms|rooms|connections|gifs)(?:\/([^/]+)(?:\/(join|leave|members|messages|search|typing|sync|crypto|dm|media)(?:\/([^/]+)(?:\/(reactions))?)?)?)?\/?$/;
+const ROUTE = /^\/chat\/api\/(state|emoji|people|dms|rooms|connections|gifs)(?:\/([^/]+)(?:\/(join|leave|members|messages|search|typing|sync|crypto|dm|media)(?:\/([^/]+)(?:\/(reactions))?)?)?)?\/?$/;
 
 // Messages are shown as text, never as HTML, and the page loads nothing from
 // elsewhere except fonts and GIFs from the GIF hosts (src/gifs.js).
@@ -930,6 +935,11 @@ export async function chat(request, env, user, pathname, ctx) {
         bridges: bridgeInfo(env, user),
         gifs: gifInfo(env),
       });
+    }
+    if (kind === "emoji") {
+      if (id) return notFound();
+      if (method !== "GET") return notAllowed();
+      return json({ quick: REACTIONS, groups: EMOJI_GROUPS.map(([name, emoji]) => ({ name, emoji })), aliases: EMOJI_ALIASES });
     }
     if (kind === "gifs") {
       if (sub) return notFound();
