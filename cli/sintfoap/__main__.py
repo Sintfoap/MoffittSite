@@ -11,6 +11,7 @@ sintfoap — sintfoap.xyz from the terminal.
   sintfoap notifications      what's pushed to your browsers and phone
   sintfoap recipes            Recipe box: recipes, scaled, onto a Drift shopping list
   sintfoap admin              which apps each account can use (admins)
+  sintfoap books [--plain]    the book suggestions: read about them and vote (no sign-in needed)
   sintfoap whoami
   sintfoap logout             ends this terminal's session on the site
 """
@@ -49,6 +50,20 @@ def plain(data: dict) -> None:
           f"  {C['gold']}{a['url']}{C['r']}\n")
 
 
+def plain_books(data: dict) -> None:
+    """The book suggestions as text, with the votes so far."""
+    print(f"\n  {C['gold']}BOOK SUGGESTIONS{C['r']}  {C['dim']}{data['total']} vote{'s' * (data['total'] != 1)} so far{C['r']}\n")
+    for b in data["books"]:
+        mine = f"  {C['grn']}✓ your vote{C['r']}" if b["id"] == data.get("mine") else ""
+        series = f"  {C['dim']}{b['series']}{C['r']}" if b.get("series") else ""
+        print(f"  {C['b']}{b['title']}{C['r']}{series}{mine}\n  {b['author']} · {b['year']} · {b['votes']} vote{'s' * (b['votes'] != 1)}\n"
+              f"  {C['dim']}{b['blurb']}{C['r']}")
+        for link in b["links"]:
+            print(f"  {C['gold']}{link['label']}{C['r']}  {link['url']}")
+        print()
+    print(f"  {C['dim']}Vote with  sintfoap books  in a terminal, or at {site.site_url('/books/')}{C['r']}\n")
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="sintfoap", description="sintfoap.xyz from the terminal")
     sub = ap.add_subparsers(dest="cmd")
@@ -62,6 +77,8 @@ def main(argv=None):
                        ("recipes", "Recipe box: recipes, scaled, onto a Drift shopping list"),
                        ("admin", "which apps each account can use (admins)")):
         sub.add_parser(page, help=what)
+    bk = sub.add_parser("books", help="the book suggestions: read about them and vote (no sign-in needed)")
+    bk.add_argument("--plain", action="store_true", help="print them instead of opening the terminal UI")
     ch = sub.add_parser("chat", help="chat rooms")
     ch.add_argument("room", nargs="?", help="a room to open, by name")
     sub.add_parser("whoami")
@@ -76,6 +93,16 @@ def main(argv=None):
         elif cmd == "logout":
             where = site.logout()
             print(f"  signed out of {where}" if where else "  wasn't signed in")
+        elif cmd == "books":
+            # Public: no sign-in needed. Signed in, it opens over the dashboard, so esc leads back to it.
+            if args.plain or not sys.stdout.isatty():
+                plain_books(site.books())
+            elif site.load_login():
+                from .tui import run
+                run("books")
+            else:
+                from .books_page import run as run_books
+                run_books()
         elif cmd == "whoami":
             me = site.whoami()
             print(f"  {me['username']} ({me['display_name']}) on {me['site']}")

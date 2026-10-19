@@ -303,6 +303,20 @@ const SCHEMA = [
      updated TEXT NOT NULL,
      PRIMARY KEY (owner, id)
    )`,
+  // Votes on the public book suggestions page (src/books.js). One per browser,
+  // by the random id in its __Host-bv cookie; it can be changed or taken back.
+  `CREATE TABLE IF NOT EXISTS book_votes (
+     voter      TEXT PRIMARY KEY,                  -- 32 hex from the cookie
+     book       TEXT NOT NULL,                     -- an id from BOOKS in src/books.js
+     name       TEXT NOT NULL DEFAULT '',          -- what they typed as their name, if anything
+     user_id    TEXT,                              -- their account, if they were signed in
+     ip         TEXT NOT NULL,
+     user_agent TEXT NOT NULL DEFAULT '',
+     place      TEXT NOT NULL DEFAULT '',          -- Cloudflare's guess: city, region, country
+     created_at INTEGER NOT NULL,
+     updated_at INTEGER NOT NULL
+   )`,
+  `CREATE INDEX IF NOT EXISTS book_votes_ip ON book_votes (ip, created_at)`,
 ];
 
 // Indexes on columns that ADDED_COLUMNS may have only just added.

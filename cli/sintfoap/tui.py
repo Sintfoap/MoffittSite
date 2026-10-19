@@ -297,6 +297,9 @@ class SiteApp(App):
         elif name == "recipes":
             from .recipes_page import RecipesPage
             self.push_screen(RecipesPage())
+        elif name == "books":
+            from .books_page import BooksPage
+            self.push_screen(BooksPage())
         elif name == "chat":
             from .chat_page import ChatPage
             # The room named on the command line, the first time only.

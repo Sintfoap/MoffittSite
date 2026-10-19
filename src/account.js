@@ -15,6 +15,7 @@ import {
 import { mailReady, sendMail, MailError } from "./mail.js";
 import { agenda, visitorNow } from "./drift.js";
 import { installed } from "./store.js";
+import { BOOKS, bookVotes, removeBookVote } from "./books.js";
 import {
   html, loginPage, signupPage, mfaPage, forgotPage, forgotDonePage, forgotEmailSentPage, resetPage, dashboardPage, accountPage, changePasswordRequiredPage, adminPage, adminClaimPage, messagePage,
 } from "./pages.js";
@@ -437,9 +438,23 @@ async function adminAccessApi(request, env, d, me, method) {
   return list();
 }
 
+// Who voted for what on the public /books page (src/books.js), for the terminal.
+// GET  /admin/api/books          → {books: [{id, title, votes}], votes: [{voter, book, title, name, username, ip, device, place, ...}]}
+// POST /admin/api/books {voter}  → removes that vote, then answers like GET
+async function adminBooksApi(request, env, d, method) {
+  if (method === "POST") {
+    let body;
+    try { body = await request.json(); } catch { return json({ error: "send JSON" }, 400); }
+    await removeBookVote(d, String(body?.voter ?? ""));
+  } else if (method !== "GET") return json({ error: "method not allowed" }, 405);
+  const votes = await bookVotes(d);
+  return json({ books: BOOKS.map(b => ({ id: b.id, title: b.title, votes: votes.filter(v => v.book === b.id).length })), votes });
+}
+
 async function admin(request, env, me, pathname, method) {
   const d = await db(env);
   if (pathname === "/admin/api/access") return adminAccessApi(request, env, d, me, method);
+  if (pathname === "/admin/api/books") return adminBooksApi(request, env, d, method);
   const show = async (extra = {}, status = 200) => {
     const { results: users } = await d.prepare(`
       SELECT u.id, u.username, u.display_name, u.created_at, u.disabled, u.must_change_pw, u.totp_secret IS NOT NULL AS totp,
@@ -450,7 +465,7 @@ async function admin(request, env, me, pathname, method) {
     const { results: orphans } = await d.prepare(`
       SELECT owner, COUNT(*) AS n FROM todo_tasks WHERE owner NOT IN (SELECT id FROM users) GROUP BY owner`).all();
     return html(adminPage({
-      user: me, apps: APPS, orphans,
+      user: me, apps: APPS, orphans, books: BOOKS, bookVotes: await bookVotes(d),
       users: users.map(u => ({ ...u, areas: u.areas ? u.areas.split(",") : [] })), ...extra,
     }), { status });
   };
@@ -538,6 +553,9 @@ async function admin(request, env, me, pathname, method) {
           d.prepare("DELETE FROM users WHERE id = ?").bind(target.id),
         ]);
         return show({ notice: `${target.username} and their tasks are deleted.` });
+      case "/admin/books/remove":
+        await removeBookVote(d, f.voter);
+        return show({ notice: "That book vote is removed." });
       case "/admin/move-tasks": {
         const to = await getUser(env, { id: String(f.to) });
         if (!to) throw new AuthError("Pick an account to move the tasks to.");
