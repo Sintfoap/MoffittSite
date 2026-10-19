@@ -7,10 +7,11 @@
 // Each sync asks for what changed since the last one (/sync with a since
 // token and no waiting), so it fits in one Worker request.
 //
-// End-to-end encrypted rooms: the site never holds the keys. A connection
-// made with a password has a session ("device") of its own, and the browser
-// that turns encryption on for it keeps that device's keys (public/chat/e2ee.js,
-// with Matrix's own crypto library). Here, encrypted events are kept as they
+// End-to-end encrypted rooms: the keys are only ever opened in a browser. A
+// connection made with a password has a session ("device") of its own, and
+// the browser that turns encryption on for it keeps that device's keys
+// (public/chat/e2ee.js, with Matrix's own crypto library), sending the site a
+// locked copy so they can follow you to your other browsers (carry.js). Here, encrypted events are kept as they
 // came, the to-device messages and key counts each sync brings are handed to
 // that browser, and the key requests it makes are passed on (cryptoRequest).
 
@@ -153,7 +154,8 @@ export const matrix = {
   name: "Matrix",
   help: "Your homeserver (e.g. matrix.org), then either an access token from Element (Settings → Help & About → Access token) "
     + "or your Matrix username and password. A password is used once, to sign in a new session called sintfoap.xyz, and isn't kept. "
-    + "End-to-end encrypted rooms work on the chat page once you turn encryption on there, which needs the username-and-password way.",
+    + "End-to-end encrypted rooms work on the chat page once you turn encryption on there, which needs the username-and-password way; "
+    + "the keys then follow you to any browser you sign in to.",
   fields: [
     { name: "homeserver", label: "Homeserver", placeholder: "matrix.org", required: true },
     { name: "token", label: "Access token", secret: true, placeholder: "syt_… (or use a username and password)" },

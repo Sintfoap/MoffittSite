@@ -283,7 +283,11 @@ const SCHEMA = [
      can_encrypt   INTEGER NOT NULL DEFAULT 0,     -- the connection has a session of its own to hold keys
      crypto_owner  TEXT,                           -- sha256 of the key the browser holding them proves itself with
      crypto_counts TEXT,                           -- JSON: the latest one-time key counts, for that browser
-     pusher_at     INTEGER NOT NULL DEFAULT 0      -- when its pusher was registered on the platform (src/notify.js), 0 = none
+     pusher_at     INTEGER NOT NULL DEFAULT 0,     -- when its pusher was registered on the platform (src/notify.js), 0 = none
+     -- So the keys follow their owner to any of their browsers (public/chat/carry.js).
+     crypto_vault    TEXT,                         -- the browser key that opens the keys, sealed with CHAT_BRIDGE_KEY
+     crypto_saved_at INTEGER NOT NULL DEFAULT 0,   -- when the browser holding them last sent a copy (chat_crypto_copies)
+     crypto_seen_at  INTEGER NOT NULL DEFAULT 0    -- when that browser last asked for anything, so another doesn't take them mid-use
    )`,
   `CREATE INDEX IF NOT EXISTS chat_connections_user ON chat_connections (user_id)`,
   // What each sync brought for the browser holding a connection's keys
@@ -292,9 +296,19 @@ const SCHEMA = [
      id         INTEGER PRIMARY KEY AUTOINCREMENT,
      connection TEXT NOT NULL,
      data       TEXT NOT NULL,                     -- JSON {to_device, changed, left}
-     created_at INTEGER NOT NULL
+     created_at INTEGER NOT NULL,
+     taken      INTEGER NOT NULL DEFAULT 0         -- handed to that browser; kept till a copy of the keys has it
    )`,
   `CREATE INDEX IF NOT EXISTS chat_crypto_inbox_conn ON chat_crypto_inbox (connection, id)`,
+  // The latest copy of a connection's keys, as the browser holding them sent
+  // it, for whichever of its owner's browsers takes them next. Sealed with
+  // CHAT_BRIDGE_KEY, in parts that each fit in a row.
+  `CREATE TABLE IF NOT EXISTS chat_crypto_copies (
+     connection TEXT NOT NULL,
+     part       INTEGER NOT NULL,
+     data       TEXT NOT NULL,
+     PRIMARY KEY (connection, part)
+   )`,
   // Votes on the public book suggestions page (src/books.js). One per browser,
   // by the random id in its __Host-bv cookie; it can be changed or taken back.
   `CREATE TABLE IF NOT EXISTS book_votes (
@@ -324,7 +338,9 @@ const ADDED_COLUMNS = {
   users: ["email TEXT", "email_verified INTEGER NOT NULL DEFAULT 0"],
   chat_messages: ["posted_seq INTEGER", "edited_at INTEGER", "ext_id TEXT", "ext_sender TEXT", "ext_name TEXT", "encrypted INTEGER NOT NULL DEFAULT 0", "ext_raw TEXT", "reply_to INTEGER", "ext_media TEXT"],
   chat_reactions: ["ext_id TEXT", "ext_name TEXT"],
-  chat_connections: ["can_encrypt INTEGER NOT NULL DEFAULT 0", "crypto_owner TEXT", "crypto_counts TEXT", "pusher_at INTEGER NOT NULL DEFAULT 0"],
+  chat_connections: ["can_encrypt INTEGER NOT NULL DEFAULT 0", "crypto_owner TEXT", "crypto_counts TEXT", "pusher_at INTEGER NOT NULL DEFAULT 0",
+    "crypto_vault TEXT", "crypto_saved_at INTEGER NOT NULL DEFAULT 0", "crypto_seen_at INTEGER NOT NULL DEFAULT 0"],
+  chat_crypto_inbox: ["taken INTEGER NOT NULL DEFAULT 0"],
   push_prefs: ["chat_bridges INTEGER NOT NULL DEFAULT 1"],
   chat_rooms: ["kind TEXT NOT NULL DEFAULT 'open'", "connection TEXT", "ext_id TEXT", "encrypted INTEGER NOT NULL DEFAULT 0", "ext_typing TEXT", "ext_typing_at INTEGER", "ext_read TEXT", "ext_back TEXT", "ext_invite TEXT"],
 };

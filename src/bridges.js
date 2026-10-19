@@ -43,7 +43,10 @@
 // End-to-end encryption happens in the browser, never here: one browser
 // claims a connection's keys (proving itself after with a key only it has),
 // takes what each sync brought for them from an inbox, and has its key
-// requests passed on. Encrypted messages are kept as they came.
+// requests passed on. Encrypted messages are kept as they came. So the keys
+// follow their owner, that browser sends a copy of them, locked with its
+// browser key, which is kept here sealed; another of the owner's browsers
+// can take them from there (cryptoOp's save and take).
 //
 // For push notifications (src/notify.js), a connection whose owner has them
 // on gets a pusher on the platform: the homeserver tells the site when a
@@ -84,8 +87,9 @@ function connectionOut(c) {
   return {
     id: c.id, provider: c.provider, network: PROVIDERS[c.provider]?.name ?? c.provider, label: c.label,
     status: c.status, error: c.error ?? null, created_at: c.created_at, synced_at: c.synced_at || null, rooms: c.rooms ?? 0,
-    // Whether encrypted rooms can be used through it, and whether a browser already holds its keys.
-    can_encrypt: !!c.can_encrypt, keys_held: !!c.crypto_owner,
+    // Whether encrypted rooms can be used through it, whether a browser already holds its keys,
+    // and whether they can follow you to your other browsers (a copy of them is kept).
+    can_encrypt: !!c.can_encrypt, keys_held: !!c.crypto_owner, keys_kept: !!(c.crypto_owner && c.crypto_saved_at),
   };
 }
 
@@ -149,6 +153,7 @@ export async function removeConnection(env, user, id, deleteRoom) {
   for (const r of results) await deleteRoom(env, user, r.id, { force: true });
   await d.batch([
     d.prepare("DELETE FROM chat_crypto_inbox WHERE connection = ?").bind(conn.id),
+    d.prepare("DELETE FROM chat_crypto_copies WHERE connection = ?").bind(conn.id),
     d.prepare("DELETE FROM chat_connections WHERE id = ?").bind(conn.id),
   ]);
   return { deleted: true };
@@ -418,11 +423,38 @@ export async function onPlatform(env, d, user, room, fn) {
 // ── end-to-end encryption (chat.js passes the crypto routes here) ──────────
 
 // The browser holding a connection's keys proves itself with a key of its
-// own making, which only its hash is kept of.
+// own making (its seat), which only its hash is kept of.
 const KEY = /^[0-9a-f]{64}$/;
+// A copy of the keys (public/chat/carry.js) is at most this long, and is
+// kept in parts of this size, so each part fits in a D1 row once sealed.
+export const MAX_COPY = 8 * 1024 * 1024;
+const COPY_PART = 1000 * 1000;
+// The browser holding the keys counts as using them for this long after it
+// last asked for anything; till then, another only takes them if told to.
+const IN_USE = 60;
+// How often its asking is written down, at most.
+const SEEN_EVERY = 10;
 
-// {op: "claim" | "inbox" | "request", key, ...}. claim makes the browser
-// asking the one that holds the keys, if no browser does yet.
+const vaultContext = conn => `chat-connection-vault:${conn.user_id}:${conn.id}`;
+const copyContext = (conn, part) => `chat-connection-copy:${conn.user_id}:${conn.id}:${part}`;
+
+async function readCopy(env, d, conn) {
+  const { results } = await d.prepare("SELECT part, data FROM chat_crypto_copies WHERE connection = ? ORDER BY part").bind(conn.id).all();
+  if (!results.length) return null;
+  const parts = await Promise.all(results.map(r => unseal(env.CHAT_BRIDGE_KEY, copyContext(conn, r.part), r.data)));
+  return parts.every(p => p != null) ? parts.join("") : null;
+}
+
+// {op, key, ...}: what a browser asks about a connection's keys.
+//   claim    {vault?}  makes the browser asking the one that holds the keys,
+//            if none does yet; vault is its browser key, kept sealed so the
+//            keys can follow you to your other browsers → {device, kept, saved}
+//   inbox    {ack?}    what syncs brought for the keys → {items, counts}
+//   request  {method, path, body?}  a key request, passed on → {response}
+//   save     {copy, ack}  the keys as they are now (carry.js), having taken
+//            the inbox up to ack → {saved}
+//   take     {force?}  moves the keys to the browser asking, from the copy:
+//            → {device, vault, copy}, or {busy} while another is using them
 export async function cryptoOp(env, user, id, op, body, fail) {
   if (!body || typeof body !== "object" || Array.isArray(body)) fail("body must be a JSON object");
   if (typeof body.key !== "string" || !KEY.test(body.key)) fail("key must be 64 hex characters");
@@ -434,26 +466,58 @@ export async function cryptoOp(env, user, id, op, body, fail) {
   if (!c.provider.canEncrypt?.(c.creds)) {
     return { forbidden: "encryption needs a connection signed in with a username and password, so it has a session of its own; remove this one and connect it that way" };
   }
-  const hash = await sha256("crypto-owner:" + body.key);
+  const hash = await sha256("crypto-owner:" + body.key), t = now();
   if (op === "claim" && !conn.crypto_owner) {
     const won = await d.prepare("UPDATE chat_connections SET crypto_owner = ? WHERE id = ? AND crypto_owner IS NULL").bind(hash, conn.id).run();
-    if (won.meta.changes) await d.prepare("DELETE FROM chat_crypto_inbox WHERE connection = ?").bind(conn.id).run();
-    conn.crypto_owner = (await d.prepare("SELECT crypto_owner FROM chat_connections WHERE id = ?").bind(conn.id).first()).crypto_owner;
+    if (won.meta.changes) await d.batch([
+      d.prepare("DELETE FROM chat_crypto_inbox WHERE connection = ?").bind(conn.id),
+      d.prepare("DELETE FROM chat_crypto_copies WHERE connection = ?").bind(conn.id),
+      d.prepare("UPDATE chat_connections SET crypto_vault = NULL, crypto_saved_at = 0 WHERE id = ?").bind(conn.id),
+    ]);
+    Object.assign(conn, await d.prepare("SELECT crypto_owner, crypto_vault, crypto_saved_at, crypto_seen_at FROM chat_connections WHERE id = ?").bind(conn.id).first());
   }
+  if (op === "take" && conn.crypto_owner !== hash) return takeKeys(env, d, conn, c, hash, body, fail);
   if (conn.crypto_owner !== hash) {
-    return { forbidden: conn.crypto_owner
-      ? "another browser holds this connection's encryption keys; to move them here, remove the connection and connect it again"
-      : "turn encryption on for this connection first" };
+    return conn.crypto_owner
+      ? { forbidden: conn.crypto_saved_at ? "your encryption keys have moved to another of your browsers"
+          : "another browser holds this connection's encryption keys; open chat there once and they'll follow you here", code: "elsewhere" }
+      : { forbidden: "turn encryption on for this connection first" };
   }
-  if (op === "claim") return { device: c.provider.device(c.creds) };
+  if (conn.crypto_seen_at < t - SEEN_EVERY) await d.prepare("UPDATE chat_connections SET crypto_seen_at = ? WHERE id = ?").bind(t, conn.id).run();
+  if (op === "claim" || op === "take") {
+    // The browser key, from a browser that had the keys before they could follow you.
+    if (!conn.crypto_vault && body.vault !== undefined) {
+      if (typeof body.vault !== "string" || !KEY.test(body.vault)) fail("vault must be 64 hex characters");
+      conn.crypto_vault = await seal(env.CHAT_BRIDGE_KEY, vaultContext(conn), body.vault);
+      await d.prepare("UPDATE chat_connections SET crypto_vault = ? WHERE id = ?").bind(conn.crypto_vault, conn.id).run();
+    }
+    return { device: c.provider.device(c.creds), kept: !!conn.crypto_vault, saved: !!conn.crypto_saved_at };
+  }
   if (op === "inbox") {
-    // Takes back what an earlier call handed over, then hands over the rest.
+    // What an earlier call handed over is marked taken (it goes once a copy
+    // of the keys has it), then the rest is handed over.
     const ack = body.ack ?? 0;
     if (!Number.isSafeInteger(ack) || ack < 0) fail("ack must be a message number");
-    if (ack) await d.prepare("DELETE FROM chat_crypto_inbox WHERE connection = ? AND id <= ?").bind(conn.id, ack).run();
-    const { results } = await d.prepare("SELECT id, data FROM chat_crypto_inbox WHERE connection = ? ORDER BY id LIMIT 50").bind(conn.id).all();
+    if (ack) await d.prepare("UPDATE chat_crypto_inbox SET taken = 1 WHERE connection = ? AND id <= ? AND taken = 0").bind(conn.id, ack).run();
+    const { results } = await d.prepare("SELECT id, data FROM chat_crypto_inbox WHERE connection = ? AND taken = 0 ORDER BY id LIMIT 50").bind(conn.id).all();
     const counts = JSON.parse((await d.prepare("SELECT crypto_counts FROM chat_connections WHERE id = ?").bind(conn.id).first()).crypto_counts || "null");
     return { items: results.map(r => ({ id: r.id, ...JSON.parse(r.data) })), counts };
+  }
+  if (op === "save") {
+    if (typeof body.copy !== "string" || !body.copy || body.copy.length > MAX_COPY) fail("copy must be the keys, as text");
+    const ack = body.ack ?? 0;
+    if (!Number.isSafeInteger(ack) || ack < 0) fail("ack must be a message number");
+    if (!conn.crypto_vault) return { forbidden: "send the browser key first (claim, with vault)" };
+    const stmts = [d.prepare("DELETE FROM chat_crypto_copies WHERE connection = ?").bind(conn.id)];
+    for (let i = 0, part = 0; i < body.copy.length; i += COPY_PART, part++) {
+      stmts.push(d.prepare("INSERT INTO chat_crypto_copies (connection, part, data) VALUES (?, ?, ?)")
+        .bind(conn.id, part, await seal(env.CHAT_BRIDGE_KEY, copyContext(conn, part), body.copy.slice(i, i + COPY_PART))));
+    }
+    // What the copy has taken in needn't be kept for the next browser.
+    stmts.push(d.prepare("DELETE FROM chat_crypto_inbox WHERE connection = ? AND id <= ?").bind(conn.id, ack),
+      d.prepare("UPDATE chat_connections SET crypto_saved_at = ? WHERE id = ?").bind(t, conn.id));
+    await d.batch(stmts);
+    return { saved: true };
   }
   if (op === "request") {
     if (!["GET", "POST", "PUT"].includes(body.method)) fail("method must be GET, POST or PUT");
@@ -466,6 +530,25 @@ export async function cryptoOp(env, user, id, op, body, fail) {
     }
   }
   return null;
+}
+
+// Another of your browsers takes the keys: it's handed the latest copy and
+// the browser key that opens it, and everything syncs brought since that
+// copy was made. The browser that had them is told they've gone the next
+// time it asks.
+async function takeKeys(env, d, conn, c, hash, body, fail) {
+  if (body.force !== undefined && typeof body.force !== "boolean") fail("force must be true or false");
+  if (!conn.crypto_owner) return { forbidden: "turn encryption on for this connection first" };
+  const vault = conn.crypto_vault && await unseal(env.CHAT_BRIDGE_KEY, vaultContext(conn), conn.crypto_vault);
+  const copy = conn.crypto_saved_at && vault && await readCopy(env, d, conn);
+  if (!copy) return { forbidden: "another browser holds this connection's encryption keys; open chat there once and they'll follow you here", code: "elsewhere" };
+  if (!body.force && conn.crypto_seen_at >= now() - IN_USE) return { busy: true, seen_at: conn.crypto_seen_at };
+  const moved = await d.prepare("UPDATE chat_connections SET crypto_owner = ?, crypto_seen_at = ? WHERE id = ? AND crypto_owner = ?")
+    .bind(hash, now(), conn.id, conn.crypto_owner).run();
+  if (!moved.meta.changes) return { busy: true, seen_at: now() };
+  // What the browser before took from the inbox after its last copy, it takes again.
+  await d.prepare("UPDATE chat_crypto_inbox SET taken = 0 WHERE connection = ?").bind(conn.id).run();
+  return { device: c.provider.device(c.creds), vault, copy };
 }
 
 // ── pushers (src/notify.js decides when a connection should have one) ──────

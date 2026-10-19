@@ -551,3 +551,18 @@ def test_the_dashboard_chat_card_opens_the_chat_page(monkeypatch):
             await pilot.pause()
             assert not isinstance(app.screen, ChatPage)
     asyncio.run(go())
+
+
+def test_connections_say_where_their_encryption_keys_are():
+    from sintfoap.chat_page import render_connections
+    base = {"network": "Matrix", "label": "@ryan:matrix.org", "status": "ok", "rooms": 2, "can_encrypt": True}
+    text = render_connections([
+        {**base, "keys_held": True, "keys_kept": True},
+        {**base, "keys_held": True, "keys_kept": False},
+        {**base, "keys_held": False, "keys_kept": False},
+        {**base, "can_encrypt": False},
+    ], {"ready": True}).plain
+    assert "encryption keys follow you to any browser you open chat in" in text
+    assert "open chat there once and they'll follow you" in text
+    assert "encryption not turned on yet" in text
+    assert "encrypted rooms need a password sign-in" in text
