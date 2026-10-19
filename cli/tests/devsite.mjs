@@ -10,6 +10,8 @@
 // matrix.test with the token syt_good, where he's in one room, "Family".
 // --notify turns push on (with throwaway keys), gives ryan Notifications and
 // one browser to send to, and answers every push as delivered.
+// ryan has Recipe box; https://recipes.test/pancakes is a recipe page to save
+// (serves 4), and any other page there has no recipe on it.
 import http from "node:http";
 import worker from "../../src/worker.js";
 import { Browser, makeEnv, sqlOne, run, grantApps } from "../../tests/helpers.mjs";
@@ -31,12 +33,23 @@ if (notify) {
   globalThis.fetch = (input, init) => new URL(input.url || input).host === "fcm.googleapis.com"
     ? Promise.resolve(new Response(null, { status: 201 })) : matrix(input, init);
 }
+{
+  const before = globalThis.fetch;
+  const PANCAKES = `<html><head><script type="application/ld+json">${JSON.stringify({ "@type": "Recipe", name: "Pancakes",
+    recipeYield: "4 servings", totalTime: "PT20M", recipeIngredient: ["1 1/2 cups flour", "2 eggs", "1 cup milk", "salt to taste"],
+    recipeInstructions: [{ "@type": "HowToStep", text: "Mix." }, { "@type": "HowToStep", text: "Cook." }] })}</script></head></html>`;
+  globalThis.fetch = (input, init) => {
+    const u = new URL(input.url || input);
+    if (u.host !== "recipes.test") return before(input, init);
+    return Promise.resolve(new Response(u.pathname === "/pancakes" ? PANCAKES : "<title>A blog</title>", { headers: { "Content-Type": "text/html" } }));
+  };
+}
 const env = makeEnv({ CHAT_BRIDGE_KEY: "devsite-bridge-key-0123456789", ...vapid });
 const ryan = new Browser(env), sam = new Browser(env);
 await ryan.signup("ryan", undefined, "Ryan M");
 await sam.signup("sam", undefined, "Sam");
 for (const who of ["ryan", "sam"]) grantApps(env, who, "plugins", "chat");
-grantApps(env, "ryan", "chat-bridges");
+grantApps(env, "ryan", "chat-bridges", "recipes");
 const id = name => sqlOne(env, "SELECT id FROM users WHERE username = ?", name).id;
 
 // sam's plugin, approved by an admin (made straight in the database).
