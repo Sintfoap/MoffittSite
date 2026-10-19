@@ -24,7 +24,8 @@
 //     upload(creds, bytes, mimetype, name) → media address, download(creds, address) → {bytes, mimetype}
 //     cryptoRequest(creds, method, path, body) → the platform's answer
 //     and, for push notifications (optional):
-//     setPusher(creds, key, url), removePusher(creds, key) }
+//     setPusher(creds, key, url), removePusher(creds, key),
+//     message(creds, room, message id) → that message as sync has it, or null }
 // Adding a platform means writing one of those and listing it in PROVIDERS;
 // the API, the web page and the terminal build their forms from `fields`.
 //
@@ -482,6 +483,22 @@ export async function connectionForPushKey(env, d, key) {
   const [id, sig] = String(key ?? "").split(".");
   if (!CONNECTION_ID.test(id) || !sig || sig !== await mac(env, id)) return null;
   return d.prepare("SELECT * FROM chat_connections WHERE id = ?").bind(id).first();
+}
+
+// A message the platform pushed, read from it directly when a sync hasn't
+// brought it in yet: as notify.js's bridgePushes takes it, {mine: true} for
+// your own, or null (not a message, a room not here yet, or no answer).
+export async function fetchMessage(env, d, conn, extRoom, extId) {
+  const provider = PROVIDERS[conn.provider], creds = await credsOf(env, conn);
+  if (!provider?.message || !creds || typeof extRoom !== "string" || typeof extId !== "string") return null;
+  const r = await d.prepare("SELECT id, name FROM chat_rooms WHERE id = ? AND connection = ?").bind(await localRoomId(conn, extRoom), conn.id).first();
+  if (!r) return null;
+  let e;
+  try { e = await provider.message(creds, extRoom, extId); }
+  catch (err) { if (err instanceof ProviderError) return null; throw err; }
+  if (!e) return null;
+  if (e.mine) return { mine: true };
+  return { room: { id: r.id, name: r.name }, id: e.id, sender_name: e.sender_name, body: e.body, encrypted: !!e.encrypted };
 }
 
 // Registers the connection's pusher on the platform, pointing at `url`.

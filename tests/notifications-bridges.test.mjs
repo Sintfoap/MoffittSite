@@ -9,6 +9,7 @@ import { Browser, makeEnv, run, sqlOne, grantApps, ORIGIN } from "./helpers.mjs"
 import { FakeMatrix } from "./fake-matrix.mjs";
 import { bridgeUpkeep } from "../src/notify.js";
 import { b64url } from "../src/crypto.js";
+import { matrix } from "../src/matrix.js";
 
 let hs, pushes;
 afterEach(() => hs?.uninstall());
@@ -95,6 +96,59 @@ test("a pusher notification syncs and pushes that message, once", async () => {
   const mine = hs.say("!fam:matrix.test", "@ryan:matrix.test", "coming");
   await notify(env, key, mine);
   await notify(env, key, undefined);
+  assert.equal(pushes.length, 1);
+});
+
+test("a push the homeserver's syncs don't have yet is read from the homeserver, as with chat closed on matrix.org", async () => {
+  const { env } = await setup();
+  await bridgeUpkeep(env);
+  const [key] = hs.pushers.keys();
+  hs.behind = 1;
+  const ev = hs.encrypted("!fam:matrix.test", "@sam:matrix.test");
+  assert.deepEqual(await notify(env, key, ev), { rejected: [] });
+  assert.equal(pushes.length, 1, "pushed without waiting for a sync");
+  assert.ok(hs.requests.some(([m, p]) => m === "GET" && p.endsWith(`/event/${encodeURIComponent(ev)}`)));
+  // When the sync catches up, it isn't pushed again.
+  hs.behind = 0;
+  run(env, "UPDATE chat_connections SET tried_at = 0");
+  await bridgeUpkeep(env);
+  await notify(env, key, ev);
+  assert.equal(pushes.length, 1);
+  // What it reads: the message as a sync would have it.
+  const creds = { base: "https://hs.matrix.test", token: "syt_good", user_id: "@ryan:matrix.test" };
+  const m = await matrix.message(creds, "!fam:matrix.test", ev);
+  assert.equal(m.sender_name, "Sam");
+  assert.equal(m.encrypted, true);
+  assert.equal((await matrix.message(creds, "!fam:matrix.test", hs.say("!fam:matrix.test", "@kim:matrix.test", "hey"))).body, "hey");
+  assert.equal(await matrix.message(creds, "!fam:matrix.test", hs.react("!fam:matrix.test", "@kim:matrix.test", ev, "👍")), null);
+  assert.equal((await matrix.message(creds, "!fam:matrix.test", hs.say("!fam:matrix.test", "@ryan:matrix.test", "me"))).mine, true);
+});
+
+test("a pushed message nothing has yet goes out with the next sync that brings it in", async () => {
+  const { env } = await setup();
+  await bridgeUpkeep(env);
+  const [key] = hs.pushers.keys();
+  hs.behind = 1;
+  const ev = hs.say("!fam:matrix.test", "@sam:matrix.test", "later");
+  hs.unreadable.add(ev);
+  await notify(env, key, ev);
+  assert.equal(pushes.length, 0);
+  hs.behind = 0; hs.unreadable.clear();
+  run(env, "UPDATE chat_connections SET tried_at = 0");
+  await bridgeUpkeep(env);
+  assert.equal(pushes.length, 1, "the cron's sync brought it in");
+  run(env, "UPDATE chat_connections SET tried_at = 0");
+  await bridgeUpkeep(env);
+  assert.equal(pushes.length, 1, "once");
+  // One that never turns up is given up on after a while.
+  hs.behind = 1;
+  const gone = hs.say("!fam:matrix.test", "@sam:matrix.test", "lost");
+  hs.unreadable.add(gone);
+  await notify(env, key, gone);
+  run(env, "UPDATE push_sent SET sent_at = sent_at - 7200 WHERE key LIKE 'wait:%'");
+  run(env, "UPDATE chat_connections SET tried_at = 0");
+  await bridgeUpkeep(env);
+  assert.equal(sqlOne(env, "SELECT COUNT(*) AS n FROM push_sent WHERE key LIKE 'wait:%'").n, 0);
   assert.equal(pushes.length, 1);
 });
 

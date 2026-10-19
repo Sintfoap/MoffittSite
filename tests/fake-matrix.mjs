@@ -31,6 +31,8 @@ export class FakeMatrix {
     this.receipts = [];        // [room, user, event id] for each read receipt the site sent
     this.media = new Map();    // media id → {bytes, type}; legacyMedia: no authenticated media API
     this.legacyMedia = false;
+    this.behind = 0;           // the latest events syncs don't have yet (a sync worker lagging, as on matrix.org)
+    this.unreadable = new Set(); // event ids reading one by id doesn't find yet
   }
 
   // An invite for the signed-in account to a room someone else is in.
@@ -202,6 +204,18 @@ export class FakeMatrix {
     if (path.startsWith("/_matrix/client/v3/room_keys/")) {
       const out = this.roomKeys(req.method, path.slice("/_matrix/client/v3/room_keys/".length), url.searchParams.get("version"), body);
       return out ? json(out) : json({ errcode: "M_NOT_FOUND", error: "No backup found" }, 404);
+    }
+    // One event, and someone's membership, straight from the store: they don't lag.
+    let ev = path.match(/^\/_matrix\/client\/v3\/rooms\/([^/]+)\/event\/([^/]+)$/);
+    if (ev && req.method === "GET") {
+      const found = !this.unreadable.has(decodeURIComponent(ev[2]))
+        && this.events.find(e => e.room === decodeURIComponent(ev[1]) && e.event.event_id === decodeURIComponent(ev[2]));
+      return found ? json({ ...found.event, room_id: found.room }) : json({ errcode: "M_NOT_FOUND", error: "Event not found" }, 404);
+    }
+    ev = path.match(/^\/_matrix\/client\/v3\/rooms\/([^/]+)\/state\/m\.room\.member\/([^/]+)$/);
+    if (ev && req.method === "GET") {
+      const name = this.rooms.get(decodeURIComponent(ev[1]))?.members.get(decodeURIComponent(ev[2]));
+      return name ? json({ membership: "join", displayname: name }) : json({ errcode: "M_NOT_FOUND" }, 404);
     }
     let m = path.match(/^\/_matrix\/client\/v3\/rooms\/([^/]+)\/joined_members$/);
     if (m && req.method === "GET") {
@@ -377,7 +391,7 @@ export class FakeMatrix {
   }
 
   sync(since, who, { limit } = {}) {
-    const from = since ? Number(since) : 0;
+    const from = since ? Number(since) : 0, upto = Math.max(from, this.events.length - this.behind);
     const join = {}, leave = {}, invite = {};
     for (const [id, r] of this.rooms) {
       if (r.invited) {
@@ -390,7 +404,7 @@ export class FakeMatrix {
         continue;
       }
       if (r.left) { if (from) leave[id] = { timeline: { events: [] } }; continue; }
-      const all = this.events.map((e, i) => [e, i]).slice(from).filter(([e]) => e.room === id);
+      const all = this.events.map((e, i) => [e, i]).slice(from, upto).filter(([e]) => e.room === id);
       // (Only the latest `limit` when asked, as a homeserver does, with where the rest begins.)
       const shown = limit && all.length > limit ? all.slice(-limit) : all;
       const timeline = shown.map(([e]) => e.event), prevBatch = String(shown[0]?.[1] ?? from);
@@ -408,6 +422,6 @@ export class FakeMatrix {
       join[id] = { state: { events: state }, timeline: { events: timeline, limited: shown.length < all.length, prev_batch: prevBatch }, ephemeral,
         summary: { "m.heroes": [...r.members.keys()].filter(k => k !== this.user) } };
     }
-    return this.syncCrypto(who, { next_batch: String(this.events.length), rooms: { join, leave, invite } });
+    return this.syncCrypto(who, { next_batch: String(upto), rooms: { join, leave, invite } });
   }
 }
