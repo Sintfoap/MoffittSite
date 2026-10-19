@@ -5,6 +5,7 @@ Ryan Moffitt's portfolio, hosted on Cloudflare Workers.
 ```
 public/          the website, served as static files
   index.html       homepage
+  llm.txt          guide for AI agents using Drift through the MCP server (/mcp)
   keys.js          the signed-in pages' g-chord shortcuts (g h, g d, g p, g s, g a, g o)
   friends/         Friends & Associates page
   books/           Book club pick: public, no sign-in; anyone can vote (app.js talks to /books/api)
@@ -25,6 +26,8 @@ public/          the website, served as static files
 src/             the Worker: runs only for the paths in run_worker_first
   worker.js        routing: sign-in pages, then /todo behind protect()
   account.js       /login /signup /logout /dashboard /account /admin, and protect()
+  apikeys.js       API keys AI agents sign in with: made and revoked on /account, stored hashed
+  mcp.js           /mcp: the MCP server, so an agent can do what a person can in Drift
   cli.js           /login/cli: signing in from a terminal, and its dashboard and settings
   auth.js          accounts, sessions, login throttling, two-factor
   crypto.js        password hashing (PBKDF2) and authenticator codes (TOTP)
@@ -84,6 +87,7 @@ The site has its own login. There's no Cloudflare Access.
 - **Menu:** the dashboard owns the side rail. `siteNav()` in `src/nav.js` builds it from `APPS` in `src/auth.js` and the account's areas; server pages render it directly, and the Worker puts it into Drift, the plugin store and chat where their HTML has `<!--site-rail-->`. A new app only needs an entry in `APPS` (with its `icon` and `g` `key`) to show up everywhere, the terminal UI included (it reads the same list as `nav` from `/login/cli/dashboard`).
 - **Areas** (`user_areas` table) decide who can use which part of the site. Each app in `APPS` is its own area (Drift's is `todo`), so each has its own per-account toggle on `/admin`. `protect(request, env, "<area>", inner)` in `src/account.js` lets only signed-in accounts with that area through. Pages redirect to `/login`; API calls get 401 or 403.
 - **Terminal sign-in** (`/login/cli`): `sintfoap login` (see `cli/`) shows a short code; you open `/login/cli` in a browser where you're signed in (two-factor included) and approve it. The terminal never sees your password. What it gets is an ordinary session, so it expires the same way, counts in your sessions, and ends with "Sign out everywhere" or a password change. Codes work once, for 10 minutes, and one address can have 5 waiting. Approving always needs a button press on the site, so a link with someone else's code in it can't sign them in as you without you clicking Approve. Once signed in, `sintfoap` shows the dashboard in the terminal, from `GET /login/cli/dashboard`. That gives the terminal the same things the web dashboard shows, including the Today items (`today`) and the date label (`date`), and Drift and the plugin store through the same APIs as their web pages. Its settings page uses `GET`/`POST /login/cli/account` (display name) and `POST /login/cli/account/sessions` (sign out everywhere else); everything on `/account` that needs the password stays on the website.
+- **API keys and MCP** (`/mcp`): on `/account`, anyone with Drift can make API keys (password required; shown once; up to 10) to give an AI agent. The agent connects to `https://sintfoap.xyz/mcp` (MCP over HTTP) with `Authorization: Bearer <key>` and gets tools for everything a person can do in Drift: read state and the agenda, create, change and delete items and collections, share collections, and add store plugins. It calls the same functions as Drift's web API, so the same checks apply. Keys are stored as SHA-256 hashes, ignored by every other route (and `/mcp` ignores cookies), and stop working when revoked or when the account is disabled or loses Drift. Changing a password doesn't revoke them. `public/llm.txt` is the guide agents read.
 - **Forms and API writes** sent from another website are refused, based on the `Origin` and `Sec-Fetch-Site` headers.
 
 ### Admin

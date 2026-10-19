@@ -8,6 +8,7 @@
 // src/store.js) and /chat (src/chat.js) each need their own app turned on for
 // the account on the admin page, and so do /notifications (src/notify.js) and
 // /recipes, the Recipe box (src/recipes.js).
+// /mcp is the MCP server AI agents use Drift through, with an API key (src/mcp.js).
 // /login/cli is signing in from a terminal (src/cli.js). /app and
 // /.well-known/assetlinks.json are the Android app's download page, release
 // check and domain link (src/phone.js). /_matrix/push/v1/notify
@@ -20,6 +21,7 @@ import { plugins, installed, install, uninstall, PLUGIN_ID, SANDBOX_CSP } from "
 import { protect, handleAuth, AUTH_PATHS, sameOrigin } from "./account.js";
 import { currentSession, areaOf } from "./auth.js";
 import { handleCli, CLI_PATHS } from "./cli.js";
+import { mcp, MCP_PATHS } from "./mcp.js";
 import { handlePhone, PHONE_PATHS } from "./phone.js";
 import { withRail } from "./pages.js";
 import { chat } from "./chat.js";
@@ -78,6 +80,7 @@ export default {
     if (pathname.startsWith("/sandbox/")) return sandbox(request, env);
     if (pathname === "/_matrix/push/v1/notify") return pushGateway(request, env, ctx ? p => ctx.waitUntil(p) : undefined);
     if (pathname === "/login/status") return loginStatus(request, env);
+    if (MCP_PATHS.test(pathname)) return mcp(request, env);
     if (CLI_PATHS.test(pathname)) return handleCli(request, env);
     if (PHONE_PATHS.test(pathname)) return handlePhone(request, env);
     if (AUTH_PATHS.test(pathname)) return handleAuth(request, env);

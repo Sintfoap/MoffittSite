@@ -1,0 +1,93 @@
+# sintfoap.xyz — Drift for AI agents (llm.txt)
+
+Drift is a personal organiser on sintfoap.xyz. This site runs an MCP server
+that lets you, an AI agent, do everything the person who gave you a key can do
+in Drift: read and change their collections and items, share collections with
+other Drift users, and add store plugins. You act as that person.
+
+## Connect
+
+- MCP endpoint: https://sintfoap.xyz/mcp   (Streamable HTTP, POST only, JSON replies)
+- Auth: header `Authorization: Bearer sf_...` (an API key)
+- Claude Code example:
+    claude mcp add --transport http drift https://sintfoap.xyz/mcp --header "Authorization: Bearer sf_..."
+- Other clients: add a remote/HTTP MCP server with that URL and header.
+
+Requests that carry an `Origin` header (browsers) are refused, and cookies are
+ignored. GET and DELETE on /mcp return 405.
+
+## Getting a key (the person does this)
+
+1. Sign in at https://sintfoap.xyz and open Account settings (/account).
+2. In "API keys", name the key, enter the password, press "Make a key".
+3. Copy the key now; it is shown once. Give it to the agent.
+4. To cut the agent off, press Revoke on the same page.
+
+A key has full Drift access as its owner. Treat it like a password. Changing
+the password or signing out everywhere does NOT revoke keys; revoke them on
+the account page. A key stops working if the account is disabled, loses Drift
+access, or is deleted.
+
+## Data model
+
+- Collection: a named list of items, id `c_` + 10 hex digits (name up to 100
+  characters; up to 100 collections). Each has `plugins` (which plugins are on),
+  an optional `view` (plugin shown first), and `order`. A new account has one
+  collection, "Inbox". You can't delete your last collection.
+- Item: id `i_` + 10 hex digits. Fields: `title` (required, up to 500),
+  `notes` (up to 20000), `tags` (lowercase, no #, up to 50), `collection`, and
+  `meta`. Up to 5000 items per owner.
+- `meta` holds one slice per plugin, keyed by plugin id. Built-in plugins:
+    checklist  {done: boolean, priority: 0-3}                      a task to tick off
+    event      {start, end}  "YYYY-MM-DD" (all day) or "YYYY-MM-DDTHH:MM"; end may be null
+    list       {order: number, parent: item id | null}              an outline
+    graph      (no per-item data)
+  Set a slice to null in an update to take the item off that plugin. A
+  plugin's data only shows if the plugin is on for the item's collection.
+- Deleting is soft: send `deleted: false` in an update to restore.
+- Sharing: the owner shares a collection with another Drift user by username,
+  role `edit` (add and change items) or `view` (read only). Shared collections
+  appear in your state with your `role`. Items can only move between
+  collections with the same owner.
+- Ids shown in drift_get_state are the only ids to use. Call it first.
+
+## Tools
+
+- drift_get_state                 Everything: collections (with shares and your role), items, plugins, store plugins.
+- drift_get_agenda {day}          Events due or late on `day` (YYYY-MM-DD).
+- drift_create_item               {title, collection, notes?, tags?, meta?}
+- drift_update_item               {id, title?, notes?, tags?, collection?, meta?, deleted?}  Only sent fields change; each meta slice is replaced whole.
+- drift_delete_item               {id}
+- drift_create_collection         {name, plugins?, view?}
+- drift_update_collection         {id, name?, plugins?, view?, order?, deleted?}  Owner only.
+- drift_delete_collection         {id}  Owner only.
+- drift_share_collection          {id, username, role?: "edit" | "view"}  Owner only; sending again changes the role.
+- drift_unshare_collection        {id, username}  The owner removes anyone; a guest can remove themselves.
+- drift_install_plugin            {id}  Add an approved store plugin (ids in drift_get_state's `store`).
+- drift_uninstall_plugin          {id}
+
+Results are JSON in a text block. Mistakes (bad field, not found, view-only,
+limits) come back with `isError: true` and a plain message; fix and retry.
+Not-found is also what you get for another person's ids.
+
+## Examples
+
+Add a high-priority task:
+  drift_create_item {"title":"Pay rent","collection":"c_...","meta":{"checklist":{"done":false,"priority":3}}}
+
+Schedule an event:
+  drift_create_item {"title":"Dentist","collection":"c_...","meta":{"event":{"start":"2026-03-05T14:30","end":"2026-03-05T15:15"}}}
+
+Tick a task off:
+  drift_update_item {"id":"i_...","meta":{"checklist":{"done":true,"priority":3}}}
+
+Nest an item under another in a list:
+  drift_update_item {"id":"i_child...","meta":{"list":{"order":1,"parent":"i_parent..."}}}
+
+Share a collection read-only:
+  drift_share_collection {"id":"c_...","username":"josh","role":"view"}
+
+## Not available
+
+Chat, Recipe box, notifications, and writing or reviewing store plugins are
+not part of this server; neither are accounts, passwords or keys.
