@@ -269,7 +269,7 @@ def test_admins_switch_apps_on_and_off_in_the_terminal(admin_site):
         page = app.screen
         assert type(page).__name__ == "AdminPage"
         apps = [a["id"] for a in page.data["apps"]]
-        assert apps == ["drift", "admin", "plugins", "chat", "chat-bridges", "notifications"]
+        assert apps == ["drift", "admin", "plugins", "chat", "chat-bridges", "recipes", "notifications"]
         # A switch for every app on every account; your own admin one can't be turned off.
         assert len(page.boxes) == len(apps) * len(page.data["users"])
         me = next(i for i, u in enumerate(page.data["users"]) if u["you"])
@@ -338,6 +338,73 @@ def test_g_n_opens_the_terminal_notifications_page(notify_site):
         app.go("n")
         await settle(pilot, 0.5)
         assert type(app.screen).__name__ == "NotificationsPage"
+    run_app("dashboard", go)
+
+
+# ── recipe box ─────────────────────────────────────────────────────────────
+
+def test_recipe_box_saves_from_a_link_scales_and_sends_to_drift(real_site):
+    async def recipes(app, pilot):
+        page = app.screen
+        assert type(page).__name__ == "RecipesPage"
+        assert page.data["recipes"] == [] and page.data["drift"]
+        # a, then a link: the site reads the recipe off the page.
+        await pilot.press("a")
+        assert app.focused.id == "url"
+        app.focused.value = "https://recipes.test/pancakes"
+        await pilot.press("enter")
+        await settle(pilot, 0.6)
+        r = page.current()
+        assert r["title"] == "Pancakes" and r["servings"] == 4
+        assert app.focused.id == "shelf"
+        # + twice: 6 servings, and the lines change to match.
+        await pilot.press("plus", "plus")
+        assert page.amounts(r) == (1.5, 6)
+        ing = page.query_one("#ingredients")
+        assert str(ing.get_option_at_index(0).prompt) == "2¼ cups flour"
+        # Untick the salt, then send the rest to a new Shopping list in Drift.
+        ing.focus()
+        ing.highlighted = 3
+        await pilot.press("space")
+        await settle(pilot)
+        assert page.skip[r["id"]] == {3}
+        await pilot.press("s")
+        await settle(pilot, 0.6)
+        drift = site.drift_state()
+        shopping = next(c for c in drift["collections"] if c["name"] == "Shopping list")
+        titles = sorted(it["title"] for it in drift["items"] if it["collection"] == shopping["id"])
+        assert titles == ["1½ cup milk", "2¼ cups flour", "3 eggs"]
+        assert any(x["id"] == shopping["id"] for x in page.data["lists"])
+        # A page with no recipe on it opens the editor with the link filled in.
+        page.query_one("#url").focus()
+        page.query_one("#url").value = "https://recipes.test/blog"
+        await pilot.press("enter")
+        await settle(pilot, 0.6)
+        dialog = app.screen
+        assert type(dialog).__name__ == "RecipeDialog"
+        assert dialog.query_one("#source").value == "https://recipes.test/blog"
+        dialog.query_one("#title").value = "Toast"
+        dialog.query_one("#ingredients").text = "2 slices bread\nbutter"
+        await pilot.press("ctrl+s")
+        await settle(pilot, 0.6)
+        assert [x["title"] for x in site.recipes()["recipes"]] == ["Pancakes", "Toast"]
+        assert page.current()["ingredients"] == ["2 slices bread", "butter"]
+        # d deletes, after asking.
+        await pilot.press("d")
+        await settle(pilot)
+        await pilot.press("y")
+        await settle(pilot, 0.6)
+        assert [x["title"] for x in site.recipes()["recipes"]] == ["Pancakes"]
+    run_app("recipes", recipes)
+
+
+def test_g_r_opens_the_terminal_recipe_box(real_site):
+    async def go(app, pilot):
+        await settle(pilot, 0.5)
+        assert any(n["key"] == "r" for n in app.data["nav"])
+        app.go("r")
+        await settle(pilot, 0.5)
+        assert type(app.screen).__name__ == "RecipesPage"
     run_app("dashboard", go)
 
 

@@ -309,6 +309,14 @@ const SCHEMA = [
      data       TEXT NOT NULL,
      PRIMARY KEY (connection, part)
    )`,
+  // Recipe box (src/recipes.js): each account's saved recipes. data is JSON.
+  `CREATE TABLE IF NOT EXISTS recipes (
+     owner   TEXT NOT NULL,          -- user id
+     id      TEXT NOT NULL,          -- "r_" + random hex
+     data    TEXT NOT NULL,
+     updated TEXT NOT NULL,
+     PRIMARY KEY (owner, id)
+   )`,
   // Votes on the public book suggestions page (src/books.js). One per browser,
   // by the random id in its __Host-bv cookie; it can be changed or taken back.
   `CREATE TABLE IF NOT EXISTS book_votes (
