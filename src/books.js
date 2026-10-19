@@ -1,5 +1,5 @@
 // Book suggestions at /books: a public page (public/books/) where anyone,
-// signed in or not, can vote for the book they'd like read next.
+// signed in or not, can vote for the book they'd like the book club to read next.
 //
 //   GET    /books/api        → {books: [{id, title, author, year, blurb, links, votes}], total, mine, name}
 //   POST   /books/api/vote   {book, name?} → the same, after voting (or changing your vote)
@@ -37,10 +37,9 @@ export const BOOKS = [
   {
     id: "gods-and-legionnaires",
     title: "Gods & Legionnaires",
-    series: "Galaxy's Edge: Savage Wars, book 2",
     author: "Jason Anspach and Nick Cole",
     year: 2020,
-    blurb: "The Coalition is reeling. New Vega and its worlds have fallen to the Savage marines, post-human warlords who rule as gods, though their alliance is shaky and rival tribes of the Uplifted still fight for control. Humanity's best hope is a new fighting force, the Legion, and only a sliver of the recruits who go through Tyrus Rechs's brutal training make it. Military science fiction set long before the main Galaxy's Edge books; it follows Savage Wars (book 1).",
+    blurb: "Humanity is losing a war against the Savages, post-human warlords who have remade themselves into something they believe are gods, and the book spends much of its time inside their heads. You see the fighting through the eyes of Savage marines who regard the humans they hunt as lesser beings, then through the eyes of the people desperately holding the line against them. Sliding between those conflicting points of view, the same battles read as glory or as horror depending on who is telling them, and the lyrical prose dwells on both.",
     links: shops("Gods & Legionnaires Anspach Cole", [
       { label: "Audible", url: "https://www.audible.com/pd/B084MLYMCZ" },
     ]),
