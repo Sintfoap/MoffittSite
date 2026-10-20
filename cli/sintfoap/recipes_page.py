@@ -151,7 +151,7 @@ class RecipesPage(Page):
         yield from self.top()
         with Vertical(id="body"):
             yield Static("R E C I P E   B O X", classes="kicker")
-            yield Input(placeholder="Paste a link to a recipe and press enter (a)", id="url")
+            yield Input(placeholder="Paste a link to a recipe (any site, or Recipe Keeper) and press enter (a)", id="url")
             with Horizontal(id="main"):
                 yield OptionList(id="shelf")
                 with VerticalScroll(id="recipe"):

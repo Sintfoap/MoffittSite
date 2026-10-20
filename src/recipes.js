@@ -214,13 +214,49 @@ function fromJsonLd(html) {
   return null;
 }
 
-// Older sites mark the parts up in the page itself instead.
-function fromMicrodata(html) {
-  const props = name => [...html.matchAll(new RegExp(`<([a-z0-9]+)[^>]*itemprop\\s*=\\s*["']${name}["'][^>]*>([\\s\\S]*?)</\\1>`, "gi"))].map(m => text(m[2])).filter(Boolean);
-  const ingredients = [...props("recipeIngredient"), ...props("ingredients")];
+// Older sites mark the parts up in the page itself instead. So does Recipe
+// Keeper's shared recipe pages (recipekeeperonline.com/recipe/…), with names
+// of its own: recipeIngredients and recipeDirections hold every line as <p>s,
+// times and the yield are <meta content>, and the picture is itemprop="photo0".
+const itemprop = name => `itemprop\\s*=\\s*["'](?:[^"']*\\s)?${name}(?:\\s[^"']*)?["']`;
+const BREAKS = /<\/(p|li|div|h\d)>|<br\s*\/?>/gi;
+
+// From `from` to the tag that closes the one just opened, counting nested ones of the same name.
+function closing(html, tag, from) {
+  const re = new RegExp(`<(/?)${tag}\\b[^>]*>`, "gi");
+  re.lastIndex = from;
+  for (let depth = 1, m; (m = re.exec(html));) {
+    if (m[0].endsWith("/>")) continue;
+    depth += m[1] ? -1 : 1;
+    if (!depth) return m.index;
+  }
+  return html.length;
+}
+
+function fromMicrodata(html, url) {
+  const VOID = /^(meta|img|br|hr|input|link)$/i;
+  const inner = (tag, at) => VOID.test(tag) ? "" : html.slice(at, closing(html, tag, at));
+  // The inside of each element with that itemprop, up to its own closing tag.
+  const els = name => [...html.matchAll(new RegExp(`<([a-z0-9]+)\\b[^>]*${itemprop(name)}[^>]*>`, "gi"))].map(m => inner(m[1], m.index + m[0].length));
+  const lines = (...names) => names.flatMap(els).flatMap(inner => inner.replace(BREAKS, "\n").split(/\n+/).map(text)).filter(Boolean);
+  const metas = name => [...html.matchAll(new RegExp(`<meta\\b[^>]*${itemprop(name)}[^>]*>`, "gi"))]
+    .map(m => text(m[0].match(/content\s*=\s*["']([^"']*)["']/i)?.[1] ?? "")).filter(Boolean);
+  const value = name => metas(name)[0] || text(els(name)[0] ?? "");
+
+  const ingredients = lines("recipeIngredient", "recipeIngredients", "ingredients");
   if (!ingredients.length) return null;
-  const y = props("recipeYield")[0] || "";
-  return { title: props("name")[0] || "", yield: y, servings: servingsOf(y), ingredients, steps: props("recipeInstructions"), image: "", time: "", notes: "" };
+  const y = value("recipeYield");
+  const time = ["totalTime", "cookTime", "prepTime"].map(value).map(t => duration(t) || (/^P/i.test(t) ? "" : t)).find(Boolean) || "";
+  const pic = html.match(new RegExp(`<img\\b[^>]*${itemprop("(?:photo0|photo|image)")}[^>]*>`, "i"))?.[0].match(/src\s*=\s*["']([^"']+)["']/i)?.[1];
+  let img = "";
+  try { img = pic ? image(new URL(decode(pic), url || undefined).toString()) : ""; } catch {}
+  const from = value("recipeSource");
+  const notes = [lines("recipeNotes", "description").join("\n"), from && `Source: ${from}`].filter(Boolean).join("\n\n");
+  return {
+    title: value("name"), yield: y, servings: servingsOf(y), ingredients, time, image: img, notes,
+    // Recipe Keeper numbers its directions ("1. Mix"); the page numbers them already.
+    steps: lines("recipeInstructions", "recipeDirections").map(l => l.replace(/^\d+[.)]\s+/, "")).filter(Boolean),
+  };
 }
 
 const meta = (html, prop) => {
@@ -231,7 +267,7 @@ const meta = (html, prop) => {
 
 // The recipe on a page, or null if there isn't one.
 export function parseRecipe(html, url = "") {
-  const r = fromJsonLd(html) || fromMicrodata(html);
+  const r = fromJsonLd(html) || fromMicrodata(html, url);
   if (!r) return null;
   const title = r.title || meta(html, "og:title") || text(html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] ?? "") || "Untitled recipe";
   const cut = (s, n) => s.length > n ? s.slice(0, n - 1).trimEnd() + "…" : s;
