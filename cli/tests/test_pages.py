@@ -297,7 +297,7 @@ def test_admins_switch_apps_on_and_off_in_the_terminal(admin_site):
         page = app.screen
         assert type(page).__name__ == "AdminPage"
         apps = [a["id"] for a in page.data["apps"]]
-        assert apps == ["drift", "admin", "plugins", "chat", "chat-bridges", "recipes", "sweep", "notifications"]
+        assert apps == ["drift", "admin", "plugins", "chat", "chat-bridges", "recipes", "sweep", "trips", "notifications"]
         # A switch for every app on every account; your own admin one can't be turned off.
         assert len(page.boxes) == len(apps) * len(page.data["users"])
         me = next(i for i, u in enumerate(page.data["users"]) if u["you"])
@@ -847,3 +847,114 @@ def test_drift_map_plans_a_route_from_the_base_and_sets_bases(real_site):
         assert [(b["from"], b["lat"]) for b in bases] == [(None, 51.5154), (R.today(), 51.5033)]
         assert "Base for Today" in text() and "51.50330, -0.11960" in text()
     run_app("drift", route)
+
+
+# ── trip planner ───────────────────────────────────────────────────────────
+
+def test_trip_planner_plans_the_days_pins_places_and_packs_into_drift(real_site):
+    col = site.drift_state()["collections"][0]
+    site.add_item({"title": "See the tower", "collection": col["id"],
+                   "meta": {"location": {"place": "Belém Tower", "lat": 38.6916, "lng": -9.216}}})
+
+    async def trips(app, pilot):
+        page = app.screen
+        assert type(page).__name__ == "TripsPage"
+        assert page.data["trips"] == [] and page.data["drift"] and not page.data["search"]
+        # n: a new trip, with dates.
+        await pilot.press("n")
+        dialog = app.screen
+        assert type(dialog).__name__ == "TripDialog"
+        dialog.query_one("#title").value = "Lisbon"
+        dialog.query_one("#start").value = "2026-05-01"
+        dialog.query_one("#end").value = "2026-05-02"
+        await pilot.press("ctrl+s")
+        await settle(pilot, 0.6)
+        t = page.trip
+        assert t["title"] == "Lisbon" and t["days"] == ["2026-05-01", "2026-05-02"]
+        # m: sam's going too.
+        await pilot.press("m")
+        app.screen.query_one("#answer").value = "sam"
+        await pilot.press("enter")
+        await settle(pilot, 0.6)
+        assert [m["username"] for m in page.trip["members"]] == ["ryan", "sam"]
+
+        # 2, a: a place off ryan's Drift map.
+        await pilot.press("2")
+        await pilot.press("a")
+        await settle(pilot, 0.6)
+        dialog = app.screen
+        assert type(dialog).__name__ == "PlaceDialog"
+        assert [x["title"] for x in dialog.mine] == ["See the tower"]
+        dialog.query_one("#mine").focus()
+        await pilot.press("down", "enter")
+        await settle(pilot, 0.6)
+        assert [(p["place"], p["lat"]) for p in page.trip["places"]] == [("Belém Tower", 38.6916)]
+        # And one by name (there's no place search here).
+        await pilot.press("a")
+        await settle(pilot, 0.4)
+        app.screen.query_one("#q").value = "Time Out Market"
+        await pilot.press("enter")
+        await settle(pilot, 0.6)
+        assert [p["place"] for p in page.trip["places"]] == ["Belém Tower", "Time Out Market"]
+
+        # 1, a: a stop on day 1, at the tower.
+        await pilot.press("1")
+        await pilot.press("a")
+        await settle(pilot, 0.4)
+        dialog = app.screen
+        assert type(dialog).__name__ == "StopDialog"
+        assert dialog.query_one("#day").value == "2026-05-01"
+        dialog.query_one("#time").value = "14:00"
+        dialog.query_one("#title").value = "The tower"
+        dialog.query_one("#place").value = page.trip["places"][0]["id"]
+        await pilot.press("ctrl+s")
+        await settle(pilot, 0.6)
+        stop = page.trip["plans"][0]
+        assert (stop["day"], stop["time"], stop["title"], stop["place"]) == ("2026-05-01", "14:00", "The tower", page.trip["places"][0]["id"])
+        lines = [str(page.query_one("#stops").get_option_at_index(i).prompt) for i in range(page.query_one("#stops").option_count)]
+        assert lines[0] == "DAY 1 · FRI 1 MAY" and "The tower" in lines[1] and "Belém Tower" in lines[1]
+
+        # 3, a: packing; b makes the camera sam's, so ryan's send leaves it out.
+        await pilot.press("3")
+        for thing in ("Passport", "Camera"):
+            await pilot.press("a")
+            await settle(pilot, 0.3)
+            app.screen.query_one("#answer").value = thing
+            await pilot.press("enter")
+            await settle(pilot, 0.5)
+        box = page.query_one("#packing")
+        box.focus()
+        box.highlighted = 1
+        await pilot.press("b", "b")      # anyone → ryan → sam
+        await settle(pilot, 0.6)
+        assert [p["who"] for p in page.trip["packing"]] == ["", page.trip["members"][1]["id"]]
+        assert box.selected == [page.trip["packing"][0]["id"]]
+        await pilot.press("s")
+        await settle(pilot, 0.6)
+        drift = site.drift_state()
+        packing = next(c for c in drift["collections"] if c["name"] == "Packing: Lisbon")
+        assert [it["title"] for it in drift["items"] if it["collection"] == packing["id"]] == ["Passport"]
+        assert [p["in_drift"] for p in page.trip["packing"]] == [True, False]
+
+        # x takes the highlighted line off.
+        box.highlighted = 1
+        await pilot.press("x")
+        await settle(pilot, 0.6)
+        assert [p["text"] for p in page.trip["packing"]] == ["Passport"]
+        # d deletes the trip, after asking.
+        await pilot.press("d")
+        await settle(pilot)
+        await pilot.press("y")
+        await settle(pilot, 0.6)
+        assert site.trips()["trips"] == []
+    run_app("trips", trips)
+
+
+def test_g_t_opens_the_terminal_trip_planner(real_site):
+    async def go(app, pilot):
+        await settle(pilot, 0.5)
+        assert any(n["key"] == "t" for n in app.data["nav"])
+        app.go("t")
+        await settle(pilot, 0.5)
+        assert type(app.screen).__name__ == "TripsPage"
+    run_app("dashboard", go)

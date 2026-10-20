@@ -22,6 +22,7 @@ public/          the website, served as static files
   notifications/   turning push notifications on, and what they're for
   recipes/         Recipe box (signed-in users with it turned on); scale.js scales ingredient lines, shared with the Worker
   sweep/           Sweep: Drift suggestions read out of your chat rooms, to accept or turn down
+  trips/           Trip planner: a trip's days, places and packing list, planned with whoever's going
   sw.js            the service worker that shows push notifications
   site.webmanifest, icons/   so the site can be added to a phone's home screen
   favicon.svg, favicon.ico   the browser tab icon (the same emblem as icons/)
@@ -46,11 +47,12 @@ src/             the Worker: runs only for the paths in run_worker_first
   notify.js        notifications: settings, browsers, Chat's pushes and Drift's reminders
   recipes.js       Recipe box: recipes read from a link's schema.org data (Recipe Keeper's shared recipes too), and their ingredients sent to a Drift list
   sweep.js         Sweep: reads chosen chat rooms with Claude and suggests Drift events, tasks and list items
+  trips.js         Trip planner: shared trips, their itinerary, pinned places, and packing lists sent to Drift
   books.js         the book club pick's list and votes (/books/api), and who voted for admins
   bridges.js       chat connections: other platforms' rooms in chat, with sealed credentials
   matrix.js        the Matrix provider for those
   vendor/uqr.mjs   QR codes for two-factor setup (MIT)
-cli/             the `sintfoap` command: sign in from a terminal; dashboard, Drift, plugin store, chat, Recipe box, Sweep and settings as a terminal UI
+cli/             the `sintfoap` command: sign in from a terminal; dashboard, Drift, plugin store, chat, Recipe box, Sweep, Trip planner and settings as a terminal UI
 apps/todo-esque/ the original Drift app (Python engine, terminal UI, CLI)
 tests/           node --no-warnings --test tests/*.test.mjs  (the CLI's: cd cli && python -m pytest tests)
 wrangler.jsonc   Worker configuration (name, static files, variables, database)
@@ -407,6 +409,30 @@ Push stays off, and the page says so, until the site has a VAPID key pair.
 | `POST /sweep/api/sweep` | `{tz, rooms?}`: read what's new and suggest |
 | `POST /sweep/api/suggestions/<id>/accept` | `{title?, kind?, start?, end?, collection?}`: add it to Drift |
 | `POST /sweep/api/suggestions/<id>/reject` | `{reason?}` |
+
+## Trip planner
+
+`/trips/` plans a trip with the people going on it. It's an app in `APPS` with its own toggle on `/admin`, off for everyone.
+
+- **Together:** whoever makes a trip adds the others by username (they need Trip planner too), and can take them off again. Everyone on it can change everything in it; only the person who made it can delete it, and anyone else can leave.
+- **Days:** the trip's dates give it a day each (up to 60). Stops go on a day, with a time if there is one, and can be at one of the trip's places. Stops for no day in particular go under "Any day".
+- **Places:** pinned by search (OpenRouteService, with the same `ORS_API_KEY` Drift's Locations uses; without it you type the name), or picked off your own Drift map: any Drift item with a place on the map. With Drift, the trip's places show on a map, numbered (Leaflet, from Drift's copy).
+- **Packing:** a shared list, each thing for anyone or for one person. Sending puts what's for you or for anyone (that isn't there yet) onto your own Drift checklist, "Packing: <trip>", made the first time, or any list you can add to. Each person sends their own, and the list shows what's already in yours.
+- **Limits:** 100 trips per account, 20 people besides the one who made it, 600 stops, places and things to pack per trip.
+- **Terminal:** `sintfoap trips` (`g t`).
+
+| Request | |
+|---|---|
+| `GET /trips/api/trips` | your trips, and whether you have Drift and place search, and the Drift lists you can add to |
+| `POST /trips/api/trips` | `{title, start, end, notes}`: a new trip |
+| `GET`, `PATCH`, `DELETE /trips/api/trips/<id>` | the whole trip; change it; delete it (or leave someone else's) |
+| `POST /trips/api/trips/<id>/members` | `{username}`; `DELETE …/members/<user id>` takes them off |
+| `POST /trips/api/trips/<id>/plans` | `{day, time, title, place, notes}`; `PATCH`, `DELETE …/plans/<id>` |
+| `POST /trips/api/trips/<id>/places` | `{place, lat, lng, note, drift}`; `PATCH`, `DELETE …/places/<id>` |
+| `POST /trips/api/trips/<id>/packing` | `{text, who}`; `PATCH`, `DELETE …/packing/<id>` |
+| `POST /trips/api/trips/<id>/pack` | `{ids?, list?}`: onto a Drift checklist → `{list, added, trip}` |
+| `GET /trips/api/places?q=` | places matching q, or `null` without place search |
+| `GET /trips/api/drift-places` | your Drift items that are on the map |
 
 ## Phone app
 

@@ -380,6 +380,30 @@ const SCHEMA = [
      hint     TEXT NOT NULL,
      added_at INTEGER NOT NULL
    )`,
+  // Trip planner (src/trips.js): trips, who's going on each, and what's in them.
+  `CREATE TABLE IF NOT EXISTS trips (
+     id      TEXT PRIMARY KEY,                     -- "t_" + random hex
+     owner   TEXT NOT NULL,                        -- user id of whoever made it
+     data    TEXT NOT NULL,                        -- JSON {title, start, end, notes, created}
+     updated TEXT NOT NULL
+   )`,
+  `CREATE TABLE IF NOT EXISTS trip_members (
+     trip     TEXT NOT NULL,
+     user_id  TEXT NOT NULL,                       -- planning it with the owner, with the same say
+     added_at INTEGER NOT NULL,
+     PRIMARY KEY (trip, user_id)
+   )`,
+  `CREATE INDEX IF NOT EXISTS trip_members_user ON trip_members (user_id)`,
+  // A trip's itinerary stops, pinned places and packing list, a row each so
+  // two people editing at once don't overwrite each other.
+  `CREATE TABLE IF NOT EXISTS trip_entries (
+     trip    TEXT NOT NULL,
+     id      TEXT NOT NULL,                        -- "e_" + random hex
+     kind    TEXT NOT NULL,                        -- plan | place | pack
+     data    TEXT NOT NULL,                        -- JSON, by kind (src/trips.js)
+     created TEXT NOT NULL,
+     PRIMARY KEY (trip, id)
+   )`,
 ];
 
 // Indexes on columns that ADDED_COLUMNS may have only just added.

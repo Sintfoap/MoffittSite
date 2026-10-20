@@ -15,6 +15,7 @@
 // ryan has Sweep, and he and sam are in a room "Plans" where sam asked about
 // dinner. The stand-in for Claude suggests that dinner from the first message
 // it's shown.
+// ryan and sam have Trip planner.
 import http from "node:http";
 import worker from "../../src/worker.js";
 import { Browser, makeEnv, sqlOne, run, grantApps } from "../../tests/helpers.mjs";
@@ -65,6 +66,7 @@ await ryan.signup("ryan", undefined, "Ryan M");
 await sam.signup("sam", undefined, "Sam");
 for (const who of ["ryan", "sam"]) grantApps(env, who, "plugins", "chat");
 grantApps(env, "ryan", "chat-bridges", "recipes", "sweep");
+for (const who of ["ryan", "sam"]) grantApps(env, who, "trips");
 {
   const plans = (await ryan.req("POST", "/chat/api/rooms", { json: { name: "Plans" } })).json.id;
   await sam.req("POST", `/chat/api/rooms/${plans}/join`);

@@ -32,6 +32,7 @@ const ICON = {
   chat: `<path d="M4 5h16v11H9l-5 4z"/><path d="M8 9.5h8M8 12.5h5"/>`,
   recipes: `<path d="M6 3h11a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H6z"/><path d="M6 3v18M9.5 8h5M9.5 11.5h5"/>`,
   sweep: `<path d="M4 20 14 10M12 8l4 4M14 6l4 4-3 3-4-4z"/><path d="M5 5v3M3.5 6.5h3M19 15v3M17.5 16.5h3"/>`,
+  trips: `<path d="M4 8h16v11H4z"/><path d="M9 8V5h6v3M4 13h16"/>`,
   bell: `<path d="M6 16V11a6 6 0 0 1 12 0v5l2 2H4z"/><path d="M10 20.5a2 2 0 0 0 4 0"/>`,
   out: `<path d="M15 4h4v16h-4M10 8l-4 4 4 4M6 12h10"/>`,
   fold: `<rect x="3" y="4" width="18" height="16" rx="1"/><path d="M9 4v16M16 9l-3 3 3 3"/>`,
