@@ -74,9 +74,17 @@ access, or is deleted.
                                   one collection's items, `include_notes: false` to leave notes out. `version` changes
                                   whenever the person's data does, so check it if items may have changed between pages.
 - drift_get_agenda {day}          Events due or late on `day` (YYYY-MM-DD).
+- drift_get_item {id}             One item, including a deleted one.
 - drift_create_item               {title, collection, notes?, tags?, meta?}
 - drift_update_item               {id, title?, notes?, tags?, collection?, meta?, deleted?}  Only sent fields change; each meta slice is replaced whole.
 - drift_delete_item               {id}
+- drift_create_items {items}      Up to 50 drift_create_item argument objects in one call.
+- drift_update_items {items}      Up to 50 drift_update_item argument objects ({id, ...}) in one call.
+                                  Both do each in turn; one that fails doesn't stop the rest. The result is
+                                  {done, failed, results: [{index, item} | {index, error}]}, index being its place in your list.
+- drift_link_items                {from, to, type?, remove?}  Link two items in Graph. No type: a plain two-way link.
+                                  A type ("leads to", "depends on", "blocks", "part of", or your own) points from -> to.
+                                  remove: true removes any link between them. Routes visit linked places one after the other.
 - drift_create_collection         {name, plugins?, view?}
 - drift_update_collection         {id, name?, plugins?, view?, order?, deleted?}  Owner only.
 - drift_delete_collection         {id}  Owner only.
@@ -85,10 +93,17 @@ access, or is deleted.
 - drift_set_bases                 {id, bases}  Replace a collection's bases (anyone who can edit it).
 - drift_plan_route                {collection, day, profile?, option?}  The day's best orders from its base and back,
                                   with travel times; profile driving-car | foot-walking | cycling-regular.
+- drift_get_map                   {collection, day, profile?, option?, width?, height?}  A PNG picture of the day's Map:
+                                  OpenStreetMap streets, the route, the base (a house) and the stops as numbered pins in
+                                  visiting order (1-9, then A-Z; red = likely late). Comes with a text block listing the
+                                  stops by label, the travel time and distance. 800x600 by default (320-1280 wide, 240-1280 high).
+- drift_find_place                {query, near?} -> {results: [{place, lat, lng}]}, or {lat, lng} -> {place}.
+                                  Check what an address finds before putting it in meta.location. Needs the site's
+                                  OpenRouteService key; without it, give locations as {lat, lng}.
 - drift_install_plugin            {id}  Add an approved store plugin (ids in drift_get_state's `store`).
 - drift_uninstall_plugin          {id}
 
-Results are JSON in a text block. Mistakes (bad field, not found, view-only,
+Results are JSON in a text block (drift_get_map: an image block, then the JSON). Mistakes (bad field, not found, view-only,
 limits) come back with `isError: true` and a plain message; fix and retry.
 Not-found is also what you get for another person's ids.
 
@@ -108,6 +123,12 @@ Tick a task off:
 
 Nest an item under another in a list:
   drift_update_item {"id":"i_child...","meta":{"list":{"order":1,"parent":"i_parent..."}}}
+
+Add a few stops for a day and see the route:
+  drift_create_items {"items":[{"title":"Coffee","collection":"c_...","meta":{"event":{"start":"2026-03-05T09:00"},"location":{"place":"Blue Bottle, Oakland"}}},
+                               {"title":"Museum","collection":"c_...","meta":{"event":{"start":"2026-03-05"},"location":{"place":"SFMOMA"}}}]}
+  drift_link_items {"from":"i_coffee...","to":"i_museum...","type":"leads to"}
+  drift_get_map {"collection":"c_...","day":"2026-03-05"}
 
 Share a collection read-only:
   drift_share_collection {"id":"c_...","username":"josh","role":"view"}

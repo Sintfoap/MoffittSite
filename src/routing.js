@@ -44,7 +44,7 @@ function estimate(points, profile) {
 const timeOn = (s, d) => dayOf(s) === d ? timeOf(s) : "";
 
 // The plan for collection `id` on `day`:
-//   { day, profile, base, stops: [{id, title, start, place}], unplaced, elsewhere,
+//   { day, profile, base, stops: [{id, title, start, end, place, lat, lng}], unplaced, elsewhere,
 //     options: [{order, duration, distance, late}], option, legs: [{duration, distance}],
 //     path: [[lat, lng]…], streets, estimated, loose, off, trouble }
 // `trouble` says what ORS said when it couldn't give the times or the streets.
@@ -60,7 +60,7 @@ export async function planDay(env, user, id, day, profile = "driving-car", optio
   const points = [...(base?.lat != null ? [base] : []), ...stops.map(it => it.meta.location)];
   const out = {
     day, profile, base: base || null, off: !hasPlaces(env), estimated: !hasPlaces(env), streets: false, loose: false, option: 0, options: [], legs: [], path: [],
-    stops: stops.map(it => ({ id: it.id, title: it.title, start: timeOn(it.meta.event.start, day), end: timeOn(it.meta.event.end, day), place: it.meta.location.place })),
+    stops: stops.map(it => ({ id: it.id, title: it.title, start: timeOn(it.meta.event.start, day), end: timeOn(it.meta.event.end, day), place: it.meta.location.place, lat: it.meta.location.lat, lng: it.meta.location.lng })),
     unplaced: plan.unplaced.map(it => it.id), elsewhere: plan.elsewhere.map(it => it.id),
   };
   if (!stops.length) return out;
