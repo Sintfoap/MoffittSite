@@ -78,6 +78,16 @@ function showUpdate() {
     <span>Version ${u.version}. Tap to download it, then open the download to install it over this one. Your data stays put.</span></a>`;
 }
 
+// How big the whole app is drawn (More → Size). Kept on this phone only.
+const SIZE_KEY = "m:size";
+export const SIZES = [["Small", 1], ["Medium", 1.2], ["Large", 1.35], ["Huge", 1.5]];
+function appSize() { try { return +localStorage.getItem(SIZE_KEY) || 1.2; } catch { return 1.2; } }
+function setSize(z) {
+  document.documentElement.style.setProperty("--z", z);
+  try { localStorage.setItem(SIZE_KEY, z); } catch {}
+}
+document.documentElement.style.setProperty("--z", appSize());
+
 async function boot() {
   try { app.dash = await api("GET", "/login/cli/dashboard"); }
   catch (e) {
@@ -127,6 +137,9 @@ async function showMore(main) {
     <section class="card me"><div class="avatar" aria-hidden="true">${esc((d.user.display_name || d.user.username)[0].toUpperCase())}</div>
       <div><b>${esc(d.user.display_name)}</b><span class="mono">${esc(d.user.username)}${d.user.admin ? " · admin" : ""}</span></div></section>
     <h2 class="label">Settings</h2>
+    <div class="card sizes"><div class="seg" role="radiogroup" aria-label="Size">${SIZES.map(([name, z]) =>
+      `<button type="button" role="radio" data-size="${z}" aria-selected="${z === appSize()}" aria-checked="${z === appSize()}">${name}</button>`).join("")}</div>
+      <p>How big everything is drawn on this phone.</p></div>
     <form class="card form" id="nameForm">
       <label for="dn">Display name</label>
       <div class="row"><input id="dn" name="display_name" maxlength="50" autocomplete="nickname" value="${esc(d.user.display_name)}"><button class="btn">Save</button></div>
@@ -146,6 +159,10 @@ async function showMore(main) {
     ${app.apk ? `<p class="fine">sintfoap for Android, version ${app.apk}${app.update ? "" : " · up to date"}</p>`
       : `<div class="card list"><a class="li act" href="/app">Get the Android app ${icon("link", 16)}</a></div><p class="fine">sintfoap phone app</p>`}`;
   showUpdate();
+  main.querySelector(".sizes").addEventListener("click", e => {
+    const b = e.target.closest("[data-size]");
+    if (b) { setSize(+b.dataset.size); showMore(main); }
+  });
   $("#nameForm").addEventListener("submit", async e => {
     e.preventDefault();
     try {
