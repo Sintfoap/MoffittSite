@@ -65,7 +65,8 @@ const idProp = (what, prefix) => ({ type: "string", description: `${what} id, li
 
 const META = `meta maps a plugin id to that plugin's data for this item; null removes the item from that plugin. Built-in plugins: ` +
   `checklist {done: boolean, priority: 0-3}; event {start, end} where each is "YYYY-MM-DD" (all day) or "YYYY-MM-DDTHH:MM" and end may be null; ` +
-  `list {order: number, parent: item id or null} (an outline); graph has no per-item data. Store plugins use their own ids. ` +
+  `list {order: number, parent: item id or null} (an outline); graph has no per-item data; ` +
+  `location {words} where words is a what3words address like "filled.count.soap" (the site fills in lat, lng and place from what3words). Store plugins use their own ids. ` +
   `A plugin only applies to an item if it is switched on for the item's collection.`;
 const ITEM_FIELDS = {
   title: { type: "string", description: "Up to 500 characters." },
@@ -76,7 +77,7 @@ const ITEM_FIELDS = {
 };
 const COLLECTION_FIELDS = {
   name: { type: "string", description: "Up to 100 characters." },
-  plugins: { type: "array", items: { type: "string" }, description: "Plugin ids switched on: built-in (checklist, event, list, graph) or installed store plugins." },
+  plugins: { type: "array", items: { type: "string" }, description: "Plugin ids switched on: built-in (checklist, event, list, graph, location) or installed store plugins." },
   view: { type: "string", description: "Plugin id whose view opens first, or empty." },
   order: { type: "number", description: "Sort position among your collections." },
 };

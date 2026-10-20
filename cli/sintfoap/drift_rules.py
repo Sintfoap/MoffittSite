@@ -5,20 +5,23 @@ No UI here, so it's easy to test.
 """
 from __future__ import annotations
 
+import math
 import re
 import time
+import unicodedata
 from datetime import date, datetime, timedelta
 
 DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 DATETIME = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$")
 
 # Drift's own plugins that bring a view, in the order the page shows them.
-VIEW_LABELS = {"checklist": "Checklist", "event": "Calendar", "list": "List", "graph": "Graph"}
+VIEW_LABELS = {"checklist": "Checklist", "event": "Calendar", "list": "List", "graph": "Graph", "location": "Map"}
 BUILT_IN = {
     "checklist": ("Checklist", "Tick items off as done, with an optional priority."),
     "event": ("Events", "Give items a date and time, and see them on a calendar."),
     "list": ("List", "Arrange items in your own order and nest them as an outline."),
     "graph": ("Graph", "Link items to each other and see them as a network."),
+    "location": ("Locations", "Give items a place as a what3words address, and see each day's events on a map."),
 }
 PRIORITY = ["None", "Low", "Medium", "High"]
 
@@ -98,8 +101,122 @@ def parse_time(s: str) -> str | None:
     return f"{h:02d}:{mins:02d}"
 
 
+# ── places ─────────────────────────────────────────────────────────────────
+# A what3words address is three words joined by dots ("filled.count.soap").
+
+W3W_LINK = re.compile(r"^(?:https?://)?(?:www\.)?(?:what3words\.com|w3w\.co)/([^?#\s]+)")
+
+
+def parse_words(s: str) -> str | None:
+    """"///Filled.Count.Soap", "filled count soap" or a what3words link → "filled.count.soap"; None if it isn't one."""
+    w = str(s or "").strip().lower()
+    m = W3W_LINK.match(w)
+    if m:
+        from urllib.parse import unquote
+        w = unquote(m[1])
+    w = re.sub(r"[\s｡。・]+", ".", w.lstrip("/"))
+    # Each word: a letter, then letters or the marks some scripts join to them (as \p{L}[\p{L}\p{M}]* on the web).
+    word = lambda x: bool(x) and unicodedata.category(x[0])[0] == "L" and all(unicodedata.category(ch)[0] in "LM" for ch in x)  # noqa: E731
+    parts = w.split(".")
+    return w if len(w) <= 100 and len(parts) == 3 and all(map(word, parts)) else None
+
+
+def w3w_link(words: str) -> str:
+    from urllib.parse import quote
+    return "https://what3words.com/" + quote(words, safe=".")
+
+
+def distance(a: dict, b: dict) -> float:
+    """Metres between two {lat, lng}, as the crow flies."""
+    r = math.pi / 180
+    d_lat, d_lng = (b["lat"] - a["lat"]) * r, (b["lng"] - a["lng"]) * r
+    h = math.sin(d_lat / 2) ** 2 + math.cos(a["lat"] * r) * math.cos(b["lat"] * r) * math.sin(d_lng / 2) ** 2
+    return 2 * 6371008.8 * math.asin(min(1, math.sqrt(h)))
+
+
+def nice_distance(m: float, miles: bool = False) -> str:
+    if miles:
+        mi = m / 1609.344
+        return f"{mi:.1f} mi" if mi < 10 else f"{round(mi)} mi"
+    if m < 1000:
+        return f"{round(m / 10) * 10} m"
+    return f"{m / 1000:.1f} km" if m < 10000 else f"{round(m / 1000)} km"
+
+
+def placed(loc: dict | None) -> bool:
+    return bool(loc and loc.get("words") and loc.get("lat") is not None and loc.get("lng") is not None)
+
+
+def day_stops(items: list[dict], d: str) -> dict:
+    """The Map view's day, as the web page has it: {stops: [{item, n, from}], unplaced, elsewhere}."""
+    evs = sorted([it for it in items if it["meta"].get("event") and on_day(it["meta"]["event"], d)], key=by_start)
+    stops, unplaced, elsewhere, prev = [], [], 0, None
+    for it in evs:
+        loc = it["meta"].get("location")
+        if not (loc and loc.get("words")):
+            elsewhere += 1
+        elif not placed(loc):
+            unplaced.append(it)
+        else:
+            stops.append({"item": it, "n": len(stops) + 1, "from": distance(prev, loc) if prev else None})
+            prev = loc
+    return {"stops": stops, "unplaced": unplaced, "elsewhere": elsewhere}
+
+
+def _mercator(lat: float, lng: float) -> tuple[float, float]:
+    s = math.sin(math.radians(max(-85.0, min(85.0, lat))))
+    return (lng + 180) / 360, 0.5 - math.log((1 + s) / (1 - s)) / (4 * math.pi)
+
+
+def stop_label(n: int) -> str:
+    return str(n) if n < 10 else chr(ord("A") + n - 10) if n < 36 else "+"
+
+
+def text_map(stops: list[dict], sel: str | None = None, width: int = 60, height: int = 13) -> dict:
+    """The day's stops drawn on a grid of characters, for the terminal's Map view.
+    Fits every stop in; with `sel` (an item id) it centres on that stop, still
+    with every stop in view. A cell is about twice as tall as it is wide. Returns {cells: rows of
+    characters (" ", "·" for the route, or a stop's label), marks: {(row, col): item id},
+    metres: metres across one column}."""
+    pts = [(s, *_mercator(s["item"]["meta"]["location"]["lat"], s["item"]["meta"]["location"]["lng"])) for s in stops]
+    cells = [[" "] * width for _ in range(height)]
+    if not pts:
+        return {"cells": cells, "marks": {}, "metres": 0.0}
+    xs, ys = [p[1] for p in pts], [p[2] for p in pts]
+    lat0 = sum(s["item"]["meta"]["location"]["lat"] for s in stops) / len(stops)
+    per_unit = 40075016.686 * math.cos(math.radians(lat0))     # metres in one unit of x at this latitude
+    floor = 15 / per_unit                                      # at most 15 m to a column
+    dx = max((max(xs) - min(xs)) / max(width - 6, 1), (max(ys) - min(ys)) / max(2 * (height - 2), 1), floor)
+    cx, cy = (max(xs) + min(xs)) / 2, (max(ys) + min(ys)) / 2
+    at = next((p for p in pts if p[0]["item"]["id"] == sel), None)
+    if at:
+        cx, cy = at[1], at[2]
+        dx = max([dx] + [abs(x - cx) / max(width / 2 - 2, 1) for x in xs] + [abs(y - cy) / max(height - 2, 1) for y in ys])
+    dy = 2 * dx
+
+    def cell(x: float, y: float) -> tuple[int, int]:
+        return round((y - cy) / dy + (height - 1) / 2), round((x - cx) / dx + (width - 1) / 2)
+
+    where = [cell(x, y) for _, x, y in pts]
+    for (r0, c0), (r1, c1) in zip(where, where[1:]):
+        n = max(abs(r1 - r0), abs(c1 - c0))
+        for i in range(1, n):
+            r, c = round(r0 + (r1 - r0) * i / n), round(c0 + (c1 - c0) * i / n)
+            if 0 <= r < height and 0 <= c < width:
+                cells[r][c] = "·"
+    marks: dict = {}
+    for (s, _, _), (r, c) in zip(pts, where):
+        if 0 <= r < height and 0 <= c < width:
+            # The picked stop stays on top of any it shares a cell with.
+            if (r, c) in marks and marks[(r, c)] == sel:
+                continue
+            cells[r][c] = stop_label(s["n"])
+            marks[(r, c)] = s["item"]["id"]
+    return {"cells": cells, "marks": marks, "metres": dx * per_unit}
+
+
 def parse_quick(text: str) -> tuple[str, dict]:
-    """"Call Sam #family +home !2 ^fri @3pm" → ("Call Sam", {tags, collection, priority, date, time})."""
+    """"Call Sam #family +home !2 ^fri @3pm ///filled.count.soap" → ("Call Sam", {tags, collection, priority, date, time, location})."""
     f: dict = {}
     tags, words = [], []
     for w in str(text).split():
@@ -113,6 +230,8 @@ def parse_quick(text: str) -> tuple[str, dict]:
             f["date"] = parse_date(w[1:])
         elif len(w) > 1 and w[0] == "@" and parse_time(w[1:]):
             f["time"] = parse_time(w[1:])
+        elif w.startswith("///") and parse_words(w):
+            f["location"] = parse_words(w)
         else:
             words.append(w)
     if tags:
@@ -302,7 +421,7 @@ def list_move(item: dict, scope: list[dict], how: str) -> dict | None:
 
 def fresh_meta(plugins: list[str], quick: dict, *, dated_view: bool = False, day: str | None = None) -> dict:
     """What a new item starts with, from the plugins that are on (each plugin's fresh()).
-    On Today and Calendar every item gets a date, so it shows up where you added it."""
+    On Today, Calendar and the Map every item gets a date, so it shows up where you added it."""
     meta: dict = {}
     if "checklist" in plugins:
         meta["checklist"] = {"done": False, "priority": quick.get("priority", 0)}
@@ -314,4 +433,6 @@ def fresh_meta(plugins: list[str], quick: dict, *, dated_view: bool = False, day
         meta["list"] = {"order": time.time(), "parent": None}
     if "graph" in plugins:
         meta["graph"] = {"links": [], "x": None, "y": None}
+    if "location" in plugins and quick.get("location"):
+        meta["location"] = {"words": quick["location"], "lat": None, "lng": None, "place": ""}
     return meta

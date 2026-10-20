@@ -9,6 +9,7 @@
 import { db, now } from "./db.js";
 import { PLUGINS, BY_ID } from "../public/todo/plugins/index.js";
 import { approvedIds, approvedPlugins, installed } from "./store.js";
+import { toCoordinates } from "./w3w.js";
 
 export class BadRequest extends Error {}
 const fail = msg => { throw new BadRequest(msg); };
@@ -123,6 +124,18 @@ function cleanCollection(changes, store) {
   return out;
 }
 
+// Locations: the site places an item's what3words address on the map when it's
+// saved (src/w3w.js). Words the item already had keep their place, so only new
+// words, or ones not placed yet, ask what3words. Without a key, what was sent
+// is kept as it is.
+async function locate(env, loc, before) {
+  if (!loc?.words || !env.W3W_API_KEY) return loc;
+  if (before?.words === loc.words && before.lat != null) return { ...loc, lat: before.lat, lng: before.lng, place: before.place || "" };
+  const at = await toCoordinates(env, loc.words);
+  if (at?.error) fail(at.error);
+  return at ? { ...loc, ...at } : { ...loc, lat: null, lng: null, place: "" };
+}
+
 // ── reading ────────────────────────────────────────────────────────────────
 
 const ITEM = { collection: "", title: "", notes: "", tags: [], created: "", deleted: false, meta: {} };
@@ -234,6 +247,7 @@ export async function createItem(env, user, fields) {
   const { n } = await d.prepare("SELECT COUNT(*) AS n FROM drift_items WHERE owner = ?").bind(acc.owner).first();
   if (n >= LIMITS.items) fail(`item limit reached (${LIMITS.items})`);
   data.meta = Object.fromEntries(Object.entries(data.meta || {}).filter(([, v]) => v !== null));
+  if (data.meta.location) data.meta.location = await locate(env, data.meta.location, null);
   const item = { ...ITEM, ...data, created: nowStamp(), deleted: false };
   const id = newId("i"), updated = updatedNow();
   await d.prepare("INSERT INTO drift_items (owner, id, data, updated) VALUES (?, ?, ?, ?)")
@@ -256,6 +270,7 @@ export async function updateItem(env, user, id, changes) {
     if (!canWrite(to.role)) fail("that collection is view-only for you");
     if (to.owner !== acc.owner) fail("items can only move between collections with the same owner");
   }
+  if (meta?.location) meta.location = await locate(env, meta.location, (await getRow(d, "drift_items", acc.owner, id, toItem))?.meta?.location);
   let expr = "json_patch(data, ?)";
   const args = [JSON.stringify({ ...core, meta: {} })];          // {meta:{}} makes sure meta exists
   for (const [pid, v] of Object.entries(meta || {})) {           // pid is a known plugin id, safe in a path

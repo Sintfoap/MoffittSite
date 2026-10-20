@@ -107,9 +107,11 @@ export default {
     return { start, end };
   },
 
+  // On the Calendar, and on Locations' map, which both show one day, new items land on that day.
   fresh(quick, ctx) {
-    if (!quick.date && !quick.time && ctx.tab !== "event") return undefined;
-    const day = quick.date || (ctx.tab === "event" && ctx.viewState.day) || today();
+    const dayView = ctx.tab === "event" || ctx.tab === "location";
+    if (!quick.date && !quick.time && !dayView) return undefined;
+    const day = quick.date || (dayView && ctx.viewState.day) || today();
     return { start: quick.time ? `${day}T${quick.time}` : day, end: null };
   },
 

@@ -44,6 +44,9 @@ access, or is deleted.
     event      {start, end}  "YYYY-MM-DD" (all day) or "YYYY-MM-DDTHH:MM"; end may be null
     list       {order: number, parent: item id | null}              an outline
     graph      (no per-item data)
+    location   {words, lat, lng, place}  a what3words address, like
+               {"words": "filled.count.soap"}; send just the words and the site
+               fills in lat, lng and the nearest place from what3words
   Set a slice to null in an update to take the item off that plugin. A
   plugin's data only shows if the plugin is on for the item's collection.
 - Deleting is soft: send `deleted: false` in an update to restore.
@@ -85,6 +88,9 @@ Add a high-priority task:
 
 Schedule an event:
   drift_create_item {"title":"Dentist","collection":"c_...","meta":{"event":{"start":"2026-03-05T14:30","end":"2026-03-05T15:15"}}}
+
+Give an event a place (the collection needs the location plugin on to show it):
+  drift_update_item {"id":"i_...","meta":{"location":{"words":"filled.count.soap"}}}
 
 Tick a task off:
   drift_update_item {"id":"i_...","meta":{"checklist":{"done":true,"priority":3}}}
