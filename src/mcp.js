@@ -10,7 +10,9 @@
 
 import { findKey, touchKey } from "./apikeys.js";
 import { getUser, areaOf } from "./auth.js";
-import { state, agenda, createItem, updateItem, createCollection, updateCollection, shareCollection, unshareCollection, BadRequest, ID } from "./drift.js";
+import { state, agenda, createItem, updateItem, createCollection, updateCollection, setBases, shareCollection, unshareCollection, BadRequest, ID } from "./drift.js";
+import { planDay } from "./routing.js";
+import { PROFILES } from "../public/todo/route.js";
 import { install, uninstall, PLUGIN_ID } from "./store.js";
 
 export const MCP_PATHS = /^\/mcp\/?$/;
@@ -65,7 +67,8 @@ const idProp = (what, prefix) => ({ type: "string", description: `${what} id, li
 
 const META = `meta maps a plugin id to that plugin's data for this item; null removes the item from that plugin. Built-in plugins: ` +
   `checklist {done: boolean, priority: 0-3}; event {start, end} where each is "YYYY-MM-DD" (all day) or "YYYY-MM-DDTHH:MM" and end may be null; ` +
-  `list {order: number, parent: item id or null} (an outline); graph has no per-item data; ` +
+  `list {order: number, parent: item id or null} (an outline); graph {links: [item ids], rel?: {item id: link type}, kind?} ` +
+  `(a typed link like "leads to" points from this item to the other; on a day's route, linked places are visited one after the other); ` +
   `location {place, lat, lng}: send {place: "an address or a place's name"} and the site finds it on the map, or {lat, lng} and it names the spot. Store plugins use their own ids. ` +
   `A plugin only applies to an item if it is switched on for the item's collection.`;
 const ITEM_FIELDS = {
@@ -121,6 +124,27 @@ const TOOLS = [
       const who = String(a.username ?? "").toLowerCase();
       if (!USERNAME.test(who)) fail("username isn't valid");
       return found(await unshareCollection(env, user, needId(a, "c"), who));
+    } },
+  { name: "drift_set_bases", description: "Set where a collection's days start and end, for route planning. Replaces all its bases. " +
+      "Each base is {place: \"an address or a place's name\"} (the site finds it) or {lat, lng}, plus from and to (YYYY-MM-DD) for the days it covers: " +
+      "from = to for one day, or leave both out for the home base, used on any day nothing else covers. A day's base is the one that covers it most closely. " +
+      "Anyone who can edit the collection can set them.",
+    inputSchema: obj({ id: idProp("Collection", "c"), bases: { type: "array", items: { type: "object" }, description: "[{place, lat, lng, from, to}]" } }, ["id", "bases"]),
+    run: async (env, user, a) => found(await setBases(env, user, needId(a, "c"), a.bases)) },
+  { name: "drift_plan_route", description: "Plan a day's route for a collection with Locations: its events with a place, from the day's base and back. " +
+      "Timed events stay in time order, linked items (Graph) are visited one after the other, and the rest is shortest travel first. " +
+      "Returns the few best orders (options, each with order of item ids, duration in seconds, distance in metres, and late: timed stops you'd likely reach late), " +
+      "and for the chosen option the legs and the path along the streets. estimated: true means straight-line estimates (no routing key on the site).",
+    inputSchema: obj({
+      collection: idProp("Collection", "c"),
+      day: { type: "string", description: "YYYY-MM-DD" },
+      profile: { type: "string", enum: Object.keys(PROFILES), description: "How you get around. Default driving-car." },
+      option: { type: "integer", minimum: 0, description: "Which of the options to give legs and the path for. Default 0, the best." },
+    }, ["collection", "day"]),
+    run: async (env, user, a) => {
+      if (!DAY.test(String(a.day))) fail("day must be YYYY-MM-DD");
+      const out = found(await planDay(env, user, needId({ id: a.collection }, "c"), a.day, a.profile, a.option));
+      return { ...out, path: undefined };
     } },
   { name: "drift_install_plugin", description: "Add an approved plugin from the plugin store to your Drift. Its id is in drift_get_state's store list.",
     inputSchema: obj({ id: { type: "string", description: "Store plugin id." } }, ["id"]),

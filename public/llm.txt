@@ -43,13 +43,20 @@ access, or is deleted.
     checklist  {done: boolean, priority: 0-3}                      a task to tick off
     event      {start, end}  "YYYY-MM-DD" (all day) or "YYYY-MM-DDTHH:MM"; end may be null
     list       {order: number, parent: item id | null}              an outline
-    graph      (no per-item data)
+    graph      {links: [item ids], rel?: {item id: type}, kind?}  links to other items;
+               a typed link ("leads to", "depends on" …) points from this item to the other
     location   {place, lat, lng}  where it happens. Send {"place": "1 Ferry
                Building, San Francisco"} and the site finds it (lat, lng and the
                name it found), or {"lat": 37.7955, "lng": -122.3937} and it
                names the spot. A place it can't find is refused.
   Set a slice to null in an update to take the item off that plugin. A
   plugin's data only shows if the plugin is on for the item's collection.
+- A collection with Locations can have `bases`: where each day's route starts
+  and ends. [{place, lat, lng, from, to}] with from/to as YYYY-MM-DD for the
+  days it covers (from = to for one day), or both left out for the home base.
+  A day's base is the one covering it most closely. A day's route keeps timed
+  events in time order, visits linked items one after the other (in the
+  link's direction when it has a type), and orders the rest by shortest travel.
 - Deleting is soft: send `deleted: false` in an update to restore.
 - Sharing: the owner shares a collection with another Drift user by username,
   role `edit` (add and change items) or `view` (read only). Shared collections
@@ -75,6 +82,9 @@ access, or is deleted.
 - drift_delete_collection         {id}  Owner only.
 - drift_share_collection          {id, username, role?: "edit" | "view"}  Owner only; sending again changes the role.
 - drift_unshare_collection        {id, username}  The owner removes anyone; a guest can remove themselves.
+- drift_set_bases                 {id, bases}  Replace a collection's bases (anyone who can edit it).
+- drift_plan_route                {collection, day, profile?, option?}  The day's best orders from its base and back,
+                                  with travel times; profile driving-car | foot-walking | cycling-regular.
 - drift_install_plugin            {id}  Add an approved store plugin (ids in drift_get_state's `store`).
 - drift_uninstall_plugin          {id}
 

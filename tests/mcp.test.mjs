@@ -282,3 +282,17 @@ test("llm.txt names every tool", () => {
   const txt = readFileSync(new URL("../public/llm.txt", import.meta.url), "utf8");
   for (const name of TOOL_NAMES) assert.ok(txt.includes(name), `llm.txt should mention ${name}`);
 });
+
+test("agents set a collection's bases and plan a day's route", async () => {
+  const env = makeEnv(), a = await agent(env, "ryan");
+  const col = (await a.call("drift_get_state")).collections[0];
+  for (const [title, start, lng] of [["Breakfast", "2026-10-20T09:00", -0.11], ["Museum", "2026-10-20", -0.3]])
+    await a.call("drift_create_item", { title, collection: col.id, meta: { event: { start }, location: { lat: 51.5, lng } } });
+  const set = await a.call("drift_set_bases", { id: col.id, bases: [{ lat: 51.51, lng: -0.2 }] });
+  assert.deepEqual(set.bases, [{ place: "", lat: 51.51, lng: -0.2, from: null, to: null }]);
+  const r = await a.call("drift_plan_route", { collection: col.id, day: "2026-10-20", profile: "foot-walking" });
+  assert.equal(r.options.length, 2);
+  assert.equal(r.legs.length, 3);
+  assert.equal(r.path, undefined, "the street path is left out");
+  assert.equal(r.estimated, true);
+});

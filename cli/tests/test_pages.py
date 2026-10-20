@@ -695,3 +695,65 @@ def test_drift_map_shows_the_days_places_and_goes_to_the_one_picked(real_site):
         assert made["meta"]["event"]["start"] == R.add_days(1) + "T19:00"
         assert made["meta"]["location"] == {"place": "Notting Hill", "lat": None, "lng": None}
     run_app("drift", map_tab)
+
+
+def test_bases_and_routes_read_like_the_web_page():
+    home = {"place": "Home", "lat": 51.5, "lng": -0.1, "from": None, "to": None}
+    trip = {"place": "Hotel", "lat": 48.85, "lng": 2.35, "from": "2026-10-01", "to": "2026-10-07"}
+    night = {"place": "Friend's", "lat": 48.9, "lng": 2.3, "from": "2026-10-03", "to": "2026-10-03"}
+    assert R.base_for([home, trip, night], "2026-09-30") is home
+    assert R.base_for([home, trip, night], "2026-10-02") is trip
+    assert R.base_for([home, trip, night], "2026-10-03") is night
+    assert R.base_for([trip], "2026-10-08") is None and R.base_for(None, "2026-10-08") is None
+    assert R.base_scope(home) == "Home base" and R.base_scope(trip).startswith("Base from ")
+    assert R.nice_duration(30) == "1 min" and R.nice_duration(65 * 60) == "1 h 5 min" and R.nice_duration(7200) == "2 h"
+    # The base is on the map, and the route leaves from it and comes back.
+    stop = lambda id_, n, lat, lng: {"item": {"id": id_, "meta": {"location": {"place": id_, "lat": lat, "lng": lng}}}, "n": n}  # noqa: E731
+    m = R.text_map([stop("a", 1, 51.52, -0.12), stop("b", 2, 51.52, -0.08)], None, 40, 9, home)
+    assert "base" in m["marks"].values() and "⌂" in "".join("".join(r) for r in m["cells"])
+
+
+def test_drift_map_plans_a_route_from_the_base_and_sets_bases(real_site):
+    col = site.drift_state()["collections"][0]
+    site.update_collection(col["id"], {"plugins": col["plugins"] + ["location"]})
+    for title, tm, lat, lng in [("Breakfast", "T08:30", 51.520847, -0.195521), ("Museum", "", 51.5194, -0.1270), ("Lunch", "T13:00", 51.5033, -0.1196)]:
+        site.add_item({"title": title, "collection": col["id"],
+                       "meta": {"event": {"start": R.today() + tm, "end": None}, "location": {"place": title, "lat": lat, "lng": lng}}})
+    site.set_bases(col["id"], [{"place": "", "lat": 51.5154, "lng": -0.1755}])
+
+    async def route(app, pilot):
+        page = app.screen
+        page.view = "c:" + col["id"]
+        page.tabs[col["id"]] = "location"
+        page.render_all()
+        await settle(pilot)
+        lst = page.query_one("#items")
+        text = lambda: "\n".join(str(lst.get_option_at_index(i).prompt) for i in range(lst.option_count))  # noqa: E731
+        assert "Home base" in text() and "51.51540, -0.17550" in text()
+        lst.focus()
+        await pilot.press("p")
+        await settle(pilot, 0.8)
+        t = text()
+        assert "Route" in t and "of travel" in t and "(Drive)" in t, t
+        assert "estimated in straight lines" in t, "no key on the test site"
+        assert "Back to" in t and " drive" in t
+        assert t.index("Breakfast") < t.index("Lunch"), "times first"
+        assert "⌂" in str(page.query_one("#geo").render())
+        await pilot.press("m")
+        await settle(pilot, 0.8)
+        assert "(Walk)" in text() and " walk" in text()
+        before = text()
+        await pilot.press("right_parenthesis")
+        await settle(pilot, 0.8)
+        assert "Route 2 of" in text() and text() != before
+        # b sets a base for just this day; the route then leaves from there.
+        await pilot.press("b")
+        await settle(pilot)
+        dlg = app.screen
+        dlg.query_one("#place").value = "51.5033, -0.1196"
+        await pilot.press("ctrl+s")
+        await settle(pilot, 0.8)
+        bases = next(c for c in site.drift_state()["collections"] if c["id"] == col["id"])["bases"]
+        assert [(b["from"], b["lat"]) for b in bases] == [(None, 51.5154), (R.today(), 51.5033)]
+        assert "Base for Today" in text() and "51.50330, -0.11960" in text()
+    run_app("drift", route)

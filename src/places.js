@@ -1,7 +1,7 @@
 // Places for Drift's Locations plugin, from OpenRouteService (built on
 // OpenStreetMap): searching for an address or a place by name, and naming the
 // spot at a pair of coordinates. The site asks ORS, so the key stays on the
-// server; Drift's routing will use the same key.
+// server; Drift's routing (src/routing.js) uses the same key.
 //
 //   ORS_API_KEY (a secret): a free key from openrouteservice.org. Without it
 //   search is off, and items keep the place you typed but aren't on the map
@@ -15,14 +15,23 @@ export const hasPlaces = env => Boolean(env.ORS_API_KEY);
 async function ask(env, path, params) {
   const url = new URL(API + path);
   for (const [k, v] of Object.entries(params)) if (v != null && v !== "") url.searchParams.set(k, String(v));
+  return call(env, url, {});
+}
+
+// POSTs `body` to ORS (routing's matrix and directions), or null.
+export function post(env, path, body) {
+  return call(env, new URL(API + path), { method: "POST", body: JSON.stringify(body), headers: { "Content-Type": "application/json" } });
+}
+
+async function call(env, url, init) {
   let res;
   try {
-    res = await fetch(url, { signal: AbortSignal.timeout(TIMEOUT), headers: { Authorization: env.ORS_API_KEY, Accept: "application/json" } });
+    res = await fetch(url, { ...init, signal: AbortSignal.timeout(TIMEOUT), headers: { ...init.headers, Authorization: env.ORS_API_KEY, Accept: "application/json" } });
   } catch (e) {
     console.error("openrouteservice didn't answer:", e?.message || e);
     return null;
   }
-  if (!res.ok) { console.error("openrouteservice said", res.status, "to", path); return null; }
+  if (!res.ok) { console.error("openrouteservice said", res.status, "to", url.pathname); return null; }
   return res.json().catch(() => null);
 }
 

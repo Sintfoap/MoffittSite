@@ -72,7 +72,7 @@ The public `/books/` page, where the book club picks its next book: each book wi
 
 ## Drift
 
-Your collections down the left (`tab` to move between them, the composer and the items), with Today and Calendar on top. Calendar shows the picked day by the hour, under a "No set time" list for items with a date but no time. A collection shows its plugins' views: Checklist, Calendar and List, Graph as a list of links with their types and each item's kind, and Map: the picked day's events that have a place, drawn on a map in characters, numbered and joined in the order they happen, with the distance from each to the one before, then the day's events with no place. Moving to one centres the map on it and names it under the map; `o` opens it in OpenStreetMap. Changes made in the browser or by people you share with show up within a few seconds.
+Your collections down the left (`tab` to move between them, the composer and the items), with Today and Calendar on top. Calendar shows the picked day by the hour, under a "No set time" list for items with a date but no time. A collection shows its plugins' views: Checklist, Calendar and List, Graph as a list of links with their types and each item's kind, and Map: the picked day's events that have a place, drawn on a map in characters, numbered and joined in the order they happen, with the distance from each to the one before, then the day's events with no place. Moving to one centres the map on it and names it under the map; `o` opens it in OpenStreetMap. The day's base (where it starts and ends) is at the top: `b` sets one for the day, a stretch of days, or every day. `p` plans the route from the base and back, keeping timed events in order and linked items together, with the travel time of each leg; `m` switches between driving, walking and cycling, and `(` `)` cycle through the other good orders. Changes made in the browser or by people you share with show up within a few seconds.
 
 The composer takes the same quick-add as the web page: `Lunch #family +home !2 ^fri @1pm ~ Ferry Building, San Francisco` (after `~`, the place).
 
@@ -89,6 +89,8 @@ The composer takes the same quick-add as the web page: `Lunch #family +home !2 ^
 | `>` `<` `K` `J` | List: nest, unnest, move up, move down |
 | `[` `]` `{` `}` `.` | Calendar: day, month, today (Map: `[` `]` `.`) |
 | `o` | open the item's place in OpenStreetMap |
+| `b` | Map: set or change the day's base |
+| `p` `m` `(` `)` | Map: route on or off, drive / walk / cycle, other orders |
 | `/` | search |
 | `c` | the collection's plugins and sharing (or leave one shared with you) |
 | `N` | new collection |
