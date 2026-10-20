@@ -6,7 +6,7 @@
 import { $, esc, api, icon, toast, failed, sheet, plural, every } from "./ui.js";
 import { today, addDays, dayOf, timeOf, niceDay, niceTime, parseQuick } from "../todo/lib.js";
 import * as L from "./drift-logic.js";
-import { baseFor, baseScope, niceDuration, PROFILES } from "../todo/route.js";
+import { baseFor, baseScope, niceDuration, straightNote, PROFILES } from "../todo/route.js";
 
 const POLL_EVERY = 5000;
 const LAST_VIEW = "m:drift-view";
@@ -223,7 +223,7 @@ function places(items, c) {
     const by = new Map(plan.stops.map(s => [s.item.id, s.item])), opt = r.options[r.option], shift = r.base?.lat != null ? 0 : -1;
     stops = opt.order.filter(id => by.has(id)).map((id, i) => ({ item: by.get(id), n: i + 1, leg: r.legs[i + shift], late: opt.late.includes(id) }));
     bar = `<p class="hint route">${r.options.length > 1 ? `<button class="btn ghost" data-option="-1" aria-label="Previous route">‹</button>` : ""}
-      <span><b>${r.options.length > 1 ? `Route ${r.option + 1} of ${r.options.length}` : "Route"}</b> · ${esc(niceDuration(opt.duration))} of travel${r.estimated ? " (estimated)" : ""}</span>
+      <span><b>${r.options.length > 1 ? `Route ${r.option + 1} of ${r.options.length}` : "Route"}</b> · ${esc(niceDuration(opt.duration))} of travel${straightNote(r) ? `<small>${esc(straightNote(r))}</small>` : ""}</span>
       ${r.options.length > 1 ? `<button class="btn ghost" data-option="1" aria-label="Next route">›</button>` : ""}</p>`;
   } else if (ui.route && plan.stops.length) bar = `<p class="hint">${r?.error ? "Couldn’t plan the route just now." : "Planning the route…"}</p>`;
   let html = weekStrip(items) + `<section class="group"><h2 class="label">${esc(niceDay(ui.day))}${plan.stops.length ? `<small>${plan.stops.length}</small>` : ""}</h2>`;

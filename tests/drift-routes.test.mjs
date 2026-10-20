@@ -83,9 +83,9 @@ test("routes flag the timed stops you'd reach late, and prefer ones that don't",
 
 // ── the site ────────────────────────────────────────────────────────────────
 
-let asked, realFetch;
+let asked, realFetch, matrixDown;
 beforeEach(() => {
-  asked = []; realFetch = globalThis.fetch;
+  asked = []; realFetch = globalThis.fetch; matrixDown = false;
   globalThis.fetch = async (input, init) => {
     const url = new URL(input instanceof Request ? input.url : String(input));
     if (url.hostname !== "api.openrouteservice.org") return new Response("not found", { status: 404 });
@@ -93,13 +93,15 @@ beforeEach(() => {
     asked.push({ path: url.pathname, body });
     if (url.pathname === "/geocode/search")
       return Response.json({ features: [{ geometry: { coordinates: [-0.12, 51.51] }, properties: { label: "Covent Garden, London" } }] });
+    if (url.pathname.startsWith("/v2/matrix/") && matrixDown) return Response.json({ error: { code: 6010 } }, { status: 404 });
     if (url.pathname.startsWith("/v2/matrix/")) {
       const pts = body.locations, d = pts.map(a => pts.map(b => Math.round(Math.hypot(a[0] - b[0], a[1] - b[1]) * 1e5)));
       return Response.json({ durations: d, distances: d.map(r => r.map(x => x * 10)) });
     }
     if (url.pathname.startsWith("/v2/directions/")) {
-      const c = body.coordinates;
-      return Response.json({ features: [{ geometry: { coordinates: c }, properties: { segments: c.slice(1).map((_, i) => ({ duration: 100 + i, distance: 1000 + i })) } }] });
+      // Along "streets": a corner between each pair of points.
+      const c = body.coordinates, line = c.flatMap((p, i) => i ? [[p[0], c[i - 1][1]], p] : [p]);
+      return Response.json({ features: [{ geometry: { coordinates: line }, properties: { segments: c.slice(1).map((_, i) => ({ duration: 100 + i, distance: 1000 + i })) } }] });
     }
     return new Response("not found", { status: 404 });
   };
@@ -136,10 +138,13 @@ test("the route goes from the day's base and back, along the streets", async () 
   assert.equal(r.json.base.from, "2026-10-20");
   assert.equal(r.json.estimated, false);
   assert.deepEqual(r.json.options[0].order.map(id => Object.keys(ids).find(k => ids[k] === id)), ["Museum", "Park", "Breakfast", "Dinner"]);
-  assert.equal(r.json.legs.length, 5);
-  assert.equal(r.json.path.length, 6);
+  assert.equal(r.json.streets, true);
+  assert.deepEqual(r.json.legs.map(l => l.duration), [100, 101, 102, 103, 104]);
+  assert.equal(r.json.path.length, 11, "along the streets, not straight from stop to stop");
   assert.deepEqual(r.json.path[0], [51.5, -0.25]);
-  assert.equal(asked.slice(searches).filter(a => a.path.startsWith("/v2/directions/")).length, 1);
+  const dirs = asked.slice(searches).filter(a => a.path.startsWith("/v2/directions/"));
+  assert.equal(dirs.length, 1);
+  assert.deepEqual(dirs[0].body.radiuses, [-1, -1, -1, -1, -1, -1], "snapped to the nearest road");
 
   // Another day uses the home base; another option, another order; walking asks for walking.
   r = await api(b, "GET", `route?collection=${col.id}&day=2026-10-20&option=1&profile=foot-walking`);
@@ -154,6 +159,20 @@ test("the route goes from the day's base and back, along the streets", async () 
   assert.ok(r.json.options.length);
   for (const o of r.json.options) assert.equal(o.order.indexOf(ids.Museum) - o.order.indexOf(ids.Park), 1);
 
+  // A stop where the base is isn't sent twice, and that leg takes no time.
+  await api(b, "PATCH", `items/${ids.Museum}`, { meta: { location: { place: "Home", lat: 51.5, lng: -0.25 } } });
+  r = await api(b, "GET", `route?collection=${col.id}&day=2026-10-20`);
+  const sent = asked.at(-1).body.coordinates;
+  assert.ok(sent.every((p, i) => !i || p.join() !== sent[i - 1].join()), JSON.stringify(sent));
+  assert.equal(r.json.streets, true);
+  assert.equal(r.json.legs.length, 5);
+  assert.ok(r.json.legs.some(l => l.duration === 0));
+  // When the travel times can't be had, the streets still can.
+  matrixDown = true;
+  r = await api(b, "GET", `route?collection=${col.id}&day=2026-10-20&profile=cycling-regular`);
+  assert.deepEqual([r.json.estimated, r.json.streets, r.json.off], [true, true, false]);
+  matrixDown = false;
+
   assert.equal((await api(b, "GET", `route?collection=${col.id}&day=tomorrow`)).status, 400);
   assert.equal((await api(b, "GET", `route?collection=c_nope&day=2026-10-20`)).status, 404);
   const empty = await api(b, "GET", `route?collection=${col.id}&day=2026-10-21`);
@@ -167,7 +186,7 @@ test("without a key the route is estimated in straight lines; editors can set ba
   await day(b, col.id);
   await api(b, "PATCH", `collections/${col.id}`, { bases: [{ ...HOME }] });
   const r = await api(b, "GET", `route?collection=${col.id}&day=2026-10-20`);
-  assert.equal(r.json.estimated, true);
+  assert.deepEqual([r.json.estimated, r.json.streets, r.json.off], [true, false, true]);
   assert.equal(r.json.path.length, 6);
   assert.ok(r.json.legs.every(l => l.duration > 0 && l.distance > 0));
   assert.equal(asked.length, 0);

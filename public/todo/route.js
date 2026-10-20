@@ -151,3 +151,10 @@ export function niceDuration(s) {
   const m = Math.max(1, Math.round(s / 60));
   return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h${m % 60 ? ` ${m % 60} min` : ""}`;
 }
+
+// Why a route is drawn in straight lines, or "" when it follows the streets.
+export function straightNote(r) {
+  if (r.off) return "Straight lines: the site needs an OpenRouteService key to follow the streets.";
+  if (!r.streets) return "Straight lines: OpenRouteService didn’t send the streets just now.";
+  return r.estimated ? "Travel times are estimates." : "";
+}

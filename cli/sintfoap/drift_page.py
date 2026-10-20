@@ -918,7 +918,7 @@ class DriftPage(Page):
                 summary.append(f"Route {r['option'] + 1} of {n}" if n > 1 else "Route", style=f"bold {INK}")
                 summary.append(f"  {R.nice_duration(opt['duration'])} of travel" + (f", {R.nice_distance(opt['distance'], MILES)}" if opt.get("distance") else ""), style=GOLD)
                 summary.append(f"  ({R.PROFILES[r['profile']]})", style=MUTED)
-                notes = (["estimated in straight lines"] if r.get("estimated") else []) + \
+                notes = ([R.straight_note(r)] if R.straight_note(r) else []) + \
                         (["some linked places can't be next to each other at those times"] if r.get("loose") else [])
                 if notes:
                     summary.append("   " + "; ".join(notes), style=FAINT)

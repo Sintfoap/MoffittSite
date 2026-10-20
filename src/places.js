@@ -31,7 +31,10 @@ async function call(env, url, init) {
     console.error("openrouteservice didn't answer:", e?.message || e);
     return null;
   }
-  if (!res.ok) { console.error("openrouteservice said", res.status, "to", url.pathname); return null; }
+  if (!res.ok) {
+    console.error("openrouteservice said", res.status, "to", url.pathname, (await res.text().catch(() => "")).slice(0, 300));
+    return null;
+  }
   return res.json().catch(() => null);
 }
 
