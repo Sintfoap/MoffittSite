@@ -545,6 +545,7 @@ class Nav(OptionList):
 
 class DriftPage(Page):
     WEB_PATH = "/todo/"
+    SIDE = "#side"
     DEFAULT_CSS = f"""
     DriftPage #main {{ height: 1fr; }}
     DriftPage #side {{ width: 30; padding: 0 1 0 2; border-right: tall {LINE}; }}
@@ -563,6 +564,7 @@ class DriftPage(Page):
     """
     BINDINGS = [
         Binding("r", "refresh", "Refresh"),
+        Binding("backslash", "fold", "Side panel"),
         Binding("N", "new_collection", "New collection", show=False),
     ]
 

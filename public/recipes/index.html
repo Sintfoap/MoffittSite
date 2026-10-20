@@ -34,7 +34,7 @@ a { color: var(--gold); }
 [hidden] { display: none !important; }
 
 /* the site rail (the dashboard sends it, with its own styles) beside the page, the key bar under both */
-.shell { display: grid; grid-template-columns: 232px minmax(0, 1fr); min-height: 100vh; padding-bottom: 38px; }
+.shell { display: grid; grid-template-columns: auto minmax(0, 1fr); min-height: 100vh; padding-bottom: 38px; }
 kbd { font: 700 11px var(--mono); color: var(--gold); }
 .keybar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 5; height: 38px; display: flex; align-items: center; gap: 22px; overflow-x: auto;
   padding: 0 max(16px, env(safe-area-inset-right, 0px)) 0 max(16px, env(safe-area-inset-left, 0px)); white-space: nowrap;
@@ -73,7 +73,7 @@ label.field { display: grid; gap: 4px; margin-bottom: 12px; color: var(--muted);
 label.field input, label.field textarea { width: 100%; color: var(--ink); font-size: 14px; }
 .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 
-.add { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; max-width: 900px; margin-bottom: 18px; }
+.add { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 18px; }
 .add input { flex: 1 1 260px; }
 .add button.btn { margin: 0; }
 
@@ -88,7 +88,7 @@ label.field input, label.field textarea { width: 100%; color: var(--ink); font-s
 .recipes button[aria-current="true"] { background: var(--gold-soft); border-left-color: var(--gold); color: var(--ink); font-weight: 700; }
 .empty { color: var(--faint); }
 
-.recipe { max-width: 820px; }
+.recipe { max-width: 1100px; }
 .recipe .hero { width: 100%; max-height: 280px; object-fit: cover; display: block; margin-bottom: 16px; border: 1px solid var(--line); }
 .recipe h2 { font-size: clamp(18px, 3vw, 24px); margin-bottom: 6px; }
 .facts { color: var(--faint); font-size: 13px; margin-bottom: 14px; }
@@ -167,7 +167,7 @@ dialog .two { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
   </form>
 </dialog>
 
-<footer class="keybar" aria-label="Keyboard shortcuts"><span><kbd>n</kbd>new from a link</span><span><kbd>/</kbd>find</span><span><kbd>j k</kbd>next, previous</span><span><kbd>+ -</kbd>servings</span><span><kbd>s</kbd>send to list</span><span><kbd>e</kbd>edit</span><span><kbd>g</kbd>then a key from the menu to jump</span><a class="end" href="/logout" data-key="o"><kbd>g o</kbd>Sign out</a></footer>
+<footer class="keybar" aria-label="Keyboard shortcuts"><span><kbd>n</kbd>new from a link</span><span><kbd>/</kbd>find</span><span><kbd>j k</kbd>next, previous</span><span><kbd>+ -</kbd>servings</span><span><kbd>s</kbd>send to list</span><span><kbd>e</kbd>edit</span><span><kbd>g</kbd>then a key from the menu to jump</span><span><kbd>\</kbd>Sidebar</span><a class="end" href="/logout" data-key="o"><kbd>g o</kbd>Sign out</a></footer>
 <script src="/keys.js" defer></script>
 <script type="module" src="/recipes/app.js"></script>
 </body>
