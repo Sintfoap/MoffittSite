@@ -13,24 +13,31 @@
 // encrypted. Encrypted rooms are listed but can't be picked yet: their keys
 // are only in the browser that turned encryption on.
 //
-// /sweep/api/state                         GET → {ready, rooms, suggestions, history, collections, drift}
+// /sweep/api/state                         GET → {ready, key, sealing, rooms, suggestions, history, collections, drift}
+// /sweep/api/key                           PUT {key} → state; DELETE → state
 // /sweep/api/rooms/<room id>               PUT {on, days?} → state
 // /sweep/api/sweep                         POST {rooms?} → {swept, added, more, state}
 // /sweep/api/suggestions/<id>/accept       POST {title?, start?, end?, collection?, kind?} → {item, state}
 // /sweep/api/suggestions/<id>/reject       POST {reason?} → state
 //
-// Needs the ANTHROPIC_API_KEY secret; SWEEP_MODEL picks the model.
+// Each person sweeps with their own Anthropic API key, so nobody's sweeps are
+// billed to anyone else. It's checked with Anthropic when it's added, then kept
+// sealed under the CHAT_BRIDGE_KEY secret and never sent back to the browser.
+// SWEEP_MODEL picks the model.
 
 import { db, now } from "./db.js";
 import { sameOrigin } from "./account.js";
 import { withRail } from "./pages.js";
-import { canBridge } from "./bridges.js";
+import { canBridge, bridgeReady } from "./bridges.js";
+import { seal, unseal } from "./crypto.js";
 import { readJson, BadRequest, writableCollections, createItem, createCollection } from "./drift.js";
 
 const fail = msg => { throw new BadRequest(msg); };
 
 export const DEFAULT_MODEL = "claude-opus-5-5";
 const API = "https://api.anthropic.com/v1/messages";
+const MODELS = "https://api.anthropic.com/v1/models?limit=1";
+const KEY = /^sk-ant-[A-Za-z0-9_-]{20,300}$/;
 const DAYS = [1, 3, 7, 14, 30];
 const LIMITS = { messages: 300, body: 1000, title: 200, quote: 300, reason: 200, examples: 30, history: 50, waiting: 200, rooms: 20, gap: 3 * 3600 };
 // Seconds between two sweeps of one account.
@@ -38,14 +45,43 @@ const COOLDOWN = 20;
 const KINDS = ["event", "task", "list"];
 const DATE = /^\d{4}-\d{2}-\d{2}$/, DATETIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/;
 const SUGGESTION = /^s_[0-9a-f]{12}$/;
-const ROUTE = /^\/sweep\/api\/(state|rooms|sweep|suggestions)(?:\/([^/]+)(?:\/(accept|reject))?)?\/?$/;
+const ROUTE = /^\/sweep\/api\/(state|key|rooms|sweep|suggestions)(?:\/([^/]+)(?:\/(accept|reject))?)?\/?$/;
 const isObj = v => v && typeof v === "object" && !Array.isArray(v);
 const clip = (s, n) => (s.length > n ? s.slice(0, n - 1) + "…" : s);
 const text = (v, n) => clip(String(v ?? "").replace(/[\u0000-\u0009\u000b-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim(), n);
 // For spotting the same thing twice: "Lucia's" and "lucias" match.
 const norm = s => String(s ?? "").toLowerCase().replace(/['’]/g, "").replace(/[^\p{L}\p{N}]+/gu, " ").trim();
 
-export const sweepReady = env => typeof env.ANTHROPIC_API_KEY === "string" && env.ANTHROPIC_API_KEY.length > 0;
+const keyContext = user => `sweep key\0${user.id}`;
+
+// The account's key, or null if it has none (or it no longer opens).
+async function keyOf(env, user) {
+  if (!bridgeReady(env)) return null;
+  const row = await (await db(env)).prepare("SELECT secret FROM sweep_keys WHERE user_id = ?").bind(user.id).first();
+  return row ? unseal(env.CHAT_BRIDGE_KEY, keyContext(user), row.secret) : null;
+}
+
+// Checks a key with Anthropic, then keeps it sealed in place of any before it.
+export async function setKey(env, user, body) {
+  if (!bridgeReady(env)) throw new SweepError("This site can't keep API keys yet: it needs the CHAT_BRIDGE_KEY secret.");
+  if (!isObj(body)) fail("body must be a JSON object");
+  const key = String(body.key ?? "").trim();
+  if (!KEY.test(key)) fail("that doesn't look like an Anthropic API key (they start with sk-ant-)");
+  let res;
+  try { res = await fetch(MODELS, { headers: { "x-api-key": key, "anthropic-version": "2023-06-01" } }); }
+  catch { throw new SweepError("Anthropic couldn't be reached to check that key. Try again in a minute."); }
+  if (res.status === 401 || res.status === 403) fail("Anthropic didn't accept that key");
+  if (!res.ok) throw new SweepError("Anthropic couldn't check that key right now. Try again in a minute.");
+  await (await db(env)).prepare(`INSERT INTO sweep_keys (user_id, secret, hint, added_at) VALUES (?, ?, ?, ?)
+    ON CONFLICT (user_id) DO UPDATE SET secret = excluded.secret, hint = excluded.hint, added_at = excluded.added_at`)
+    .bind(user.id, await seal(env.CHAT_BRIDGE_KEY, keyContext(user), key), key.slice(-4), now()).run();
+  return state(env, user);
+}
+
+export async function dropKey(env, user) {
+  await (await db(env)).prepare("DELETE FROM sweep_keys WHERE user_id = ?").bind(user.id).run();
+  return state(env, user);
+}
 
 function newId() {
   const b = crypto.getRandomValues(new Uint8Array(6));
@@ -124,12 +160,13 @@ const toSuggestion = r => {
 export async function state(env, user) {
   const d = await db(env);
   const drift = user.areas.has("todo");
+  const key = await d.prepare("SELECT hint, added_at FROM sweep_keys WHERE user_id = ?").bind(user.id).first();
   const { results: waiting } = await d.prepare(`SELECT * FROM sweep_suggestions WHERE user_id = ? AND status = 'waiting'
     ORDER BY created_at DESC, rowid DESC LIMIT ?`).bind(user.id, LIMITS.waiting).all();
   const { results: decided } = await d.prepare(`SELECT * FROM sweep_suggestions WHERE user_id = ? AND status != 'waiting'
     ORDER BY decided_at DESC, rowid DESC LIMIT ?`).bind(user.id, LIMITS.history).all();
   return {
-    ready: sweepReady(env), drift, days: DAYS,
+    ready: !!key && bridgeReady(env), key, sealing: bridgeReady(env), drift, days: DAYS,
     rooms: await rooms(d, user),
     suggestions: waiting.map(toSuggestion),
     history: decided.map(toSuggestion),
@@ -282,10 +319,10 @@ export function transcript(msgs, tz, me) {
   return out.join("\n");
 }
 
-async function ask(env, body) {
+async function ask(key, body) {
   const call = extra => fetch(API, {
     method: "POST",
-    headers: { "content-type": "application/json", "x-api-key": env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", ...extra.headers },
+    headers: { "content-type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01", ...extra.headers },
     body: JSON.stringify({ ...body, ...extra.body }),
   });
   // A declined request is retried on Anthropic's pick of model (fallbacks).
@@ -297,7 +334,8 @@ async function ask(env, body) {
   const out = await res.json().catch(() => null);
   if (!res.ok) {
     console.error("sweep model error:", res.status, out?.error?.message);
-    throw new SweepError(res.status === 429 || res.status === 529 ? "Claude is busy right now. Try again in a minute." : "Claude couldn't be reached.");
+    throw new SweepError(res.status === 401 || res.status === 403 ? "Anthropic didn't accept your API key. Add a new one below."
+      : res.status === 429 || res.status === 529 ? "Claude is busy right now. Try again in a minute." : "Claude couldn't be reached.");
   }
   if (out.stop_reason === "refusal") throw new SweepError("Claude declined to read that room.");
   if (out.stop_reason === "max_tokens") throw new SweepError("That room had too much to read at once.");
@@ -308,8 +346,9 @@ async function ask(env, body) {
 // Sweeps the rooms picked (or the ones named, of those); each reads up to
 // LIMITS.messages messages, oldest first, and `more` says one has more waiting.
 export async function sweep(env, user, request, body = {}) {
-  if (!sweepReady(env)) throw new SweepError("Sweep isn't set up on this site yet: it needs the ANTHROPIC_API_KEY secret.");
   if (!isObj(body)) fail("body must be a JSON object");
+  const key = await keyOf(env, user);
+  if (!key) fail("add your Anthropic API key first: Sweep reads your rooms with it");
   const d = await db(env);
   const t = now();
   const last = await d.prepare("SELECT swept_at FROM sweep_runs WHERE user_id = ?").bind(user.id).first();
@@ -348,7 +387,7 @@ export async function sweep(env, user, request, body = {}) {
       `The conversation, from the room "${room.name}". Each line is [message number] when, who: what they said. "Me" is them; --- marks a long gap.`,
       `<conversation>\n${transcript(msgs, tz, user.id)}\n</conversation>`,
     ].join("\n\n");
-    const found = await ask(env, {
+    const found = await ask(key, {
       model: env.SWEEP_MODEL || DEFAULT_MODEL, max_tokens: 16000,
       output_config: { effort: "medium", format: { type: "json_schema", schema: SCHEMA } },
       system: SYSTEM, messages: [{ role: "user", content: prompt }],
@@ -417,6 +456,11 @@ export async function sweepApp(request, env, user, pathname) {
     if (kind === "state") {
       if (id) return json({ error: "not found" }, 404);
       return method === "GET" ? json(await state(env, user)) : notAllowed();
+    }
+    if (kind === "key") {
+      if (id) return json({ error: "not found" }, 404);
+      if (method === "PUT" || method === "POST") return json(await setKey(env, user, await readJson(request)));
+      return method === "DELETE" ? json(await dropKey(env, user)) : notAllowed();
     }
     if (kind === "sweep") {
       if (id) return json({ error: "not found" }, 404);

@@ -15,6 +15,8 @@ beforeEach(() => {
   globalThis.fetch = async (input, init) => {
     const url = new URL(input.url || input);
     if (url.host !== "api.anthropic.com") return real(input, init);
+    // Checking a key: only BAD is refused.
+    if (url.pathname === "/v1/models") return new Response("{}", { status: init.headers["x-api-key"] === BAD ? 401 : 200 });
     const body = JSON.parse(init.body);
     calls.push({ headers: init.headers, body });
     if (status !== 200) return new Response(JSON.stringify({ type: "error", error: { message: "busy" } }), { status });
@@ -24,7 +26,8 @@ beforeEach(() => {
 });
 afterEach(() => { globalThis.fetch = real; });
 
-const KEY = { ANTHROPIC_API_KEY: "sk-test" };
+const KEY = { CHAT_BRIDGE_KEY: "test-bridge-key-0123456789" };
+const RYANS = "sk-ant-api03-" + "r".repeat(40), SAMS = "sk-ant-api03-" + "s".repeat(40), BAD = "sk-ant-api03-" + "x".repeat(40);
 const chat = (b, method, path, json) => b.req(method, "/chat/api" + path, json === undefined ? {} : { json });
 const sweep = (b, method, path, json) => b.req(method, "/sweep/api/" + path, json === undefined ? {} : { json });
 const messageId = (env, body) => sqlOne(env, "SELECT id FROM chat_messages WHERE body = ?", body).id;
@@ -40,6 +43,7 @@ async function setup(extra = KEY) {
   await chat(sam, "POST", `/rooms/${room}/join`);
   await chat(sam, "POST", `/rooms/${room}/messages`, { body: "dinner at Lucia's on Friday at 7?" });
   await chat(ryan, "POST", `/rooms/${room}/messages`, { body: "yes! and you should try Joe's Pizza sometime" });
+  if (extra.CHAT_BRIDGE_KEY) assert.equal((await sweep(ryan, "PUT", "key", { key: RYANS })).status, 200);
   return { env, ryan, sam, room };
 }
 
@@ -95,7 +99,7 @@ test("a sweep sends the room as data to Claude and keeps what comes back as wait
 
   assert.equal(calls.length, 1);
   const { headers, body } = calls[0];
-  assert.equal(headers["x-api-key"], "sk-test");
+  assert.equal(headers["x-api-key"], RYANS, "ryan's own key");
   assert.equal(body.model, "claude-opus-5-5");
   assert.equal(body.output_config.format.type, "json_schema");
   assert.equal(body.fallbacks, "default");
@@ -172,14 +176,52 @@ test("accepting makes the Drift item; turning down keeps the reason; both feed t
   assert.match(prompt, /Their Drift collections: Inbox, Restaurants to try/);
 });
 
-test("without the API key, Sweep says so; a busy Claude is an error, not a crash; sweeps can't be fired back to back", async () => {
-  const off = await setup({});
-  await sweep(off.ryan, "PUT", `rooms/${off.room}`, { on: true });
-  assert.equal((await sweep(off.ryan, "GET", "state")).json.ready, false);
-  const no = await sweep(off.ryan, "POST", "sweep", {});
-  assert.equal(no.status, 503);
-  assert.match(no.json.error, /ANTHROPIC_API_KEY/);
+test("each account sweeps with its own key: checked when added, kept sealed, never shown again", async () => {
+  const { env, ryan, sam, room } = await setup();
+  grantApps(env, "sam", "sweep");
+  const ryanId = sqlOne(env, "SELECT id FROM users WHERE username = 'ryan'").id;
+  const stored = sqlOne(env, "SELECT * FROM sweep_keys WHERE user_id = ?", ryanId);
+  assert.ok(stored.secret.startsWith("v1.") && !stored.secret.includes(RYANS), "sealed");
+  const mine = (await sweep(ryan, "GET", "state")).json;
+  assert.equal(mine.ready, true);
+  assert.equal(mine.key.hint, "rrrr");
+  assert.ok(!JSON.stringify(mine).includes(RYANS), "the key itself never comes back");
 
+  // Sam has no key, so Sam's sweep doesn't use Ryan's.
+  const samRoom = (await chat(sam, "POST", "/rooms", { name: "Sam's" })).json.id;
+  await sweep(sam, "PUT", `rooms/${samRoom}`, { on: true });
+  assert.equal((await sweep(sam, "GET", "state")).json.ready, false);
+  const none = await sweep(sam, "POST", "sweep", {});
+  assert.equal(none.status, 400);
+  assert.match(none.json.error, /add your Anthropic API key/);
+  assert.equal(calls.length, 0);
+
+  assert.equal((await sweep(sam, "PUT", "key", { key: "hello" })).status, 400);
+  const bad = await sweep(sam, "PUT", "key", { key: BAD });
+  assert.equal(bad.status, 400);
+  assert.match(bad.json.error, /didn't accept/);
+  assert.equal((await sweep(sam, "PUT", "key", { key: SAMS })).json.key.hint, "ssss");
+  await chat(sam, "POST", `/rooms/${samRoom}/messages`, { body: "pick up milk" });
+  assert.equal((await sweep(sam, "POST", "sweep", {})).status, 200);
+  assert.equal(calls.at(-1).headers["x-api-key"], SAMS);
+
+  // A key Anthropic stops taking says so; removing it is just that.
+  await sweep(ryan, "PUT", `rooms/${room}`, { on: true });
+  status = 401;
+  assert.match((await sweep(ryan, "POST", "sweep", {})).json.error, /didn't accept your API key/);
+  status = 200;
+  assert.equal((await sweep(ryan, "DELETE", "key")).json.key, null);
+  assert.equal(sqlOne(env, "SELECT COUNT(*) AS n FROM sweep_keys WHERE user_id = ?", ryanId).n, 0);
+
+  // Without CHAT_BRIDGE_KEY there's nowhere safe to keep one.
+  const off = await setup({});
+  assert.equal((await sweep(off.ryan, "GET", "state")).json.sealing, false);
+  const no = await sweep(off.ryan, "PUT", "key", { key: RYANS });
+  assert.equal(no.status, 503);
+  assert.match(no.json.error, /CHAT_BRIDGE_KEY/);
+});
+
+test("a busy Claude is an error, not a crash; sweeps can't be fired back to back", async () => {
   const { env, ryan, room } = await setup();
   await sweep(ryan, "PUT", `rooms/${room}`, { on: true });
   status = 529;
@@ -209,7 +251,7 @@ test("one account can't see or decide another's suggestions, and deleting an acc
   run(env, "INSERT INTO user_areas (user_id, area) VALUES (?, 'admin')", bossId);
   run(env, "UPDATE users SET totp_secret = 'AAAAAAAAAAAAAAAA' WHERE id = ?", bossId);
   await admin.post("/admin/delete", { user_id: ryanId, confirm: "ryan" });
-  for (const t of ["sweep_rooms", "sweep_suggestions", "sweep_runs"]) assert.deepEqual(sql(env, `SELECT * FROM ${t} WHERE user_id = ?`, ryanId), [], t);
+  for (const t of ["sweep_rooms", "sweep_suggestions", "sweep_runs", "sweep_keys"]) assert.deepEqual(sql(env, `SELECT * FROM ${t} WHERE user_id = ?`, ryanId), [], t);
 });
 
 test("the transcript marks long gaps and who's speaking", () => {

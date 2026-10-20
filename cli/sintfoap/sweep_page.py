@@ -4,7 +4,8 @@ The rooms Sweep may read down the left (space ticks one, b changes how far
 back its first sweep looks). On the right, what it suggested from them: a
 accepts one into Drift, e edits it first, x turns it down (shift+x says why),
 and s sweeps the ticked rooms again. What you accept and turn down shapes
-what it suggests next."""
+what it suggests next. k adds your own Anthropic API key, which Sweep reads
+with, so nobody else pays for your sweeps."""
 from __future__ import annotations
 
 import time
@@ -131,6 +132,7 @@ class SweepPage(Page):
         Binding("x", "reject", "Turn down"),
         Binding("X", "reject_why", "Turn down, why", show=False),
         Binding("b", "back", "How far back", show=False),
+        Binding("k", "key", "Your key"),
         Binding("r", "refresh", "Refresh"),
     ]
 
@@ -185,7 +187,8 @@ class SweepPage(Page):
         keep = self.current()
         self.data = data
         notice = self.query_one("#notice", Static)
-        problem = ("Sweep isn't set up on this site yet. The site's admin needs to add the ANTHROPIC_API_KEY secret." if not data["ready"]
+        problem = ("This site can't keep API keys yet. The site's admin needs to add the CHAT_BRIDGE_KEY secret." if not data["sealing"]
+                   else "Press k to add your Anthropic API key. Sweep reads your rooms with it, so its use goes on your account." if not data["key"]
                    else "You need Drift to accept suggestions. Ask the site's admin to turn it on for you." if not data["drift"] else "")
         notice.update(problem)
         notice.set_class(bool(problem), "on")
@@ -202,7 +205,8 @@ class SweepPage(Page):
             rooms.highlighted = min(at or 0, len(data["rooms"]) - 1)
         self.query_one("#room-note", Static).update(
             Text("You aren't in any chat rooms yet." if not data["rooms"] else
-                 "space ticks a room · b how far back\nEncrypted rooms can't be read yet.", style=FAINT))
+                 "space ticks a room · b how far back\nEncrypted rooms can't be read yet.", style=FAINT)
+            + Text(f"\n\nYour key: …{data['key']['hint']} (k to change)" if data.get("key") else "\n\nNo Anthropic key yet: press k", style=FAINT))
 
         sugs = self.query_one("#sugs", OptionList)
         sugs.clear_options()
@@ -325,6 +329,32 @@ class SweepPage(Page):
         s = self.current()
         if s:
             await self.decide(s, False, {})
+
+    def action_key(self) -> None:
+        if not self.data or not self.data["sealing"]:
+            return
+
+        async def done(key: str | None) -> None:
+            key = (key or "").strip()
+            if not key:
+                return
+
+            async def save(page: "SweepPage") -> None:
+                status = page.query_one("#status", Static)
+                status.update("Checking your key with Anthropic…")
+                try:
+                    page.show(await page.fetch(site.sweep_key, key))
+                except Exception:
+                    status.update("")
+                    raise
+                status.update(f"Saved your key ending in …{page.data['key']['hint']}.")
+            await attempt(save)(self)
+        have = self.data.get("key")
+        self.app.push_screen(Ask("Your Anthropic API key",
+                                 "Sweep reads your rooms with Claude using this key, so what it costs goes on your Anthropic account. "
+                                 "Make one at console.anthropic.com. It's kept encrypted and never shown again."
+                                 + (f" This replaces your key ending in …{have['hint']}." if have else ""),
+                                 placeholder="sk-ant-…", ok="Save key", password=True), done)
 
     def action_reject_why(self) -> None:
         s = self.current()

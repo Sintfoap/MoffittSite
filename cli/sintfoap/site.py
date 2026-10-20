@@ -651,8 +651,18 @@ def _tz() -> str:
 
 
 def sweep_state() -> dict:
-    """{ready, drift, days, rooms, suggestions, history, collections}."""
+    """{ready, key, sealing, drift, days, rooms, suggestions, history, collections}."""
     return _get("/sweep/api/state")
+
+
+def sweep_key(key: str) -> dict:
+    """Saves your Anthropic API key for Sweep (checked with Anthropic first). Returns sweep_state()."""
+    return api("PUT", "/sweep/api/key", {"key": key})
+
+
+def sweep_drop_key() -> dict:
+    """Removes your Anthropic API key from Sweep. Returns sweep_state()."""
+    return api("DELETE", "/sweep/api/key")
 
 
 def sweep_room(room: str, on: bool, days: int | None = None) -> dict:

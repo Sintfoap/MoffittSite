@@ -93,6 +93,9 @@ button.small::before, button.small::after { content: none; }
 .sug .why { color: var(--faint); font-size: 12.5px; font-style: italic; }
 .sug .acts { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
 .sug .acts button.btn { margin: 0; }
+.keyform { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.keyform input { flex: 1 1 260px; min-width: 0; padding: 7px 10px; background: var(--field); border: 1px solid var(--line-2); border-radius: 0; font-family: var(--mono); }
+.keyform button.btn { margin: 0; }
 .sug select, .sug input, .rooms select { padding: 5px 8px; background: var(--field); border: 1px solid var(--line-2); border-radius: 0; max-width: 100%; }
 .sug .edit { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 6px 10px; align-items: center; margin-top: 8px; max-width: 560px; }
 .sug .edit label { color: var(--faint); font-size: 12.5px; }
@@ -131,7 +134,7 @@ details.card[open] summary { margin-bottom: 10px; }
   <h1>Suggestions from your chats</h1>
   <p class="lede">Sweep reads the rooms you pick and suggests events, tasks and list items for Drift. Nothing is added until you accept it, and what you accept or turn down shapes what it suggests next.</p>
   <div id="error" class="msg bad" role="alert" hidden></div>
-  <div id="unready" class="msg warn" hidden>Sweep isn't set up on this site yet. The site's admin needs to add the ANTHROPIC_API_KEY secret (see the README).</div>
+  <div id="unready" class="msg warn" hidden>Add your Anthropic API key below to start sweeping.</div>
   <div id="nodrift" class="msg warn" hidden>You need Drift to accept suggestions. Ask the site's admin to turn it on for you.</div>
 
   <div class="bar"><button class="btn" id="sweep">Sweep now</button><span class="status" id="status" aria-live="polite"></span></div>
@@ -145,6 +148,18 @@ details.card[open] summary { margin-bottom: 10px; }
     <h2>Rooms to read</h2>
     <p>Sweep reads only the rooms ticked here. The first sweep of a room looks back as far as you pick; after that it reads what's new.</p>
     <ul class="rooms" id="rooms"></ul>
+  </section>
+
+  <section class="card" id="key-card">
+    <h2>Your Anthropic key</h2>
+    <p>Sweep reads your rooms with Claude using your own API key, so what it costs goes on your Anthropic account and nobody else's. Make one at <a href="https://console.anthropic.com/settings/keys" rel="noopener noreferrer" target="_blank">console.anthropic.com</a>. It's kept encrypted and never shown again.</p>
+    <div id="nosealing" class="msg warn" hidden>This site can't keep API keys yet. The site's admin needs to add the CHAT_BRIDGE_KEY secret (see the README).</div>
+    <p id="key-have" hidden></p>
+    <form class="keyform" id="key-form">
+      <input type="password" id="key-input" placeholder="sk-ant-…" autocomplete="off" spellcheck="false" aria-label="Anthropic API key" maxlength="320">
+      <button class="btn" id="key-save" type="submit">Save key</button>
+      <button class="btn danger" id="key-remove" type="button" hidden>Remove</button>
+    </form>
   </section>
 
   <details class="card" id="history-card">

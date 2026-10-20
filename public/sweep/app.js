@@ -95,8 +95,13 @@ function suggestion(s, i) {
 }
 
 function render() {
-  const { ready, drift, rooms, suggestions, history, days } = data;
-  $("#unready").hidden = ready;
+  const { ready, drift, rooms, suggestions, history, days, key, sealing } = data;
+  $("#unready").hidden = ready || !sealing;
+  $("#nosealing").hidden = sealing;
+  $("#key-have").hidden = !key;
+  if (key) $("#key-have").textContent = `Using your key ending in …${key.hint}, added ${ago(key.added_at)}. Save another to replace it.`;
+  $("#key-remove").hidden = !key;
+  $("#key-input").disabled = $("#key-save").disabled = !sealing;
   $("#nodrift").hidden = drift;
   $("#sweep").disabled = !ready || !rooms.some(r => r.on);
   at = Math.max(0, Math.min(at, suggestions.length - 1));
@@ -167,6 +172,27 @@ async function sweepNow() {
 }
 
 $("#sweep").addEventListener("click", sweepNow);
+
+$("#key-form").addEventListener("submit", async e => {
+  e.preventDefault();
+  const input = $("#key-input"), key = input.value.trim();
+  if (!key) return;
+  $("#key-save").disabled = true;
+  status("Checking your key with Anthropic…");
+  try {
+    data = await api("PUT", "key", { key });
+    input.value = "";
+    status(`Saved your key ending in …${data.key.hint}.`);
+    render();
+    showError(null);
+  } catch (err) { status(""); showError(err); render(); }
+});
+
+$("#key-remove").addEventListener("click", async () => {
+  if (!confirm("Remove your Anthropic key? Sweep can't read your rooms until you add one again.")) return;
+  try { data = await api("DELETE", "key"); status("Removed your key."); render(); showError(null); }
+  catch (err) { showError(err); }
+});
 
 // s sweeps, j/k move, a accepts, e edits, x turns down. The key after g is
 // keys.js's (g s is Settings), so it's left alone.

@@ -50,14 +50,16 @@ if (notify) {
 {
   const before = globalThis.fetch;
   globalThis.fetch = async (input, init) => {
-    if (new URL(input.url || input).host !== "api.anthropic.com") return before(input, init);
+    const u = new URL(input.url || input);
+    if (u.host !== "api.anthropic.com") return before(input, init);
+    if (u.pathname === "/v1/models") return new Response("{}");  // checking a key: any will do
     const first = JSON.parse(init.body).messages[0].content.match(/^\[(\d+)\]/m);
     const suggestions = first ? [{ kind: "event", title: "Dinner at Lucia's", start: "2030-01-04T19:00", end: "", collection: "",
       quote: "dinner at Lucia's", message: Number(first[1]), confidence: 0.9, why: "A plan with a time." }] : [];
     return new Response(JSON.stringify({ stop_reason: "end_turn", content: [{ type: "text", text: JSON.stringify({ suggestions }) }] }));
   };
 }
-const env = makeEnv({ CHAT_BRIDGE_KEY: "devsite-bridge-key-0123456789", ANTHROPIC_API_KEY: "sk-devsite", ...vapid });
+const env = makeEnv({ CHAT_BRIDGE_KEY: "devsite-bridge-key-0123456789", ...vapid });
 const ryan = new Browser(env), sam = new Browser(env);
 await ryan.signup("ryan", undefined, "Ryan M");
 await sam.signup("sam", undefined, "Sam");

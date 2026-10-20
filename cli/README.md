@@ -160,6 +160,7 @@ The same as `/sweep/`. The rooms Sweep may read are on the left (`space` ticks o
 | `a` | accept into the collection it names (or your first one) |
 | `e` | edit, then accept (`ctrl+s`) |
 | `x` | turn it down; `X` asks why first |
+| `k` | add your Anthropic API key (Sweep reads with it, so its use goes on your account); remove it on the website |
 | `r` | refresh |
 
 ## Account settings
