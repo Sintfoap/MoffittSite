@@ -12,6 +12,9 @@
 // one browser to send to, and answers every push as delivered.
 // ryan has Recipe box; https://recipes.test/pancakes is a recipe page to save
 // (serves 4), and any other page there has no recipe on it.
+// ryan has Sweep, and he and sam are in a room "Plans" where sam asked about
+// dinner. The stand-in for Claude suggests that dinner from the first message
+// it's shown.
 import http from "node:http";
 import worker from "../../src/worker.js";
 import { Browser, makeEnv, sqlOne, run, grantApps } from "../../tests/helpers.mjs";
@@ -44,12 +47,27 @@ if (notify) {
     return Promise.resolve(new Response(u.pathname === "/pancakes" ? PANCAKES : "<title>A blog</title>", { headers: { "Content-Type": "text/html" } }));
   };
 }
-const env = makeEnv({ CHAT_BRIDGE_KEY: "devsite-bridge-key-0123456789", ...vapid });
+{
+  const before = globalThis.fetch;
+  globalThis.fetch = async (input, init) => {
+    if (new URL(input.url || input).host !== "api.anthropic.com") return before(input, init);
+    const first = JSON.parse(init.body).messages[0].content.match(/^\[(\d+)\]/m);
+    const suggestions = first ? [{ kind: "event", title: "Dinner at Lucia's", start: "2030-01-04T19:00", end: "", collection: "",
+      quote: "dinner at Lucia's", message: Number(first[1]), confidence: 0.9, why: "A plan with a time." }] : [];
+    return new Response(JSON.stringify({ stop_reason: "end_turn", content: [{ type: "text", text: JSON.stringify({ suggestions }) }] }));
+  };
+}
+const env = makeEnv({ CHAT_BRIDGE_KEY: "devsite-bridge-key-0123456789", ANTHROPIC_API_KEY: "sk-devsite", ...vapid });
 const ryan = new Browser(env), sam = new Browser(env);
 await ryan.signup("ryan", undefined, "Ryan M");
 await sam.signup("sam", undefined, "Sam");
 for (const who of ["ryan", "sam"]) grantApps(env, who, "plugins", "chat");
-grantApps(env, "ryan", "chat-bridges", "recipes");
+grantApps(env, "ryan", "chat-bridges", "recipes", "sweep");
+{
+  const plans = (await ryan.req("POST", "/chat/api/rooms", { json: { name: "Plans" } })).json.id;
+  await sam.req("POST", `/chat/api/rooms/${plans}/join`);
+  await sam.req("POST", `/chat/api/rooms/${plans}/messages`, { json: { body: "dinner at Lucia's on Friday at 7?" } });
+}
 const id = name => sqlOne(env, "SELECT id FROM users WHERE username = ?", name).id;
 
 // sam's plugin, approved by an admin (made straight in the database).

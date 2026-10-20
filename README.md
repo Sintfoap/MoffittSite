@@ -21,6 +21,7 @@ public/          the website, served as static files
   m/               the phone app: its own screens for Home, Drift and Chat, on the same APIs as the pages above
   notifications/   turning push notifications on, and what they're for
   recipes/         Recipe box (signed-in users with it turned on); scale.js scales ingredient lines, shared with the Worker
+  sweep/           Sweep: Drift suggestions read out of your chat rooms, to accept or turn down
   sw.js            the service worker that shows push notifications
   site.webmanifest, icons/   so the site can be added to a phone's home screen
   favicon.svg, favicon.ico   the browser tab icon (the same emblem as icons/)
@@ -44,11 +45,12 @@ src/             the Worker: runs only for the paths in run_worker_first
   push.js          sending Web Push: encryption (RFC 8291) and VAPID signing, with WebCrypto
   notify.js        notifications: settings, browsers, Chat's pushes and Drift's reminders
   recipes.js       Recipe box: recipes read from a link's schema.org data (Recipe Keeper's shared recipes too), and their ingredients sent to a Drift list
+  sweep.js         Sweep: reads chosen chat rooms with Claude and suggests Drift events, tasks and list items
   books.js         the book club pick's list and votes (/books/api), and who voted for admins
   bridges.js       chat connections: other platforms' rooms in chat, with sealed credentials
   matrix.js        the Matrix provider for those
   vendor/uqr.mjs   QR codes for two-factor setup (MIT)
-cli/             the `sintfoap` command: sign in from a terminal; dashboard, Drift, plugin store, chat, Recipe box and settings as a terminal UI
+cli/             the `sintfoap` command: sign in from a terminal; dashboard, Drift, plugin store, chat, Recipe box, Sweep and settings as a terminal UI
 apps/todo-esque/ the original Drift app (Python engine, terminal UI, CLI)
 tests/           node --no-warnings --test tests/*.test.mjs  (the CLI's: cd cli && python -m pytest tests)
 wrangler.jsonc   Worker configuration (name, static files, variables, database)
@@ -383,6 +385,27 @@ Push stays off, and the page says so, until the site has a VAPID key pair.
 | POST | `/notifications/api/devices` | the browser's `PushSubscription.toJSON()`, plus `{label, tz}` |
 | DELETE | `/notifications/api/devices/<id>` | |
 | POST | `/notifications/api/test` | pushes a test to all your browsers → also `{sent, failed}` |
+
+## Sweep
+
+`/sweep/` reads the chat rooms you pick and suggests Drift items from them: events with a date, tasks someone took on, and things for a list ("we need eggs", "watch Severance"). Nothing goes into Drift until you accept it. It's an app in `APPS` with its own toggle on `/admin`, off for everyone; accepting needs Drift too.
+
+- **Setting it up:** it calls Claude, so the Worker needs an Anthropic API key: `npx wrangler secret put ANTHROPIC_API_KEY`. Without one the page says Sweep isn't set up and nothing is sent anywhere. It uses `claude-opus-5-5` (with server-side fallbacks, so a busy model falls back instead of failing); set the `SWEEP_MODEL` variable to use another.
+- **Rooms:** any room you're a member of, Chat connections' rooms included if you have that app. Tick a room and choose how far back to read it (the last day up to 30 days). Each sweep reads only what's new since the last one, up to 300 messages, oldest first; if there's more, it says so and the next sweep carries on.
+- **Encrypted rooms** can't be read yet, since their keys are only in your browser. The page lists them greyed out. Reading them from the browser, then from a Matrix session of Sweep's own, comes next.
+- **What Claude sees:** the room's name, who said what and when ("Me" for you), today's date in your time zone, the names of your Drift collections, and the suggestions you've accepted and turned down before. The conversation is marked as data, not instructions. Suggestions you already have in Drift, or that were already made from that room, are dropped.
+- **Accepting:** an event goes in with its date and time, a task as a checklist item, a list item into the list it names (a new list is made for it if you don't have one). Edit first to change the title, kind, date or collection. The item's notes say which room and who it came from.
+- **Turning down** takes an optional reason. Your last 30 decisions, edits and reasons are shown to Claude on the next sweep, so it learns what you want.
+- **Limits:** a sweep every 20 seconds per account, 20 rooms at a time.
+- **Terminal:** `sintfoap sweep` (`g w`).
+
+| Request | |
+|---|---|
+| `GET /sweep/api/state` | your rooms, waiting suggestions, recent decisions and collections |
+| `PUT /sweep/api/rooms/<id>` | `{on, days}`: whether to read a room, and how far back |
+| `POST /sweep/api/sweep` | `{tz, rooms?}`: read what's new and suggest |
+| `POST /sweep/api/suggestions/<id>/accept` | `{title?, kind?, start?, end?, collection?}`: add it to Drift |
+| `POST /sweep/api/suggestions/<id>/reject` | `{reason?}` |
 
 ## Phone app
 

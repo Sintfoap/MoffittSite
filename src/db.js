@@ -343,6 +343,35 @@ const SCHEMA = [
      updated_at INTEGER NOT NULL
    )`,
   `CREATE INDEX IF NOT EXISTS book_votes_ip ON book_votes (ip, created_at)`,
+  // Sweep (src/sweep.js): the chat rooms each account lets it read, and how far it has read them.
+  `CREATE TABLE IF NOT EXISTS sweep_rooms (
+     user_id  TEXT NOT NULL,
+     room     TEXT NOT NULL,                       -- chat_rooms.id
+     days     INTEGER NOT NULL,                    -- how far back the first sweep looks
+     swept_to INTEGER NOT NULL DEFAULT 0,          -- the last chat_messages.id read
+     swept_at INTEGER,
+     added_at INTEGER NOT NULL,
+     PRIMARY KEY (user_id, room)
+   )`,
+  // What Sweep suggested, and what you said: waiting, accepted (item is the Drift item) or rejected.
+  `CREATE TABLE IF NOT EXISTS sweep_suggestions (
+     id         TEXT PRIMARY KEY,                  -- "s_" + random hex
+     user_id    TEXT NOT NULL,
+     room       TEXT NOT NULL,
+     message    INTEGER NOT NULL,                  -- the chat_messages.id it came from
+     status     TEXT NOT NULL,
+     data       TEXT NOT NULL,                     -- JSON {kind, title, start, end, collection, quote, why, confidence, ...}
+     reason     TEXT NOT NULL DEFAULT '',          -- why it was rejected, if they said
+     item       TEXT,
+     created_at INTEGER NOT NULL,
+     decided_at INTEGER
+   )`,
+  `CREATE INDEX IF NOT EXISTS sweep_suggestions_user ON sweep_suggestions (user_id, status, created_at)`,
+  // When each account last swept, so sweeps can't be fired off back to back.
+  `CREATE TABLE IF NOT EXISTS sweep_runs (
+     user_id  TEXT PRIMARY KEY,
+     swept_at INTEGER NOT NULL
+   )`,
 ];
 
 // Indexes on columns that ADDED_COLUMNS may have only just added.

@@ -566,6 +566,7 @@ async function admin(request, env, me, pathname, method) {
           d.prepare("DELETE FROM push_devices WHERE user_id = ?").bind(target.id),
           d.prepare("DELETE FROM push_prefs WHERE user_id = ?").bind(target.id),
           d.prepare("DELETE FROM push_sent WHERE user_id = ?").bind(target.id),
+          ...["sweep_rooms", "sweep_suggestions", "sweep_runs"].map(t => d.prepare(`DELETE FROM ${t} WHERE user_id = ?`).bind(target.id)),
           d.prepare("DELETE FROM users WHERE id = ?").bind(target.id),
         ]);
         return show({ notice: `${target.username} and their tasks are deleted.` });

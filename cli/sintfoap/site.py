@@ -632,3 +632,44 @@ def shop(recipe_id: str, lines: list[int], servings: float | None = None, factor
     if list_id:
         body["list"] = list_id
     return api("POST", f"/recipes/api/recipes/{_q(recipe_id)}/shop", body)
+
+
+# ──────────────────────────────── sweep ─────────────────────────────────────
+# /sweep/api/ (src/sweep.js)
+
+def _tz() -> str:
+    """This computer's time zone name (America/New_York), if it can tell; the site guesses otherwise."""
+    import os
+    tz = os.environ.get("TZ", "")
+    if "/" in tz:
+        return tz.lstrip(":")
+    try:
+        target = os.path.realpath("/etc/localtime")
+        return target.split("zoneinfo/", 1)[1] if "zoneinfo/" in target else ""
+    except OSError:
+        return ""
+
+
+def sweep_state() -> dict:
+    """{ready, drift, days, rooms, suggestions, history, collections}."""
+    return _get("/sweep/api/state")
+
+
+def sweep_room(room: str, on: bool, days: int | None = None) -> dict:
+    """Lets Sweep read a chat room (or stops it); days is how far back its first sweep looks. Returns sweep_state()."""
+    return api("PUT", f"/sweep/api/rooms/{_q(room)}", {"on": bool(on), **({"days": days} if days else {})})
+
+
+def sweep_now() -> dict:
+    """Sweeps the rooms you picked: {swept: [{room, messages, added}], added, more, state}."""
+    return api("POST", "/sweep/api/sweep", {"tz": _tz()} if _tz() else {})
+
+
+def sweep_accept(suggestion: str, changes: dict | None = None) -> dict:
+    """Adds a suggestion to Drift, with any of {title, kind, start, end, collection} changed first; {item, state}."""
+    return api("POST", f"/sweep/api/suggestions/{_q(suggestion)}/accept", changes or {})
+
+
+def sweep_reject(suggestion: str, body: dict | None = None) -> dict:
+    """Turns a suggestion down ({reason} optional); returns sweep_state()."""
+    return api("POST", f"/sweep/api/suggestions/{_q(suggestion)}/reject", body or {})
