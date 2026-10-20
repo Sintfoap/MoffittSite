@@ -152,7 +152,7 @@ Drift lives at `/todo/`. Everything in it is an **item**: a title, notes, tags a
 | Events (`event`) | `{start, end}`, as `YYYY-MM-DD` or `YYYY-MM-DDTHH:MM` | month calendar; the picked day shown by the hour, with a "No set time" list for undated-time items; an agenda |
 | List (`list`) | `{order, parent}` | an outline you reorder and nest |
 | Graph (`graph`) | `{links, rel?, kind?, x, y}`: linked item ids, an optional type per link (`{id: "depends on"}`, which makes it point one way), an optional kind for the item, and where you pinned it | a network you drag, pan and zoom; "Link items" links or unlinks two items, as a plain link or a typed arrow; kinds colour the nodes, and the legend hides kinds and link types |
-| Locations (`location`) | `{place, lat, lng}`: what the place is called and where it is. You search for it (the site looks it up), pin it on the map, or paste coordinates | a map of the chosen day's events that have a place, numbered and joined in the order they happen, with the distance from each to the one before; picking one in the list flies the map there, and the day's events with no place can be pinned |
+| Locations (`location`) | `{place, lat, lng}`: what the place is called and where it is. You search for it (the site looks it up), pin it on the map, or paste coordinates | a map of the chosen day's events that have a place, numbered and joined in the order they happen, with the distance from each to the one before; picking one in the list flies the map there, and the day's events with no place can be pinned. **Range** shows a stretch of days at once instead (see below) |
 
 Each **collection** picks which plugins are on, and shows a tab for each one's view. One item can carry several plugins' metadata at once, so a dated checklist item is also on the calendar. **Today** and **Calendar** in the sidebar show events from every collection.
 
@@ -167,6 +167,10 @@ Locations finds places through [OpenRouteService](https://openrouteservice.org) 
 - A pin or pasted coordinates (`37.7955, -122.3937`, or an OpenStreetMap, Google Maps or `geo:` link) get the name of the spot (`GET /todo/api/places?lat=…&lng=…`).
 
 Without the key, search is off and typed places stay "not found yet", but pins and pasted coordinates still work. The map's tiles come from OpenStreetMap, and Leaflet (`public/todo/vendor/leaflet/`, BSD-2) draws it.
+
+#### Range
+
+The Map's **Day / Range** switch shows several days at once, to check that what you've planned for different days sits well together (for a trip, say, whether something on Tuesday is really nearer Thursday's plans). Pick a first and last day, any length up to 14 days; ‹ › slide the whole stretch by its own length, and Today moves it to start today. Each day's places are pins in that day's colour, numbered again from 1 in the order they happen, with a legend (click a day to hide or show it) and the places listed under each day. An event that runs over several days is on each of them, and pins at exactly the same spot fan out a little so none hides another. Events with no place, or not found yet, are listed under their day and can be pinned. Range draws no route lines and uses no bases; those stay in Day. Switching to Range starts a week from the day you were looking at, and switching back returns to that day. It's all in the page (`rangeDays`, `normRange`, `rangeStops` and `dayColor` in `public/todo/plugins/location.js`); the MCP's `drift_get_map` picture, the phone app and the terminal still show one day.
 
 #### Bases and routes
 

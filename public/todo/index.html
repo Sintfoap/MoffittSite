@@ -261,8 +261,19 @@ ul.items { list-style: none; margin: 0; padding: 0; }
 .geo-list .link { padding: 6px; font-size: 12.5px; }
 .geo-list .num, .geo-pin span { display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; font: 700 12px var(--sans); background: var(--accent); color: var(--accent-ink); border: 2px solid var(--surface); }
 .geo-pin { background: none; border: 0; }
-.geo-pin.sel span { background: var(--red); transform: scale(1.2); }
+.geo-pin.sel span { background: var(--red); transform: scale(1.2); box-shadow: 0 0 0 3px var(--ink); }
 .geo-route { stroke: var(--accent); }
+.geo .seg { display: inline-flex; margin-right: 6px; }
+.geo .seg .ghost { border: 1px solid var(--line); border-radius: 0; padding: 3px 10px; font-size: 12.5px; }
+.geo .seg .ghost + .ghost { border-left: 0; }
+.geo [hidden] { display: none !important; }
+.geo-legend { list-style: none; margin: 0; padding: 0 0 6px; display: grid; gap: 1px; border-bottom: 1px solid var(--line); margin-bottom: 4px; }
+.geo-legend button { display: grid; grid-template-columns: 12px minmax(0, 1fr) auto; align-items: center; gap: 8px; width: 100%; text-align: left; padding: 5px 6px; }
+.geo-legend button[aria-pressed="false"] { opacity: .45; }
+.geo-legend button[aria-pressed="false"] span { text-decoration: line-through; }
+.geo-legend small { font-size: 12px; color: var(--muted); }
+.geo .dot { width: 12px; height: 12px; border-radius: 50%; background: var(--c); display: inline-block; flex: none; }
+.geo-h.day { display: flex; align-items: center; gap: 8px; color: var(--ink); }
 .geo .leaflet-container { font: inherit; background: var(--raise); }
 .geo .leaflet-popup-content-wrapper, .geo .leaflet-popup-tip { background: var(--raise); color: var(--ink); border-radius: 0; }
 .geo .leaflet-popup-content { font-size: 13px; line-height: 1.5; }
