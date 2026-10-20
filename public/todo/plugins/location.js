@@ -239,7 +239,7 @@ class MapView {
           <span class="base-dates" ${scope === "range" ? "" : "hidden"}><input type="date" name="from" value="${esc(cur?.from || day)}" aria-label="First day"> to <input type="date" name="to" value="${esc(cur?.to || addDays(1, day))}" aria-label="Last day"></span>
           <label class="inline"><input type="radio" name="scope" value="home" ${scope === "home" ? "checked" : ""}> Every day (home base)</label>
         </fieldset>
-        <div class="base-btns"><button class="primary">Save</button><button type="button" class="ghost" data-geo="basecancel">Cancel</button></div>
+        <div class="base-btns"><button type="button" class="btn" data-geo="basecancel">Cancel</button><button class="btn primary">Save</button></div>
       </form>`;
     }
     if (!base) return `<div class="geo-base">${icon(house, 15)}<span><small>No base for this day</small>Routes start at the first stop.</span>${owner ? `<span class="btns"><button class="link" data-geo="baseedit">Set a base</button></span>` : ""}</div>`;

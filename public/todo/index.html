@@ -303,9 +303,14 @@ ul.items { list-style: none; margin: 0; padding: 0; }
 .base-scope { border: 0; padding: 0; margin: 0; display: grid; gap: 4px; }
 .base-dates { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 12.5px; padding-left: 22px; }
 .base-dates[hidden] { display: none; }
+.base-form input[type=search], .base-dates input { padding: 6px 8px; border: 1px solid var(--line); border-radius: var(--radius-s); background: var(--bg); color: var(--ink); outline: 0; font-size: 13px; }
 .base-form input[type=search] { width: 100%; box-sizing: border-box; }
-.base-dates input { width: auto; padding: 2px 4px; font-size: 12.5px; }
-.base-btns { display: flex; gap: 8px; }
+.base-form input:focus { border-color: var(--accent); }
+.base-form input[type=radio] { accent-color: var(--accent); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .base-form input { color-scheme: dark; } }
+:root[data-theme="dark"] .base-form input { color-scheme: dark; }
+.base-dates input { width: auto; }
+.base-btns { display: flex; justify-content: flex-end; gap: 8px; }
 .geo-bases summary { cursor: pointer; }
 .geo-bases .geo-pins li { gap: 4px; }
 .geo-pins [aria-pressed="true"] { color: var(--red); }
