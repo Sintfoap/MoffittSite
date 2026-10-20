@@ -21,6 +21,7 @@ public/          the website, served as static files
   m/               the phone app: its own screens for Home, Drift and Chat, on the same APIs as the pages above
   notifications/   turning push notifications on, and what they're for
   recipes/         Recipe box (signed-in users with it turned on); scale.js scales ingredient lines, shared with the Worker
+  meals/           Meal plan: the week's dinners from Recipe box, around the Drift calendar
   sweep/           Sweep: Drift suggestions read out of your chat rooms, to accept or turn down
   sw.js            the service worker that shows push notifications
   site.webmanifest, icons/   so the site can be added to a phone's home screen
@@ -46,12 +47,13 @@ src/             the Worker: runs only for the paths in run_worker_first
   push.js          sending Web Push: encryption (RFC 8291) and VAPID signing, with WebCrypto
   notify.js        notifications: settings, browsers, Chat's pushes and Drift's reminders
   recipes.js       Recipe box: recipes read from a link's schema.org data (Recipe Keeper's shared recipes too), and their ingredients sent to a Drift list
+  meals.js         Meal plan: a week of dinners picked from Recipe box, quick ones on busy Drift nights, and the week's shopping sent to a Drift list
   sweep.js         Sweep: reads chosen chat rooms with Claude and suggests Drift events, tasks and list items
   books.js         the book club pick's list and votes (/books/api), and who voted for admins
   bridges.js       chat connections: other platforms' rooms in chat, with sealed credentials
   matrix.js        the Matrix provider for those
   vendor/uqr.mjs   QR codes for two-factor setup (MIT)
-cli/             the `sintfoap` command: sign in from a terminal; dashboard, Drift, plugin store, chat, Recipe box, Sweep and settings as a terminal UI
+cli/             the `sintfoap` command: sign in from a terminal; dashboard, Drift, plugin store, chat, Recipe box, Meal plan, Sweep and settings as a terminal UI
 apps/todo-esque/ the original Drift app (Python engine, terminal UI, CLI)
 tests/           node --no-warnings --test tests/*.test.mjs  (the CLI's: cd cli && python -m pytest tests)
 wrangler.jsonc   Worker configuration (name, static files, variables, database)
@@ -393,6 +395,23 @@ Push stays off, and the page says so, until the site has a VAPID key pair.
 | POST | `/notifications/api/devices` | the browser's `PushSubscription.toJSON()`, plus `{label, tz}` |
 | DELETE | `/notifications/api/devices/<id>` | |
 | POST | `/notifications/api/test` | pushes a test to all your browsers → also `{sent, failed}` |
+
+## Meal plan
+
+`/meals/` plans the week's dinners (Monday to Sunday) from your Recipe box, around your Drift calendar. It's an app in `APPS` with its own toggle on `/admin`, off for everyone; it reads the recipes you have in Recipe box, and it needs Drift for the calendar and the shopping list.
+
+- **Busy nights:** a night is busy when an open Drift item that day has a time in the evening (it overlaps 4–9 pm; one with no end is taken to last an hour), or the day has three or more timed things. All-day items show but don't make a night busy.
+- **Filling the week** picks a recipe for each empty night. Busy nights go first and get a quick recipe (30 minutes or less, from the recipe's Time); with none, the quickest there is. No recipe twice in a week while there are others, and last week's dinners only when nothing else is left. **Shuffle** picks again for every night that isn't locked.
+- **Each night:** pick a recipe yourself (that locks it, so filling and shuffling leave it alone), change its servings, lock or unlock it, or mark it **Out** (nothing to cook or buy). A busy night with a slow recipe is flagged.
+- **Shopping:** every planned recipe's ingredients, scaled to that night's servings, with the same line from two recipes listed once. Untick what you have, and the rest go to your Drift Shopping list (made the first time) or any list you can edit, each noting which dinners it's for.
+- **Terminal:** `sintfoap meals` (`g m`).
+
+| Request | |
+|---|---|
+| `GET /meals/api/week?start=<day>` | the week holding that day (this week without it): its nights, what's on in Drift, your recipes and the shopping |
+| `PUT /meals/api/week/<monday>/<day>` | `{recipe?, servings?, out?, locked?}` → the week |
+| `POST /meals/api/week/<monday>/fill` | `{redo?}`: recipes for the empty nights, or every unlocked one → the week |
+| `POST /meals/api/week/<monday>/shop` | `{lines?, list?}`: the week's shopping onto a Drift list → `{list, added, shopped}` |
 
 ## Sweep
 

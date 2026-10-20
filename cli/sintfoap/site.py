@@ -640,6 +640,32 @@ def shop(recipe_id: str, lines: list[int], servings: float | None = None, factor
     return api("POST", f"/recipes/api/recipes/{_q(recipe_id)}/shop", body)
 
 
+# ────────────────────────────── meal plan ───────────────────────────────────
+# /meals/api/ (src/meals.js)
+
+def meal_week(start: str) -> dict:
+    """The week holding `start` (YYYY-MM-DD): {start, prev, next, days, recipes, shopping, shopped, lists, drift, recipe_box}."""
+    return _get(f"/meals/api/week?start={_q(start)}")
+
+
+def set_meal(monday: str, day: str, change: dict) -> dict:
+    """{recipe?, servings?, out?, locked?} for one night; the week back."""
+    return api("PUT", f"/meals/api/week/{_q(monday)}/{_q(day)}", change)
+
+
+def fill_meals(monday: str, redo: bool = False) -> dict:
+    """Recipes for the week's empty nights (redo: every night that isn't locked); the week back."""
+    return api("POST", f"/meals/api/week/{_q(monday)}/fill", {"redo": True} if redo else {})
+
+
+def shop_meals(monday: str, lines: list[int], list_id: str | None = None) -> dict:
+    """Sends those lines of the week's shopping (by index) to a Drift list (your Shopping list without list_id); {list, added, shopped}."""
+    body: dict[str, Any] = {"lines": lines}
+    if list_id:
+        body["list"] = list_id
+    return api("POST", f"/meals/api/week/{_q(monday)}/shop", body)
+
+
 # ──────────────────────────────── sweep ─────────────────────────────────────
 # /sweep/api/ (src/sweep.js)
 

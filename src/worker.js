@@ -7,7 +7,7 @@
 // "todo" area before the page or API is served. /plugins (the plugin store,
 // src/store.js) and /chat (src/chat.js) each need their own app turned on for
 // the account on the admin page, and so do /notifications (src/notify.js),
-// /recipes, the Recipe box (src/recipes.js), and /sweep, which suggests Drift
+// /recipes, the Recipe box (src/recipes.js), /meals, the Meal plan (src/meals.js), and /sweep, which suggests Drift
 // items from chat rooms (src/sweep.js).
 // /mcp is the MCP server AI agents use Drift through, with an API key (src/mcp.js).
 // /login/cli is signing in from a terminal (src/cli.js). /app and
@@ -31,6 +31,7 @@ import { chat } from "./chat.js";
 import { recipes } from "./recipes.js";
 import { books } from "./books.js";
 import { sweepApp } from "./sweep.js";
+import { meals } from "./meals.js";
 import { notifications, driftReminders, pushGateway, bridgeUpkeep } from "./notify.js";
 import { state, version, createItem, updateItem, createCollection, updateCollection, setBases, shareCollection, unshareCollection, readJson, BadRequest, ID } from "./drift.js";
 import { planDay } from "./routing.js";
@@ -79,6 +80,13 @@ export default {
     }
     if (pathname.startsWith("/recipes/")) {
       return protect(request, env, areaOf("recipes"), user => recipes(request, env, user, pathname));
+    }
+    if (pathname === "/meals") {
+      url.pathname = "/meals/";
+      return Response.redirect(url.toString(), 308);
+    }
+    if (pathname.startsWith("/meals/")) {
+      return protect(request, env, areaOf("meals"), user => meals(request, env, user, pathname));
     }
     if (pathname === "/sweep") {
       url.pathname = "/sweep/";

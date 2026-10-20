@@ -36,6 +36,7 @@ export const APPS = [
   { id: "chat-bridges", area: "chat-bridges", parent: "chat", name: "Chat connections", href: "/chat/#connections", icon: "chat",
     blurb: "Bring your Matrix rooms into Chat." },
   { id: "recipes", area: "recipes", name: "Recipe box", href: "/recipes/", icon: "recipes", key: "r", blurb: "Save recipes from any link, scale them, and shop for them in Drift." },
+  { id: "meals", area: "meals", name: "Meal plan", href: "/meals/", icon: "meals", key: "m", blurb: "Plans the week's dinners from your recipes around your Drift calendar." },
   { id: "sweep", area: "sweep", name: "Sweep", href: "/sweep/", icon: "sweep", key: "w", blurb: "Suggests Drift events, tasks and list items from your chat rooms." },
   { id: "notifications", area: "notifications", name: "Notifications", href: "/notifications/", icon: "bell", key: "n", blurb: "Alerts on your phone or computer for Chat and Drift.", group: "account" },
 ];
