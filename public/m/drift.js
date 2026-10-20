@@ -6,11 +6,13 @@
 import { $, esc, api, icon, toast, failed, sheet, plural, every } from "./ui.js";
 import { today, addDays, dayOf, timeOf, niceDay, niceTime, parseQuick } from "../todo/lib.js";
 import * as L from "./drift-logic.js";
+import { baseFor, baseScope, niceDuration, PROFILES } from "../todo/route.js";
 
 const POLL_EVERY = 5000;
 const LAST_VIEW = "m:drift-view";
 const data = { state: null, loading: null };
-const ui = { view: "today", day: today(), tabs: {}, showDone: false, q: "" };
+const ui = { view: "today", day: today(), tabs: {}, showDone: false, q: "", route: false, profile: "driving-car", option: 0 };
+const VERB = { "driving-car": "drive", "foot-walking": "walk", "cycling-regular": "ride" };
 let stopPoll = null, main = null;
 
 const remember = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
@@ -196,19 +198,47 @@ function calendar(items, showCol) {
 }
 
 // The Map: the picked day's events that have a place, in the order they
-// happen. The map itself is on the full site; here each stop opens in the
-// phone's maps app for directions.
+// happen, or with Route on, in the order the site plans from the day's base
+// and back (src/routing.js). The map itself is on the full site; here each
+// stop opens in the phone's maps app for directions.
+let planned = { key: null, r: null };
+function routeFor(c, stops) {
+  const key = JSON.stringify([c.id, ui.day, ui.profile, ui.option, c.bases || [], stops.map(({ item: it }) => [it.id, it.meta.event, it.meta.location, it.meta.graph])]);
+  if (planned.key !== key) {
+    planned = { key, r: null };
+    const q = new URLSearchParams({ collection: c.id, day: ui.day, profile: ui.profile, option: ui.option });
+    api("GET", "/todo/api/route?" + q).then(r => { if (planned.key === key) { planned.r = r; draw(); } })
+      .catch(() => { if (planned.key === key) { planned.r = { error: true, options: [] }; draw(); } });
+  }
+  return planned.r;
+}
+
 function places(items, c) {
-  const { stops, unplaced, elsewhere } = L.dayStops(items, ui.day);
+  const plan = L.dayStops(items, ui.day), { unplaced, elsewhere } = plan;
   const miles = /^en-(US|LR|MM)$/i.test(navigator.language || "");
-  let html = weekStrip(items) + `<section class="group"><h2 class="label">${esc(niceDay(ui.day))}${stops.length ? `<small>${stops.length}</small>` : ""}</h2>`;
-  if (!stops.length) html += `<p class="hint">${!c.plugins.includes("event") ? "Turn on Events in this collection's settings too, so items have a day to be on the map."
+  const base = baseFor(c.bases, ui.day), r = ui.route && plan.stops.length ? routeFor(c, plan.stops) : null;
+  let stops = plan.stops, bar = "";
+  const leg = l => l ? `${niceDuration(l.duration)} ${VERB[r.profile] || "drive"}` : "";
+  if (r?.options.length) {
+    const by = new Map(plan.stops.map(s => [s.item.id, s.item])), opt = r.options[r.option], shift = r.base?.lat != null ? 0 : -1;
+    stops = opt.order.filter(id => by.has(id)).map((id, i) => ({ item: by.get(id), n: i + 1, leg: r.legs[i + shift], late: opt.late.includes(id) }));
+    bar = `<p class="hint route">${r.options.length > 1 ? `<button class="btn ghost" data-option="-1" aria-label="Previous route">‹</button>` : ""}
+      <span><b>${r.options.length > 1 ? `Route ${r.option + 1} of ${r.options.length}` : "Route"}</b> · ${esc(niceDuration(opt.duration))} of travel${r.estimated ? " (estimated)" : ""}</span>
+      ${r.options.length > 1 ? `<button class="btn ghost" data-option="1" aria-label="Next route">›</button>` : ""}</p>`;
+  } else if (ui.route && plan.stops.length) bar = `<p class="hint">${r?.error ? "Couldn’t plan the route just now." : "Planning the route…"}</p>`;
+  let html = weekStrip(items) + `<section class="group"><h2 class="label">${esc(niceDay(ui.day))}${plan.stops.length ? `<small>${plan.stops.length}</small>` : ""}</h2>`;
+  html += `<p class="hint base">${base ? `⌂ ${esc(baseScope(base, niceDay))}: ${esc(L.placeLabel(base))}` : "⌂ No base for this day. Set one on the full site’s Map."}</p>`;
+  if (plan.stops.length) html += `<p class="routing"><button class="btn ${ui.route ? "" : "ghost"}" data-route>${ui.route ? "Route on" : "Plan a route"}</button>
+    ${ui.route ? `<select data-profile aria-label="How you get around">${Object.entries(PROFILES).map(([k, v]) => `<option value="${k}" ${k === ui.profile ? "selected" : ""}>${v}</option>`).join("")}</select>` : ""}</p>` + bar;
+  if (!plan.stops.length) html += `<p class="hint">${!c.plugins.includes("event") ? "Turn on Events in this collection's settings too, so items have a day to be on the map."
     : "Nothing with a place on this day. Give an event a place, or add one with ~ and its name."}</p>`;
-  html += `<ul class="items stops">${stops.map(({ item: it, n, from }) => {
+  html += `<ul class="items stops">${stops.map(({ item: it, n, from, leg: l, late }) => {
     const m = it.meta.location;
-    return row(it, { skipEvent: true, time: `${n} · ${L.timeRange(it.meta.event)}${from != null ? ` · ${L.niceDistance(from, miles)} from ${n - 1}` : ""}`,
+    const how = r?.options.length ? (l ? ` · ${leg(l)}` : "") + (late ? " · probably late" : "") : from != null ? ` · ${L.niceDistance(from, miles)} from ${n - 1}` : "";
+    return row(it, { skipEvent: true, time: `${n} · ${L.timeRange(it.meta.event)}${how}`,
     }).replace("</li>", `<a class="go" href="https://www.google.com/maps/dir/?api=1&amp;destination=${m.lat},${m.lng}" target="_blank" rel="noopener">Directions</a></li>`);
   }).join("")}</ul>`;
+  if (r?.options.length && r.base?.lat != null && r.legs.length) html += `<p class="hint">⌂ Back to ${esc(L.placeLabel(r.base))} · ${esc(leg(r.legs.at(-1)))}</p>`;
   if (unplaced.length) html += `<p class="hint">Not found on the map yet: ${unplaced.map(it => esc(it.title)).join(", ")}. Open one to search again, or pin it on the full site.</p>`;
   if (elsewhere.length) html += `<p class="hint">${plural(elsewhere.length, "more item")} on this day with no place.</p>`;
   return html + `<p class="hint"><a href="/todo/">See the map on the full site</a></p></section>`;
@@ -229,14 +259,20 @@ function wire() {
       return draw();
     }
     const day = t.closest("[data-day]");
-    if (day) { ui.day = day.dataset.day; return draw(); }
+    if (day) { ui.day = day.dataset.day; ui.option = 0; return draw(); }
     const wk = t.closest("[data-week]");
-    if (wk) { ui.day = +wk.dataset.week ? addDays(+wk.dataset.week, ui.day) : today(); return draw(); }
+    if (wk) { ui.day = +wk.dataset.week ? addDays(+wk.dataset.week, ui.day) : today(); ui.option = 0; return draw(); }
     if (t.closest("[data-showdone]")) { ui.showDone = !ui.showDone; return draw(); }
+    if (t.closest("[data-route]")) { ui.route = !ui.route; ui.option = 0; return draw(); }
+    const step = t.closest("[data-option]");
+    if (step) { const n = planned.r?.options.length || 1; ui.option = ((ui.option + +step.dataset.option) % n + n) % n; return draw(); }
     if (t.closest("[data-search]")) { ui.searching = true; return draw(); }
     if (t.closest("[data-endsearch]")) { ui.searching = false; ui.q = ""; return draw(); }
     if (t.closest("[data-newcol]")) return collectionSheet(null);
     if (t.closest("[data-settings]")) return collectionSheet(current().col);
+  };
+  main.onchange = e => {
+    if (e.target.matches("[data-profile]")) { ui.profile = e.target.value; ui.option = 0; draw(); }
   };
   main.oninput = e => {
     if (e.target.id === "q") { ui.q = e.target.value; const pos = e.target.selectionStart; draw(); $("#q").setSelectionRange(pos, pos); }

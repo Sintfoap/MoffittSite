@@ -8,6 +8,7 @@ as it is and their views are a press of w away.
 from __future__ import annotations
 
 import calendar
+import json
 import locale
 import os
 from datetime import date, datetime
@@ -405,6 +406,94 @@ class CollectionDialog(ModalScreen[str | None]):
             self.dismiss("left")
 
 
+class BaseDialog(ModalScreen[dict | None]):
+    """Set where a day starts and ends: for that day, a stretch of days, or every day (the home base).
+    Returns {"base": {...}} to save, {"remove": True}, or None."""
+    BINDINGS = [Binding("escape", "cancel", "Cancel"), Binding("ctrl+s", "save", "Save", priority=True)]
+    DEFAULT_CSS = """
+    BaseDialog .grid { height: auto; }
+    BaseDialog .grid > Vertical { height: auto; width: 1fr; margin-right: 1; }
+    BaseDialog Select { width: 1fr; }
+    """
+
+    def __init__(self, day: str, base: dict | None):
+        super().__init__()
+        self.day, self.base = day, base
+
+    def compose(self) -> ComposeResult:
+        b = self.base or {}
+        scope = "home" if b and R.is_home(b) else "range" if b and b["from"] != b["to"] else "day"
+        with VerticalScroll(classes="dialog"):
+            yield Static(Text("Change the base" if b else "Set a base", style=f"bold {INK}"))
+            yield Static(Text("Where the day's route starts and ends.", style=MUTED))
+            yield Label("Place  (an address, a place's name, or lat, lng: the site finds it)", classes="lbl")
+            yield Input(R.place_label(b) if b else "", id="place", placeholder="Home, a hotel, a friend's…")
+            yield Label("It's the base for", classes="lbl")
+            yield Select([(R.nice_day(self.day), "day"), ("A stretch of days", "range"), ("Every day (home base)", "home")],
+                         value=scope, allow_blank=False, id="scope")
+            with Horizontal(classes="grid", id="dates"):
+                with Vertical():
+                    yield Label("From", classes="lbl")
+                    yield Input(b.get("from") or self.day, id="from")
+                with Vertical():
+                    yield Label("To", classes="lbl")
+                    yield Input(b.get("to") or R.add_days(1, self.day), id="to")
+            yield Static(id="err")
+            with Horizontal(classes="buttons"):
+                yield Button("Save", id="save")
+                yield Button("Cancel", id="cancel", classes="quiet")
+                if self.base:
+                    yield Button("Remove base", id="remove", classes="danger")
+            yield Static(Text("ctrl+s save   esc cancel", style=FAINT))
+
+    def on_mount(self) -> None:
+        self.query_one("#dates").display = self.query_one("#scope", Select).value == "range"
+        self.query_one("#place", Input).focus()
+
+    def on_select_changed(self, e: Select.Changed) -> None:
+        if e.select.id == "scope":
+            self.query_one("#dates").display = e.value == "range"
+
+    def on_button_pressed(self, e: Button.Pressed) -> None:
+        if e.button.id == "save":
+            self.action_save()
+        elif e.button.id == "remove":
+            self.dismiss({"remove": True})
+        else:
+            self.dismiss(None)
+
+    def on_input_submitted(self, e: Input.Submitted) -> None:
+        self.action_save()
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+    def fail(self, msg: str) -> None:
+        self.query_one("#err", Static).update(Text(msg, style=BAD))
+
+    def action_save(self) -> None:
+        raw = self.query_one("#place", Input).value.strip()
+        if not raw:
+            return self.fail("Give the base a place.")
+        old = self.base
+        at = R.parse_coords(raw)
+        loc = ({"place": old["place"], "lat": old["lat"], "lng": old["lng"]} if old and raw == R.place_label(old)
+               else {"place": "", **at} if at else {"place": raw, "lat": None, "lng": None})
+        scope = self.query_one("#scope", Select).value
+        if scope == "home":
+            when = {"from": None, "to": None}
+        elif scope == "day":
+            when = {"from": self.day, "to": self.day}
+        else:
+            a, z = (R.parse_date(self.query_one(f"#{k}", Input).value) for k in ("from", "to"))
+            if not a or not z:
+                return self.fail("The days need to be dates Drift understands, like 2026-11-02, fri or +3d.")
+            if z < a:
+                return self.fail("The last day can't be before the first.")
+            when = {"from": a, "to": z}
+        self.dismiss({"base": {**loc, **when}})
+
+
 # ── the page ───────────────────────────────────────────────────────────────
 
 class ItemList(OptionList):
@@ -434,6 +523,11 @@ class ItemList(OptionList):
         Binding("right_curly_bracket", "screen.month(1)", "Next month", show=False),
         Binding("full_stop", "screen.go_today", "Go to today", show=False),
         Binding("o", "screen.open_place", "Open place", show=False),
+        Binding("p", "screen.route", "Route", show=False),
+        Binding("m", "screen.route_mode", "Drive, walk or cycle", show=False),
+        Binding("left_parenthesis", "screen.route_option(-1)", "Previous route", show=False),
+        Binding("right_parenthesis", "screen.route_option(1)", "Next route", show=False),
+        Binding("b", "screen.base", "Base", show=False),
         Binding("j", "cursor_down", "Down", show=False),
         Binding("k", "cursor_up", "Up", show=False),
     ]
@@ -483,6 +577,10 @@ class DriftPage(Page):
         self.q = ""
         self.undo: tuple[str, str] | None = None     # (kind, id) of the last delete
         self.loaded = False
+        # The Map view's route (p): how you get around, which of the orders, and the plan the site sent.
+        self.route_on, self.profile, self.option = False, "driving-car", 0
+        self.route: dict | None = None
+        self.route_key: str | None = None
 
     def compose(self) -> ComposeResult:
         yield from self.top()
@@ -754,19 +852,95 @@ class DriftPage(Page):
             for it in later:
                 opts.append(Option(item_row(it, col_name=name_of(it)), id=it["id"]))
 
+    def route_stops(self, plan: dict, col: dict | None) -> list[dict]:
+        """The day's stops in the order to show them: the route's, once the site has
+        planned it (p), else the order they happen. Asks for the route when what
+        it depends on changes."""
+        if not (self.route_on and col and plan["stops"]):
+            return plan["stops"]
+        key = json.dumps([col["id"], self.day, self.profile, self.option, col.get("bases") or [],
+                          [[st["item"]["id"], st["item"]["meta"].get("event"), st["item"]["meta"]["location"], st["item"]["meta"].get("graph")]
+                           for st in plan["stops"]]], sort_keys=True)
+        if key != self.route_key:
+            self.route_key, self.route = key, None
+            self.run_worker(self.load_route(key, col["id"]))
+        r = self.route
+        if not r or not r.get("options"):
+            return plan["stops"]
+        by = {st["item"]["id"]: st["item"] for st in plan["stops"]}
+        opt = r["options"][r["option"]]
+        shift = 0 if R.placed(r.get("base")) else -1
+        order = [i for i in opt["order"] if i in by]
+        return [{"item": by[i], "n": n + 1, "from": None, "leg": r["legs"][n + shift] if 0 <= n + shift < len(r["legs"]) else None,
+                 "late": i in opt["late"]} for n, i in enumerate(order)]
+
+    async def load_route(self, key: str, col_id: str) -> None:
+        try:
+            r = await fetch(self.app, site.drift_route, col_id, self.day, self.profile, self.option)
+        except Failed:
+            r = {"error": True, "options": []}
+        if self.route_key == key:
+            self.route = r
+            self.render_items()
+
+    def leg_text(self, leg: dict | None) -> str:
+        if not leg:
+            return ""
+        verb = R.VERB.get((self.route or {}).get("profile"), "drive")
+        return f"{R.nice_duration(leg['duration'])} {verb}" + (f", {R.nice_distance(leg['distance'], MILES)}" if leg.get("distance") else "")
+
     def map_list(self, opts: list, shown: list[dict], name_of) -> None:
-        """The Map view's list: the day's stops in order, under the map (draw_map)."""
+        """The Map view's list: the day's base and stops in order, under the map (draw_map)."""
         plan = R.day_stops(shown, self.day)
-        opts.append(Option(header(R.nice_day(self.day), len(plan["stops"]) or "", "[ ] day   . today   o open in OpenStreetMap"), disabled=True))
-        for st in plan["stops"]:
-            it, frm = st["item"], st["from"]
+        _, col, _ = self.current()
+        base = R.base_for((col or {}).get("bases"), self.day)
+        stops = self.route_stops(plan, col)
+        keys = "[ ] day   . today   o OpenStreetMap   b base   p route" + ("   m how   ( ) other routes" if self.route_on else "")
+        opts.append(Option(header(R.nice_day(self.day), len(plan["stops"]) or "", keys), disabled=True))
+        line = Text("  ⌂ ", style=f"bold {GOLD}")
+        if base:
+            line.append(R.base_scope(base) + "  ", style=MUTED)
+            line.append(R.place_label(base), style=PLACE)
+            if not R.placed(base):
+                line.append("  not found on the map", style=FAINT)
+        else:
+            line.append("No base for this day, so routes start at the first stop. b sets one.", style=FAINT)
+        opts.append(Option(line, disabled=True))
+        r = self.route if self.route_on and plan["stops"] else None
+        if self.route_on and plan["stops"]:
+            summary = Text("  ")
+            if r is None:
+                summary.append("Planning the route…", style=FAINT)
+            elif r.get("error"):
+                summary.append("Couldn't plan the route just now.", style=BAD)
+            elif r["options"]:
+                opt, n = r["options"][r["option"]], len(r["options"])
+                summary.append(f"Route {r['option'] + 1} of {n}" if n > 1 else "Route", style=f"bold {INK}")
+                summary.append(f"  {R.nice_duration(opt['duration'])} of travel" + (f", {R.nice_distance(opt['distance'], MILES)}" if opt.get("distance") else ""), style=GOLD)
+                summary.append(f"  ({R.PROFILES[r['profile']]})", style=MUTED)
+                notes = (["estimated in straight lines"] if r.get("estimated") else []) + \
+                        (["some linked places can't be next to each other at those times"] if r.get("loose") else [])
+                if notes:
+                    summary.append("   " + "; ".join(notes), style=FAINT)
+            opts.append(Option(summary, disabled=True))
+        for st in stops:
+            it = st["item"]
             row = Text()
             row.append(f" {R.stop_label(st['n'])} ", style=f"bold #1a1206 on {GOLD}")
-            extra = [(R.when(it["meta"]["event"]), GOLD)] + ([(f"{R.nice_distance(frm, MILES)} from {st['n'] - 1}", MUTED)] if frm is not None else [])
+            extra = [(R.when(it["meta"]["event"]), GOLD)]
+            if r and r.get("options"):
+                extra += [(self.leg_text(st.get("leg")), MUTED)] if st.get("leg") else []
+                extra += [("probably late", BAD)] if st.get("late") else []
+            elif st.get("from") is not None:
+                extra.append((f"{R.nice_distance(st['from'], MILES)} from {st['n'] - 1}", MUTED))
             row.append_text(item_row(it, col_name=name_of(it), skip_event=True, extra=extra))
             opts.append(Option(row, id=it["id"]))
+        if r and r.get("options") and R.placed(r.get("base")) and r.get("legs"):
+            back = Text("  ⌂ ", style=f"bold {GOLD}")
+            back.append(f"Back to {R.place_label(r['base'])}", style=MUTED)
+            back.append(f"   {self.leg_text(r['legs'][-1])}", style=MUTED)
+            opts.append(Option(back, disabled=True))
         if not plan["stops"]:
-            _, col, _ = self.current()
             msg = ("Turn on Events with c too, so items have a day to be on the map." if col and "event" not in col["plugins"]
                    else "Nothing with a place on this day. Give an event one with e, or add one with ~ and its name.")
             opts.append(Option(Text("   " + msg, style=FAINT), disabled=True))
@@ -780,23 +954,25 @@ class DriftPage(Page):
                 opts.append(Option(item_row(it, col_name=name_of(it), skip_event=True, extra=[(R.when(it["meta"]["event"]), GOLD)]), id=it["id"]))
 
     def draw_map(self, shown: list[dict] | None = None, sel: str | None = None) -> None:
-        """The day's stops on a map drawn in characters. The highlighted stop is centred."""
+        """The day's stops on a map drawn in characters, in the route's order when
+        there is one, from the base and back. The highlighted stop is centred."""
+        _, col, _ = self.current()
         if shown is None:
-            _, col, _ = self.current()
             shown = [it for it in self.state["items"] if (not col or it["collection"] == col["id"]) and self.matches(it)]
-        stops = R.day_stops(shown, self.day)["stops"]
+        stops = self.route_stops(R.day_stops(shown, self.day), col)
+        base = R.base_for((col or {}).get("bases"), self.day) if self.route_on else None
         geo = self.query_one("#geo", Static)
         if not stops:
             geo.update("")
             return
         width = max(min(self.query_one("#pane").size.width - 6, 110), 30) if self.query_one("#pane").size.width else 60
-        m = R.text_map(stops, sel, width, 13)
+        m = R.text_map(stops, sel, width, 13, base)
         out = Text("┌" + "─" * width + "┐\n", style=LINE)
         for r, row in enumerate(m["cells"]):
             out.append("│", style=LINE)
             for c, ch in enumerate(row):
                 hit = m["marks"].get((r, c))
-                out.append(ch, style=(f"bold #1a1206 on {BAD}" if hit == sel else f"bold #1a1206 on {GOLD}") if hit else GOLD_DIM)
+                out.append(ch, style=(f"bold {INK} on {LINE}" if hit == "base" else f"bold #1a1206 on {BAD}" if hit == sel else f"bold #1a1206 on {GOLD}") if hit else GOLD_DIM)
             out.append("│\n", style=LINE)
         scale = 10 * m["metres"]
         foot = f"└{'─' * 2}┤{'─' * 8}├ {R.nice_distance(scale, MILES)} "
@@ -809,6 +985,52 @@ class DriftPage(Page):
             out.append(R.place_label(loc), style=PLACE)
             out.append(f"   {loc['lat']:.5f}, {loc['lng']:.5f}", style=MUTED)
         geo.update(out)
+
+    def action_route(self) -> None:
+        if self.current()[2] != "location":
+            return
+        self.route_on, self.option = not self.route_on, 0
+        self.render_items()
+
+    def action_route_mode(self) -> None:
+        if self.current()[2] != "location" or not self.route_on:
+            return
+        ps = list(R.PROFILES)
+        self.profile, self.option = ps[(ps.index(self.profile) + 1) % len(ps)], 0
+        self.render_items()
+
+    def action_route_option(self, step: int) -> None:
+        n = len((self.route or {}).get("options") or [])
+        if self.current()[2] != "location" or not self.route_on or n < 2:
+            return
+        self.option = (self.option + step) % n
+        self.render_items()
+
+    def action_base(self) -> None:
+        """b: set the base for the day shown, or change the one it has (a home base stays, and a new one is made for the day)."""
+        _, col, tab = self.current()
+        if tab != "location" or not col:
+            return
+        if not writable(col):
+            self.app.notify("You can view this collection but not change it.", timeout=3)
+            return
+        bases = col.get("bases") or []
+        cur = R.base_for(bases, self.day)
+        editing = cur if cur and not R.is_home(cur) else None
+
+        async def done(out: dict | None) -> None:
+            if not out:
+                return
+            keep = [b for b in bases if b is not editing]
+            new = keep if out.get("remove") else keep + [out["base"]]
+            try:
+                saved = await self.fetch(site.set_bases, col["id"], new)
+            except Failed:
+                return
+            col["bases"] = saved.get("bases") or []
+            self.render_items()
+
+        self.app.push_screen(BaseDialog(self.day, editing), callback=lambda out: self.run_worker(done(out)))
 
     def action_open_place(self) -> None:
         it = self.selected()
@@ -873,7 +1095,7 @@ class DriftPage(Page):
     def action_day(self, step: int) -> None:
         if self.current()[2] not in ("event", "location"):
             return
-        self.day = R.add_days(step, self.day)
+        self.day, self.option = R.add_days(step, self.day), 0
         self.month = self.day[:7]
         self.render_items()
 
@@ -888,7 +1110,7 @@ class DriftPage(Page):
         self.render_items()
 
     def action_go_today(self) -> None:
-        self.day, self.month = R.today(), R.today()[:7]
+        self.day, self.month, self.option = R.today(), R.today()[:7], 0
         self.render_items()
 
     def action_compose(self) -> None:

@@ -29,12 +29,14 @@ import { chat } from "./chat.js";
 import { recipes } from "./recipes.js";
 import { books } from "./books.js";
 import { notifications, driftReminders, pushGateway, bridgeUpkeep } from "./notify.js";
-import { state, version, createItem, updateItem, createCollection, updateCollection, shareCollection, unshareCollection, readJson, BadRequest, ID } from "./drift.js";
+import { state, version, createItem, updateItem, createCollection, updateCollection, setBases, shareCollection, unshareCollection, readJson, BadRequest, ID } from "./drift.js";
+import { planDay } from "./routing.js";
 
 // /todo/api/state, /todo/api/version, /todo/api/items[/<id>],
 // /todo/api/collections[/<id>[/shares[/<username>]]]
-const API = /^\/todo\/api\/(state|version|items|collections|installs|places)(?:\/([^/]+)(?:\/(shares)(?:\/([^/]+))?)?)?\/?$/;
+const API = /^\/todo\/api\/(state|version|items|collections|installs|places|route)(?:\/([^/]+)(?:\/(shares)(?:\/([^/]+))?)?)?\/?$/;
 const USERNAME = /^[a-z0-9_.-]{1,64}$/;
+const DAY = /^\d{4}-\d{2}-\d{2}$/;
 
 export default {
   async fetch(request, env, ctx) {
@@ -138,6 +140,16 @@ async function todo(request, env, user, pathname) {
       return results === null ? json({ error: "couldn’t reach the map service" }, 502) : json({ results });
     }
 
+    // GET route?collection=<id>&day=YYYY-MM-DD[&profile=driving-car|foot-walking|cycling-regular][&option=n]
+    //   → the day's route from its base and back (src/routing.js)
+    if (kind === "route") {
+      if (method !== "GET" || id) return json({ error: "not found" }, 404);
+      const q = new URL(request.url).searchParams, day = q.get("day") || "";
+      if (!ID.test(q.get("collection") || "") || !DAY.test(day)) return json({ error: "collection and day (YYYY-MM-DD) are needed" }, 400);
+      const out = await planDay(env, user, q.get("collection"), day, q.get("profile") || undefined, q.get("option"));
+      return out ? json(out) : json({ error: "not found" }, 404);
+    }
+
     // GET    installs       → the ids of the store plugins you've added to Drift
     // POST   installs/<id>  → add an approved store plugin
     // DELETE installs/<id>  → remove it (collections using it keep their data)
@@ -176,7 +188,9 @@ async function todo(request, env, user, pathname) {
     if (method === "PATCH") changes = await readJson(request);
     else if (method === "DELETE") changes = { deleted: true };
     else return json({ error: "method not allowed" }, 405);
-    const out = await update(env, as, id, changes);
+    // A collection's bases alone can be changed by anyone who can edit it.
+    const basesOnly = kind === "collections" && changes && typeof changes === "object" && Object.keys(changes).join() === "bases";
+    const out = basesOnly ? await setBases(env, user, id, changes.bases) : await update(env, as, id, changes);
     return out ? json(out) : json({ error: "not found" }, 404);
   });
 }

@@ -176,18 +176,23 @@ def stop_label(n: int) -> str:
     return str(n) if n < 10 else chr(ord("A") + n - 10) if n < 36 else "+"
 
 
-def text_map(stops: list[dict], sel: str | None = None, width: int = 60, height: int = 13) -> dict:
+def text_map(stops: list[dict], sel: str | None = None, width: int = 60, height: int = 13, base: dict | None = None) -> dict:
     """The day's stops drawn on a grid of characters, for the terminal's Map view.
     Fits every stop in; with `sel` (an item id) it centres on that stop, still
-    with every stop in view. A cell is about twice as tall as it is wide. Returns {cells: rows of
-    characters (" ", "·" for the route, or a stop's label), marks: {(row, col): item id},
-    metres: metres across one column}."""
-    pts = [(s, *_mercator(s["item"]["meta"]["location"]["lat"], s["item"]["meta"]["location"]["lng"])) for s in stops]
+    with every stop in view. A cell is about twice as tall as it is wide. With
+    `base` (a placed {lat, lng}) the route starts and ends there, marked "⌂".
+    Returns {cells: rows of characters (" ", "·" for the route, or a stop's
+    label), marks: {(row, col): item id, or "base"}, metres: metres across one column}."""
+    loc = lambda s: s["item"]["meta"]["location"]
+    pts = [(s, *_mercator(loc(s)["lat"], loc(s)["lng"])) for s in stops]
+    home = (None, *_mercator(base["lat"], base["lng"])) if stops and placed(base) else None
+    every = pts + ([home] if home else [])
     cells = [[" "] * width for _ in range(height)]
     if not pts:
         return {"cells": cells, "marks": {}, "metres": 0.0}
-    xs, ys = [p[1] for p in pts], [p[2] for p in pts]
-    lat0 = sum(s["item"]["meta"]["location"]["lat"] for s in stops) / len(stops)
+    xs, ys = [p[1] for p in every], [p[2] for p in every]
+    lats = [loc(s)["lat"] for s in stops] + ([base["lat"]] if home else [])
+    lat0 = sum(lats) / len(lats)
     per_unit = 40075016.686 * math.cos(math.radians(lat0))     # metres in one unit of x at this latitude
     floor = 15 / per_unit                                      # at most 15 m to a column
     dx = max((max(xs) - min(xs)) / max(width - 6, 1), (max(ys) - min(ys)) / max(2 * (height - 2), 1), floor)
@@ -202,13 +207,18 @@ def text_map(stops: list[dict], sel: str | None = None, width: int = 60, height:
         return round((y - cy) / dy + (height - 1) / 2), round((x - cx) / dx + (width - 1) / 2)
 
     where = [cell(x, y) for _, x, y in pts]
-    for (r0, c0), (r1, c1) in zip(where, where[1:]):
+    route = ([cell(home[1], home[2])] if home else []) + where + ([cell(home[1], home[2])] if home else [])
+    for (r0, c0), (r1, c1) in zip(route, route[1:]):
         n = max(abs(r1 - r0), abs(c1 - c0))
         for i in range(1, n):
             r, c = round(r0 + (r1 - r0) * i / n), round(c0 + (c1 - c0) * i / n)
             if 0 <= r < height and 0 <= c < width:
                 cells[r][c] = "·"
     marks: dict = {}
+    if home:
+        r, c = route[0]
+        if 0 <= r < height and 0 <= c < width:
+            cells[r][c], marks[(r, c)] = "⌂", "base"
     for (s, _, _), (r, c) in zip(pts, where):
         if 0 <= r < height and 0 <= c < width:
             # The picked stop stays on top of any it shares a cell with.
@@ -217,6 +227,44 @@ def text_map(stops: list[dict], sel: str | None = None, width: int = 60, height:
             cells[r][c] = stop_label(s["n"])
             marks[(r, c)] = s["item"]["id"]
     return {"cells": cells, "marks": marks, "metres": dx * per_unit}
+
+
+# ── bases and routes ──────────────────────────────────────────────────────
+# As public/todo/route.js has them. A collection's bases are where each day
+# starts and ends: [{place, lat, lng, from, to}], from and to both None for
+# the home base. The site plans the routes (GET /todo/api/route).
+
+PROFILES = {"driving-car": "Drive", "foot-walking": "Walk", "cycling-regular": "Cycle"}
+VERB = {"driving-car": "drive", "foot-walking": "walk", "cycling-regular": "ride"}
+
+
+def is_home(b: dict) -> bool:
+    return b.get("from") is None
+
+
+def base_for(bases: list[dict] | None, d: str) -> dict | None:
+    """The base for day `d`: the one that covers it most closely (a day's, then a stretch's), then home."""
+    def span(b: dict) -> float:
+        return math.inf if is_home(b) else (date.fromisoformat(b["to"]) - date.fromisoformat(b["from"])).days
+    best = None
+    for b in bases or []:
+        if (is_home(b) or b["from"] <= d <= b["to"]) and (best is None or span(b) <= span(best)):
+            best = b
+    return best
+
+
+def base_scope(b: dict) -> str:
+    if is_home(b):
+        return "Home base"
+    if b["from"] == b["to"]:
+        return "Base for " + nice_day(b["from"])
+    return f"Base from {nice_day(b['from'])} to {nice_day(b['to'])}"
+
+
+def nice_duration(s: float) -> str:
+    """"8 min", "1 h 5 min"."""
+    m = max(1, round(s / 60))
+    return f"{m} min" if m < 60 else f"{m // 60} h" + (f" {m % 60} min" if m % 60 else "")
 
 
 def parse_quick(text: str) -> tuple[str, dict]:

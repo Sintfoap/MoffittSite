@@ -159,13 +159,25 @@ Quick-add: `Lunch #food +Home !2 ^fri @1pm ~ Ferry Building, San Francisco` (tag
 
 ### Locations and OpenRouteService
 
-Locations finds places through [OpenRouteService](https://openrouteservice.org) (built on OpenStreetMap), from the Worker, so the key never reaches a browser (`src/places.js`). Set it as a secret: **`ORS_API_KEY`**, a free key from openrouteservice.org (Workers & Pages → moffittsite → Settings → Variables and Secrets → Add, type Secret; or `wrangler secret put ORS_API_KEY`). Routing will use the same key. With it:
+Locations finds places through [OpenRouteService](https://openrouteservice.org) (built on OpenStreetMap), from the Worker, so the key never reaches a browser (`src/places.js`). Set it as a secret: **`ORS_API_KEY`**, a free key from openrouteservice.org (Workers & Pages → moffittsite → Settings → Variables and Secrets → Add, type Secret; or `wrangler secret put ORS_API_KEY`). Routing uses the same key. With it:
 
 - The item dialog's Place box searches as you type (`GET /todo/api/places?q=…&near=lat,lng`, favouring places near the collection's others), and picking a result saves it.
 - A place typed and saved without picking (from quick-add, the terminal, the phone or an agent) is looked up then, and the best match is kept; one that can't be found is refused with a message. An unchanged place isn't looked up again.
 - A pin or pasted coordinates (`37.7955, -122.3937`, or an OpenStreetMap, Google Maps or `geo:` link) get the name of the spot (`GET /todo/api/places?lat=…&lng=…`).
 
 Without the key, search is off and typed places stay "not found yet", but pins and pasted coordinates still work. The map's tiles come from OpenStreetMap, and Leaflet (`public/todo/vendor/leaflet/`, BSD-2) draws it.
+
+#### Bases and routes
+
+Each day starts and ends at a **base**, kept on the collection as `bases: [{place, lat, lng, from, to}]`: a home base (no dates) for every day, plus ones for a single day or a stretch of days. A day uses the base that covers it most closely, so a one-night stay beats a week's hotel, which beats home. Anyone who can edit the collection can change its bases (the Map's side panel, `b` in the terminal, or `PATCH /todo/api/collections/<id>` with only `{bases}`).
+
+**Route** on the Map plans the order to visit the day's places in (`GET /todo/api/route?collection=…&day=…&profile=…&option=…`, `src/routing.js`, rules in `public/todo/route.js`):
+
+1. Events with a time stay in time order.
+2. Items linked in the Graph plugin are visited one after the other: either way round for a plain link, in the link's direction for a typed one ("leads to"). When the times keep linked places apart, they keep their order but not their closeness.
+3. Everything else is ordered by travel time. The five best orders are offered to cycle between (‹ ›), and a timed stop you'd likely reach late is flagged.
+
+Travel times come from OpenRouteService's matrix (one call), and the chosen order's streets from its directions (one call), for driving, walking or cycling; answers are cached for a day. Without the key, times are estimated from straight-line distance and the route is drawn straight.
 
 ### Sharing
 
@@ -187,7 +199,8 @@ All endpoints act only on the signed-in user's own data.
 | PATCH | `/todo/api/items/<id>` | any of those, or `deleted`. Each `meta.<plugin>` is replaced whole; `null` removes it |
 | DELETE | `/todo/api/items/<id>` | |
 | POST | `/todo/api/collections` | `{name, plugins, view, order}` |
-| PATCH | `/todo/api/collections/<id>` | any of those, or `deleted` |
+| PATCH | `/todo/api/collections/<id>` | any of those, `bases`, or `deleted`. `{bases}` alone works for anyone who can edit it |
+| GET | `/todo/api/route?collection=<id>&day=YYYY-MM-DD` | `&profile=driving-car\|foot-walking\|cycling-regular&option=n` → the day's route: `{base, options: [{order, duration, distance, late}], option, legs, path, estimated}` |
 | DELETE | `/todo/api/collections/<id>` | hides its items too; you can't delete your last one |
 | POST | `/todo/api/collections/<id>/shares` | `{username, role}`, role `edit` or `view`. Owner only; sending it again changes the role |
 | DELETE | `/todo/api/collections/<id>/shares/<username>` | the owner removes someone, or you leave a collection shared with you |

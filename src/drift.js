@@ -10,6 +10,7 @@ import { db, now } from "./db.js";
 import { PLUGINS, BY_ID } from "../public/todo/plugins/index.js";
 import { approvedIds, approvedPlugins, installed } from "./store.js";
 import { hasPlaces, searchPlaces, nameOf } from "./places.js";
+import { cleanBases } from "../public/todo/route.js";
 
 export class BadRequest extends Error {}
 const fail = msg => { throw new BadRequest(msg); };
@@ -118,10 +119,20 @@ function cleanCollection(changes, store) {
       case "view": out.view = v == null || v === "" ? "" : String(v); if (out.view && !BY_ID[out.view] && !store.has(out.view)) fail("view must be a plugin id"); break;
       case "order": { const n = Number(v); if (!Number.isFinite(n)) fail("order must be a number"); out.order = n; break; }
       case "deleted": out.deleted = Boolean(v); break;
+      case "bases": out.bases = cleanBases(v, fail, BY_ID.location.clean); break;
       default: fail(`unknown field ${JSON.stringify(f)}`);
     }
   }
   return out;
+}
+
+// Bases (where a day's route starts and ends, public/todo/route.js) are found
+// on the map like items' places; ones already there keep what was found.
+async function locateBases(env, bases, before = []) {
+  return Promise.all(bases.map(b => {
+    const was = before.find(x => x.place === b.place && x.lat != null) || before.find(x => x.lat === b.lat && x.lng === b.lng && x.place);
+    return locate(env, b, was).then(loc => ({ ...b, ...loc }));
+  }));
 }
 
 // Locations: the site finds what you typed on the map when an item is saved
@@ -346,6 +357,7 @@ export async function createCollection(env, owner, fields) {
 export async function updateCollection(env, owner, id, changes) {
   const d = await db(env);
   const patch = cleanCollection(changes, await storeIdsFor(env, pluginIds(changes)));
+  if (patch.bases) patch.bases = await locateBases(env, patch.bases, (await getRow(d, "drift_collections", owner, id, toCollection))?.bases);
   if (patch.deleted) {
     const { n } = await d.prepare("SELECT COUNT(*) AS n FROM drift_collections WHERE owner = ? AND id != ? AND json_extract(data, '$.deleted') IS NOT 1")
       .bind(owner, id).first();
@@ -355,6 +367,26 @@ export async function updateCollection(env, owner, id, changes) {
     .bind(JSON.stringify(patch), updatedNow(), owner, id).run();
   if (!res.meta.changes) return null;
   return getRow(d, "drift_collections", owner, id, toCollection);
+}
+
+// Changes a collection's bases. Unlike its other settings, anyone who can
+// edit the collection's items can, since they plan its days too.
+export async function setBases(env, user, id, bases) {
+  const d = await db(env);
+  const acc = await collectionAccess(d, user, id);
+  if (!acc) return null;
+  if (!canWrite(acc.role)) fail("that collection is view-only for you");
+  return updateCollection(env, acc.owner, id, { bases }).then(c => c && { ...c, role: acc.role });
+}
+
+// A collection you can see and its items, or null.
+export async function collectionWithItems(env, user, id) {
+  const d = await db(env);
+  const acc = await collectionAccess(d, user, id);
+  if (!acc) return null;
+  const { results } = await d.prepare(`SELECT id, data, updated FROM drift_items WHERE owner = ? AND json_extract(data, '$.collection') = ?`)
+    .bind(acc.owner, id).all();
+  return { collection: acc.collection, items: results.map(toItem).filter(it => !it.deleted) };
 }
 
 // ── lists other apps add to ────────────────────────────────────────────────

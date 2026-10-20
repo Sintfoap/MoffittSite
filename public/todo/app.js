@@ -76,6 +76,15 @@ async function setMeta(id, pid, value, { celebrate = false } = {}) {
   setTimeout(() => { state.pending.delete(id); apply(); }, 650);
 }
 
+// A collection's bases (Locations' Map view): anyone who can edit its items can change them.
+// Saved before it's shown, since the route the map asks for depends on it.
+async function setBases(id, bases) {
+  if (!writable(colById(id))) return toast("You can view this collection but not change it.");
+  try { const { bases: saved } = await req("PATCH", "collections/" + id, { bases }); if (colById(id)) colById(id).bases = saved; }
+  catch (e) { toast("Couldn’t save the base: " + e.message); }
+  render();
+}
+
 async function removeItem(id) {
   const it = state.items.find(x => x.id === id); if (!it || !canEdit(it)) return;
   state.items = state.items.filter(x => x.id !== id);
@@ -147,7 +156,8 @@ function ctx() {
     collection: cur.col, tab: cur.tab, items: all.filter(matches), scopeItems: all, filtered: Boolean(state.q),
     pending: state.pending, viewState: (state.viewState[key] ||= {}),
     all: state.items, selected: state.sel, open: openItem,
-    row, group, empty, render, setMeta, update,
+    row, group, empty, render, setMeta, update, toast,
+    setBases: bases => cur.col && setBases(cur.col.id, bases),
   };
 }
 

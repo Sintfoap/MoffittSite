@@ -268,6 +268,17 @@ def update_collection(col_id: str, changes: dict) -> dict:
     return api("PATCH", f"/todo/api/collections/{_q(col_id)}", changes)
 
 
+def set_bases(col_id: str, bases: list[dict]) -> dict:
+    """A collection's bases; anyone who can edit it can (public/todo/route.js)."""
+    return api("PATCH", f"/todo/api/collections/{_q(col_id)}", {"bases": bases})
+
+
+def drift_route(col_id: str, day: str, profile: str = "driving-car", option: int = 0) -> dict:
+    """The day's route from its base and back (src/routing.js)."""
+    q = urllib.parse.urlencode({"collection": col_id, "day": day, "profile": profile, "option": option})
+    return _get(f"/todo/api/route?{q}")
+
+
 def delete_collection(col_id: str) -> dict:
     return api("DELETE", f"/todo/api/collections/{_q(col_id)}")
 
