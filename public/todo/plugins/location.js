@@ -15,7 +15,7 @@
 // days, public/todo/route.js), and "Route" plans the order to go in along the
 // streets, with the few best orders to cycle between (src/routing.js).
 
-import { esc, icon, today, addDays, dayOf, timeOf, niceDay, niceTime, parseCoords } from "../lib.js";
+import { esc, icon, today, addDays, dayOf, timeOf, niceDay, niceTime, parseCoords, DATE } from "../lib.js";
 import { baseFor, baseScope, isHome, niceDuration, straightNote, PROFILES } from "../route.js";
 
 const BLANK = { place: "", lat: null, lng: null };
@@ -58,6 +58,38 @@ export function dayStops(items, d) {
   }
   return { stops, unplaced, elsewhere };
 }
+
+// ── a stretch of days on one map ───────────────────────────────────────────
+// The Map's Range mode shows several days at once, each day's pins in its own
+// colour, to check that what's planned for different days sits well together.
+export const MAX_RANGE = 14;
+const spanOf = (a, b) => Math.round((Date.parse(b) - Date.parse(a)) / 864e5) + 1;
+
+// Every day from `first` to `last`, inclusive, at most MAX_RANGE of them.
+// Nothing if either isn't a day or they're the wrong way round.
+export function rangeDays(first, last) {
+  if (!DATE.test(first) || !DATE.test(last) || first > last) return [];
+  const days = [];
+  for (let d = first; d <= last && days.length < MAX_RANGE; d = addDays(1, d)) days.push(d);
+  return days;
+}
+
+// Fixes a range after one end was edited (`changed` is "first" or "last"): the
+// end that wasn't touched moves to keep first <= last and at most MAX_RANGE days.
+export function normRange(first, last, changed) {
+  if (first > last) { if (changed === "first") last = first; else first = last; }
+  if (spanOf(first, last) > MAX_RANGE) {
+    if (changed === "first") last = addDays(MAX_RANGE - 1, first); else first = addDays(1 - MAX_RANGE, last);
+  }
+  return { first, last };
+}
+
+// Each of the days with its stops (numbered again from 1), as dayStops gives them.
+export const rangeStops = (items, days) => days.map(day => ({ day, ...dayStops(items, day) }));
+
+// A colour for the i-th day. Stepping the hue by the golden angle keeps days
+// next to each other as different as can be, however many there are.
+export const dayColor = i => `hsl(${Math.round((25 + i * 137.508) % 360)} 70% ${38 + (i % 3) * 7}%)`;
 
 // The middle of the places among `items`, to search near; null if none has one.
 export function centre(items) {
