@@ -134,7 +134,7 @@ The same settings as `/notifications/`: what Chat and Drift push to you (direct 
 
 ## Recipe box
 
-The same recipes as `/recipes/`: the list on the left, the open one on the right. Paste a link to a recipe page in the box at the top (`a` goes there) and the site reads the recipe off it, from the schema.org data most recipe sites publish. If a page has no recipe on it, the editor opens with the link filled in so you can type it.
+The same recipes as `/recipes/`: the list on the left, the open one on the right. Paste a link to a recipe page in the box at the top (`a` goes there) and the site reads the recipe off it, from the schema.org data most recipe sites publish, or from a recipe shared out of Recipe Keeper (recipekeeperonline.com). If a page has no recipe on it, the editor opens with the link filled in so you can type it.
 
 | Key | |
 |---|---|
