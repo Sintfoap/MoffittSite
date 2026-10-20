@@ -669,7 +669,7 @@ def test_drift_map_shows_the_days_places_and_goes_to_the_one_picked(real_site):
         text = "\n".join(lines)
         assert text.index("Breakfast") < text.index("Museum") < text.index("Lunch")
         assert "Tomorrow" not in text, "only the chosen day"
-        assert "///daring.lion.race" in text and "km from 1" in text
+        assert "///daring.lion.race" in text and ("km from 1" in text or "mi from 1" in text), "km or miles, by the locale"
         geo = page.query_one("#geo")
         assert geo.has_class("on")
         # Moving to Lunch centres the map on it and names it under the map.
