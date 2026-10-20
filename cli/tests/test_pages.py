@@ -616,3 +616,79 @@ def test_drift_graph_lists_link_types_and_kinds(real_site):
         line = next(str(lst.get_option_at_index(i).prompt) for i in range(lst.option_count) if "Launch" in str(lst.get_option_at_index(i).prompt))
         assert "milestone" in line and "→ depends on Write copy" in line
     run_app("drift", graph_tab)
+
+
+def test_places_parse_and_draw_like_the_web_page():
+    assert R.parse_words("///Filled.Count.Soap") == "filled.count.soap"
+    assert R.parse_words("https://w3w.co/index.home.raft") == "index.home.raft"
+    assert R.parse_words("two.words") is None and R.parse_words("with.num3.bers") is None
+    assert R.parse_quick("Lunch ///filled.count.soap @1pm") == ("Lunch", {"location": "filled.count.soap", "time": "13:00"})
+    assert R.fresh_meta(["location"], {"location": "filled.count.soap"}) == {"location": {"words": "filled.count.soap", "lat": None, "lng": None, "place": ""}}
+
+    d = "2026-10-20"
+    at = lambda id_, start, loc: {"id": id_, "title": id_, "meta": {"event": {"start": start, "end": None}, **({"location": loc} if loc else {})}}  # noqa: E731
+    a = {"words": "filled.count.soap", "lat": 51.520847, "lng": -0.195521, "place": ""}
+    b = {"words": "index.home.raft", "lat": 51.521251, "lng": -0.203586, "place": ""}
+    items = [at("tea", d + "T15:00", b), at("lunch", d + "T12:00", a), at("unplaced", d + "T09:00", {"words": "x.y.z", "lat": None, "lng": None}),
+             at("nowhere", d + "T10:00", None), at("tomorrow", "2026-10-21", a)]
+    plan = R.day_stops(items, d)
+    assert [(s["n"], s["item"]["id"]) for s in plan["stops"]] == [(1, "lunch"), (2, "tea")]
+    assert plan["stops"][0]["from"] is None and round(plan["stops"][1]["from"]) == 560
+    assert [it["id"] for it in plan["unplaced"]] == ["unplaced"] and plan["elsewhere"] == 1
+    assert R.nice_distance(560) == "560 m" and R.nice_distance(1234) == "1.2 km" and R.nice_distance(1609.344, True) == "1.0 mi"
+
+    m = R.text_map(plan["stops"], None, 40, 9)
+    text = "\n".join("".join(r) for r in m["cells"])
+    assert "1" in text and "2" in text and "·" in text
+    (r1, c1), (r2, c2) = sorted(m["marks"], key=lambda k: m["marks"][k] != "lunch")
+    assert c1 > c2, "lunch is east of tea"
+    # Picking a stop centres the map on it.
+    m = R.text_map(plan["stops"], "tea", 40, 9)
+    assert m["marks"].get((4, 20)) == "tea"
+
+
+def test_drift_map_shows_the_days_places_and_goes_to_the_one_picked(real_site):
+    col = site.drift_state()["collections"][0]
+    site.update_collection(col["id"], {"plugins": col["plugins"] + ["location"]})
+    places = [("Breakfast", "T08:30", "filled.count.soap", 51.520847, -0.195521), ("Museum", "T10:00", "daring.lion.race", 51.508341, -0.125499),
+              ("Lunch", "T13:00", "chair.lamp.tree", 51.5033, -0.1196)]
+    for title, tm, words, lat, lng in places:
+        site.add_item({"title": title, "collection": col["id"],
+                       "meta": {"event": {"start": R.today() + tm, "end": None}, "location": {"words": words, "lat": lat, "lng": lng}}})
+    site.add_item({"title": "Tomorrow", "collection": col["id"],
+                   "meta": {"event": {"start": R.add_days(1), "end": None}, "location": {"words": "index.home.raft", "lat": 51.52, "lng": -0.2}}})
+
+    async def map_tab(app, pilot):
+        page = app.screen
+        page.view = "c:" + col["id"]
+        page.tabs[col["id"]] = "location"
+        page.render_all()
+        await settle(pilot)
+        lst = page.query_one("#items")
+        lines = [str(lst.get_option_at_index(i).prompt) for i in range(lst.option_count)]
+        text = "\n".join(lines)
+        assert text.index("Breakfast") < text.index("Museum") < text.index("Lunch")
+        assert "Tomorrow" not in text, "only the chosen day"
+        assert "///daring.lion.race" in text and ("km from 1" in text or "mi from 1" in text), "km or miles, by the locale"
+        geo = page.query_one("#geo")
+        assert geo.has_class("on")
+        # Moving to Lunch centres the map on it and names it under the map.
+        page.query_one("#items").focus()
+        lst.highlighted = next(i for i, l in enumerate(lines) if "Lunch" in l)
+        await settle(pilot)
+        shown = str(geo.render())
+        assert "Lunch" in shown and "///chair.lamp.tree" in shown
+        # The next day has its own places.
+        await pilot.press("right_square_bracket")
+        await settle(pilot)
+        text = "\n".join(str(lst.get_option_at_index(i).prompt) for i in range(lst.option_count))
+        assert "Tomorrow" in text and "Breakfast" not in text
+        # Adding on the map lands on the day shown, with its place.
+        page.query_one("#add").focus()
+        await type_(pilot, "Dinner ///index.home.raft @7pm")
+        await pilot.press("enter")
+        await settle(pilot, 0.6)
+        made = next(it for it in site.drift_state()["items"] if it["title"] == "Dinner")
+        assert made["meta"]["event"]["start"] == R.add_days(1) + "T19:00"
+        assert made["meta"]["location"]["words"] == "index.home.raft"
+    run_app("drift", map_tab)

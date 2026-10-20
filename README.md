@@ -151,10 +151,15 @@ Drift lives at `/todo/`. Everything in it is an **item**: a title, notes, tags a
 | Events (`event`) | `{start, end}`, as `YYYY-MM-DD` or `YYYY-MM-DDTHH:MM` | month calendar; the picked day shown by the hour, with a "No set time" list for undated-time items; an agenda |
 | List (`list`) | `{order, parent}` | an outline you reorder and nest |
 | Graph (`graph`) | `{links, rel?, kind?, x, y}`: linked item ids, an optional type per link (`{id: "depends on"}`, which makes it point one way), an optional kind for the item, and where you pinned it | a network you drag, pan and zoom; "Link items" links or unlinks two items, as a plain link or a typed arrow; kinds colour the nodes, and the legend hides kinds and link types |
+| Locations (`location`) | `{words, lat, lng, place}`: a what3words address (`filled.count.soap`), and where it is, which the site fills in from what3words when the item is saved | a map of the chosen day's events that have a place, numbered and joined in the order they happen, with the distance from each to the one before; picking one in the list flies the map there |
 
 Each **collection** picks which plugins are on, and shows a tab for each one's view. One item can carry several plugins' metadata at once, so a dated checklist item is also on the calendar. **Today** and **Calendar** in the sidebar show events from every collection.
 
-Quick-add: `Dentist #health +Home !2 ^fri @3pm` (tag, collection, priority, date, time).
+Quick-add: `Dentist #health +Home !2 ^fri @3pm ///filled.count.soap` (tag, collection, priority, date, time, what3words place).
+
+### Locations and what3words
+
+Locations turns an item's three words into a spot on the map through the what3words API (`src/w3w.js`), from the Worker, so the key never reaches a browser. Set it as a secret: **`W3W_API_KEY`**, a key from [developer.what3words.com](https://developer.what3words.com) on a plan that includes convert-to-coordinates (Workers & Pages → moffittsite → Settings → Variables and Secrets → Add, type Secret; or `wrangler secret put W3W_API_KEY`). Without it items keep their words and show them, but nothing is placed on the map. The site asks what3words only when an item's words change (or weren't placed yet); words what3words doesn't know are refused with a message, and if it can't be reached the words are kept and placed on the next save. The map's tiles come from OpenStreetMap, and Leaflet (`public/todo/vendor/leaflet/`, BSD-2) draws it.
 
 ### Sharing
 

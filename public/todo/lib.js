@@ -39,8 +39,20 @@ export function parseTime(s) {
   return `${String(h).padStart(2, "0")}:${String(min).padStart(2, "0")}`;
 }
 
-// Quick-add: "Call Sam #family +home !2 ^fri @3pm"
-//   #tag   +collection   !1..!3 priority   ^date   @time
+// ── places: a what3words address is three words joined by dots ("filled.count.soap").
+// Takes it as people paste it: "///filled.count.soap", "filled count soap" or a
+// what3words.com / w3w.co link. Gives the bare lowercase words, or null.
+const W3W = /^\p{L}[\p{L}\p{M}]*\.\p{L}[\p{L}\p{M}]*\.\p{L}[\p{L}\p{M}]*$/u;
+export function parseWords(s) {
+  let w = String(s ?? "").trim().toLowerCase();
+  const link = w.match(/^(?:https?:\/\/)?(?:www\.)?(?:what3words\.com|w3w\.co)\/([^?#\s]+)/);
+  if (link) { try { w = decodeURIComponent(link[1]); } catch { return null; } }
+  w = w.replace(/^\/+/, "").replace(/[\s｡。・]+/g, ".");
+  return w.length <= 100 && W3W.test(w) ? w : null;
+}
+
+// Quick-add: "Call Sam #family +home !2 ^fri @3pm ///filled.count.soap"
+//   #tag   +collection   !1..!3 priority   ^date   @time   ///what3words
 export function parseQuick(text) {
   const f = {}, tags = [], words = [];
   for (const w of String(text).split(/\s+/).filter(Boolean)) {
@@ -49,6 +61,7 @@ export function parseQuick(text) {
     else if (/^(!{1,3}|![0-3])$/.test(w)) f.priority = /\d/.test(w[1]) ? +w[1] : w.length;
     else if (w.length > 1 && w[0] === "^" && parseDate(w.slice(1))) f.date = parseDate(w.slice(1));
     else if (w.length > 1 && w[0] === "@" && parseTime(w.slice(1))) f.time = parseTime(w.slice(1));
+    else if (w.startsWith("///") && parseWords(w)) f.location = parseWords(w);
     else words.push(w);
   }
   if (tags.length) f.tags = tags;

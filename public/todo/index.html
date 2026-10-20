@@ -236,6 +236,43 @@ ul.items { list-style: none; margin: 0; padding: 0; }
 .linkpick input[name^="rel:"] { width: 13ch; padding: 3px 6px; font-size: 12.5px; }
 .graph .node text { fill: var(--ink); font-size: 12.5px; paint-order: stroke; stroke: var(--surface); stroke-width: 3px; }
 .graph .node.done text { fill: var(--faint); }
+
+/* ── map (Locations plugin) ─────────────────────── */
+.geo { margin-top: 14px; border: 1px solid var(--line); border-radius: var(--radius-m); background: var(--surface); overflow: hidden; }
+.geo .graph-bar input[type=date] { padding: 2px 6px; font-size: 12.5px; width: auto; background: var(--raise); color: var(--ink); border: 1px solid var(--line); border-radius: 0; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .geo input[type=date] { color-scheme: dark; } }
+:root[data-theme="dark"] .geo input[type=date] { color-scheme: dark; }
+.geo-body { display: grid; grid-template-columns: minmax(0, 1fr) 300px; }
+@media (max-width: 900px) { .geo-body { grid-template-columns: 1fr; } .geo-side { border-left: 0 !important; border-top: 1px solid var(--line); max-height: none !important; } }
+.geo-map { height: min(64vh, 560px); background: var(--raise); }
+.geo-map > .hint { padding: 12px; }
+.geo-side { border-left: 1px solid var(--line); max-height: min(64vh, 560px); overflow-y: auto; padding: 6px; }
+.geo-side > .hint { margin: 8px 6px; }
+.geo-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.geo-list li { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 4px; border-left: 2px solid transparent; }
+.geo-list li.sel { background: var(--accent-soft); border-left-color: var(--accent); }
+.geo-list .go { display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 8px; padding: 6px; border: 0; background: none; text-align: left; }
+.geo-list .go:hover { background: var(--raise); }
+.geo-list .txt { display: grid; min-width: 0; }
+.geo-list .txt b { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.geo-list .txt small { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.geo-list .txt small.w3w { color: var(--red); }
+.geo-list li.done b { color: var(--faint); text-decoration: line-through; }
+.geo-list .link { padding: 6px; font-size: 12.5px; }
+.geo-list .num, .geo-pin span { display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; font: 700 12px var(--sans); background: var(--accent); color: var(--accent-ink); border: 2px solid var(--surface); }
+.geo-pin { background: none; border: 0; }
+.geo-pin.sel span { background: var(--red); transform: scale(1.2); }
+.geo-route { stroke: var(--accent); }
+.geo .leaflet-container { font: inherit; background: var(--raise); }
+.geo .leaflet-popup-content-wrapper, .geo .leaflet-popup-tip { background: var(--raise); color: var(--ink); border-radius: 0; }
+.geo .leaflet-popup-content { font-size: 13px; line-height: 1.5; }
+.geo .leaflet-container a { color: var(--accent); }
+.geo .leaflet-container a.leaflet-popup-close-button { color: var(--muted); }
+.geo .leaflet-bar a { background: var(--raise); color: var(--ink); border-color: var(--line); }
+.geo .leaflet-control-attribution { background: color-mix(in srgb, var(--surface) 80%, transparent); color: var(--muted); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .geo .leaflet-tile-pane { filter: invert(1) hue-rotate(180deg) brightness(.85) contrast(.9); } }
+:root[data-theme="dark"] .geo .leaflet-tile-pane { filter: invert(1) hue-rotate(180deg) brightness(.85) contrast(.9); }
+.chip.place { color: var(--red); }
 dialog fieldset.bare { border: 0; padding: 0; margin: 0; display: grid; gap: 14px; min-width: 0; }
 .sharing { display: grid; gap: 8px; }
 .sharing p { margin: 0; }

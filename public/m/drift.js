@@ -59,6 +59,7 @@ function row(it, { depth = 0, showCol = false, skipEvent = false, time = "", lin
   if (ev && !skipEvent) chips.push(`<span class="chip ${L.isLate(it) ? "bad" : dayOf(ev.start) === today() ? "gold" : ""}">${icon("cal", 12)}${esc(L.whenChip(ev))}</span>`);
   if (showCol && col(it.collection)) chips.push(`<span class="chip col">${esc(col(it.collection).name)}</span>`);
   for (const g of it.tags || []) chips.push(`<span class="chip tag">#${esc(g)}</span>`);
+  if (it.meta.location?.words) chips.push(`<span class="chip bad">${icon("pin", 12)}///${esc(it.meta.location.words)}</span>`);
   if (it.notes) chips.push(`<span class="chip">${icon("note", 12)}</span>`);
   return `<li class="item p${pri}${done ? " done" : ""}" data-id="${esc(it.id)}" style="--depth:${depth}">
     ${ck ? `<button class="check" data-toggle aria-label="${done ? "Mark not done" : "Mark done"}">${icon("check", 16)}</button>` : `<span class="dot" aria-hidden="true"></span>`}
@@ -113,6 +114,8 @@ function draw() {
     body = !shown.length ? empty("This list is empty", "Add an item below, then open it to move it up, down or under another.")
       : ui.q ? group("Matches", shown)
       : `<section class="group outline"><ul class="items">${L.outline(shown).map(([it, depth]) => row(it, { depth })).join("")}</ul></section>`;
+  } else if (cur.tab === "location") {
+    body = places(shown, cur.col);
   } else if (cur.tab === "graph") {
     const titles = Object.fromEntries(scope.map(it => [it.id, it.title]));
     const linked = shown.filter(it => it.meta.graph);
@@ -164,11 +167,11 @@ function draw() {
   if (ui.searching) { const q = $("#q"); q.focus(); q.setSelectionRange(q.value.length, q.value.length); }
 }
 
-function calendar(items, showCol) {
+// The week as a strip of days to pick from, for the Calendar and the Map.
+function weekStrip(items) {
   const week = L.weekOf(ui.day), busy = L.busyDays(items, week);
-  const { untimed, timed, later } = L.dayAgenda(items, ui.day);
   const label = new Date(week[3] + "T00:00").toLocaleDateString(undefined, { month: "long", year: "numeric" });
-  let html = `<div class="week">
+  return `<div class="week">
     <div class="week-head"><h2>${esc(label)}</h2><span>
       <button class="icon-btn" data-week="-7" aria-label="Previous week">${icon("left")}</button>
       <button class="link" data-week="0">Today</button>
@@ -178,6 +181,11 @@ function calendar(items, showCol) {
       return `<button class="day${d === ui.day ? " sel" : ""}${d === today() ? " now" : ""}" data-day="${d}" aria-label="${esc(niceDay(d))}, ${plural(busy[d], "item")}">
         <span class="wd">${esc(dt.toLocaleDateString(undefined, { weekday: "narrow" }))}</span><b>${dt.getDate()}</b><i>${busy[d] ? "•".repeat(Math.min(3, busy[d])) : ""}</i></button>`;
     }).join("")}</div></div>`;
+}
+
+function calendar(items, showCol) {
+  const { untimed, timed, later } = L.dayAgenda(items, ui.day);
+  let html = weekStrip(items);
   const n = untimed.length + timed.length;
   html += `<section class="group"><h2 class="label">${esc(niceDay(ui.day))}${n ? `<small>${n}</small>` : ""}</h2>`;
   if (!n) html += `<p class="hint">Nothing on this day. Items you add here get this date.</p>`;
@@ -185,6 +193,25 @@ function calendar(items, showCol) {
     ${timed.map(it => row(it, { showCol, skipEvent: true, time: L.timeRange(it.meta.event) })).join("")}</ul></section>`;
   if (later.length) html += group("Next two weeks", later, { showCol });
   return html;
+}
+
+// The Map: the picked day's events that have a place, in the order they
+// happen. The map itself is on the full site; here each stop opens in the
+// phone's maps app for directions.
+function places(items, c) {
+  const { stops, unplaced, elsewhere } = L.dayStops(items, ui.day);
+  const miles = /^en-(US|LR|MM)$/i.test(navigator.language || "");
+  let html = weekStrip(items) + `<section class="group"><h2 class="label">${esc(niceDay(ui.day))}${stops.length ? `<small>${stops.length}</small>` : ""}</h2>`;
+  if (!stops.length) html += `<p class="hint">${!c.plugins.includes("event") ? "Turn on Events in this collection's settings too, so items have a day to be on the map."
+    : "Nothing with a place on this day. Give an event a what3words address, or add one with ///three.word.address."}</p>`;
+  html += `<ul class="items stops">${stops.map(({ item: it, n, from }) => {
+    const m = it.meta.location;
+    return row(it, { skipEvent: true, time: `${n} · ${L.timeRange(it.meta.event)}${from != null ? ` · ${L.niceDistance(from, miles)} from ${n - 1}` : ""}`,
+      links: m.place || "" }).replace("</li>", `<a class="go" href="https://www.google.com/maps/dir/?api=1&amp;destination=${m.lat},${m.lng}" target="_blank" rel="noopener">Directions</a></li>`);
+  }).join("")}</ul>`;
+  if (unplaced.length) html += `<p class="hint">Not on the map yet: ${unplaced.map(it => esc(it.title)).join(", ")}. The site places them when it has a what3words key.</p>`;
+  if (elsewhere) html += `<p class="hint">${plural(elsewhere, "more item")} on this day with no place.</p>`;
+  return html + `<p class="hint"><a href="/todo/">See the map on the full site</a></p></section>`;
 }
 
 /* ── taps ───────────────────────────────────────── */
@@ -239,8 +266,8 @@ async function add() {
   const cur = current();
   const { col: target, error } = L.targetFor(data.state.collections, cur.col, quick);
   if (error) return toast(error);
-  const dated = cur.kind !== "col" || (target === cur.col && cur.tab === "event");
-  const meta = L.freshMeta(target, quick, { dated, day: cur.kind === "calendar" || cur.tab === "event" ? ui.day : null });
+  const dated = cur.kind !== "col" || (target === cur.col && (cur.tab === "event" || cur.tab === "location"));
+  const meta = L.freshMeta(target, quick, { dated, day: cur.kind === "calendar" || cur.tab === "event" || cur.tab === "location" ? ui.day : null });
   input.value = ""; preview("");
   try {
     const it = await api("POST", "/todo/api/items", { title, collection: target.id, tags: quick.tags || [], meta });
@@ -255,6 +282,7 @@ async function add() {
 function itemSheet(it) {
   const c = col(it.collection), ro = !L.writable(c), m = it.meta;
   const hasCheck = c.plugins.includes("checklist") || !!m.checklist, hasEvent = c.plugins.includes("event") || !!m.event;
+  const hasPlace = c.plugins.includes("location") || !!m.location;
   const ck = m.checklist, ev = m.event;
   const moveTo = data.state.collections.filter(x => x.id === it.collection || (L.writable(x) && x.owner === c.owner));
   const cur = current();
@@ -273,6 +301,8 @@ function itemSheet(it) {
       <label>Date<input type="date" name="day" value="${esc(dayOf(ev?.start))}" ${ro ? "disabled" : ""}></label>
       <label>Time<input type="time" name="time" value="${esc(timeOf(ev?.start))}" ${ro ? "disabled" : ""}></label></div>
       ${ro ? "" : `<div class="quick"><button type="button" class="pill" data-date="${today()}">Today</button><button type="button" class="pill" data-date="${addDays(1)}">Tomorrow</button><button type="button" class="pill" data-date="${addDays(7)}">In a week</button><button type="button" class="pill" data-date="">No date</button></div>`}` : ""}
+    ${hasPlace ? `<label>Place (what3words)<input name="words" value="${m.location?.words ? "///" + esc(m.location.words) : ""}" placeholder="///filled.count.soap" autocapitalize="none" autocomplete="off" spellcheck="false" ${ro ? "disabled" : ""}></label>
+      ${m.location?.lat != null ? `<p class="hint">${m.location.place ? esc(m.location.place) + " · " : ""}<a href="${esc(L.w3wLink(m.location.words))}" target="_blank" rel="noopener">See it on what3words</a></p>` : ""}` : ""}
     <div class="pair">
       <label>Tags<input name="tags" value="${esc((it.tags || []).join(" "))}" placeholder="Separate with spaces" autocapitalize="none" ${ro ? "disabled" : ""}></label>
       <label>Collection<select name="collection" ${ro ? "disabled" : ""}>${moveTo.map(x => `<option value="${esc(x.id)}" ${x.id === it.collection ? "selected" : ""}>${esc(x.name)}</option>`).join("")}</select></label>
@@ -312,8 +342,8 @@ function itemSheet(it) {
     const fd = new FormData(f);
     const out = L.itemChanges(it, {
       title: fd.get("title"), notes: fd.get("notes"), tags: fd.get("tags"), collection: fd.get("collection"),
-      onList: !!fd.get("onList"), done: !!fd.get("done"), priority: fd.get("priority"), day: fd.get("day"), time: fd.get("time"),
-    }, { hasCheck, hasEvent });
+      onList: !!fd.get("onList"), done: !!fd.get("done"), priority: fd.get("priority"), day: fd.get("day"), time: fd.get("time"), words: fd.get("words"),
+    }, { hasCheck, hasEvent, hasPlace });
     if (out.error) { e.preventDefault(); f.querySelector(".err").textContent = out.error; return; }
     if (Object.keys(out).length) patch(it, out);
   });
@@ -321,7 +351,8 @@ function itemSheet(it) {
 
 /* ── collections ────────────────────────────────── */
 const BUILT_IN = [["checklist", "Checklist", "Tick items off, with a priority"], ["event", "Events", "Dates and times, on a calendar"],
-  ["list", "List", "Your own order, nested as an outline"], ["graph", "Graph", "Link items to each other"]];
+  ["list", "List", "Your own order, nested as an outline"], ["graph", "Graph", "Link items to each other"],
+  ["location", "Locations", "Places as what3words, on a map of the day"]];
 
 function collectionSheet(c) {
   if (c && c.role !== "owner") {

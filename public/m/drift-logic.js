@@ -3,13 +3,14 @@
 // it. The rules themselves are Drift's own (public/todo/lib.js and plugins/),
 // the same ones the web page and the terminal use.
 
-import { today, addDays, dayOf, timeOf, niceDay, niceTime, parseDate, parseTime } from "../todo/lib.js";
+import { today, addDays, dayOf, timeOf, niceDay, niceTime, parseDate, parseTime, parseWords } from "../todo/lib.js";
 import { PLUGINS, BY_ID } from "../todo/plugins/index.js";
+import { dayStops, niceDistance, w3wLink } from "../todo/plugins/location.js";
 
-export { PLUGINS, BY_ID };
+export { PLUGINS, BY_ID, dayStops, niceDistance, w3wLink };
 
 // Drift's own plugins that bring a view, in the order the web page shows them.
-export const VIEW_LABELS = { checklist: "Checklist", event: "Calendar", list: "List", graph: "Graph" };
+export const VIEW_LABELS = { checklist: "Checklist", event: "Calendar", list: "List", graph: "Graph", location: "Map" };
 export const PRIORITY = ["None", "Low", "Medium", "High"];
 
 export const writable = col => !!col && col.role !== "view";
@@ -123,8 +124,8 @@ export function tabFor(col, picked) {
 }
 
 // What a new item starts with: each plugin that's on decides (its fresh()), as
-// on the web page. On Today and the Calendar every item gets a date, so it
-// shows up where you added it.
+// on the web page. On Today, the Calendar and the Map every item gets a date,
+// so it shows up where you added it.
 export function freshMeta(col, quick, { dated = false, day = null } = {}) {
   const meta = {};
   const ctx = { tab: dated ? "event" : null, viewState: { day: day || today() } };
@@ -151,7 +152,7 @@ export function targetFor(collections, current, quick) {
 
 // The item sheet's fields → the changes to send ({} when nothing changed), or
 // {error}. f: {title, notes, tags, collection, onList, priority, done, day, time}.
-export function itemChanges(it, f, { hasCheck, hasEvent }) {
+export function itemChanges(it, f, { hasCheck, hasEvent, hasPlace = false }) {
   const out = {}, m = it.meta;
   const title = String(f.title || "").trim();
   if (!title) return { error: "Give the item a title." };
@@ -182,6 +183,15 @@ export function itemChanges(it, f, { hasCheck, hasEvent }) {
       let end = old?.end || null;
       if (end && (end.includes("T") !== start.includes("T") || end < start)) end = null;
       if (!old || old.start !== start || (old.end || null) !== end) meta.event = { start, end };
+    }
+  }
+  if (hasPlace) {
+    const old = m.location, raw = String(f.words || "").trim();
+    if (!raw) { if (old?.words) meta.location = null; }
+    else {
+      const words = parseWords(raw);
+      if (!words) return { error: `“${raw}” isn't a what3words address. It's three words with dots, like ///filled.count.soap.` };
+      if (old?.words !== words) meta.location = { words, lat: null, lng: null, place: "" };
     }
   }
   if (Object.keys(meta).length) out.meta = meta;

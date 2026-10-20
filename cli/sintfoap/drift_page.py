@@ -8,6 +8,8 @@ as it is and their views are a press of w away.
 from __future__ import annotations
 
 import calendar
+import locale
+import os
 from datetime import date, datetime
 
 from rich.text import Text
@@ -20,10 +22,13 @@ from textual.widgets.option_list import Option
 
 from . import site
 from . import drift_rules as R
-from .look import BAD, FAINT, GOLD, GOLD_DIM, GOOD, INK, LINE, MUTED, PRI, Confirm, Failed, Page, attempt, fetch, plural
+from .look import BAD, FAINT, GOLD, GOLD_DIM, GOOD, INK, LINE, MUTED, PRI, Confirm, Failed, Page, attempt, fetch, open_in_browser, plural
 
 POLL_EVERY = 5      # seconds between "did anything change?" checks, like the web page
-TAG, COL, KIND = "#8fb3d9", "#b79ad6", "#c3a6f7"
+# Distances in miles where the web page would use them (an American English locale).
+MILES = (locale.getlocale()[0] or os.environ.get("LANG", "")).startswith("en_US")
+TAG, COL, KIND, PLACE = "#8fb3d9", "#b79ad6", "#c3a6f7", "#e47a62"
+ADD_HINT = "Add an item   #tag  +collection  !1-3  ^date  @time  ///place"
 STARTER = ["checklist", "event", "list", "graph"]
 
 
@@ -53,6 +58,9 @@ def item_row(it: dict, *, depth: int = 0, col_name: str | None = None, skip_even
         d = R.day_of(ev["start"])
         chips.append(("◷ " + R.event_chip(ev), BAD if R.is_late(it) else GOLD if d == R.today() else MUTED))
     chips += list(extra)
+    loc = m.get("location")
+    if loc and loc.get("words"):
+        chips.append(("⌖ ///" + loc["words"] + (f" · {loc['place']}" if loc.get("place") else ""), PLACE if R.placed(loc) else MUTED))
     if col_name:
         chips.append((f"+{col_name}", COL))
     chips += [(f"#{g}", TAG) for g in it.get("tags", [])]
@@ -117,6 +125,7 @@ class ItemDialog(ModalScreen[dict | None]):
         plugins = (col or {}).get("plugins", [])
         self.has_check = "checklist" in plugins or "checklist" in it["meta"]
         self.has_event = "event" in plugins or "event" in it["meta"]
+        self.has_place = "location" in plugins or "location" in it["meta"]
 
     def compose(self) -> ComposeResult:
         it, m = self.it, self.it["meta"]
@@ -155,6 +164,14 @@ class ItemDialog(ModalScreen[dict | None]):
                     with Vertical():
                         yield Label("Time  (9, 3pm, 15:30)", classes="lbl")
                         yield Input(R.time_of(ev.get("start")), id="time", placeholder="All day", disabled=self.ro)
+            if self.has_place:
+                loc = m.get("location") or {}
+                yield Label("Place  (a what3words address: ///filled.count.soap)", classes="lbl")
+                yield Input("///" + loc["words"] if loc.get("words") else "", id="words", placeholder="No place", disabled=self.ro)
+                if R.placed(loc):
+                    yield Static(Text(f"{loc['place'] + ' · ' if loc.get('place') else ''}{loc['lat']:.5f}, {loc['lng']:.5f}", style=FAINT))
+                elif loc.get("words"):
+                    yield Static(Text("Not placed on the map yet. The site does that when it has a what3words key.", style=FAINT))
             yield Static(id="err")
             with Horizontal(classes="buttons"):
                 if not self.ro:
@@ -233,6 +250,18 @@ class ItemDialog(ModalScreen[dict | None]):
                     end = None
                 if not old or old.get("start") != start or old.get("end") != end:
                     meta["event"] = {"start": start, "end": end}
+        if self.has_place:
+            raw = self.query_one("#words", Input).value.strip()
+            old = m.get("location")
+            if not raw:
+                if old and old.get("words"):
+                    meta["location"] = None
+            else:
+                words = R.parse_words(raw)
+                if not words:
+                    return self.fail(f"“{raw}” isn't a what3words address. It's three words with dots, like ///filled.count.soap.")
+                if not old or old.get("words") != words:
+                    meta["location"] = {"words": words, "lat": None, "lng": None, "place": ""}
         if meta:
             out["meta"] = meta
         self.dismiss(out)
@@ -407,6 +436,7 @@ class ItemList(OptionList):
         Binding("left_curly_bracket", "screen.month(-1)", "Previous month", show=False),
         Binding("right_curly_bracket", "screen.month(1)", "Next month", show=False),
         Binding("full_stop", "screen.go_today", "Go to today", show=False),
+        Binding("o", "screen.open_place", "Open place", show=False),
         Binding("j", "cursor_down", "Down", show=False),
         Binding("k", "cursor_up", "Up", show=False),
     ]
@@ -436,6 +466,8 @@ class DriftPage(Page):
     DriftPage #search {{ display: none; }}
     DriftPage #search.on {{ display: block; }}
     DriftPage #items {{ height: 1fr; }}
+    DriftPage #geo {{ display: none; height: auto; }}
+    DriftPage #geo.on {{ display: block; }}
     DriftPage Nav {{ height: 1fr; }}
     """
     BINDINGS = [
@@ -465,9 +497,10 @@ class DriftPage(Page):
                 yield Static(id="h1")
                 yield Static(id="subline")
                 yield Static(id="tabs")
-                yield Input(id="add", placeholder="Add an item   #tag  +collection  !1-3  ^date  @time")
+                yield Input(id="add", placeholder=ADD_HINT)
                 yield Static(id="preview")
                 yield Input(id="search", placeholder="Search titles, notes and tags (esc to clear)")
+                yield Static(id="geo")
                 yield ItemList(id="items")
         yield Footer()
 
@@ -636,6 +669,8 @@ class DriftPage(Page):
                 opts.append(Option(Text("\n> nest   < unnest   K J move", style=FAINT), disabled=True))
                 for it, depth in R.walk_outline(shown):
                     opts.append(Option(item_row(it, depth=depth, col_name=name_of(it)), id=it["id"]))
+        elif tab == "location":
+            self.map_list(opts, shown, name_of)
         elif tab == "graph":
             titles = {it["id"]: it["title"] for it in scope}
             opts.append(Option(Text("\nLinks as a list. The network you can drag and zoom is in the browser: press w.", style=FAINT), disabled=True))
@@ -678,7 +713,7 @@ class DriftPage(Page):
         ro = kind == "col" and not writable(col)
         add = self.query_one("#add", Input)
         add.disabled = ro
-        add.placeholder = "This collection is view-only for you" if ro else "Add an item   #tag  +collection  !1-3  ^date  @time"
+        add.placeholder = "This collection is view-only for you" if ro else ADD_HINT
 
         with self.prevent(OptionList.OptionHighlighted):
             lst.set_options(opts)
@@ -686,6 +721,9 @@ class DriftPage(Page):
             target = keep if keep and keep in ids else next((o.id for o in opts if o.id and not o.disabled), None)
             if target:
                 lst.highlighted = ids.index(target)
+        self.query_one("#geo").set_class(tab == "location", "on")
+        if tab == "location":
+            self.draw_map(shown, target)
 
     def calendar(self, opts: list, shown: list[dict], name_of) -> None:
         events = [it for it in shown if it["meta"].get("event")]
@@ -719,6 +757,66 @@ class DriftPage(Page):
             for it in later:
                 opts.append(Option(item_row(it, col_name=name_of(it)), id=it["id"]))
 
+    def map_list(self, opts: list, shown: list[dict], name_of) -> None:
+        """The Map view's list: the day's stops in order, under the map (draw_map)."""
+        plan = R.day_stops(shown, self.day)
+        opts.append(Option(header(R.nice_day(self.day), len(plan["stops"]) or "", "[ ] day   . today   o open on what3words"), disabled=True))
+        for st in plan["stops"]:
+            it, frm = st["item"], st["from"]
+            row = Text()
+            row.append(f" {R.stop_label(st['n'])} ", style=f"bold #1a1206 on {GOLD}")
+            extra = [(R.when(it["meta"]["event"]), GOLD)] + ([(f"{R.nice_distance(frm, MILES)} from {st['n'] - 1}", MUTED)] if frm is not None else [])
+            row.append_text(item_row(it, col_name=name_of(it), skip_event=True, extra=extra))
+            opts.append(Option(row, id=it["id"]))
+        if not plan["stops"]:
+            _, col, _ = self.current()
+            msg = ("Turn on Events with c too, so items have a day to be on the map." if col and "event" not in col["plugins"]
+                   else "Nothing with a place on this day. Give an event a what3words address with e, or add one with ///three.word.address.")
+            opts.append(Option(Text("   " + msg, style=FAINT), disabled=True))
+        if plan["unplaced"]:
+            opts.append(Option(header("Not on the map yet", len(plan["unplaced"]), "the site places them when it has a what3words key"), disabled=True))
+            for it in plan["unplaced"]:
+                opts.append(Option(item_row(it, col_name=name_of(it), skip_event=True), id=it["id"]))
+        if plan["elsewhere"]:
+            opts.append(Option(Text(f"\n   {plural(plan['elsewhere'], 'more item')} on this day with no place.", style=FAINT), disabled=True))
+
+    def draw_map(self, shown: list[dict] | None = None, sel: str | None = None) -> None:
+        """The day's stops on a map drawn in characters. The highlighted stop is centred."""
+        if shown is None:
+            _, col, _ = self.current()
+            shown = [it for it in self.state["items"] if (not col or it["collection"] == col["id"]) and self.matches(it)]
+        stops = R.day_stops(shown, self.day)["stops"]
+        geo = self.query_one("#geo", Static)
+        if not stops:
+            geo.update("")
+            return
+        width = max(min(self.query_one("#pane").size.width - 6, 110), 30) if self.query_one("#pane").size.width else 60
+        m = R.text_map(stops, sel, width, 13)
+        out = Text("┌" + "─" * width + "┐\n", style=LINE)
+        for r, row in enumerate(m["cells"]):
+            out.append("│", style=LINE)
+            for c, ch in enumerate(row):
+                hit = m["marks"].get((r, c))
+                out.append(ch, style=(f"bold #1a1206 on {BAD}" if hit == sel else f"bold #1a1206 on {GOLD}") if hit else GOLD_DIM)
+            out.append("│\n", style=LINE)
+        scale = 10 * m["metres"]
+        foot = f"└{'─' * 2}┤{'─' * 8}├ {R.nice_distance(scale, MILES)} "
+        out.append(foot + "─" * max(width + 1 - len(foot), 0) + "┘", style=LINE)
+        st = next((x for x in stops if x["item"]["id"] == sel), None)
+        if st:
+            loc = st["item"]["meta"]["location"]
+            out.append(f"\n {R.stop_label(st['n'])} ", style=f"bold #1a1206 on {BAD}")
+            out.append(f" {st['item']['title']}   ", style=f"bold {INK}")
+            out.append(f"///{loc['words']}", style=PLACE)
+            out.append((f" · {loc['place']}" if loc.get("place") else "") + f"   {loc['lat']:.5f}, {loc['lng']:.5f}", style=MUTED)
+        geo.update(out)
+
+    def action_open_place(self) -> None:
+        it = self.selected()
+        loc = (it or {}).get("meta", {}).get("location") or {}
+        if loc.get("words"):
+            open_in_browser(self.app, R.w3w_link(loc["words"]))
+
     # ── moving around ──────────────────────────────────────────────────
     def on_option_list_option_highlighted(self, e: OptionList.OptionHighlighted) -> None:
         if e.option_list.id == "nav" and e.option.id and e.option.id != "new" and e.option.id != self.view:
@@ -726,6 +824,8 @@ class DriftPage(Page):
             self.query_one("#search", Input).value = ""
             self.query_one("#search").set_class(False, "on")
             self.render_items()
+        elif e.option_list.id == "items" and self.current()[2] == "location":
+            self.draw_map(sel=e.option.id)
 
     def on_option_list_option_selected(self, e: OptionList.OptionSelected) -> None:
         if e.option_list.id == "nav":
@@ -772,7 +872,7 @@ class DriftPage(Page):
         self.render_items()
 
     def action_day(self, step: int) -> None:
-        if self.current()[2] != "event":
+        if self.current()[2] not in ("event", "location"):
             return
         self.day = R.add_days(step, self.day)
         self.month = self.day[:7]
@@ -835,6 +935,8 @@ class DriftPage(Page):
             t.append(f"+{f['collection']}   ", style=COL)
         for g in f.get("tags", []):
             t.append(f"#{g}   ", style=TAG)
+        if f.get("location"):
+            t.append(f"⌖ ///{f['location']}   ", style=PLACE)
         return t
 
     # ── changing things ────────────────────────────────────────────────
@@ -861,8 +963,8 @@ class DriftPage(Page):
         if not writable(target):
             self.app.notify("You can view this collection but not add to it.", severity="warning")
             return
-        dated = kind != "col" or (target is cur and tab == "event")
-        day = self.day if (kind == "calendar" or tab == "event") else None
+        dated = kind != "col" or (target is cur and tab in ("event", "location"))
+        day = self.day if (kind == "calendar" or tab in ("event", "location")) else None
         meta = R.fresh_meta(target["plugins"], quick, dated_view=dated, day=day)
         e.input.value = ""
         try:
