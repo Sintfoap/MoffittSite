@@ -16,7 +16,7 @@
 // streets, with the few best orders to cycle between (src/routing.js).
 
 import { esc, icon, today, addDays, dayOf, timeOf, niceDay, niceTime, parseCoords } from "../lib.js";
-import { baseFor, baseScope, isHome, niceDuration, PROFILES } from "../route.js";
+import { baseFor, baseScope, isHome, niceDuration, straightNote, PROFILES } from "../route.js";
 
 const BLANK = { place: "", lat: null, lng: null };
 const pin = '<path d="M12 21s-6.5-6.2-6.5-11.2a6.5 6.5 0 0 1 13 0C18.5 14.8 12 21 12 21z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><circle cx="12" cy="9.8" r="2.3" stroke="currentColor" stroke-width="1.8"/>';
@@ -267,7 +267,7 @@ class MapView {
     return `<div class="geo-routebar">
       ${n > 1 ? `<button class="ghost" data-geo="option" data-step="-1" aria-label="Previous route">‹</button>` : ""}
       <span><b>${n > 1 ? `Route ${route.option + 1} of ${n}` : "Route"}</b>${esc(niceDuration(opt.duration))} of travel${opt.distance ? `, ${esc(niceDistance(opt.distance, far))}` : ""}
-        <small>${route.estimated ? "Estimated in straight lines. " : ""}${route.loose ? "Some linked places can’t be next to each other at those times. " : ""}${n > 1 ? "Times and links fixed; the rest is shortest first." : ""}</small></span>
+        <small>${route.options.length && straightNote(route) ? esc(straightNote(route)) + " " : ""}${route.loose ? "Some linked places can’t be next to each other at those times. " : ""}${n > 1 ? "Times and links fixed; the rest is shortest first." : ""}</small></span>
       ${n > 1 ? `<button class="ghost" data-geo="option" data-step="1" aria-label="Next route">›</button>` : ""}</div>`;
   }
 

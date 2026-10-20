@@ -261,6 +261,15 @@ def base_scope(b: dict) -> str:
     return f"Base from {nice_day(b['from'])} to {nice_day(b['to'])}"
 
 
+def straight_note(r: dict) -> str:
+    """Why a route is drawn in straight lines, or "" when it follows the streets."""
+    if r.get("off"):
+        return "straight lines: the site needs an OpenRouteService key to follow the streets"
+    if not r.get("streets"):
+        return "straight lines: OpenRouteService didn't send the streets just now"
+    return "travel times are estimates" if r.get("estimated") else ""
+
+
 def nice_duration(s: float) -> str:
     """"8 min", "1 h 5 min"."""
     m = max(1, round(s / 60))

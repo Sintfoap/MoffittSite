@@ -735,7 +735,7 @@ def test_drift_map_plans_a_route_from_the_base_and_sets_bases(real_site):
         await settle(pilot, 0.8)
         t = text()
         assert "Route" in t and "of travel" in t and "(Drive)" in t, t
-        assert "estimated in straight lines" in t, "no key on the test site"
+        assert "needs an OpenRouteService key" in t, "no key on the test site"
         assert "Back to" in t and " drive" in t
         assert t.index("Breakfast") < t.index("Lunch"), "times first"
         assert "⌂" in str(page.query_one("#geo").render())
