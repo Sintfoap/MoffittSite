@@ -12,6 +12,10 @@
 // one browser to send to, and answers every push as delivered.
 // ryan has Recipe box; https://recipes.test/pancakes is a recipe page to save
 // (serves 4), and any other page there has no recipe on it.
+// With --groceries, ryan has Grocery autopilot, a Pancakes recipe and a
+// Shopping list (Eggs, Coffee), and his Kroger account is connected to a
+// store; the stand-ins for Kroger and Instacart find flour, eggs and milk,
+// and take any cart or list.
 // ryan has Sweep, and he and sam are in a room "Plans" where sam asked about
 // dinner. The stand-in for Claude suggests that dinner from the first message
 // it's shown.
@@ -59,7 +63,34 @@ if (notify) {
     return new Response(JSON.stringify({ stop_reason: "end_turn", content: [{ type: "text", text: JSON.stringify({ suggestions }) }] }));
   };
 }
-const env = makeEnv({ CHAT_BRIDGE_KEY: "devsite-bridge-key-0123456789", ...vapid });
+const groceries = process.argv.includes("--groceries");
+let stores = {};
+if (groceries) {
+  stores = { KROGER_CLIENT_ID: "devsite", KROGER_CLIENT_SECRET: "devsite-secret", INSTACART_API_KEY: "devsite-instacart" };
+  const before = globalThis.fetch;
+  const product = (upc, description, size, price) => ({ productId: upc, upc, description, brand: "Kroger", items: [{ size, price: { regular: price } }] });
+  const PRODUCTS = {
+    flour: [product("0001111000001", "Kroger All Purpose Flour", "5 lb", 2.99), product("0001111000002", "Gold Medal Flour", "5 lb", 4.29)],
+    egg: [product("0001111000003", "Kroger Large Eggs", "12 ct", 3.49)],
+    milk: [product("0001111000004", "Kroger 2% Milk", "1 gal", 3.19)],
+  };
+  const STORE = { locationId: "01400943", chain: "KROGER", name: "Kroger - Main St", address: { addressLine1: "1 Main St", city: "Cincinnati", state: "OH", zipCode: "45202" } };
+  globalThis.fetch = async (input, init = {}) => {
+    const u = new URL(input.url || input);
+    if (u.host === "connect.instacart.com") return Response.json({ products_link_url: "https://customers.instacart.com/store/shopping_lists/devsite" });
+    if (u.host !== "api.kroger.com") return before(input, init);
+    if (u.pathname === "/v1/connect/oauth2/token") return Response.json({ access_token: "devsite-token", refresh_token: "devsite-refresh", expires_in: 1800 });
+    if (u.pathname === "/v1/locations") return Response.json({ data: [STORE, { ...STORE, locationId: "01400944", name: "Kroger - Vine St", address: { ...STORE.address, addressLine1: "9 Vine St" } }] });
+    if (u.pathname.startsWith("/v1/locations/")) return Response.json({ data: { ...STORE, locationId: u.pathname.split("/").pop() } });
+    if (u.pathname === "/v1/products") {
+      const words = (u.searchParams.get("filter.term") || "").toLowerCase().split(/\s+/).map(w => w.replace(/s$/, ""));
+      return Response.json({ data: PRODUCTS[words.find(w => PRODUCTS[w])] ?? [] });
+    }
+    if (u.pathname === "/v1/cart/add") return new Response(null, { status: 204 });
+    return new Response("{}", { status: 404 });
+  };
+}
+const env = makeEnv({ CHAT_BRIDGE_KEY: "devsite-bridge-key-0123456789", ...vapid, ...stores });
 const ryan = new Browser(env), sam = new Browser(env);
 await ryan.signup("ryan", undefined, "Ryan M");
 await sam.signup("sam", undefined, "Sam");
@@ -71,6 +102,19 @@ grantApps(env, "ryan", "chat-bridges", "recipes", "sweep");
   await sam.req("POST", `/chat/api/rooms/${plans}/messages`, { json: { body: "dinner at Lucia's on Friday at 7?" } });
 }
 const id = name => sqlOne(env, "SELECT id FROM users WHERE username = ?", name).id;
+
+if (groceries) {
+  grantApps(env, "ryan", "groceries");
+  await ryan.req("POST", "/recipes/api/recipes", { json: { title: "Pancakes", yield: "4 servings",
+    ingredients: ["1 1/2 cups flour", "2 eggs", "1 cup milk", "salt to taste"] } });
+  const list = (await ryan.req("POST", "/todo/api/collections", { json: { name: "Shopping list", plugins: ["checklist", "list"] } })).json;
+  for (const title of ["Eggs", "Coffee"]) {
+    await ryan.req("POST", "/todo/api/items", { json: { title, collection: list.id, meta: { checklist: { done: false, priority: 0 } } } });
+  }
+  const s = new URL((await ryan.get("/groceries/kroger/connect")).location).searchParams.get("state");
+  await ryan.get(`/groceries/kroger/callback?state=${s}&code=devsite`);
+  await ryan.req("PUT", "/groceries/api/kroger/store", { json: { id: "01400943" } });
+}
 
 // sam's plugin, approved by an admin (made straight in the database).
 const t = Math.floor(Date.now() / 1000);

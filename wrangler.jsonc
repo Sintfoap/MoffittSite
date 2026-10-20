@@ -14,7 +14,7 @@
       "/todo", "/todo/*", "/plugins", "/plugins/*", "/sandbox/*", "/chat", "/chat/*",
       "/login", "/login/*", "/signup", "/logout",
       "/dashboard", "/dashboard/*", "/account", "/account/*", "/admin", "/admin/*",
-      "/notifications", "/notifications/*", "/recipes", "/recipes/*", "/sweep", "/sweep/*", "/_matrix/push/v1/notify",
+      "/notifications", "/notifications/*", "/recipes", "/recipes/*", "/sweep", "/sweep/*", "/groceries", "/groceries/*", "/_matrix/push/v1/notify",
       "/mcp", "/books/api", "/books/api/*", "/app", "/app/*", "/.well-known/assetlinks.json"
     ]
   },
@@ -52,6 +52,14 @@
   // Sweep reads chat rooms with each person's own Claude API key, which they add
   // on /sweep/ and which is sealed with CHAT_BRIDGE_KEY. SWEEP_MODEL, a Text
   // variable, picks the model (claude-opus-5-5 if it isn't set). See src/sweep.js.
+  // KROGER_CLIENT_ID and KROGER_CLIENT_SECRET, also secrets, are a Kroger
+  // developer app (developer.kroger.com, Production, with the cart.basic:write,
+  // product.compact and profile.compact scopes and https://<site>/groceries/kroger/callback
+  // as its redirect URI). Grocery autopilot puts orders into each person's own
+  // Kroger cart with them; their sign-ins are sealed with CHAT_BRIDGE_KEY.
+  // INSTACART_API_KEY, also a secret, is an Instacart Developer Platform key
+  // (docs.instacart.com) that turns an order into an Instacart shopping list.
+  // Without them, those stores are off. See src/groceries.js.
   // ORS_API_KEY, also a secret, is a free OpenRouteService key (openrouteservice.org)
   // that finds Drift's Locations on the map. Without it place search is off, but
   // pins and pasted coordinates work. See src/places.js.

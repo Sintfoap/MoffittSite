@@ -17,6 +17,7 @@ sintfoap                    # signs you in the first time, then opens your dashb
 | `sintfoap notifications` | what's pushed to your browsers and phone, and where |
 | `sintfoap recipes` | Recipe box: your recipes, scaled, and sent to a Drift shopping list |
 | `sintfoap sweep` | Sweep: Drift suggestions from your chat rooms, to accept or turn down |
+| `sintfoap groceries` | Grocery autopilot: your Drift list and recipes, added up and sent to Kroger or Instacart |
 | `sintfoap admin` | which apps each account can use (admins) |
 | `sintfoap app` | the Android app: a QR code to scan with your phone, and the download link |
 | `sintfoap books [--plain]` | the book club pick: read about the books and vote; no sign-in needed |
@@ -163,6 +164,26 @@ The same as `/sweep/`. The rooms Sweep may read are on the left (`space` ticks o
 | `k` | add your Anthropic API key (Sweep reads with it, so its use goes on your account); remove it on the website |
 | `r` | refresh |
 
+## Grocery autopilot
+
+The same as `/groceries/`. What the order is made from is on the left (the Drift list, and your recipes: `space` picks one, `+` and `-` change its servings, with what you always have below), the order on the right with the highlighted line's details, then the stores.
+
+| Key | |
+|---|---|
+| `l` | shop from another Drift list |
+| `space` | on a recipe, pick it; on a line, leave it out of this order |
+| `h` | always have it: leave it out of every order (`n` puts one back) |
+| `z` | pick your Kroger store by ZIP code |
+| `C` | connect your Kroger account (in the browser); `D` disconnects it |
+| `m` | match each line to a product at your Kroger store |
+| `c` | search for another product for the line; it's picked from then on |
+| `[` `]` | fewer or more of the line's product |
+| `k` | put the matched lines in your Kroger cart |
+| `i` | make an Instacart shopping list and open it |
+| `b` | search walmart.com for the line (Walmart has no way for apps to fill a cart) |
+| `t` | whether sending ticks the Drift items off (it does to start with) |
+| `r` | refresh |
+
 ## Account settings
 
 Your profile, two-factor, recovery codes, email and sessions, like `/account`. Here you can change your display name, sign out every other device, or sign out this terminal. Anything that needs your password (two-factor, recovery codes, email, the password itself) opens the website instead, so the terminal never asks for it.
@@ -181,6 +202,7 @@ sintfoap/chat_page.py      chat
 sintfoap/notifications_page.py  what's pushed and where
 sintfoap/recipes_page.py   Recipe box
 sintfoap/sweep_page.py     Sweep
+sintfoap/groceries_page.py Grocery autopilot
 sintfoap/recipe_rules.py   scaling ingredient lines, as on the web page (tests/scale_cases.json keeps them the same)
 sintfoap/__main__.py       the command
 tests/                     python -m pytest tests

@@ -50,6 +50,13 @@ def admin_site(monkeypatch):
     proc.kill()
 
 
+@pytest.fixture
+def grocery_site(monkeypatch):
+    proc, origin = start_site(monkeypatch, "--groceries")
+    yield origin
+    proc.kill()
+
+
 def run_app(start, test, size=(120, 40)):
     async def go():
         app = SiteApp(start)
@@ -297,7 +304,7 @@ def test_admins_switch_apps_on_and_off_in_the_terminal(admin_site):
         page = app.screen
         assert type(page).__name__ == "AdminPage"
         apps = [a["id"] for a in page.data["apps"]]
-        assert apps == ["drift", "admin", "plugins", "chat", "chat-bridges", "recipes", "sweep", "notifications"]
+        assert apps == ["drift", "admin", "plugins", "chat", "chat-bridges", "recipes", "sweep", "groceries", "notifications"]
         # A switch for every app on every account; your own admin one can't be turned off.
         assert len(page.boxes) == len(apps) * len(page.data["users"])
         me = next(i for i, u in enumerate(page.data["users"]) if u["you"])
@@ -847,3 +854,95 @@ def test_drift_map_plans_a_route_from_the_base_and_sets_bases(real_site):
         assert [(b["from"], b["lat"]) for b in bases] == [(None, 51.5154), (R.today(), 51.5033)]
         assert "Base for Today" in text() and "51.50330, -0.11960" in text()
     run_app("drift", route)
+
+
+# ── Grocery autopilot ──────────────────────────────────────────────────────
+
+def test_groceries_builds_the_order_matches_it_and_sends_it(grocery_site, monkeypatch):
+    opened = []
+    monkeypatch.setattr("webbrowser.open", lambda url: opened.append(url))
+
+    async def groceries(app, pilot):
+        page = app.screen
+        assert type(page).__name__ == "GroceriesPage"
+        assert page.data["list"]["name"] == "Shopping list"
+        assert sorted(l["name"] for l in page.data["lines"]) == ["Coffee", "Eggs"]
+        assert "Kroger - Main St" in str(page.query_one("#stores").render())
+        # Pick Pancakes, then double it.
+        recipes = page.query_one("#recipes")
+        recipes.focus()
+        recipes.highlighted = 0
+        await pilot.press("space")
+        await settle(pilot, 0.6)
+        assert [r["id"] for r in page.data["plan"]["recipes"]] == [page.data["recipes"][0]["id"]]
+        await pilot.press("plus", "plus", "plus", "plus")
+        await settle(pilot, 1.0)
+        assert page.data["plan"]["recipes"][0]["servings"] == 8
+        by = {l["key"]: l for l in page.data["lines"]}
+        assert by["flour"]["amount"] == "3 cup" and by["egg"]["amount"] == "4" and by["milk"]["amount"] == "2 cup"
+        assert "salt" not in by and any(l["key"] == "salt" for l in page.data["have"])
+        # h: coffee's always in the cupboard; n puts it back.
+        lines = page.query_one("#lines")
+        lines.focus()
+        lines.highlighted = [l["key"] for l in page.data["lines"]].index("coffee")
+        await pilot.press("h")
+        await settle(pilot, 0.6)
+        assert "coffee" not in {l["key"] for l in page.data["lines"]}
+        await pilot.press("n")
+        await settle(pilot)
+        dialog = app.screen
+        assert type(dialog).__name__ == "Pick"
+        dialog.query_one("#choices").highlighted = [l["key"] for l in page.data["have"]].index("coffee")
+        await pilot.press("enter")
+        await settle(pilot, 0.6)
+        assert "coffee" in {l["key"] for l in page.data["lines"]}
+        # m: match at Kroger. Coffee isn't found, so space leaves it out.
+        await pilot.press("m")
+        await settle(pilot, 0.8)
+        assert page.product(next(l for l in page.data["lines"] if l["key"] == "flour"))["description"] == "Kroger All Purpose Flour"
+        assert "Matched 3 of 4." in str(page.query_one("#status").render())
+        keys = [l["key"] for l in page.data["lines"]]
+        lines.highlighted = keys.index("coffee")
+        await pilot.press("space")
+        await settle(pilot)
+        assert page.skip == {"coffee"}
+        # c: Gold Medal flour instead; ] two of the eggs.
+        lines.highlighted = keys.index("flour")
+        await pilot.press("c")
+        await settle(pilot)
+        await pilot.press("enter")
+        await settle(pilot, 0.6)
+        app.screen.query_one("#choices").highlighted = 1
+        await pilot.press("enter")
+        await settle(pilot, 0.6)
+        assert page.product(next(l for l in page.data["lines"] if l["key"] == "flour"))["description"] == "Gold Medal Flour"
+        lines.highlighted = keys.index("egg")
+        await pilot.press("right_square_bracket")
+        assert page.qty["egg"] == 2
+        await pilot.press("k")
+        await settle(pilot, 1.0)
+        assert "Put 3 things in your Kroger cart, and ticked 1 off in Drift." in str(page.query_one("#status").render())
+        assert page.data["orders"][0]["store"] == "kroger"
+        assert [l["key"] for l in page.data["lines"]] == ["coffee"], "sent: the list's eggs are ticked and Pancakes unpicked"
+        assert page.data["plan"]["recipes"] == []
+        # Pancakes again: the flour sent last time is picked already.
+        recipes.focus()
+        recipes.highlighted = 0
+        await pilot.press("space")
+        await settle(pilot, 0.6)
+        assert next(l for l in page.data["lines"] if l["key"] == "flour")["match"]["description"] == "Gold Medal Flour", "remembered"
+        lines.focus()
+        # b: Walmart can only be searched.
+        await pilot.press("b")
+        assert opened[-1].startswith("https://www.walmart.com/search?q=")
+        # i: the rest as an Instacart list, opened in the browser.
+        await pilot.press("i")
+        await settle(pilot, 1.0)
+        assert opened[-1] == "https://customers.instacart.com/store/shopping_lists/devsite"
+        assert page.data["orders"][0]["store"] == "instacart"
+
+    run_app("groceries", groceries)
+    drift = site.drift_state()
+    shopping = next(c for c in drift["collections"] if c["name"] == "Shopping list")
+    done = sorted(i["title"] for i in drift["items"] if i["collection"] == shopping["id"] and i["meta"]["checklist"]["done"])
+    assert done == ["Coffee", "Eggs"]
