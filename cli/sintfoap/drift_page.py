@@ -28,7 +28,7 @@ POLL_EVERY = 5      # seconds between "did anything change?" checks, like the we
 # Distances in miles where the web page would use them (an American English locale).
 MILES = (locale.getlocale()[0] or os.environ.get("LANG", "")).startswith("en_US")
 TAG, COL, KIND, PLACE = "#8fb3d9", "#b79ad6", "#c3a6f7", "#e47a62"
-ADD_HINT = "Add an item   #tag  +collection  !1-3  ^date  @time  ///place"
+ADD_HINT = "Add an item   #tag  +collection  !1-3  ^date  @time  ~ place"
 STARTER = ["checklist", "event", "list", "graph"]
 
 
@@ -59,8 +59,8 @@ def item_row(it: dict, *, depth: int = 0, col_name: str | None = None, skip_even
         chips.append(("◷ " + R.event_chip(ev), BAD if R.is_late(it) else GOLD if d == R.today() else MUTED))
     chips += list(extra)
     loc = m.get("location")
-    if loc and loc.get("words"):
-        chips.append(("⌖ ///" + loc["words"] + (f" · {loc['place']}" if loc.get("place") else ""), PLACE if R.placed(loc) else MUTED))
+    if loc and R.place_label(loc):
+        chips.append(("⌖ " + R.place_label(loc), PLACE if R.placed(loc) else MUTED))
     if col_name:
         chips.append((f"+{col_name}", COL))
     chips += [(f"#{g}", TAG) for g in it.get("tags", [])]
@@ -166,12 +166,12 @@ class ItemDialog(ModalScreen[dict | None]):
                         yield Input(R.time_of(ev.get("start")), id="time", placeholder="All day", disabled=self.ro)
             if self.has_place:
                 loc = m.get("location") or {}
-                yield Label("Place  (a what3words address: ///filled.count.soap)", classes="lbl")
-                yield Input("///" + loc["words"] if loc.get("words") else "", id="words", placeholder="No place", disabled=self.ro)
+                yield Label("Place  (an address, a place's name, or lat, lng: the site finds it)", classes="lbl")
+                yield Input(R.place_label(loc), id="place", placeholder="No place", disabled=self.ro)
                 if R.placed(loc):
-                    yield Static(Text(f"{loc['place'] + ' · ' if loc.get('place') else ''}{loc['lat']:.5f}, {loc['lng']:.5f}", style=FAINT))
-                elif loc.get("words"):
-                    yield Static(Text("Not placed on the map yet. The site does that when it has a what3words key.", style=FAINT))
+                    yield Static(Text(f"{loc['lat']:.5f}, {loc['lng']:.5f}", style=FAINT))
+                elif loc.get("place"):
+                    yield Static(Text("Not found on the map yet.", style=FAINT))
             yield Static(id="err")
             with Horizontal(classes="buttons"):
                 if not self.ro:
@@ -251,17 +251,14 @@ class ItemDialog(ModalScreen[dict | None]):
                 if not old or old.get("start") != start or old.get("end") != end:
                     meta["event"] = {"start": start, "end": end}
         if self.has_place:
-            raw = self.query_one("#words", Input).value.strip()
+            raw = " ".join(self.query_one("#place", Input).value.split())
             old = m.get("location")
             if not raw:
-                if old and old.get("words"):
+                if old and R.place_label(old):
                     meta["location"] = None
-            else:
-                words = R.parse_words(raw)
-                if not words:
-                    return self.fail(f"“{raw}” isn't a what3words address. It's three words with dots, like ///filled.count.soap.")
-                if not old or old.get("words") != words:
-                    meta["location"] = {"words": words, "lat": None, "lng": None, "place": ""}
+            elif not old or raw != R.place_label(old):
+                at = R.parse_coords(raw)
+                meta["location"] = {"place": "", **at} if at else {"place": raw, "lat": None, "lng": None}
         if meta:
             out["meta"] = meta
         self.dismiss(out)
@@ -760,7 +757,7 @@ class DriftPage(Page):
     def map_list(self, opts: list, shown: list[dict], name_of) -> None:
         """The Map view's list: the day's stops in order, under the map (draw_map)."""
         plan = R.day_stops(shown, self.day)
-        opts.append(Option(header(R.nice_day(self.day), len(plan["stops"]) or "", "[ ] day   . today   o open on what3words"), disabled=True))
+        opts.append(Option(header(R.nice_day(self.day), len(plan["stops"]) or "", "[ ] day   . today   o open in OpenStreetMap"), disabled=True))
         for st in plan["stops"]:
             it, frm = st["item"], st["from"]
             row = Text()
@@ -771,14 +768,16 @@ class DriftPage(Page):
         if not plan["stops"]:
             _, col, _ = self.current()
             msg = ("Turn on Events with c too, so items have a day to be on the map." if col and "event" not in col["plugins"]
-                   else "Nothing with a place on this day. Give an event a what3words address with e, or add one with ///three.word.address.")
+                   else "Nothing with a place on this day. Give an event one with e, or add one with ~ and its name.")
             opts.append(Option(Text("   " + msg, style=FAINT), disabled=True))
         if plan["unplaced"]:
-            opts.append(Option(header("Not on the map yet", len(plan["unplaced"]), "the site places them when it has a what3words key"), disabled=True))
+            opts.append(Option(header("Not found yet", len(plan["unplaced"]), "e to change the place, or pin it on the website"), disabled=True))
             for it in plan["unplaced"]:
                 opts.append(Option(item_row(it, col_name=name_of(it), skip_event=True), id=it["id"]))
         if plan["elsewhere"]:
-            opts.append(Option(Text(f"\n   {plural(plan['elsewhere'], 'more item')} on this day with no place.", style=FAINT), disabled=True))
+            opts.append(Option(header("No place", len(plan["elsewhere"])), disabled=True))
+            for it in plan["elsewhere"]:
+                opts.append(Option(item_row(it, col_name=name_of(it), skip_event=True, extra=[(R.when(it["meta"]["event"]), GOLD)]), id=it["id"]))
 
     def draw_map(self, shown: list[dict] | None = None, sel: str | None = None) -> None:
         """The day's stops on a map drawn in characters. The highlighted stop is centred."""
@@ -807,15 +806,15 @@ class DriftPage(Page):
             loc = st["item"]["meta"]["location"]
             out.append(f"\n {R.stop_label(st['n'])} ", style=f"bold #1a1206 on {BAD}")
             out.append(f" {st['item']['title']}   ", style=f"bold {INK}")
-            out.append(f"///{loc['words']}", style=PLACE)
-            out.append((f" · {loc['place']}" if loc.get("place") else "") + f"   {loc['lat']:.5f}, {loc['lng']:.5f}", style=MUTED)
+            out.append(R.place_label(loc), style=PLACE)
+            out.append(f"   {loc['lat']:.5f}, {loc['lng']:.5f}", style=MUTED)
         geo.update(out)
 
     def action_open_place(self) -> None:
         it = self.selected()
         loc = (it or {}).get("meta", {}).get("location") or {}
-        if loc.get("words"):
-            open_in_browser(self.app, R.w3w_link(loc["words"]))
+        if R.placed(loc):
+            open_in_browser(self.app, R.osm_link(loc))
 
     # ── moving around ──────────────────────────────────────────────────
     def on_option_list_option_highlighted(self, e: OptionList.OptionHighlighted) -> None:
@@ -935,8 +934,8 @@ class DriftPage(Page):
             t.append(f"+{f['collection']}   ", style=COL)
         for g in f.get("tags", []):
             t.append(f"#{g}   ", style=TAG)
-        if f.get("location"):
-            t.append(f"⌖ ///{f['location']}   ", style=PLACE)
+        if f.get("place"):
+            t.append(f"⌖ {f['place']}   ", style=PLACE)
         return t
 
     # ── changing things ────────────────────────────────────────────────

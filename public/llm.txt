@@ -44,9 +44,10 @@ access, or is deleted.
     event      {start, end}  "YYYY-MM-DD" (all day) or "YYYY-MM-DDTHH:MM"; end may be null
     list       {order: number, parent: item id | null}              an outline
     graph      (no per-item data)
-    location   {words, lat, lng, place}  a what3words address, like
-               {"words": "filled.count.soap"}; send just the words and the site
-               fills in lat, lng and the nearest place from what3words
+    location   {place, lat, lng}  where it happens. Send {"place": "1 Ferry
+               Building, San Francisco"} and the site finds it (lat, lng and the
+               name it found), or {"lat": 37.7955, "lng": -122.3937} and it
+               names the spot. A place it can't find is refused.
   Set a slice to null in an update to take the item off that plugin. A
   plugin's data only shows if the plugin is on for the item's collection.
 - Deleting is soft: send `deleted: false` in an update to restore.
@@ -90,7 +91,7 @@ Schedule an event:
   drift_create_item {"title":"Dentist","collection":"c_...","meta":{"event":{"start":"2026-03-05T14:30","end":"2026-03-05T15:15"}}}
 
 Give an event a place (the collection needs the location plugin on to show it):
-  drift_update_item {"id":"i_...","meta":{"location":{"words":"filled.count.soap"}}}
+  drift_update_item {"id":"i_...","meta":{"location":{"place":"Ferry Building, San Francisco"}}}
 
 Tick a task off:
   drift_update_item {"id":"i_...","meta":{"checklist":{"done":true,"priority":3}}}

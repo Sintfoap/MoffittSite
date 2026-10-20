@@ -9,7 +9,7 @@
 import { db, now } from "./db.js";
 import { PLUGINS, BY_ID } from "../public/todo/plugins/index.js";
 import { approvedIds, approvedPlugins, installed } from "./store.js";
-import { toCoordinates } from "./w3w.js";
+import { hasPlaces, searchPlaces, nameOf } from "./places.js";
 
 export class BadRequest extends Error {}
 const fail = msg => { throw new BadRequest(msg); };
@@ -124,16 +124,24 @@ function cleanCollection(changes, store) {
   return out;
 }
 
-// Locations: the site places an item's what3words address on the map when it's
-// saved (src/w3w.js). Words the item already had keep their place, so only new
-// words, or ones not placed yet, ask what3words. Without a key, what was sent
-// is kept as it is.
+// Locations: the site finds what you typed on the map when an item is saved
+// (src/places.js), and names a spot given only as coordinates. An unchanged
+// place keeps what was found before, so only new places ask. When the site
+// can't ask (no key, or ORS doesn't answer), the place is kept as typed and
+// found on a later save.
 async function locate(env, loc, before) {
-  if (!loc?.words || !env.W3W_API_KEY) return loc;
-  if (before?.words === loc.words && before.lat != null) return { ...loc, lat: before.lat, lng: before.lng, place: before.place || "" };
-  const at = await toCoordinates(env, loc.words);
-  if (at?.error) fail(at.error);
-  return at ? { ...loc, ...at } : { ...loc, lat: null, lng: null, place: "" };
+  if (!loc || !hasPlaces(env)) return loc;
+  if (loc.lat != null) {
+    if (loc.place) return loc;
+    if (before?.lat === loc.lat && before.lng === loc.lng && before.place) return { ...loc, place: before.place };
+    return { ...loc, place: await nameOf(env, loc.lat, loc.lng) || "" };
+  }
+  if (!loc.place) return loc;
+  if (before?.place === loc.place && before.lat != null) return { ...loc, lat: before.lat, lng: before.lng };
+  const found = await searchPlaces(env, loc.place);
+  if (!found) return loc;
+  if (!found.length) fail(`couldn’t find “${loc.place}” on the map`);
+  return found[0];
 }
 
 // ── reading ────────────────────────────────────────────────────────────────

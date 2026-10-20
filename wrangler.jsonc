@@ -49,9 +49,9 @@
   // GIPHY_API_KEY, also a secret, is a GIPHY API key (developers.giphy.com) for
   // chat's GIF picker; GIF_API_KEY, a KLIPY key, works instead. Without either
   // the picker is off. See src/gifs.js.
-  // W3W_API_KEY, also a secret, is a what3words API key (developer.what3words.com)
-  // that places Drift's Locations on the map. Without it items keep their three
-  // words but aren't placed. See src/w3w.js.
+  // ORS_API_KEY, also a secret, is a free OpenRouteService key (openrouteservice.org)
+  // that finds Drift's Locations on the map. Without it place search is off, but
+  // pins and pasted coordinates work. See src/places.js.
 
   // Branch builds run `wrangler preview`, which takes its settings from here.
   // Previews have no database, so signing in there fails closed.

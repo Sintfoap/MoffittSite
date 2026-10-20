@@ -117,21 +117,21 @@ test("the phone app installs as its own app, and its page loads every file it na
 
 test("the phone's Map lists the day's places, and the item sheet sets a place", () => {
   const d = today();
-  const a = { words: "filled.count.soap", lat: 51.520847, lng: -0.195521, place: "" };
-  const items = [item("i_tea", { event: { start: d + "T15:00", end: null }, location: { ...a, lng: -0.203586 } }),
+  const a = { place: "Ferry Building", lat: 37.7955, lng: -122.3937 };
+  const items = [item("i_tea", { event: { start: d + "T15:00", end: null }, location: { ...a, lng: -122.4 } }),
     item("i_lunch", { event: { start: d + "T12:00", end: null }, location: a }), item("i_none", { event: { start: d + "T09:00", end: null } })];
   const { stops, elsewhere } = D.dayStops(items, d);
   assert.deepEqual(stops.map(s => s.item.id), ["i_lunch", "i_tea"]);
-  assert.equal(elsewhere, 1);
+  assert.equal(elsewhere.length, 1);
   assert.equal(D.VIEW_LABELS.location, "Map");
 
   const it = item("i_1", { location: a });
-  const base = { title: "i_1", notes: "", tags: "", collection: "c_1", words: "///filled.count.soap" };
+  const base = { title: "i_1", notes: "", tags: "", collection: "c_1", place: "Ferry Building" };
   const kinds = { hasCheck: false, hasEvent: false, hasPlace: true };
-  assert.deepEqual(D.itemChanges(it, base, kinds), {}, "the same words change nothing");
-  assert.deepEqual(D.itemChanges(it, { ...base, words: "index home raft" }, kinds).meta.location, { words: "index.home.raft", lat: null, lng: null, place: "" });
-  assert.deepEqual(D.itemChanges(it, { ...base, words: "" }, kinds).meta.location, null);
-  assert.match(D.itemChanges(it, { ...base, words: "two.words" }, kinds).error, /isn't a what3words address/);
-  assert.deepEqual(D.freshMeta({ plugins: ["event", "location"] }, { location: "index.home.raft" }, { dated: true, day: "2026-11-02" }),
-    { event: { start: "2026-11-02", end: null }, location: { words: "index.home.raft", lat: null, lng: null, place: "" } });
+  assert.deepEqual(D.itemChanges(it, base, kinds), {}, "the same place changes nothing");
+  assert.deepEqual(D.itemChanges(it, { ...base, place: " Coit  Tower " }, kinds).meta.location, { place: "Coit Tower", lat: null, lng: null });
+  assert.deepEqual(D.itemChanges(it, { ...base, place: "37.8, -122.4" }, kinds).meta.location, { place: "", lat: 37.8, lng: -122.4 });
+  assert.deepEqual(D.itemChanges(it, { ...base, place: "" }, kinds).meta.location, null);
+  assert.deepEqual(D.freshMeta({ plugins: ["event", "location"] }, { place: "Coit Tower" }, { dated: true, day: "2026-11-02" }),
+    { event: { start: "2026-11-02", end: null }, location: { place: "Coit Tower", lat: null, lng: null } });
 });

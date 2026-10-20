@@ -1,21 +1,26 @@
-// Locations: give an item a place, as a what3words address, and see the day's
-// events on a map.
-// meta.location = { words, lat, lng, place }
-//   words     the three words, bare and lowercase ("filled.count.soap"); "" for none yet
-//   lat, lng  where they are, filled in by the site from what3words when you
-//             save (src/w3w.js); null until then
-//   place     the nearest town what3words names, for showing; "" when unknown
+// Locations: give an item a place, and see the day's events on a map.
+// meta.location = { place, lat, lng }
+//   place     what it's called: an address or a place's name, as found ("" for none yet)
+//   lat, lng  where it is; null until it's been found
+//
+// You search for a place (the site asks OpenRouteService, src/places.js), pin
+// it on the map, or paste coordinates. A place typed but not picked from the
+// search is looked up when it's saved, and coordinates on their own get the
+// name of the spot.
 //
 // The Map view shows the items that are events on the chosen day and have a
 // place, numbered in the order they happen and joined in that order. Picking
-// one in the list flies the map to it.
+// one in the list flies the map there.
 
-import { esc, today, addDays, dayOf, timeOf, niceDay, niceTime, parseWords } from "../lib.js";
+import { esc, today, addDays, dayOf, timeOf, niceDay, niceTime, parseCoords } from "../lib.js";
 
-const BLANK = { words: "", lat: null, lng: null, place: "" };
+const BLANK = { place: "", lat: null, lng: null };
 const pin = '<path d="M12 21s-6.5-6.2-6.5-11.2a6.5 6.5 0 0 1 13 0C18.5 14.8 12 21 12 21z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><circle cx="12" cy="9.8" r="2.3" stroke="currentColor" stroke-width="1.8"/>';
-const placed = m => m && m.words && m.lat != null && m.lng != null;
-export const w3wLink = words => "https://what3words.com/" + encodeURIComponent(words).replace(/%2E/gi, ".");
+export const placed = m => !!m && m.lat != null && m.lng != null;
+const coords = m => `${m.lat.toFixed(5)}, ${m.lng.toFixed(5)}`;
+// What to call it: its name, or its coordinates.
+export const placeLabel = m => m.place || (placed(m) ? coords(m) : "");
+export const osmLink = m => `https://www.openstreetmap.org/?mlat=${m.lat}&mlon=${m.lng}#map=17/${m.lat}/${m.lng}`;
 
 // Does the event cover this day? Same rule as the calendar.
 const onDay = (m, d) => dayOf(m.start) <= d && d <= dayOf(m.end || m.start);
@@ -36,20 +41,24 @@ export function niceDistance(m, miles = false) {
 
 // The day on the map: the events that day with a place, in the order they
 // happen, each with its number and how far it is from the stop before;
-// `unplaced` has the day's events whose words aren't on the map yet, and
-// `elsewhere` counts the day's events with no place at all.
+// `unplaced` has the day's events whose place hasn't been found yet, and
+// `elsewhere` the day's events with no place at all.
 export function dayStops(items, d) {
   const evs = items.filter(it => it.meta.event && onDay(it.meta.event, d)).sort(byStart);
-  const stops = [], unplaced = [];
-  let elsewhere = 0, prev = null;
+  const stops = [], unplaced = [], elsewhere = [];
+  let prev = null;
   for (const it of evs) {
     const m = it.meta.location;
-    if (!m?.words) { elsewhere++; continue; }
-    if (!placed(m)) { unplaced.push(it); continue; }
-    stops.push({ item: it, n: stops.length + 1, from: prev ? distance(prev, m) : null });
-    prev = m;
+    if (placed(m)) { stops.push({ item: it, n: stops.length + 1, from: prev ? distance(prev, m) : null }); prev = m; }
+    else (m?.place ? unplaced : elsewhere).push(it);
   }
   return { stops, unplaced, elsewhere };
+}
+
+// The middle of the places among `items`, to search near; null if none has one.
+export function centre(items) {
+  const pts = items.map(it => it.meta.location).filter(placed);
+  return pts.length ? { lat: pts.reduce((a, m) => a + m.lat, 0) / pts.length, lng: pts.reduce((a, m) => a + m.lng, 0) / pts.length } : null;
 }
 
 // Leaflet (public/todo/vendor/leaflet/), loaded the first time a map is shown.
@@ -91,6 +100,7 @@ class MapView {
     </div>`;
     this.mapEl = el.querySelector(".geo-map"); this.side = el.querySelector(".geo-side");
     el.addEventListener("click", this.onClick = e => this.click(e));
+    el.addEventListener("keydown", this.onKey = e => { if (e.key === "Escape" && this.pinning) { e.stopPropagation(); this.stopPin(); } });
     el.addEventListener("change", this.onChange = e => {
       if (e.target.dataset.geo === "pick" && e.target.value) this.setDay(e.target.value);
     });
@@ -100,6 +110,12 @@ class MapView {
   }
 
   get day() { return this.ctx.viewState.day || today(); }
+  startPin(id) {
+    this.pinning = this.pinning === id ? null : id;
+    this.mapEl.classList.toggle("pinning", !!this.pinning);
+    this.draw();
+  }
+  stopPin() { this.pinning = null; this.mapEl.classList.remove("pinning"); this.draw(); }
   setDay(d) { this.ctx.viewState.day = d; this.ctx.viewState.sel = null; this.draw(); }
 
   build() {
@@ -110,6 +126,14 @@ class MapView {
       maxZoom: 19, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
     }).addTo(this.map);
     this.map.attributionControl.setPrefix('<a href="https://leafletjs.com">Leaflet</a>');
+    // Pinning: the next click on the map is where the item is. The site names the spot.
+    this.map.on("click", e => {
+      if (!this.pinning) return;
+      const id = this.pinning, { lat, lng } = e.latlng.wrap();
+      this.stopPin();
+      this.ctx.viewState.sel = id;
+      this.ctx.setMeta(id, "location", { place: "", lat: +lat.toFixed(6), lng: +lng.toFixed(6) });
+    });
     this.shown = null;
     this.draw();
   }
@@ -121,7 +145,9 @@ class MapView {
     const vs = ctx.viewState;
     if (vs.sel && !plan.stops.some(s => s.item.id === vs.sel)) vs.sel = null;
     this.el.querySelector("[data-geo=pick]").value = day;
-    this.el.querySelector("[data-geo=label]").textContent = niceDay(day) + (plan.stops.length ? ` · ${plan.stops.length} place${plan.stops.length === 1 ? "" : "s"}` : "");
+    const pinning = this.pinning && ctx.items.find(it => it.id === this.pinning);
+    this.el.querySelector("[data-geo=label]").textContent = pinning ? `Click the map where “${pinning.title}” is (Esc to stop)`
+      : niceDay(day) + (plan.stops.length ? ` · ${plan.stops.length} place${plan.stops.length === 1 ? "" : "s"}` : "");
 
     const noEvents = ctx.collection && !ctx.collection.plugins.includes("event");
     let side = plan.stops.length ? `<ol class="geo-list">${plan.stops.map(({ item: it, n, from }) => {
@@ -129,12 +155,16 @@ class MapView {
       return `<li class="${it.id === vs.sel ? "sel" : ""}${it.meta.checklist?.done ? " done" : ""}" data-id="${esc(it.id)}">
         <button class="go" data-geo="go" aria-label="Show ${esc(it.title)} on the map"><span class="num">${n}</span>
           <span class="txt"><b>${esc(it.title)}</b><small>${esc(whenOf(it.meta.event))}${from != null ? ` · ${esc(niceDistance(from, far))} from ${n - 1}` : ""}</small>
-          <small class="w3w">///${esc(m.words)}${m.place ? ` · ${esc(m.place)}` : ""}</small></span></button>
+          <small class="where">${esc(placeLabel(m))}</small></span></button>
         <button class="link" data-geo="open">Edit</button></li>`;
     }).join("")}</ol>` : `<p class="hint">${noEvents ? "Turn on Events in this collection’s settings too, so items have a day to be on the map."
-      : `Nothing with a place on ${esc(niceDay(day))}. Give an event a what3words address in its dialog, or add one with ///three.word.address.`}</p>`;
-    if (plan.unplaced.length) side += `<p class="hint">Not on the map yet: ${plan.unplaced.map(it => `<button class="link" data-geo="open" data-id="${esc(it.id)}">${esc(it.title)}</button> (///${esc(it.meta.location.words)})`).join(", ")}. The site places what3words addresses when it has a what3words key.</p>`;
-    if (plan.elsewhere) side += `<p class="hint">${plan.elsewhere} more on this day with no place.</p>`;
+      : `Nothing with a place on ${esc(niceDay(day))}. Search for one in an event’s dialog, pin one below, or add one with ~ and its name.`}</p>`;
+    // The day's other events, to pin on the map.
+    const pinnable = (title, list, what) => list.length ? `<h4 class="geo-h">${title}</h4><ul class="geo-pins">${list.map(it => `<li data-id="${esc(it.id)}">
+      <span><b>${esc(it.title)}</b><small>${esc(whenOf(it.meta.event))}${what(it)}</small></span>
+      <button class="link" data-geo="pin" aria-pressed="${this.pinning === it.id}">${this.pinning === it.id ? "Click the map…" : "Pin"}</button></li>`).join("")}</ul>` : "";
+    side += pinnable("Not found yet", plan.unplaced, it => ` · “${esc(it.meta.location.place)}”`);
+    side += pinnable("No place", plan.elsewhere, () => "");
     this.side.innerHTML = side;
     if (this.map) this.drawMap(plan.stops);
   }
@@ -148,11 +178,16 @@ class MapView {
       const m = it.meta.location;
       const icon = L.divIcon({ className: `geo-pin${it.id === vs.sel ? " sel" : ""}`, html: `<span>${n}</span>`, iconSize: [26, 26], iconAnchor: [13, 13], popupAnchor: [0, -12] });
       const mk = L.marker([m.lat, m.lng], { icon, title: it.title, riseOnHover: true }).addTo(map);
-      mk.bindPopup(`<b>${esc(it.title)}</b><br>${esc(whenOf(it.meta.event))}<br><a href="${esc(w3wLink(m.words))}" target="_blank" rel="noopener">///${esc(m.words)}</a>${m.place ? `<br><small>${esc(m.place)}</small>` : ""}
-        <br><button class="link" data-geo="open" data-id="${esc(it.id)}">Edit</button>`);
+      mk.bindPopup(`<b>${esc(it.title)}</b><br>${esc(whenOf(it.meta.event))}<br>${esc(placeLabel(m))}
+        <br><button class="link" data-geo="open" data-id="${esc(it.id)}">Edit</button> · <button class="link" data-geo="pin" data-id="${esc(it.id)}">Move pin</button>
+        · <a href="${esc(osmLink(m))}" target="_blank" rel="noopener">OpenStreetMap</a>`);
       mk.on("click", () => this.select(it.id, false));
       // Leaflet keeps clicks inside a popup to itself, so its Edit button gets its own handler.
-      mk.on("popupopen", e => { const b = e.popup.getElement()?.querySelector("[data-geo=open]"); if (b) b.onclick = () => this.ctx.open(it.id); });
+      mk.on("popupopen", e => {
+        const el = e.popup.getElement();
+        el?.querySelector("[data-geo=open]")?.addEventListener("click", () => this.ctx.open(it.id));
+        el?.querySelector("[data-geo=pin]")?.addEventListener("click", () => { this.map.closePopup(); this.startPin(it.id); });
+      });
       this.markers.set(it.id, mk);
     }
     if (stops.length > 1) this.line = L.polyline(stops.map(s => [s.item.meta.location.lat, s.item.meta.location.lng]), { className: "geo-route", dashArray: "6 6", weight: 2 }).addTo(map);
@@ -195,28 +230,62 @@ class MapView {
       case "fit": this.fit(dayStops(this.ctx.items, this.day).stops); break;
       case "go": this.select(id); break;
       case "open": if (id) this.ctx.open(id); break;
+      case "pin": if (id) this.startPin(id); break;
     }
   }
 
   destroy() {
     this.el.removeEventListener("click", this.onClick);
     this.el.removeEventListener("change", this.onChange);
+    this.el.removeEventListener("keydown", this.onKey);
     this.map?.remove(); this.map = null; this.el = null;
   }
 }
 let live = null;
 
+// The item dialog's search: places matching what you type, from the site,
+// near the collection's other places. Picking one saves it.
+function searchBox(fs, item, ctx) {
+  const input = fs.querySelector("[name=place]"), list = fs.querySelector(".place-results");
+  if (!input || !list) return;
+  let timer, asked = 0, results = [];
+  input.addEventListener("input", () => {
+    clearTimeout(timer);
+    const q = input.value.trim();
+    if (q.length < 3 || parseCoords(q)) { list.innerHTML = ""; return; }
+    timer = setTimeout(async () => {
+      const n = ++asked, near = centre(ctx.all.filter(it => it.collection === item.collection && it.id !== item.id));
+      const r = await fetch(`/todo/api/places?q=${encodeURIComponent(q)}${near ? `&near=${near.lat.toFixed(4)},${near.lng.toFixed(4)}` : ""}`,
+        { credentials: "same-origin", cache: "no-store" }).then(r => r.json()).catch(() => null);
+      if (n !== asked) return;
+      results = r?.results || [];
+      list.innerHTML = r?.off ? `<li class="hint">Search is off until the site has an OpenRouteService key. Paste coordinates, or pin it on the Map.</li>`
+        : !r || r.error ? `<li class="hint">Couldn’t search just now.</li>`
+        : results.length ? results.map((p, i) => `<li><button type="button" data-pick="${i}">${esc(p.place)}</button></li>`).join("")
+        : `<li class="hint">Nothing found for “${esc(q)}”.</li>`;
+    }, 300);
+  });
+  // Keep focus in the box while picking, so it doesn't first save the half-typed text.
+  list.addEventListener("mousedown", e => e.preventDefault());
+  list.addEventListener("click", e => {
+    const b = e.target.closest("[data-pick]"); if (!b) return;
+    e.stopPropagation();
+    const p = results[+b.dataset.pick];
+    input.value = p.place; list.innerHTML = "";
+    ctx.setMeta(item.id, "location", p);
+  });
+}
+
 export default {
   id: "location",
   name: "Locations",
-  description: "Give items a place as a what3words address, and see each day’s events on a map.",
+  description: "Give items a place, found by search or pinned on a map, and see each day’s events on a map.",
   icon: pin,
 
   clean(v, fail) {
     if (!v || typeof v !== "object" || Array.isArray(v)) fail("location must be an object");
-    const raw = String(v.words ?? "").trim();
-    const words = raw ? parseWords(raw) : "";
-    if (words === null) fail("location.words must be a what3words address, three words with dots like filled.count.soap");
+    const place = String(v.place ?? "").trim().replace(/\s+/g, " ");
+    if (place.length > 200) fail("location.place is longer than 200 characters");
     let lat = v.lat ?? null, lng = v.lng ?? null;
     if ((lat === null) !== (lng === null)) fail("location.lat and location.lng go together");
     if (lat !== null) {
@@ -224,37 +293,36 @@ export default {
       if (!Number.isFinite(lat) || lat < -90 || lat > 90) fail("location.lat must be between -90 and 90");
       if (!Number.isFinite(lng) || lng < -180 || lng > 180) fail("location.lng must be between -180 and 180");
     }
-    const place = String(v.place ?? "").trim();
-    if (place.length > 120) fail("location.place is longer than 120 characters");
-    return words ? { words, lat, lng, place } : { ...BLANK };
+    return { place, lat, lng };
   },
 
   fresh(quick) {
-    return quick.location ? { ...BLANK, words: quick.location } : undefined;
+    return quick.place ? { ...BLANK, place: quick.place } : undefined;
   },
 
   chips(item) {
-    const m = item.meta.location;
-    if (!m.words) return [];
-    return [`<span class="chip place" title="${placed(m) ? "On the map" : "Not on the map yet"}">${`<svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">${pin}</svg>`}///${esc(m.words)}${m.place ? ` · ${esc(m.place)}` : ""}</span>`];
+    const m = item.meta.location, label = placeLabel(m);
+    if (!label) return [];
+    return [`<span class="chip place${placed(m) ? "" : " lost"}" title="${placed(m) ? "On the map" : "Not found on the map yet"}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">${pin}</svg>${esc(label)}</span>`];
   },
 
   editor(item) {
     const m = item.meta.location;
-    const about = placed(m)
-      ? `${m.place ? esc(m.place) + " · " : ""}${m.lat.toFixed(5)}, ${m.lng.toFixed(5)} · <a href="${esc(w3wLink(m.words))}" target="_blank" rel="noopener">See it on what3words</a>`
-      : m.words ? "Not placed on the map yet. The site does that when it has a what3words key."
-      : `Every 3 m square in the world has three words. Find a place’s at <a href="https://what3words.com/" target="_blank" rel="noopener">what3words.com</a>.`;
-    return `<label>what3words address<input type="text" name="words" value="${m.words ? "///" + esc(m.words) : ""}" placeholder="///filled.count.soap" autocomplete="off" spellcheck="false"></label>
+    const about = placed(m) ? `${coords(m)} · <a href="${esc(osmLink(m))}" target="_blank" rel="noopener">See it on OpenStreetMap</a>`
+      : m.place ? "Not found on the map yet. Pick it from the search, or pin it on the Map."
+      : "Search for an address or a place by name, or paste coordinates. You can also pin it on the Map.";
+    return `<label>Place<input type="search" name="place" value="${esc(placeLabel(m))}" placeholder="An address or a place’s name" autocomplete="off" spellcheck="false"></label>
+      <ul class="place-results"></ul>
       <p class="hint">${about}</p>`;
   },
+  mountEditor: searchBox,
   read(f, item) {
-    const raw = String(f.words ?? "").trim();
+    const raw = String(f.place ?? "").trim();
     if (!raw) return { ...BLANK };
-    const words = parseWords(raw);
-    if (!words) throw new Error("A what3words address is three words with dots, like ///filled.count.soap");
     const old = item.meta.location;
-    return old?.words === words ? old : { ...BLANK, words };
+    if (old && raw === placeLabel(old)) return old;
+    const at = parseCoords(raw);
+    return at ? { place: "", ...at } : { ...BLANK, place: raw };
   },
 
   view: {
