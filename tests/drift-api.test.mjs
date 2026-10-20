@@ -22,7 +22,7 @@ test("serves the page to a signed-in user and marks it uncacheable", async () =>
 test("a new account starts with an Inbox and the built-in plugins", async () => {
   const b = await signedIn(makeEnv(), "ryan");
   const s = (await api(b, "GET", "state")).json;
-  assert.deepEqual(s.plugins.map(p => p.id), ["checklist", "event", "list", "graph", "location"]);
+  assert.deepEqual(s.plugins.map(p => p.id), ["checklist", "event", "list", "graph", "location", "weather"]);
   assert.equal(s.collections.length, 1);
   assert.equal(s.collections[0].name, "Inbox");
   assert.deepEqual(s.collections[0].plugins, ["checklist", "event", "list"]);

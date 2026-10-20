@@ -49,6 +49,10 @@ access, or is deleted.
                Building, San Francisco"} and the site finds it (lat, lng and the
                name it found), or {"lat": 37.7955, "lng": -122.3937} and it
                names the spot. A place it can't find is refused.
+    weather    {outdoor: boolean}  an outdoor item: Drift warns when the forecast
+               for its day looks wet (rain at least 50% likely, 2 mm or more, or
+               thunderstorms). The forecast is at its place, else its
+               collection's base, else near the person.
   Set a slice to null in an update to take the item off that plugin. A
   plugin's data only shows if the plugin is on for the item's collection.
 - A collection with Locations can have `bases`: where each day's route starts

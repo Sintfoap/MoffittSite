@@ -301,6 +301,12 @@ def drift_route(col_id: str, day: str, profile: str = "driving-car", option: int
     return _get(f"/todo/api/route?{q}")
 
 
+def drift_weather(spot: dict | None = None) -> dict:
+    """The next 16 days' forecast at spot ({lat, lng}), or near you (src/weather.js)."""
+    q = "?" + urllib.parse.urlencode({"lat": f"{spot['lat']:.2f}", "lng": f"{spot['lng']:.2f}"}) if spot else ""
+    return _get(f"/todo/api/weather{q}")
+
+
 def delete_collection(col_id: str) -> dict:
     return api("DELETE", f"/todo/api/collections/{_q(col_id)}")
 
