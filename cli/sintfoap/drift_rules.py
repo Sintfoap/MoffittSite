@@ -266,7 +266,7 @@ def straight_note(r: dict) -> str:
     if r.get("off"):
         return "straight lines: the site needs an OpenRouteService key to follow the streets"
     if not r.get("streets"):
-        return "straight lines: OpenRouteService didn't send the streets just now"
+        return "straight lines: OpenRouteService didn't send the streets" + (f" ({r['trouble']})" if r.get("trouble") else " just now")
     return "travel times are estimates" if r.get("estimated") else ""
 
 

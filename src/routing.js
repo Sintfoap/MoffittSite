@@ -19,14 +19,15 @@ const MAX_STOPS = 40;             // ORS takes up to 50 points on a route
 const SPEED = { "driving-car": 11, "foot-walking": 1.35, "cycling-regular": 4.2 }, WIGGLE = 1.3;
 const ll = p => [p.lng, p.lat];
 
-// Asks ORS once for a given body, and keeps the answer for a day.
+// Asks ORS once for a given body, and keeps the answer for a day:
+// {data}, or {error} (not kept).
 async function cached(env, path, body) {
   const cache = globalThis.caches?.default;
   const key = cache && new Request("https://ors.cache" + path + "?" + await digest(JSON.stringify(body)));
   const hit = key && await cache.match(key).catch(() => null);
-  if (hit) return hit.json();
+  if (hit) return { data: await hit.json() };
   const out = await post(env, path, body);
-  if (out && key) await cache.put(key, new Response(JSON.stringify(out), { headers: { "Cache-Control": "max-age=86400" } })).catch(() => {});
+  if (out.data && key) await cache.put(key, new Response(JSON.stringify(out.data), { headers: { "Cache-Control": "max-age=86400" } })).catch(() => {});
   return out;
 }
 async function digest(s) {
@@ -45,7 +46,8 @@ const timeOn = (s, d) => dayOf(s) === d ? timeOf(s) : "";
 // The plan for collection `id` on `day`:
 //   { day, profile, base, stops: [{id, title, start, place}], unplaced, elsewhere,
 //     options: [{order, duration, distance, late}], option, legs: [{duration, distance}],
-//     path: [[lat, lng]…], streets, estimated, loose, off }
+//     path: [[lat, lng]…], streets, estimated, loose, off, trouble }
+// `trouble` says what ORS said when it couldn't give the times or the streets.
 // `option` picks which of the options to follow the streets of. null when
 // you can't see the collection.
 export async function planDay(env, user, id, day, profile = "driving-car", option = 0) {
@@ -64,7 +66,9 @@ export async function planDay(env, user, id, day, profile = "driving-car", optio
   if (!stops.length) return out;
   const withBase = base?.lat != null;
 
-  let m = hasPlaces(env) && points.length > 1 && await cached(env, `/v2/matrix/${profile}`, { locations: points.map(ll), metrics: ["duration", "distance"] });
+  const mx = hasPlaces(env) && points.length > 1 ? await cached(env, `/v2/matrix/${profile}`, { locations: points.map(ll), metrics: ["duration", "distance"] }) : {};
+  const m = mx.data;
+  if (mx.error) out.trouble = "travel times: " + mx.error;
   // A place ORS can't reach by this profile comes back as null: count it as far.
   const fill = (rows, far) => rows?.map((r, i) => r.map((x, j) => x ?? (i === j ? 0 : far)));
   let dur = fill(m?.durations, 1e7), dist = fill(m?.distances, 1e8);
@@ -88,9 +92,15 @@ export async function planDay(env, user, id, day, profile = "driving-car", optio
   out.streets = false;
   const same = (a, b) => points[a].lat === points[b].lat && points[a].lng === points[b].lng;
   const asked = path.filter((i, x) => !x || !same(i, path[x - 1]));
-  const r = hasPlaces(env) && asked.length > 1 && await cached(env, `/v2/directions/${profile}/geojson`,
-    { coordinates: asked.map(i => ll(points[i])), radiuses: asked.map(() => -1), instructions: false });
-  const f = r?.features?.[0];
+  let r = {};
+  if (hasPlaces(env) && asked.length > 1) {
+    const coordinates = asked.map(i => ll(points[i]));
+    r = await cached(env, `/v2/directions/${profile}/geojson`, { coordinates, radiuses: asked.map(() => -1), instructions: false });
+    // Some ORS servers cap how far a point may be snapped: try once more with their default.
+    if (r.error) r = await cached(env, `/v2/directions/${profile}/geojson`, { coordinates, instructions: false });
+    if (r.error) out.trouble = "streets: " + r.error;
+  }
+  const f = r.data?.features?.[0];
   if (f?.geometry?.coordinates?.length > 1) {
     out.path = f.geometry.coordinates.map(([lng, lat]) => [lat, lng]);
     out.streets = true;

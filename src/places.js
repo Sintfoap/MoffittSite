@@ -15,10 +15,11 @@ export const hasPlaces = env => Boolean(env.ORS_API_KEY);
 async function ask(env, path, params) {
   const url = new URL(API + path);
   for (const [k, v] of Object.entries(params)) if (v != null && v !== "") url.searchParams.set(k, String(v));
-  return call(env, url, {});
+  return (await call(env, url, {})).data;
 }
 
-// POSTs `body` to ORS (routing's matrix and directions), or null.
+// POSTs `body` to ORS (routing's matrix and directions): {data}, or {error}
+// with what went wrong.
 export function post(env, path, body) {
   return call(env, new URL(API + path), { method: "POST", body: JSON.stringify(body), headers: { "Content-Type": "application/json" } });
 }
@@ -26,16 +27,23 @@ export function post(env, path, body) {
 async function call(env, url, init) {
   let res;
   try {
-    res = await fetch(url, { ...init, signal: AbortSignal.timeout(TIMEOUT), headers: { ...init.headers, Authorization: env.ORS_API_KEY, Accept: "application/json" } });
+    // Directions in GeoJSON come back as application/geo+json, which ORS
+    // refuses to send to a request that only accepts application/json.
+    res = await fetch(url, { ...init, signal: AbortSignal.timeout(TIMEOUT),
+      headers: { ...init.headers, Authorization: env.ORS_API_KEY, Accept: "application/json, application/geo+json" } });
   } catch (e) {
     console.error("openrouteservice didn't answer:", e?.message || e);
-    return null;
+    return { error: "it didn’t answer" };
   }
   if (!res.ok) {
-    console.error("openrouteservice said", res.status, "to", url.pathname, (await res.text().catch(() => "")).slice(0, 300));
-    return null;
+    const text = (await res.text().catch(() => "")).slice(0, 500);
+    console.error("openrouteservice said", res.status, "to", url.pathname, text);
+    let why = "";
+    try { const b = JSON.parse(text); why = b?.error?.message || b?.error || b?.message || ""; } catch {}
+    return { error: `${res.status}${typeof why === "string" && why ? ": " + why.slice(0, 200) : ""}` };
   }
-  return res.json().catch(() => null);
+  const data = await res.json().catch(() => null);
+  return data ? { data } : { error: "it sent something unreadable" };
 }
 
 const toPlace = f => {
