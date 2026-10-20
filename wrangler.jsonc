@@ -14,7 +14,7 @@
       "/todo", "/todo/*", "/plugins", "/plugins/*", "/sandbox/*", "/chat", "/chat/*",
       "/login", "/login/*", "/signup", "/logout",
       "/dashboard", "/dashboard/*", "/account", "/account/*", "/admin", "/admin/*",
-      "/notifications", "/notifications/*", "/recipes", "/recipes/*", "/sweep", "/sweep/*", "/_matrix/push/v1/notify",
+      "/notifications", "/notifications/*", "/recipes", "/recipes/*", "/meals", "/meals/*", "/sweep", "/sweep/*", "/_matrix/push/v1/notify",
       "/mcp", "/books/api", "/books/api/*", "/app", "/app/*", "/.well-known/assetlinks.json"
     ]
   },

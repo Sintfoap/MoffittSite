@@ -329,6 +329,15 @@ const SCHEMA = [
      updated TEXT NOT NULL,
      PRIMARY KEY (owner, id)
    )`,
+  // Meal plan (src/meals.js): each account's dinners, a row per week (week is its Monday).
+  // data is JSON {nights: {day: {recipe, servings, out, locked}}, shopped}.
+  `CREATE TABLE IF NOT EXISTS meal_plans (
+     owner   TEXT NOT NULL,          -- user id
+     week    TEXT NOT NULL,          -- YYYY-MM-DD, a Monday
+     data    TEXT NOT NULL,
+     updated TEXT NOT NULL,
+     PRIMARY KEY (owner, week)
+   )`,
   // Votes on the public book suggestions page (src/books.js). One per browser,
   // by the random id in its __Host-bv cookie; it can be changed or taken back.
   `CREATE TABLE IF NOT EXISTS book_votes (

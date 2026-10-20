@@ -297,7 +297,7 @@ def test_admins_switch_apps_on_and_off_in_the_terminal(admin_site):
         page = app.screen
         assert type(page).__name__ == "AdminPage"
         apps = [a["id"] for a in page.data["apps"]]
-        assert apps == ["drift", "admin", "plugins", "chat", "chat-bridges", "recipes", "sweep", "notifications"]
+        assert apps == ["drift", "admin", "plugins", "chat", "chat-bridges", "recipes", "meals", "sweep", "notifications"]
         # A switch for every app on every account; your own admin one can't be turned off.
         assert len(page.boxes) == len(apps) * len(page.data["users"])
         me = next(i for i, u in enumerate(page.data["users"]) if u["you"])
@@ -434,6 +434,71 @@ def test_g_r_opens_the_terminal_recipe_box(real_site):
         await settle(pilot, 0.5)
         assert type(app.screen).__name__ == "RecipesPage"
     run_app("dashboard", go)
+
+
+# ── meal plan ──────────────────────────────────────────────────────────────
+
+def test_meal_plan_fills_the_week_around_drift_and_shops_for_it(real_site):
+    import datetime as dt
+    monday = dt.date.today() - dt.timedelta(days=dt.date.today().weekday())
+    tuesday = (monday + dt.timedelta(days=1)).isoformat()
+    tacos = site.add_recipe({"title": "Tacos", "time": "20 min", "servings": 4, "ingredients": "1 lb beef\n8 tortillas"})
+    site.add_recipe({"title": "Stew", "time": "2 hr", "servings": 4, "ingredients": "2 lb chuck\n3 carrots"})
+    inbox = site.drift_state()["collections"][0]["id"]
+    site.add_item({"title": "Soccer", "collection": inbox, "meta": {"event": {"start": f"{tuesday}T18:00", "end": None}}})
+
+    async def meals(app, pilot):
+        page = app.screen
+        assert type(page).__name__ == "MealsPage"
+        assert page.data["start"] == monday.isoformat()
+        assert page.data["days"][1]["busy"] and page.data["days"][1]["why"] == "Soccer at 6 pm"
+        # f fills the week: the busy Tuesday gets the quick recipe.
+        await pilot.press("f")
+        await settle(pilot, 0.6)
+        assert page.data["days"][1]["recipe"] == tacos["id"]
+        assert all(n["recipe"] for n in page.data["days"])
+        # Monday: out tonight; Tuesday: pick Stew yourself, and it's locked.
+        page.query_one("#nights").focus()
+        page.query_one("#nights").highlighted = 0
+        await pilot.press("o")
+        await settle(pilot, 0.5)
+        assert page.data["days"][0]["out"]
+        page.query_one("#nights").highlighted = 1
+        await settle(pilot)
+        await pilot.press("enter")
+        await settle(pilot)
+        assert type(app.screen).__name__ == "PickRecipe"
+        assert app.screen.query_one("#pick").highlighted == 2, "it opens on tonight's recipe"
+        app.screen.query_one("#pick").highlighted = 1     # nothing, Stew, Tacos (by title)
+        await pilot.press("enter")
+        await settle(pilot, 0.6)
+        tue = page.data["days"][1]
+        assert page.recipe(tue["recipe"])["title"] == "Stew" and tue["locked"] and tue["slow"]
+        await pilot.press("plus")
+        await settle(pilot, 0.5)
+        assert page.data["days"][1]["servings"] == 5
+        # Untick the first line and send the rest.
+        lines = [s["line"] for s in page.data["shopping"]]
+        lst = page.query_one("#shopping")
+        lst.focus()
+        lst.highlighted = 0
+        await pilot.press("space")
+        await settle(pilot)
+        assert page.skip == {lines[0]}
+        await pilot.press("s")
+        await settle(pilot, 0.6)
+        drift = site.drift_state()
+        shopping = next(c for c in drift["collections"] if c["name"] == "Shopping list")
+        sent = sorted(it["title"] for it in drift["items"] if it["collection"] == shopping["id"])
+        assert sent == sorted(lines[1:])
+        assert page.data["shopped"]["added"] == len(lines) - 1
+        # ] goes to next week, which is empty.
+        page.query_one("#nights").focus()
+        await pilot.press("right_square_bracket")
+        await settle(pilot, 0.5)
+        assert page.data["start"] == (monday + dt.timedelta(days=7)).isoformat()
+        assert not any(n["recipe"] for n in page.data["days"])
+    run_app("meals", meals)
 
 
 # ── sweep ──────────────────────────────────────────────────────────────────

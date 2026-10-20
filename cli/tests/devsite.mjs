@@ -12,6 +12,7 @@
 // one browser to send to, and answers every push as delivered.
 // ryan has Recipe box; https://recipes.test/pancakes is a recipe page to save
 // (serves 4), and any other page there has no recipe on it.
+// ryan has Meal plan too (his Recipe box starts empty).
 // ryan has Sweep, and he and sam are in a room "Plans" where sam asked about
 // dinner. The stand-in for Claude suggests that dinner from the first message
 // it's shown.
@@ -64,7 +65,7 @@ const ryan = new Browser(env), sam = new Browser(env);
 await ryan.signup("ryan", undefined, "Ryan M");
 await sam.signup("sam", undefined, "Sam");
 for (const who of ["ryan", "sam"]) grantApps(env, who, "plugins", "chat");
-grantApps(env, "ryan", "chat-bridges", "recipes", "sweep");
+grantApps(env, "ryan", "chat-bridges", "recipes", "meals", "sweep");
 {
   const plans = (await ryan.req("POST", "/chat/api/rooms", { json: { name: "Plans" } })).json.id;
   await sam.req("POST", `/chat/api/rooms/${plans}/join`);
