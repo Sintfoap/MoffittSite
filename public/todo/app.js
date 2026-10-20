@@ -257,6 +257,11 @@ function renderItemDialog() {
           <div class="row"><span class="hint">${esc(p.description)}</span><button type="button" class="link" data-attach="${p.id}">Add</button></div></fieldset>`).join("")}
     </fieldset>
     <div class="acts">${ro ? "<span></span>" : `<button type="button" class="danger" data-del>Delete item</button>`}<button class="btn primary" value="close">Done</button></div>`;
+  // Editors that need more than inputs (Locations' search) wire themselves up.
+  if (!ro) for (const fs of $("#itemForm").querySelectorAll("fieldset[data-plugin]")) {
+    const p = BY_ID[fs.dataset.plugin];
+    if (!p?.store && typeof p?.mountEditor === "function") p.mountEditor(fs, it, ctx());
+  }
 }
 function readFieldset(fs) {
   const out = {};

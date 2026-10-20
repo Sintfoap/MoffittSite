@@ -256,7 +256,7 @@ ul.items { list-style: none; margin: 0; padding: 0; }
 .geo-list .txt { display: grid; min-width: 0; }
 .geo-list .txt b { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .geo-list .txt small { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.geo-list .txt small.w3w { color: var(--red); }
+.geo-list .txt small.where { color: var(--accent); }
 .geo-list li.done b { color: var(--faint); text-decoration: line-through; }
 .geo-list .link { padding: 6px; font-size: 12.5px; }
 .geo-list .num, .geo-pin span { display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; font: 700 12px var(--sans); background: var(--accent); color: var(--accent-ink); border: 2px solid var(--surface); }
@@ -272,7 +272,21 @@ ul.items { list-style: none; margin: 0; padding: 0; }
 .geo .leaflet-control-attribution { background: color-mix(in srgb, var(--surface) 80%, transparent); color: var(--muted); }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .geo .leaflet-tile-pane { filter: invert(1) hue-rotate(180deg) brightness(.85) contrast(.9); } }
 :root[data-theme="dark"] .geo .leaflet-tile-pane { filter: invert(1) hue-rotate(180deg) brightness(.85) contrast(.9); }
-.chip.place { color: var(--red); }
+.chip.place { color: var(--accent); }
+.chip.place.lost { color: var(--faint); }
+.geo-h { margin: 12px 6px 4px; font-size: 12.5px; font-weight: 500; color: var(--faint); }
+.geo-pins { list-style: none; margin: 0; padding: 0 6px; display: grid; gap: 4px; }
+.geo-pins li { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.geo-pins span { display: grid; min-width: 0; }
+.geo-pins b { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.geo-pins small { font-size: 12px; color: var(--muted); }
+.geo-pins [aria-pressed="true"] { color: var(--red); }
+.geo-map.pinning, .geo-map.pinning .leaflet-interactive { cursor: crosshair; }
+.place-results { list-style: none; margin: -6px 0 0; padding: 0; display: grid; gap: 2px; }
+.place-results:empty { display: none; }
+.place-results button { width: 100%; text-align: left; padding: 6px 8px; border: 1px solid var(--line); background: var(--raise); font-size: 13px; }
+.place-results button:hover { border-color: var(--accent); }
+.place-results .hint { margin: 2px; }
 dialog fieldset.bare { border: 0; padding: 0; margin: 0; display: grid; gap: 14px; min-width: 0; }
 .sharing { display: grid; gap: 8px; }
 .sharing p { margin: 0; }

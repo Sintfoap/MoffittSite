@@ -8,7 +8,6 @@ from __future__ import annotations
 import math
 import re
 import time
-import unicodedata
 from datetime import date, datetime, timedelta
 
 DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -21,7 +20,7 @@ BUILT_IN = {
     "event": ("Events", "Give items a date and time, and see them on a calendar."),
     "list": ("List", "Arrange items in your own order and nest them as an outline."),
     "graph": ("Graph", "Link items to each other and see them as a network."),
-    "location": ("Locations", "Give items a place as a what3words address, and see each day's events on a map."),
+    "location": ("Locations", "Give items a place, found by search or pinned on a map, and see each day's events on a map."),
 }
 PRIORITY = ["None", "Low", "Medium", "High"]
 
@@ -102,28 +101,35 @@ def parse_time(s: str) -> str | None:
 
 
 # ── places ─────────────────────────────────────────────────────────────────
-# A what3words address is three words joined by dots ("filled.count.soap").
+# A place is {place, lat, lng}: what it's called, and where it is once found.
 
-W3W_LINK = re.compile(r"^(?:https?://)?(?:www\.)?(?:what3words\.com|w3w\.co)/([^?#\s]+)")
-
-
-def parse_words(s: str) -> str | None:
-    """"///Filled.Count.Soap", "filled count soap" or a what3words link → "filled.count.soap"; None if it isn't one."""
-    w = str(s or "").strip().lower()
-    m = W3W_LINK.match(w)
-    if m:
-        from urllib.parse import unquote
-        w = unquote(m[1])
-    w = re.sub(r"[\s｡。・]+", ".", w.lstrip("/"))
-    # Each word: a letter, then letters or the marks some scripts join to them (as \p{L}[\p{L}\p{M}]* on the web).
-    word = lambda x: bool(x) and unicodedata.category(x[0])[0] == "L" and all(unicodedata.category(ch)[0] in "LM" for ch in x)  # noqa: E731
-    parts = w.split(".")
-    return w if len(w) <= 100 and len(parts) == 3 and all(map(word, parts)) else None
+_NUM = r"(-?\d{1,3}(?:\.\d+)?)"
+_LINKS = [re.compile(r"[?&]mlat=(-?[\d.]+)&mlon=(-?[\d.]+)"), re.compile(r"#map=\d+/(-?[\d.]+)/(-?[\d.]+)"), re.compile(r"@(-?[\d.]+),(-?[\d.]+)"),
+          re.compile(r"[?&](?:q|query|ll)=(-?[\d.]+)(?:,|%2C)(-?[\d.]+)", re.I), re.compile(r"^geo:(-?[\d.]+),(-?[\d.]+)", re.I)]
 
 
-def w3w_link(words: str) -> str:
-    from urllib.parse import quote
-    return "https://what3words.com/" + quote(words, safe=".")
+def parse_coords(s: str) -> dict | None:
+    """"37.80, -122.27", or a map link with coordinates in it → {lat, lng}; None if there are none."""
+    t = str(s or "").strip()
+    m = re.fullmatch(_NUM + r"\s*[,\s]\s*" + _NUM, t) or next((x for x in (r.search(t) for r in _LINKS) if x), None)
+    if not m:
+        return None
+    try:
+        lat, lng = float(m[1]), float(m[2])
+    except ValueError:
+        return None
+    return {"lat": lat, "lng": lng} if abs(lat) <= 90 and abs(lng) <= 180 else None
+
+
+def place_label(loc: dict) -> str:
+    """What to call a place: its name, or its coordinates."""
+    if loc.get("place"):
+        return loc["place"]
+    return f"{loc['lat']:.5f}, {loc['lng']:.5f}" if placed(loc) else ""
+
+
+def osm_link(loc: dict) -> str:
+    return f"https://www.openstreetmap.org/?mlat={loc['lat']}&mlon={loc['lng']}#map=17/{loc['lat']}/{loc['lng']}"
 
 
 def distance(a: dict, b: dict) -> float:
@@ -144,22 +150,20 @@ def nice_distance(m: float, miles: bool = False) -> str:
 
 
 def placed(loc: dict | None) -> bool:
-    return bool(loc and loc.get("words") and loc.get("lat") is not None and loc.get("lng") is not None)
+    return bool(loc and loc.get("lat") is not None and loc.get("lng") is not None)
 
 
 def day_stops(items: list[dict], d: str) -> dict:
     """The Map view's day, as the web page has it: {stops: [{item, n, from}], unplaced, elsewhere}."""
     evs = sorted([it for it in items if it["meta"].get("event") and on_day(it["meta"]["event"], d)], key=by_start)
-    stops, unplaced, elsewhere, prev = [], [], 0, None
+    stops, unplaced, elsewhere, prev = [], [], [], None
     for it in evs:
         loc = it["meta"].get("location")
-        if not (loc and loc.get("words")):
-            elsewhere += 1
-        elif not placed(loc):
-            unplaced.append(it)
-        else:
+        if placed(loc):
             stops.append({"item": it, "n": len(stops) + 1, "from": distance(prev, loc) if prev else None})
             prev = loc
+        else:
+            (unplaced if loc and loc.get("place") else elsewhere).append(it)
     return {"stops": stops, "unplaced": unplaced, "elsewhere": elsewhere}
 
 
@@ -216,10 +220,15 @@ def text_map(stops: list[dict], sel: str | None = None, width: int = 60, height:
 
 
 def parse_quick(text: str) -> tuple[str, dict]:
-    """"Call Sam #family +home !2 ^fri @3pm ///filled.count.soap" → ("Call Sam", {tags, collection, priority, date, time, location})."""
+    """"Lunch #family +home !2 ^fri @1pm ~ Ferry Building" → ("Lunch", {tags, collection, priority, date, time, place}).
+    After "~", plain words are the place."""
     f: dict = {}
-    tags, words = [], []
+    tags, words, place, at = [], [], [], False
     for w in str(text).split():
+        if not at and w[0] == "~":
+            at, w = True, w[1:]
+            if not w:
+                continue
         if len(w) > 1 and w[0] == "#":
             tags.append(w[1:].lower())
         elif len(w) > 1 and w[0] == "+":
@@ -230,12 +239,12 @@ def parse_quick(text: str) -> tuple[str, dict]:
             f["date"] = parse_date(w[1:])
         elif len(w) > 1 and w[0] == "@" and parse_time(w[1:]):
             f["time"] = parse_time(w[1:])
-        elif w.startswith("///") and parse_words(w):
-            f["location"] = parse_words(w)
         else:
-            words.append(w)
+            (place if at else words).append(w)
     if tags:
         f["tags"] = tags
+    if place:
+        f["place"] = " ".join(place)
     return " ".join(words), f
 
 
@@ -433,6 +442,6 @@ def fresh_meta(plugins: list[str], quick: dict, *, dated_view: bool = False, day
         meta["list"] = {"order": time.time(), "parent": None}
     if "graph" in plugins:
         meta["graph"] = {"links": [], "x": None, "y": None}
-    if "location" in plugins and quick.get("location"):
-        meta["location"] = {"words": quick["location"], "lat": None, "lng": None, "place": ""}
+    if "location" in plugins and quick.get("place"):
+        meta["location"] = {"place": quick["place"], "lat": None, "lng": None}
     return meta

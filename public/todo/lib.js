@@ -39,32 +39,37 @@ export function parseTime(s) {
   return `${String(h).padStart(2, "0")}:${String(min).padStart(2, "0")}`;
 }
 
-// ── places: a what3words address is three words joined by dots ("filled.count.soap").
-// Takes it as people paste it: "///filled.count.soap", "filled count soap" or a
-// what3words.com / w3w.co link. Gives the bare lowercase words, or null.
-const W3W = /^\p{L}[\p{L}\p{M}]*\.\p{L}[\p{L}\p{M}]*\.\p{L}[\p{L}\p{M}]*$/u;
-export function parseWords(s) {
-  let w = String(s ?? "").trim().toLowerCase();
-  const link = w.match(/^(?:https?:\/\/)?(?:www\.)?(?:what3words\.com|w3w\.co)\/([^?#\s]+)/);
-  if (link) { try { w = decodeURIComponent(link[1]); } catch { return null; } }
-  w = w.replace(/^\/+/, "").replace(/[\s｡。・]+/g, ".");
-  return w.length <= 100 && W3W.test(w) ? w : null;
+// ── places ───────────────────────────────────────
+// Coordinates as people paste them: "37.80, -122.27", or a map link with them
+// in it (OpenStreetMap's mlat=…&mlon=… or #map=z/lat/lng, Google's @lat,lng or
+// q=lat,lng, a geo: link). Gives {lat, lng}, or null.
+export function parseCoords(s) {
+  const t = String(s ?? "").trim();
+  const ok = (a, b) => { const lat = +a, lng = +b; return Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180 ? { lat, lng } : null; };
+  const num = "(-?\\d{1,3}(?:\\.\\d+)?)";
+  let m = t.match(new RegExp(`^${num}\\s*[,\\s]\\s*${num}$`));
+  if (m) return ok(m[1], m[2]);
+  m = t.match(/[?&]mlat=(-?[\d.]+)&mlon=(-?[\d.]+)/) || t.match(/#map=\d+\/(-?[\d.]+)\/(-?[\d.]+)/)
+    || t.match(/@(-?[\d.]+),(-?[\d.]+)/) || t.match(/[?&](?:q|query|ll)=(-?[\d.]+)(?:,|%2C)(-?[\d.]+)/i) || t.match(/^geo:(-?[\d.]+),(-?[\d.]+)/i);
+  return m ? ok(m[1], m[2]) : null;
 }
 
-// Quick-add: "Call Sam #family +home !2 ^fri @3pm ///filled.count.soap"
-//   #tag   +collection   !1..!3 priority   ^date   @time   ///what3words
+// Quick-add: "Lunch #family +home !2 ^fri @1pm ~ Blue Bottle, Oakland"
+//   #tag   +collection   !1..!3 priority   ^date   @time   ~ place (the rest of the line)
 export function parseQuick(text) {
-  const f = {}, tags = [], words = [];
-  for (const w of String(text).split(/\s+/).filter(Boolean)) {
+  const f = {}, tags = [], words = [], place = [];
+  let at = false;                                   // after "~": plain words are the place
+  for (let w of String(text).split(/\s+/).filter(Boolean)) {
+    if (!at && w[0] === "~") { at = true; w = w.slice(1); if (!w) continue; }
     if (w.length > 1 && w[0] === "#") tags.push(w.slice(1).toLowerCase());
     else if (w.length > 1 && w[0] === "+") f.collection = w.slice(1);
     else if (/^(!{1,3}|![0-3])$/.test(w)) f.priority = /\d/.test(w[1]) ? +w[1] : w.length;
     else if (w.length > 1 && w[0] === "^" && parseDate(w.slice(1))) f.date = parseDate(w.slice(1));
     else if (w.length > 1 && w[0] === "@" && parseTime(w.slice(1))) f.time = parseTime(w.slice(1));
-    else if (w.startsWith("///") && parseWords(w)) f.location = parseWords(w);
-    else words.push(w);
+    else (at ? place : words).push(w);
   }
   if (tags.length) f.tags = tags;
+  if (place.length) f.place = place.join(" ");
   return [words.join(" "), f];
 }
 

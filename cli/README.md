@@ -72,14 +72,14 @@ The public `/books/` page, where the book club picks its next book: each book wi
 
 ## Drift
 
-Your collections down the left (`tab` to move between them, the composer and the items), with Today and Calendar on top. Calendar shows the picked day by the hour, under a "No set time" list for items with a date but no time. A collection shows its plugins' views: Checklist, Calendar and List, Graph as a list of links with their types and each item's kind, and Map: the picked day's events that have a what3words place, drawn on a map in characters, numbered and joined in the order they happen, with the distance from each to the one before. Moving to one centres the map on it and names it under the map; `o` opens it on what3words.com. Changes made in the browser or by people you share with show up within a few seconds.
+Your collections down the left (`tab` to move between them, the composer and the items), with Today and Calendar on top. Calendar shows the picked day by the hour, under a "No set time" list for items with a date but no time. A collection shows its plugins' views: Checklist, Calendar and List, Graph as a list of links with their types and each item's kind, and Map: the picked day's events that have a place, drawn on a map in characters, numbered and joined in the order they happen, with the distance from each to the one before, then the day's events with no place. Moving to one centres the map on it and names it under the map; `o` opens it in OpenStreetMap. Changes made in the browser or by people you share with show up within a few seconds.
 
-The composer takes the same quick-add as the web page: `Call Sam #family +home !2 ^fri @3pm ///filled.count.soap`.
+The composer takes the same quick-add as the web page: `Lunch #family +home !2 ^fri @1pm ~ Ferry Building, San Francisco` (after `~`, the place).
 
 | Key (on the items) | |
 |---|---|
 | `a` | add an item |
-| `enter` / `e` | edit it: title, notes, tags, collection, priority, date and time, place |
+| `enter` / `e` | edit it: title, notes, tags, collection, priority, date and time, place (an address, a place's name or coordinates; the site finds it) |
 | `x` / `space` | tick it off |
 | `0`–`3` | priority |
 | `t` | date it today |
@@ -88,7 +88,7 @@ The composer takes the same quick-add as the web page: `Call Sam #family +home !
 | `h` | show or hide done items |
 | `>` `<` `K` `J` | List: nest, unnest, move up, move down |
 | `[` `]` `{` `}` `.` | Calendar: day, month, today (Map: `[` `]` `.`) |
-| `o` | open the item's place on what3words.com |
+| `o` | open the item's place in OpenStreetMap |
 | `/` | search |
 | `c` | the collection's plugins and sharing (or leave one shared with you) |
 | `N` | new collection |

@@ -18,6 +18,7 @@
 // /books/api is the public book suggestions page's votes (src/books.js); anyone
 // can use it, signed in or not.
 import { plugins, installed, install, uninstall, PLUGIN_ID, SANDBOX_CSP } from "./store.js";
+import { hasPlaces, searchPlaces, nameOf } from "./places.js";
 import { protect, handleAuth, AUTH_PATHS, sameOrigin } from "./account.js";
 import { currentSession, areaOf } from "./auth.js";
 import { handleCli, CLI_PATHS } from "./cli.js";
@@ -32,7 +33,7 @@ import { state, version, createItem, updateItem, createCollection, updateCollect
 
 // /todo/api/state, /todo/api/version, /todo/api/items[/<id>],
 // /todo/api/collections[/<id>[/shares[/<username>]]]
-const API = /^\/todo\/api\/(state|version|items|collections|installs)(?:\/([^/]+)(?:\/(shares)(?:\/([^/]+))?)?)?\/?$/;
+const API = /^\/todo\/api\/(state|version|items|collections|installs|places)(?:\/([^/]+)(?:\/(shares)(?:\/([^/]+))?)?)?\/?$/;
 const USERNAME = /^[a-z0-9_.-]{1,64}$/;
 
 export default {
@@ -118,6 +119,24 @@ async function todo(request, env, user, pathname) {
     if (kind === "state") return method === "GET" && !id ? json(await state(env, user)) : json({ error: "not found" }, 404);
     // GET → a fingerprint that changes whenever any of the user's data does
     if (kind === "version") return method === "GET" && !id ? json({ version: await version(env, user.id) }) : json({ error: "not found" }, 404);
+
+    // GET places?q=…[&near=lat,lng] → {results: [{place, lat, lng}]}, places matching q (Locations' search)
+    // GET places?lat=…&lng=…        → {place}, the name of that spot
+    // {off: true} when the site has no OpenRouteService key.
+    if (kind === "places") {
+      if (method !== "GET" || id) return json({ error: "not found" }, 404);
+      if (!hasPlaces(env)) return json({ off: true, results: [], place: "" });
+      const q = new URL(request.url).searchParams, num = k => Number(q.get(k));
+      if (q.has("lat")) {
+        const lat = num("lat"), lng = num("lng");
+        if (!(Math.abs(lat) <= 90 && Math.abs(lng) <= 180)) return json({ error: "lat and lng must be coordinates" }, 400);
+        const place = await nameOf(env, lat, lng);
+        return place === null ? json({ error: "couldn’t reach the map service" }, 502) : json({ place });
+      }
+      const [lat, lng] = String(q.get("near") || "").split(",").map(Number);
+      const results = await searchPlaces(env, q.get("q"), Math.abs(lat) <= 90 && Math.abs(lng) <= 180 ? { lat, lng } : null);
+      return results === null ? json({ error: "couldn’t reach the map service" }, 502) : json({ results });
+    }
 
     // GET    installs       → the ids of the store plugins you've added to Drift
     // POST   installs/<id>  → add an approved store plugin

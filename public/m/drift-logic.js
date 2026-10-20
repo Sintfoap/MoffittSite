@@ -3,11 +3,11 @@
 // it. The rules themselves are Drift's own (public/todo/lib.js and plugins/),
 // the same ones the web page and the terminal use.
 
-import { today, addDays, dayOf, timeOf, niceDay, niceTime, parseDate, parseTime, parseWords } from "../todo/lib.js";
+import { today, addDays, dayOf, timeOf, niceDay, niceTime, parseDate, parseTime, parseCoords } from "../todo/lib.js";
 import { PLUGINS, BY_ID } from "../todo/plugins/index.js";
-import { dayStops, niceDistance, w3wLink } from "../todo/plugins/location.js";
+import { dayStops, niceDistance, placeLabel, osmLink } from "../todo/plugins/location.js";
 
-export { PLUGINS, BY_ID, dayStops, niceDistance, w3wLink };
+export { PLUGINS, BY_ID, dayStops, niceDistance, placeLabel, osmLink };
 
 // Drift's own plugins that bring a view, in the order the web page shows them.
 export const VIEW_LABELS = { checklist: "Checklist", event: "Calendar", list: "List", graph: "Graph", location: "Map" };
@@ -186,12 +186,12 @@ export function itemChanges(it, f, { hasCheck, hasEvent, hasPlace = false }) {
     }
   }
   if (hasPlace) {
-    const old = m.location, raw = String(f.words || "").trim();
-    if (!raw) { if (old?.words) meta.location = null; }
-    else {
-      const words = parseWords(raw);
-      if (!words) return { error: `“${raw}” isn't a what3words address. It's three words with dots, like ///filled.count.soap.` };
-      if (old?.words !== words) meta.location = { words, lat: null, lng: null, place: "" };
+    // A place typed here is looked up by the site when it's saved; coordinates are kept as they are.
+    const old = m.location, raw = String(f.place || "").trim().replace(/\s+/g, " ");
+    if (!raw) { if (old && placeLabel(old)) meta.location = null; }
+    else if (!old || raw !== placeLabel(old)) {
+      const at = parseCoords(raw);
+      meta.location = at ? { place: "", ...at } : { place: raw, lat: null, lng: null };
     }
   }
   if (Object.keys(meta).length) out.meta = meta;

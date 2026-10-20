@@ -15,6 +15,8 @@
 //   chips(item, ctx)        optional: HTML snippets shown under an item's title
 //   editor(item, ctx)       HTML inputs for the item dialog; read(fields, item) turns
 //                           those inputs back into meta (null removes it)
+//   mountEditor(fs, item, ctx)  optional: wires up the editor's fieldset once it's drawn
+//                           (for more than plain inputs, like a search box)
 //   actions                 optional: { name(item, ctx, el) } for data-act="<id>:<name>"
 //   keys                    optional: { key(item, ctx) } for the selected item
 //   view                    optional: a whole view of the items, either

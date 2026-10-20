@@ -1,28 +1,30 @@
-// Tests for Drift's Locations plugin: what3words addresses on items, placed on
-// the map by the site (src/w3w.js), and the day's stops the Map view shows.
+// Tests for Drift's Locations plugin: places found through OpenRouteService
+// (src/places.js), coordinates named, and the day's stops the Map view shows.
 // Run with:  node --no-warnings --test tests/*.test.mjs
 import { test, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { Browser, makeEnv } from "./helpers.mjs";
-import { parseWords, parseQuick } from "../public/todo/lib.js";
-import { dayStops, distance, niceDistance } from "../public/todo/plugins/location.js";
+import { parseCoords, parseQuick } from "../public/todo/lib.js";
+import { dayStops, distance, niceDistance, centre } from "../public/todo/plugins/location.js";
 
-const PLACES = {
-  "filled.count.soap": { lat: 51.520847, lng: -0.195521, nearestPlace: "Bayswater, London" },
-  "index.home.raft": { lat: 51.521251, lng: -0.203586, nearestPlace: "Bayswater, London" },
-};
+const FERRY = { label: "Ferry Building, San Francisco, CA, USA", lat: 37.7955, lng: -122.3937 };
+const TOWER = { label: "Coit Tower, San Francisco, CA, USA", lat: 37.8024, lng: -122.4058 };
+const feature = p => ({ type: "Feature", geometry: { type: "Point", coordinates: [p.lng, p.lat] }, properties: { label: p.label } });
 let asked, realFetch, down;
 beforeEach(() => {
   asked = []; down = false; realFetch = globalThis.fetch;
-  globalThis.fetch = async input => {
+  globalThis.fetch = async (input, init) => {
     const url = new URL(input instanceof Request ? input.url : String(input));
-    if (url.hostname !== "api.what3words.com") return new Response("not found", { status: 404 });
+    if (url.hostname !== "api.openrouteservice.org") return new Response("not found", { status: 404 });
     asked.push(url);
     if (down) throw new TypeError("fetch failed");
-    if (url.searchParams.get("key") !== "w3w-key") return Response.json({ error: { code: "InvalidKey", message: "nope" } }, { status: 401 });
-    const p = PLACES[url.searchParams.get("words")];
-    if (!p) return Response.json({ error: { code: "BadWords", message: "not an address" } }, { status: 400 });
-    return Response.json({ coordinates: { lat: p.lat, lng: p.lng }, nearestPlace: p.nearestPlace, words: url.searchParams.get("words") });
+    if (new Headers(init?.headers).get("Authorization") !== "ors-key") return Response.json({ error: "Access to this API has been disallowed" }, { status: 403 });
+    if (url.pathname === "/geocode/search") {
+      const q = url.searchParams.get("text").toLowerCase();
+      return Response.json({ features: [FERRY, TOWER].filter(p => p.label.toLowerCase().includes(q) || q === "sf").map(feature) });
+    }
+    if (url.pathname === "/geocode/reverse") return Response.json({ features: [feature({ ...FERRY, lat: +url.searchParams.get("point.lat"), lng: +url.searchParams.get("point.lon") })] });
+    return new Response("not found", { status: 404 });
   };
 });
 afterEach(() => { globalThis.fetch = realFetch; });
@@ -35,79 +37,89 @@ async function signedIn(env) {
 const api = (b, method, path, json) => b.req(method, "/todo/api/" + path, json === undefined ? {} : { json });
 const inbox = async b => (await api(b, "GET", "state")).json.collections[0];
 
-test("what3words addresses are read however they're pasted", () => {
-  assert.equal(parseWords("///Filled.Count.Soap"), "filled.count.soap");
-  assert.equal(parseWords("filled count soap"), "filled.count.soap");
-  assert.equal(parseWords("https://what3words.com/filled.count.soap"), "filled.count.soap");
-  assert.equal(parseWords("w3w.co/index.home.raft?x=1"), "index.home.raft");
-  for (const bad of ["", "///", "two.words", "four.words.in.here", "with.num3.bers", "a..b"]) assert.equal(parseWords(bad), null, bad);
-  assert.deepEqual(parseQuick("Lunch ///filled.count.soap @1pm"), ["Lunch", { location: "filled.count.soap", time: "13:00" }]);
-  assert.deepEqual(parseQuick("Read ///not-words"), ["Read ///not-words", {}], "anything else stays in the title");
+test("coordinates and places are read however they're typed", () => {
+  assert.deepEqual(parseCoords("37.7955, -122.3937"), { lat: 37.7955, lng: -122.3937 });
+  assert.deepEqual(parseCoords("https://www.openstreetmap.org/?mlat=51.5&mlon=-0.12#map=17/51.5/-0.12"), { lat: 51.5, lng: -0.12 });
+  assert.deepEqual(parseCoords("https://www.google.com/maps/@37.80,-122.27,15z"), { lat: 37.8, lng: -122.27 });
+  assert.deepEqual(parseCoords("geo:1.5,2.5"), { lat: 1.5, lng: 2.5 });
+  for (const no of ["91, 0", "Ferry Building", "", "1,2,3"]) assert.equal(parseCoords(no), null, no);
+  assert.deepEqual(parseQuick("Lunch #food ~ Ferry Building, SF @1pm"), ["Lunch", { tags: ["food"], time: "13:00", place: "Ferry Building, SF" }]);
+  assert.deepEqual(parseQuick("Read ~"), ["Read", {}]);
 });
 
-test("the site places words on the map when they're saved, and only asks once", async () => {
-  const b = await signedIn(makeEnv({ W3W_API_KEY: "w3w-key" }));
-  const col = await inbox(b);
-  const made = await api(b, "POST", "items", { title: "Lunch", collection: col.id, meta: { location: { words: "///Filled.Count.Soap" } } });
-  assert.equal(made.status, 201);
-  assert.deepEqual(made.json.meta.location, { words: "filled.count.soap", lat: 51.520847, lng: -0.195521, place: "Bayswater, London" });
-  assert.equal(asked.length, 1);
+test("the site searches for places, near the ones you have, and names a spot", async () => {
+  const b = await signedIn(makeEnv({ ORS_API_KEY: "ors-key" }));
+  const r = await api(b, "GET", "places?q=ferry&near=37.8,-122.4");
+  assert.deepEqual(r.json, { results: [{ place: FERRY.label, lat: FERRY.lat, lng: FERRY.lng }] });
+  assert.equal(asked[0].searchParams.get("focus.point.lat"), "37.8");
+  assert.deepEqual((await api(b, "GET", "places?lat=37.7955&lng=-122.3937")).json, { place: FERRY.label });
+  assert.equal((await api(b, "GET", "places?lat=95&lng=0")).status, 400);
+  assert.equal((await api(b, "POST", "places?q=x", {})).status, 404);
+  down = true;
+  assert.equal((await api(b, "GET", "places?q=ferry")).status, 502);
 
-  // Sending the same words again (with someone's own idea of where they are) keeps the site's place, without asking.
-  const same = await api(b, "PATCH", `items/${made.json.id}`, { meta: { location: { words: "filled.count.soap", lat: 1, lng: 2 } } });
+  const off = await signedIn(makeEnv());
+  assert.deepEqual((await api(off, "GET", "places?q=ferry")).json, { off: true, results: [], place: "" });
+  assert.equal((await new Browser(makeEnv()).req("GET", "/todo/api/places?q=x")).status, 401, "signed out");
+});
+
+test("a typed place is found when it's saved, once; a pin gets its name", async () => {
+  const b = await signedIn(makeEnv({ ORS_API_KEY: "ors-key" }));
+  const col = await inbox(b);
+  const made = await api(b, "POST", "items", { title: "Lunch", collection: col.id, meta: { location: { place: "  ferry  building " } } });
+  assert.equal(made.status, 201);
+  assert.deepEqual(made.json.meta.location, { place: FERRY.label, lat: FERRY.lat, lng: FERRY.lng });
+  assert.equal(asked.length, 1);
+  // Sent again as found: kept, nothing asked.
+  const same = await api(b, "PATCH", `items/${made.json.id}`, { meta: { location: { place: FERRY.label } } });
   assert.deepEqual(same.json.meta.location, made.json.meta.location);
   assert.equal(asked.length, 1);
 
-  const moved = await api(b, "PATCH", `items/${made.json.id}`, { meta: { location: { words: "index.home.raft" } } });
-  assert.equal(moved.json.meta.location.lng, -0.203586);
-  assert.equal(asked.length, 2);
+  const pinned = await api(b, "PATCH", `items/${made.json.id}`, { meta: { location: { place: "", lat: 37.8, lng: -122.41 } } });
+  assert.deepEqual(pinned.json.meta.location, { place: FERRY.label, lat: 37.8, lng: -122.41 });
+  assert.equal(asked.at(-1).pathname, "/geocode/reverse");
+  // Picked from the search: saved as is.
+  const n = asked.length;
+  const picked = await api(b, "PATCH", `items/${made.json.id}`, { meta: { location: { place: TOWER.label, lat: TOWER.lat, lng: TOWER.lng } } });
+  assert.equal(picked.json.meta.location.lat, TOWER.lat);
+  assert.equal(asked.length, n);
 
-  const bad = await api(b, "PATCH", `items/${made.json.id}`, { meta: { location: { words: "not.a.place" } } });
-  assert.equal(bad.status, 400);
-  assert.match(bad.json.error, /doesn’t know \/\/\/not\.a\.place/);
-  assert.equal((await api(b, "PATCH", `items/${made.json.id}`, { meta: { location: { words: "two.words" } } })).status, 400);
+  const lost = await api(b, "PATCH", `items/${made.json.id}`, { meta: { location: { place: "Atlantis" } } });
+  assert.equal(lost.status, 400);
+  assert.match(lost.json.error, /couldn’t find “Atlantis”/);
 
-  // No words yet is allowed (the item dialog's "Add"); nothing is asked.
   const blank = await api(b, "PATCH", `items/${made.json.id}`, { meta: { location: {} } });
-  assert.deepEqual(blank.json.meta.location, { words: "", lat: null, lng: null, place: "" });
-  assert.equal(asked.length, 3);
+  assert.deepEqual(blank.json.meta.location, { place: "", lat: null, lng: null });
 });
 
-test("when what3words can't be reached the words are kept, and placed on a later save", async () => {
-  const b = await signedIn(makeEnv({ W3W_API_KEY: "w3w-key" }));
-  const col = await inbox(b);
-  down = true;
-  const made = await api(b, "POST", "items", { title: "Lunch", collection: col.id, meta: { location: { words: "filled.count.soap" } } });
-  assert.equal(made.status, 201);
-  assert.deepEqual(made.json.meta.location, { words: "filled.count.soap", lat: null, lng: null, place: "" });
+test("without a key, or when the service is down, places are kept as typed", async () => {
+  for (const env of [makeEnv(), makeEnv({ ORS_API_KEY: "ors-key" })]) {
+    down = Boolean(env.ORS_API_KEY);
+    const b = await signedIn(env);
+    const col = await inbox(b);
+    const made = await api(b, "POST", "items", { title: "Lunch", collection: col.id, meta: { location: { place: "Ferry Building" } } });
+    assert.deepEqual(made.json.meta.location, { place: "Ferry Building", lat: null, lng: null });
+    const pinned = await api(b, "POST", "items", { title: "Tea", collection: col.id, meta: { location: { lat: 37.8, lng: -122.4 } } });
+    assert.deepEqual(pinned.json.meta.location, { place: "", lat: 37.8, lng: -122.4 });
+  }
   down = false;
-  const again = await api(b, "PATCH", `items/${made.json.id}`, { meta: { location: made.json.meta.location } });
-  assert.equal(again.json.meta.location.lat, 51.520847);
-});
-
-test("without a key, items keep their words and whatever place was sent", async () => {
   const b = await signedIn(makeEnv());
   const col = await inbox(b);
-  const made = await api(b, "POST", "items", { title: "Lunch", collection: col.id, meta: { location: { words: "filled.count.soap" } } });
-  assert.deepEqual(made.json.meta.location, { words: "filled.count.soap", lat: null, lng: null, place: "" });
-  const given = await api(b, "POST", "items", { title: "Tea", collection: col.id, meta: { location: { words: "index.home.raft", lat: 51.5, lng: -0.2 } } });
-  assert.deepEqual(given.json.meta.location, { words: "index.home.raft", lat: 51.5, lng: -0.2, place: "" });
-  assert.equal(asked.length, 0);
-  for (const location of [{ words: "a.b.c", lat: 91, lng: 0 }, { words: "a.b.c", lat: 1 }, { words: "a.b.c", place: "x".repeat(121) }, "a.b.c"])
+  for (const location of [{ lat: 91, lng: 0 }, { lat: 1 }, { place: "x".repeat(201) }, "Ferry Building"])
     assert.equal((await api(b, "POST", "items", { title: "x", collection: col.id, meta: { location } })).status, 400, JSON.stringify(location));
 });
 
 test("the map shows the day's events with a place, in order, with the distance from the stop before", () => {
   const at = (id, start, location, end = null) => ({ id, title: id, meta: { event: { start, end }, ...(location ? { location } : {}) } });
-  const a = { words: "filled.count.soap", lat: 51.520847, lng: -0.195521, place: "" };
-  const b = { words: "index.home.raft", lat: 51.521251, lng: -0.203586, place: "" };
+  const a = { place: "A", lat: 51.520847, lng: -0.195521 };
+  const b = { place: "", lat: 51.521251, lng: -0.203586 };
   const items = [
     at("tea", "2026-10-20T15:00", b),
     at("lunch", "2026-10-20T12:00", a),
     at("allday", "2026-10-20", a),
-    at("unplaced", "2026-10-20T09:00", { words: "x.y.z", lat: null, lng: null, place: "" }),
+    at("lost", "2026-10-20T09:00", { place: "Atlantis", lat: null, lng: null }),
     at("nowhere", "2026-10-20T10:00", null),
-    at("blank", "2026-10-20T11:00", { words: "", lat: null, lng: null, place: "" }),
+    at("blank", "2026-10-20T11:00", { place: "", lat: null, lng: null }),
     at("trip", "2026-10-19", b, "2026-10-21"),
     at("tomorrow", "2026-10-21T12:00", a),
     { id: "undated", title: "undated", meta: { location: a } },
@@ -118,8 +130,11 @@ test("the map shows the day's events with a place, in order, with the distance f
   assert.equal(Math.round(stops[1].from), 560);
   assert.equal(stops[2].from, 0);
   assert.equal(stops[3].from, distance(a, b));
-  assert.deepEqual(unplaced.map(it => it.id), ["unplaced"]);
-  assert.equal(elsewhere, 2);
+  assert.deepEqual(unplaced.map(it => it.id), ["lost"]);
+  assert.deepEqual(elsewhere.map(it => it.id), ["nowhere", "blank"]);
+  const mid = centre([at("x", "2026-10-20", a), at("y", "2026-10-20", { ...a, lat: 51.521847 }), at("z", "2026-10-20", null)]);
+  assert.ok(Math.abs(mid.lat - 51.521347) < 1e-9 && mid.lng === -0.195521);
+  assert.equal(centre([]), null);
   assert.equal(niceDistance(560), "560 m");
   assert.equal(niceDistance(1234), "1.2 km");
   assert.equal(niceDistance(25000), "25 km");

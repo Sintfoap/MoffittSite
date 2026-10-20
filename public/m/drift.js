@@ -59,7 +59,7 @@ function row(it, { depth = 0, showCol = false, skipEvent = false, time = "", lin
   if (ev && !skipEvent) chips.push(`<span class="chip ${L.isLate(it) ? "bad" : dayOf(ev.start) === today() ? "gold" : ""}">${icon("cal", 12)}${esc(L.whenChip(ev))}</span>`);
   if (showCol && col(it.collection)) chips.push(`<span class="chip col">${esc(col(it.collection).name)}</span>`);
   for (const g of it.tags || []) chips.push(`<span class="chip tag">#${esc(g)}</span>`);
-  if (it.meta.location?.words) chips.push(`<span class="chip bad">${icon("pin", 12)}///${esc(it.meta.location.words)}</span>`);
+  if (it.meta.location && L.placeLabel(it.meta.location)) chips.push(`<span class="chip ${it.meta.location.lat != null ? "gold" : ""}">${icon("pin", 12)}${esc(L.placeLabel(it.meta.location))}</span>`);
   if (it.notes) chips.push(`<span class="chip">${icon("note", 12)}</span>`);
   return `<li class="item p${pri}${done ? " done" : ""}" data-id="${esc(it.id)}" style="--depth:${depth}">
     ${ck ? `<button class="check" data-toggle aria-label="${done ? "Mark not done" : "Mark done"}">${icon("check", 16)}</button>` : `<span class="dot" aria-hidden="true"></span>`}
@@ -203,14 +203,14 @@ function places(items, c) {
   const miles = /^en-(US|LR|MM)$/i.test(navigator.language || "");
   let html = weekStrip(items) + `<section class="group"><h2 class="label">${esc(niceDay(ui.day))}${stops.length ? `<small>${stops.length}</small>` : ""}</h2>`;
   if (!stops.length) html += `<p class="hint">${!c.plugins.includes("event") ? "Turn on Events in this collection's settings too, so items have a day to be on the map."
-    : "Nothing with a place on this day. Give an event a what3words address, or add one with ///three.word.address."}</p>`;
+    : "Nothing with a place on this day. Give an event a place, or add one with ~ and its name."}</p>`;
   html += `<ul class="items stops">${stops.map(({ item: it, n, from }) => {
     const m = it.meta.location;
     return row(it, { skipEvent: true, time: `${n} · ${L.timeRange(it.meta.event)}${from != null ? ` · ${L.niceDistance(from, miles)} from ${n - 1}` : ""}`,
-      links: m.place || "" }).replace("</li>", `<a class="go" href="https://www.google.com/maps/dir/?api=1&amp;destination=${m.lat},${m.lng}" target="_blank" rel="noopener">Directions</a></li>`);
+    }).replace("</li>", `<a class="go" href="https://www.google.com/maps/dir/?api=1&amp;destination=${m.lat},${m.lng}" target="_blank" rel="noopener">Directions</a></li>`);
   }).join("")}</ul>`;
-  if (unplaced.length) html += `<p class="hint">Not on the map yet: ${unplaced.map(it => esc(it.title)).join(", ")}. The site places them when it has a what3words key.</p>`;
-  if (elsewhere) html += `<p class="hint">${plural(elsewhere, "more item")} on this day with no place.</p>`;
+  if (unplaced.length) html += `<p class="hint">Not found on the map yet: ${unplaced.map(it => esc(it.title)).join(", ")}. Open one to search again, or pin it on the full site.</p>`;
+  if (elsewhere.length) html += `<p class="hint">${plural(elsewhere.length, "more item")} on this day with no place.</p>`;
   return html + `<p class="hint"><a href="/todo/">See the map on the full site</a></p></section>`;
 }
 
@@ -301,8 +301,9 @@ function itemSheet(it) {
       <label>Date<input type="date" name="day" value="${esc(dayOf(ev?.start))}" ${ro ? "disabled" : ""}></label>
       <label>Time<input type="time" name="time" value="${esc(timeOf(ev?.start))}" ${ro ? "disabled" : ""}></label></div>
       ${ro ? "" : `<div class="quick"><button type="button" class="pill" data-date="${today()}">Today</button><button type="button" class="pill" data-date="${addDays(1)}">Tomorrow</button><button type="button" class="pill" data-date="${addDays(7)}">In a week</button><button type="button" class="pill" data-date="">No date</button></div>`}` : ""}
-    ${hasPlace ? `<label>Place (what3words)<input name="words" value="${m.location?.words ? "///" + esc(m.location.words) : ""}" placeholder="///filled.count.soap" autocapitalize="none" autocomplete="off" spellcheck="false" ${ro ? "disabled" : ""}></label>
-      ${m.location?.lat != null ? `<p class="hint">${m.location.place ? esc(m.location.place) + " · " : ""}<a href="${esc(L.w3wLink(m.location.words))}" target="_blank" rel="noopener">See it on what3words</a></p>` : ""}` : ""}
+    ${hasPlace ? `<label>Place<input name="place" value="${m.location ? esc(L.placeLabel(m.location)) : ""}" placeholder="An address, a place's name, or lat, lng" autocomplete="off" ${ro ? "disabled" : ""}></label>
+      <p class="hint">${m.location?.lat != null ? `<a href="${esc(L.osmLink(m.location))}" target="_blank" rel="noopener">See it on OpenStreetMap</a>`
+        : m.location?.place ? "Not found on the map yet." : "The site finds it on the map when you save."}</p>` : ""}
     <div class="pair">
       <label>Tags<input name="tags" value="${esc((it.tags || []).join(" "))}" placeholder="Separate with spaces" autocapitalize="none" ${ro ? "disabled" : ""}></label>
       <label>Collection<select name="collection" ${ro ? "disabled" : ""}>${moveTo.map(x => `<option value="${esc(x.id)}" ${x.id === it.collection ? "selected" : ""}>${esc(x.name)}</option>`).join("")}</select></label>
@@ -342,7 +343,7 @@ function itemSheet(it) {
     const fd = new FormData(f);
     const out = L.itemChanges(it, {
       title: fd.get("title"), notes: fd.get("notes"), tags: fd.get("tags"), collection: fd.get("collection"),
-      onList: !!fd.get("onList"), done: !!fd.get("done"), priority: fd.get("priority"), day: fd.get("day"), time: fd.get("time"), words: fd.get("words"),
+      onList: !!fd.get("onList"), done: !!fd.get("done"), priority: fd.get("priority"), day: fd.get("day"), time: fd.get("time"), place: fd.get("place"),
     }, { hasCheck, hasEvent, hasPlace });
     if (out.error) { e.preventDefault(); f.querySelector(".err").textContent = out.error; return; }
     if (Object.keys(out).length) patch(it, out);
@@ -352,7 +353,7 @@ function itemSheet(it) {
 /* ── collections ────────────────────────────────── */
 const BUILT_IN = [["checklist", "Checklist", "Tick items off, with a priority"], ["event", "Events", "Dates and times, on a calendar"],
   ["list", "List", "Your own order, nested as an outline"], ["graph", "Graph", "Link items to each other"],
-  ["location", "Locations", "Places as what3words, on a map of the day"]];
+  ["location", "Locations", "Places on a map of the day"]];
 
 function collectionSheet(c) {
   if (c && c.role !== "owner") {
