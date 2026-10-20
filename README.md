@@ -14,7 +14,7 @@ public/          the website, served as static files
     app.js           the page: collections, views, item dialog
     lib.js           dates and quick-add parsing
     plugin-host.js   runs store plugins in the sandbox and cleans what they draw
-    plugins/         Checklist, Events, List, Graph; one file each
+    plugins/         Checklist, Events, List, Graph, Locations, Weather; one file each
   plugins/         the plugin store page (signed-in Drift users)
   sandbox/         the frame store plugins run in
   chat/            chat rooms (signed-in Drift users); gifs.js is the GIF picker, emoji-picker.js the full reaction picker (emoji.js), e2ee.js encryption, carry.js its keys' copy for your other browsers
@@ -39,6 +39,7 @@ src/             the Worker: runs only for the paths in run_worker_first
   nav.js           the site's menu: one list, from APPS, that the rail and the terminal UI both use
   db.js            D1 tables (created on first use)
   drift.js         Drift storage: collections and items per account
+  weather.js       the forecast for Drift's Weather plugin: 16 days at a spot, from Open-Meteo
   store.js         the plugin store: drafts, review queue, approved plugins
   chat.js          chat: rooms, members, messages
   gifs.js          chat's GIF picker: search, trending and categories from GIPHY (or KLIPY), and favorites
@@ -156,6 +157,7 @@ Drift lives at `/todo/`. Everything in it is an **item**: a title, notes, tags a
 | List (`list`) | `{order, parent}` | an outline you reorder and nest |
 | Graph (`graph`) | `{links, rel?, kind?, x, y}`: linked item ids, an optional type per link (`{id: "depends on"}`, which makes it point one way), an optional kind for the item, and where you pinned it | a network you drag, pan and zoom; "Link items" links or unlinks two items, as a plain link or a typed arrow; kinds colour the nodes, and the legend hides kinds and link types |
 | Locations (`location`) | `{place, lat, lng}`: what the place is called and where it is. You search for it (the site looks it up), pin it on the map, or paste coordinates | a map of the chosen day's events that have a place, numbered and joined in the order they happen, with the distance from each to the one before; picking one in the list flies the map there, and the day's events with no place can be pinned. **Range** shows a stretch of days at once instead (see below) |
+| Weather (`weather`) | `{outdoor}`: whether it happens outdoors. Adding Weather to an item marks it outdoors; so does tagging a new one `#outdoor` (or `#outdoors`, `#outside`) | **Forecast**: the next 16 days, each with its weather and what's on it. With Weather on, the Calendar's days show their weather too, and an outdoor item on a wet day gets a warning (see below) |
 
 Each **collection** picks which plugins are on, and shows a tab for each one's view. One item can carry several plugins' metadata at once, so a dated checklist item is also on the calendar. **Today** and **Calendar** in the sidebar show events from every collection.
 
@@ -186,6 +188,12 @@ Each day starts and ends at a **base**, kept on the collection as `bases: [{plac
 3. Everything else is ordered by travel time. The five best orders are offered to cycle between (‹ ›), and a timed stop you'd likely reach late is flagged.
 
 Travel times come from OpenRouteService's matrix (one call), and the chosen order's streets from its directions (one call), for driving, walking or cycling; answers are cached for a day. Without the key, times are estimated from straight-line distance and the route is drawn straight.
+
+### Weather
+
+The forecast comes from [Open-Meteo](https://open-meteo.com) (no key needed), from the Worker: `GET /todo/api/weather?lat=…&lng=…` gives the next 16 days there (`{lat, lng, near, days: [{day, code, hi, lo, rain, precip}]}`: a WMO weather code, °C, the chance of rain in percent and mm of it), rounded to about a kilometre and cached by Cloudflare for half an hour (`src/weather.js`). Without `lat`, it's near where the request came from (Cloudflare's guess), with `near: true`; when that's unknown too, `days` is empty.
+
+An item's weather is for its place (Locations), else its collection's base for that day, else near you; a day on the Calendar uses the collection's base, else near you. A day is **wet** when rain is at least 50% likely, 2 mm or more is expected, or there are thunderstorms. Then an outdoor item that isn't ticked off gets a ☂ chip (on Today and in its collection too), the day's cell on the Calendar shows ☂ in red, and the day's view names the outdoor items it spoils. Temperatures are in °F in an American English browser (or terminal locale), °C otherwise. The rules are in `public/todo/plugins/weather.js`, and the terminal's copy in `cli/sintfoap/drift_rules.py`.
 
 ### Sharing
 

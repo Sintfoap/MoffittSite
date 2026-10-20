@@ -847,3 +847,66 @@ def test_drift_map_plans_a_route_from_the_base_and_sets_bases(real_site):
         assert [(b["from"], b["lat"]) for b in bases] == [(None, 51.5154), (R.today(), 51.5033)]
         assert "Base for Today" in text() and "51.50330, -0.11960" in text()
     run_app("drift", route)
+
+
+def test_weather_rules_read_like_the_web_page():
+    assert R.wet({"code": 3, "rain": 50, "precip": 0}) and R.wet({"code": 3, "rain": 10, "precip": 2.5}) and R.wet({"code": 95})
+    assert not R.wet({"code": 61, "rain": 30, "precip": 0.4}) and not R.wet(None)
+    assert R.sky(63) == ("Rain", "☂") and R.sky(0)[0] == "Clear" and R.sky(None) == ("", "·")
+    assert R.temp(21.4) == "21°" and R.temp(21.4, True) == "71°" and R.temp(None) == ""
+    assert R.why({"code": 63, "rain": 80}) == "Rain, 80% chance" and R.why({"code": 0, "rain": 0}) == "Clear"
+    assert R.fresh_meta(["weather"], {"tags": ["outside"]}) == {"weather": {"outdoor": True}}
+    assert R.fresh_meta(["weather"], {"tags": ["food"]}) == {} and R.fresh_meta([], {"tags": ["outdoor"]}) == {}
+    home = {"place": "Home", "lat": 51.5, "lng": -0.1, "from": None, "to": None}
+    it = {"meta": {"event": {"start": "2026-10-21", "end": None}, "weather": {"outdoor": True}}}
+    assert R.spot_for(it, "2026-10-21", {"bases": [home]}) is home and R.spot_for(it, "2026-10-21", None) is None
+    assert R.spot_key(home) == "51.50,-0.10" and R.spot_key(None) == "here"
+    fc = {"days": [{"day": "2026-10-21", "code": 63, "rain": 80, "precip": 5}]}
+    assert R.wet_on(it, "2026-10-21", fc) and not R.wet_on(it, "2026-10-22", fc)
+    assert not R.wet_on({"meta": {**it["meta"], "checklist": {"done": True}}}, "2026-10-21", fc), "done items aren't warned about"
+
+
+def test_drift_weather_warns_about_outdoor_items_on_wet_days(real_site):
+    col = site.drift_state()["collections"][0]
+    site.update_collection(col["id"], {"plugins": col["plugins"] + ["weather"]})
+    rainy = R.add_days(1)          # the stand-in forecast rains tomorrow (tests/devsite.mjs)
+    site.add_item({"title": "Picnic", "collection": col["id"], "meta": {"event": {"start": rainy + "T12:00", "end": None}, "weather": {"outdoor": True}}})
+    site.add_item({"title": "Cinema", "collection": col["id"], "meta": {"event": {"start": rainy + "T19:00", "end": None}, "weather": {"outdoor": False}}})
+
+    async def forecast(app, pilot):
+        page = app.screen
+        page.view = "c:" + col["id"]
+        page.tabs[col["id"]] = "weather"
+        page.render_all()
+        await settle(pilot, 0.8)
+        lst = page.query_one("#items")
+        text = "\n".join(str(lst.get_option_at_index(i).prompt) for i in range(lst.option_count))
+        assert "near you" in text and "TODAY" in text
+        assert "An outdoor item on a wet day" in text
+        assert text.index("An outdoor item") < text.index("Picnic") < text.index("Cinema")
+
+        # The calendar marks the wet day and names the item on it.
+        page.tabs[col["id"]] = "event"
+        page.day = rainy
+        page.render_all()
+        await settle(pilot, 0.5)
+        text = "\n".join(str(lst.get_option_at_index(i).prompt) for i in range(lst.option_count))
+        assert "☂" in text.split("\n")[0] or "☂" in text
+        assert "Looks wet for “Picnic”, which is outdoors." in text
+        assert "Rain, 80% chance" in text, "Picnic's warning chip"
+
+        # Unticking Outdoors in the item dialog stops the warning.
+        lst.focus()
+        lst.highlighted = next(i for i in range(lst.option_count) if lst.get_option_at_index(i).id and "Picnic" in str(lst.get_option_at_index(i).prompt))
+        await pilot.press("e")
+        await settle(pilot)
+        dlg = app.screen
+        assert "80% chance of rain" in str(dlg.query("Static").last().render()) or any("80% chance of rain" in str(s.render()) for s in dlg.query("Static"))
+        dlg.query_one("#outdoor").value = False
+        await pilot.press("ctrl+s")
+        await settle(pilot, 0.5)
+        picnic = next(it for it in site.drift_state()["items"] if it["title"] == "Picnic")
+        assert picnic["meta"]["weather"] == {"outdoor": False}
+        text = "\n".join(str(lst.get_option_at_index(i).prompt) for i in range(lst.option_count))
+        assert "Looks wet for" not in text
+    run_app("drift", forecast)

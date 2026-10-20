@@ -11,6 +11,7 @@ import calendar
 import json
 import locale
 import os
+import time
 from datetime import date, datetime
 
 from rich.text import Text
@@ -28,7 +29,9 @@ from .look import BAD, FAINT, GOLD, GOLD_DIM, GOOD, INK, LINE, MUTED, PRI, Confi
 POLL_EVERY = 5      # seconds between "did anything change?" checks, like the web page
 # Distances in miles where the web page would use them (an American English locale).
 MILES = (locale.getlocale()[0] or os.environ.get("LANG", "")).startswith("en_US")
-TAG, COL, KIND, PLACE = "#8fb3d9", "#b79ad6", "#c3a6f7", "#e47a62"
+FAHRENHEIT = MILES      # and °F, for the same reason
+WX_TTL, WX_RETRY = 30 * 60, 2 * 60      # seconds to keep a forecast, or to wait after one failed
+TAG, COL, KIND, PLACE, RAIN = "#8fb3d9", "#b79ad6", "#c3a6f7", "#e47a62", "#7fa6d9"
 ADD_HINT = "Add an item   #tag  +collection  !1-3  ^date  @time  ~ place"
 STARTER = ["checklist", "event", "list", "graph"]
 
@@ -40,7 +43,7 @@ def writable(col: dict | None) -> bool:
 # ── drawing one item ───────────────────────────────────────────────────────
 
 def item_row(it: dict, *, depth: int = 0, col_name: str | None = None, skip_event: bool = False,
-             extra: list[tuple[str, str]] = (), links: list[str] = ()) -> Text:
+             extra: list[tuple[str, str]] = (), links: list[str] = (), wx: tuple[str, str] | None = None) -> Text:
     m = it["meta"]
     ck = m.get("checklist")
     done = bool(ck and ck.get("done"))
@@ -58,6 +61,8 @@ def item_row(it: dict, *, depth: int = 0, col_name: str | None = None, skip_even
     if ev and not skip_event:
         d = R.day_of(ev["start"])
         chips.append(("◷ " + R.event_chip(ev), BAD if R.is_late(it) else GOLD if d == R.today() else MUTED))
+    if wx:
+        chips.append(wx)
     chips += list(extra)
     loc = m.get("location")
     if loc and R.place_label(loc):
@@ -81,7 +86,8 @@ def header(title: str, n: int | str = "", note: str = "") -> Text:
     return t
 
 
-def month_grid(month: str, sel: str, events: list[dict]) -> Text:
+def month_grid(month: str, sel: str, events: list[dict], wx: dict[str, tuple[str, str]] | None = None) -> Text:
+    """The month, with a dot on busy days and, given wx ({day: (symbol, style)}), each day's weather."""
     first = date.fromisoformat(month + "-01")
     busy = {}
     for it in events:
@@ -91,7 +97,7 @@ def month_grid(month: str, sel: str, events: list[dict]) -> Text:
             if d0 <= d.isoformat() <= d1:
                 busy[d.isoformat()] = busy.get(d.isoformat(), 0) + 1
     t = Text(f"\n{first.strftime('%B %Y')}\n", style=f"bold {INK}")
-    t.append(" Mo  Tu  We  Th  Fr  Sa  Su\n", style=MUTED)
+    t.append("  Mo   Tu   We   Th   Fr   Sa   Su\n" if wx else " Mo  Tu  We  Th  Fr  Sa  Su\n", style=MUTED)
     for week in calendar.Calendar().monthdatescalendar(first.year, first.month):
         for d in week:
             iso = d.isoformat()
@@ -102,6 +108,9 @@ def month_grid(month: str, sel: str, events: list[dict]) -> Text:
                 style += " reverse"
             t.append(f"{d.day:>3}", style=style)
             t.append("•" if iso in busy and d.month == first.month else " ", style=GOLD)
+            if wx is not None:
+                sym, st = wx.get(iso, (" ", FAINT))
+                t.append(sym, style=st)
         t.append("\n")
     t.append("[ ] day   { } month   . today", style=FAINT)
     return t
@@ -119,14 +128,15 @@ class ItemDialog(ModalScreen[dict | None]):
     ItemDialog Select { width: 1fr; }
     """
 
-    def __init__(self, it: dict, cols: list[dict], col: dict | None):
+    def __init__(self, it: dict, cols: list[dict], col: dict | None, wx: str = ""):
         super().__init__()
-        self.it, self.cols, self.col = it, cols, col
+        self.it, self.cols, self.col, self.wx = it, cols, col, wx
         self.ro = not writable(col)
         plugins = (col or {}).get("plugins", [])
         self.has_check = "checklist" in plugins or "checklist" in it["meta"]
         self.has_event = "event" in plugins or "event" in it["meta"]
         self.has_place = "location" in plugins or "location" in it["meta"]
+        self.has_weather = "weather" in plugins or "weather" in it["meta"]
 
     def compose(self) -> ComposeResult:
         it, m = self.it, self.it["meta"]
@@ -173,6 +183,11 @@ class ItemDialog(ModalScreen[dict | None]):
                     yield Static(Text(f"{loc['lat']:.5f}, {loc['lng']:.5f}", style=FAINT))
                 elif loc.get("place"):
                     yield Static(Text("Not found on the map yet.", style=FAINT))
+            if self.has_weather:
+                yield Label("Weather", classes="lbl")
+                yield Checkbox("Outdoors: warn me when its day looks wet", R.outdoors(it), id="outdoor", disabled=self.ro)
+                if self.wx:
+                    yield Static(Text(self.wx, style=MUTED))
             yield Static(id="err")
             with Horizontal(classes="buttons"):
                 if not self.ro:
@@ -260,6 +275,10 @@ class ItemDialog(ModalScreen[dict | None]):
             elif not old or raw != R.place_label(old):
                 at = R.parse_coords(raw)
                 meta["location"] = {"place": "", **at} if at else {"place": raw, "lat": None, "lng": None}
+        if self.has_weather:
+            outdoor, old = self.query_one("#outdoor", Checkbox).value, m.get("weather")
+            if (old is None and outdoor) or (old is not None and old.get("outdoor") != outdoor):
+                meta["weather"] = {"outdoor": outdoor}
         if meta:
             out["meta"] = meta
         self.dismiss(out)
@@ -583,6 +602,8 @@ class DriftPage(Page):
         self.route_on, self.profile, self.option = False, "driving-car", 0
         self.route: dict | None = None
         self.route_key: str | None = None
+        # Weather's forecasts by spot (R.spot_key): {"at", "data", "loading", "failed"}.
+        self.wx: dict[str, dict] = {}
 
     def compose(self) -> ComposeResult:
         yield from self.top()
@@ -714,7 +735,7 @@ class DriftPage(Page):
 
         def rows(lst_, **kw):
             for it in lst_:
-                opts.append(Option(item_row(it, col_name=name_of(it), **kw), id=it["id"]))
+                opts.append(Option(item_row(it, col_name=name_of(it), wx=self.wx_chip(it), **kw), id=it["id"]))
 
         def group(title, lst_, empty="", **kw):
             opts.append(Option(header(title, len(lst_) or ""), disabled=True))
@@ -736,7 +757,7 @@ class DriftPage(Page):
                 opts.append(Option(header("Today", len(on)), disabled=True))
                 for it in on:
                     tm = R.time_of(it["meta"]["event"]["start"])
-                    opts.append(Option(item_row(it, col_name=name_of(it), skip_event=True,
+                    opts.append(Option(item_row(it, col_name=name_of(it), wx=self.wx_chip(it), skip_event=True,
                                                 extra=[(R.nice_time(tm), GOLD)] if tm else []), id=it["id"]))
             if not opts:
                 opts.append(Option(Text("\nNothing for today. Items with today's date, from any collection, show up here. Add one above.", style=MUTED), disabled=True))
@@ -765,9 +786,11 @@ class DriftPage(Page):
             else:
                 opts.append(Option(Text("\n> nest   < unnest   K J move", style=FAINT), disabled=True))
                 for it, depth in R.walk_outline(shown):
-                    opts.append(Option(item_row(it, depth=depth, col_name=name_of(it)), id=it["id"]))
+                    opts.append(Option(item_row(it, depth=depth, col_name=name_of(it), wx=self.wx_chip(it)), id=it["id"]))
         elif tab == "location":
             self.map_list(opts, shown, name_of)
+        elif tab == "weather":
+            self.forecast_list(opts, shown, name_of)
         elif tab == "graph":
             titles = {it["id"]: it["title"] for it in scope}
             opts.append(Option(Text("\nLinks as a list. The network you can drag and zoom is in the browser: press w.", style=FAINT), disabled=True))
@@ -778,7 +801,7 @@ class DriftPage(Page):
                 rel = g.get("rel") or {}
                 links = [(f"{rel[x]} " if rel.get(x) else "") + titles[x] for x in g.get("links", []) if x in titles]
                 kind = [(g["kind"], KIND)] if g.get("kind") else []
-                opts.append(Option(item_row(it, col_name=name_of(it), links=links, extra=kind), id=it["id"]))
+                opts.append(Option(item_row(it, col_name=name_of(it), wx=self.wx_chip(it), links=links, extra=kind), id=it["id"]))
         else:
             if shown:
                 group("Items", shown)
@@ -824,18 +847,29 @@ class DriftPage(Page):
 
     def calendar(self, opts: list, shown: list[dict], name_of) -> None:
         events = [it for it in shown if it["meta"].get("event")]
-        opts.append(Option(month_grid(self.month, self.day, events), disabled=True))
+        _, col, _ = self.current()
+        marks = None
+        if self.weather_on(col):
+            marks = {}
+            for d in calendar.Calendar().itermonthdates(*(int(x) for x in self.month.split("-"))):
+                iso = d.isoformat()
+                f = R.forecast_day(self.forecast(R.day_spot(col, iso)), iso)
+                if f:
+                    marks[iso] = ("☂", f"bold {BAD}") if self.spoilt(shown, iso) else (R.sky(f.get("code"))[1], RAIN if R.wet(f) else MUTED)
+        opts.append(Option(month_grid(self.month, self.day, events, marks), disabled=True))
         later = sorted([it for it in events if self.day < R.day_of(it["meta"]["event"]["start"]) <= R.add_days(14, self.day)], key=R.by_start)
         now_h = datetime.now().hour if self.day == R.today() else None
         plan = R.day_plan(events, self.day, now_h)
         n = len(plan["untimed"]) + sum(len(v) for v in plan["hours"].values())
         opts.append(Option(header(R.nice_day(self.day), n or ""), disabled=True))
+        if marks is not None:
+            self.day_weather(opts, shown, col, self.day)
         opts.append(Option(Text(f"  No set time  {len(plan['untimed']) or ''}", style=f"bold {MUTED}"), disabled=True))
         for it in plan["untimed"]:
             ev = it["meta"]["event"]
             extra = [("continues" + (f" until {R.nice_time(R.time_of(ev['end'])) or R.nice_day(R.day_of(ev['end']))}" if ev.get("end") else ""), GOLD)] \
                 if R.time_of(ev["start"]) else []
-            opts.append(Option(item_row(it, col_name=name_of(it), skip_event=True, extra=extra), id=it["id"]))
+            opts.append(Option(item_row(it, col_name=name_of(it), wx=self.wx_chip(it), skip_event=True, extra=extra), id=it["id"]))
         if not plan["untimed"]:
             opts.append(Option(Text("   Items you add without a time land here.", style=FAINT), disabled=True))
         opts.append(Option(Text("\n  By the hour", style=f"bold {MUTED}"), disabled=True))
@@ -847,12 +881,134 @@ class DriftPage(Page):
                 opts.append(Option(label, disabled=True))
             for i, it in enumerate(items):
                 row = label.copy() if i == 0 else Text(" " * 7 + "┃", style=GOLD)
-                row.append_text(item_row(it, col_name=name_of(it), skip_event=True, extra=[(R.when(it["meta"]["event"]), GOLD)]))
+                row.append_text(item_row(it, col_name=name_of(it), wx=self.wx_chip(it), skip_event=True, extra=[(R.when(it["meta"]["event"]), GOLD)]))
                 opts.append(Option(row, id=it["id"]))
         if later:
             opts.append(Option(header("Next two weeks", len(later)), disabled=True))
             for it in later:
-                opts.append(Option(item_row(it, col_name=name_of(it)), id=it["id"]))
+                opts.append(Option(item_row(it, col_name=name_of(it), wx=self.wx_chip(it)), id=it["id"]))
+
+    # ── Weather ────────────────────────────────────────────────────────
+    def weather_on(self, col: dict | None) -> bool:
+        """Weather is on for this collection (on Today and Calendar: for any)."""
+        cols = [col] if col else self.state["collections"]
+        return any("weather" in c["plugins"] for c in cols)
+
+    def forecast(self, spot: dict | None) -> dict | None:
+        """The forecast at spot (None: near you) as far as it's known, asking the site
+        for it when it's missing or old. The page draws again when it arrives."""
+        key = R.spot_key(spot)
+        e = self.wx.get(key)
+        if e and (e["loading"] or time.monotonic() - e["at"] < (WX_RETRY if e["failed"] else WX_TTL)):
+            return e["data"]
+        entry = {"at": time.monotonic(), "data": (e or {}).get("data"), "loading": True, "failed": False}
+        self.wx[key] = entry
+        self.run_worker(self.load_forecast(entry, spot if R.placed(spot) else None))
+        return entry["data"]
+
+    async def load_forecast(self, entry: dict, spot: dict | None) -> None:
+        try:
+            entry["data"] = await fetch(self.app, site.drift_weather, spot)
+        except Failed:
+            entry["failed"] = True
+        entry["loading"], entry["at"] = False, time.monotonic()
+        self.render_items()
+
+    def item_weather(self, it: dict) -> list[dict]:
+        """The forecast for each day an item's event covers, as far ahead as it goes."""
+        ev = it["meta"].get("event")
+        if not ev:
+            return []
+        col, out = self.col(it["collection"]), []
+        d, last = max(R.day_of(ev["start"]), R.today()), R.day_of(ev.get("end") or ev["start"])
+        for _ in range(16):
+            if d > last:
+                break
+            f = R.forecast_day(self.forecast(R.spot_for(it, d, col)), d)
+            if f:
+                out.append(f)
+            d = R.add_days(1, d)
+        return out
+
+    def wx_chip(self, it: dict) -> tuple[str, str] | None:
+        """Weather's chip for an item on it: a warning on a wet day if it's outdoors, else the forecast."""
+        if "weather" not in it["meta"]:
+            return None
+        days = self.item_weather(it)
+        if not days:
+            return None
+        w = next((d for d in days if R.wet(d)), None) if R.outdoors(it) and R.is_open(it) else None
+        if w:
+            return "☂ " + R.why(w), f"bold {BAD}"
+        return f"{R.sky(days[0].get('code'))[1]} {R.hi_lo(days[0], FAHRENHEIT)}", MUTED
+
+    def wx_line(self, it: dict) -> str:
+        """The item dialog's line about its day's weather."""
+        ev = it["meta"].get("event")
+        if not ev:
+            return "Give it a date to see its forecast."
+        days = self.item_weather(it)
+        if not days:
+            return "Its day has passed." if R.day_of(ev.get("end") or ev["start"]) < R.today() else "The forecast reaches 16 days ahead; check back closer to the day."
+        return " · ".join(("" if len(days) == 1 else d["day"][5:] + ": ") + f"{R.sky(d.get('code'))[0]}, {R.hi_lo(d, FAHRENHEIT)}"
+                          + (f", {d['rain']}% chance of rain" if d.get("rain") is not None else "") for d in days)
+
+    def spoilt(self, items: list[dict], d: str) -> list[dict]:
+        """The outdoor items on day d that look like getting wet."""
+        return [it for it in items if R.wet_on(it, d, self.forecast(R.spot_for(it, d, self.col(it["collection"]))))]
+
+    def day_weather(self, opts: list, shown: list[dict], col: dict | None, d: str) -> None:
+        """A day's weather in a line, and a warning naming its outdoor items if it looks wet."""
+        f = R.forecast_day(self.forecast(R.day_spot(col, d)), d)
+        if not f:
+            return
+        sym, words = R.sky(f.get("code"))[1], R.sky(f.get("code"))[0]
+        line = Text(f"  {sym} {words} · {R.hi_lo(f, FAHRENHEIT)}" + (f" · {f['rain']}% chance of rain" if f.get("rain") is not None else ""),
+                    style=RAIN if R.wet(f) else MUTED)
+        spot = R.day_spot(col, d)
+        if spot:
+            line.append(f"  at {R.place_label(spot)}", style=FAINT)
+        opts.append(Option(line, disabled=True))
+        bad = self.spoilt(shown, d)
+        if bad:
+            opts.append(Option(Text("  ☂ Looks wet for " + ", ".join(f"“{it['title']}”" for it in bad)
+                                    + (", which is outdoors." if len(bad) == 1 else ", which are outdoors."), style=BAD), disabled=True))
+
+    def forecast_list(self, opts: list, shown: list[dict], name_of) -> None:
+        """The Forecast view: the days ahead, each with its weather and what's on."""
+        _, col, _ = self.current()
+        home = R.day_spot(col, R.today())
+        fc = self.forecast(home)
+        key = self.wx.get(R.spot_key(home), {})
+        if not fc:
+            msg = "Couldn't get the forecast. It'll try again in a couple of minutes." if key.get("failed") else "Getting the forecast…"
+            opts.append(Option(Text("\n" + msg, style=FAINT), disabled=True))
+            return
+        if not fc.get("days"):
+            opts.append(Option(Text("\nThe site couldn't tell where you are. Turn on Locations and give this collection a home base on its Map (b), "
+                                    "and the forecast is for there.", style=FAINT), disabled=True))
+            return
+        where = f" at {R.place_label(home)}" if home else " near you" if fc.get("near") else ""
+        opts.append(Option(Text(f"\nThe next {len(fc['days'])} days{where}. Mark an item as outdoors (e) or tag it #outdoor "
+                                "to be warned when its day looks wet.", style=FAINT), disabled=True))
+        events = [it for it in shown if it["meta"].get("event")]
+        for f0 in fc["days"]:
+            d = f0["day"]
+            if d < R.today():
+                continue
+            f = R.forecast_day(self.forecast(R.day_spot(col, d)), d) or f0
+            label = "Today" if d == R.today() else date.fromisoformat(d).strftime("%a %b ") + str(date.fromisoformat(d).day)
+            h = Text.assemble(("\n" + label.upper(), f"bold {GOLD}"))
+            h.append(f"   {R.sky(f.get('code'))[1]} {R.sky(f.get('code'))[0]} · {R.hi_lo(f, FAHRENHEIT)}"
+                     + (f" · {f['rain']}% rain" if f.get("rain") is not None else ""), style=RAIN if R.wet(f) else MUTED)
+            opts.append(Option(h, disabled=True))
+            on = sorted([it for it in events if R.on_day(it["meta"]["event"], d)], key=R.by_start)
+            bad = self.spoilt(on, d)
+            if bad:
+                opts.append(Option(Text(("  ☂ An outdoor item" if len(bad) == 1 else f"  ☂ {len(bad)} outdoor items")
+                                        + f" on a wet day. Move {'it' if len(bad) == 1 else 'them'}, or bring an umbrella.", style=BAD), disabled=True))
+            for it in on:
+                opts.append(Option(item_row(it, col_name=name_of(it), wx=("☂ outdoors", f"bold {BAD}") if it in bad else None), id=it["id"]))
 
     def route_stops(self, plan: dict, col: dict | None) -> list[dict]:
         """The day's stops in the order to show them: the route's, once the site has
@@ -935,7 +1091,7 @@ class DriftPage(Page):
                 extra += [("probably late", BAD)] if st.get("late") else []
             elif st.get("from") is not None:
                 extra.append((f"{R.nice_distance(st['from'], MILES)} from {st['n'] - 1}", MUTED))
-            row.append_text(item_row(it, col_name=name_of(it), skip_event=True, extra=extra))
+            row.append_text(item_row(it, col_name=name_of(it), wx=self.wx_chip(it), skip_event=True, extra=extra))
             opts.append(Option(row, id=it["id"]))
         if r and r.get("options") and R.placed(r.get("base")) and r.get("legs"):
             back = Text("  ⌂ ", style=f"bold {GOLD}")
@@ -949,11 +1105,11 @@ class DriftPage(Page):
         if plan["unplaced"]:
             opts.append(Option(header("Not found yet", len(plan["unplaced"]), "e to change the place, or pin it on the website"), disabled=True))
             for it in plan["unplaced"]:
-                opts.append(Option(item_row(it, col_name=name_of(it), skip_event=True), id=it["id"]))
+                opts.append(Option(item_row(it, col_name=name_of(it), wx=self.wx_chip(it), skip_event=True), id=it["id"]))
         if plan["elsewhere"]:
             opts.append(Option(header("No place", len(plan["elsewhere"])), disabled=True))
             for it in plan["elsewhere"]:
-                opts.append(Option(item_row(it, col_name=name_of(it), skip_event=True, extra=[(R.when(it["meta"]["event"]), GOLD)]), id=it["id"]))
+                opts.append(Option(item_row(it, col_name=name_of(it), wx=self.wx_chip(it), skip_event=True, extra=[(R.when(it["meta"]["event"]), GOLD)]), id=it["id"]))
 
     def draw_map(self, shown: list[dict] | None = None, sel: str | None = None) -> None:
         """The day's stops on a map drawn in characters, in the route's order when
@@ -1279,7 +1435,9 @@ class DriftPage(Page):
         it = self.selected()
         if not it:
             return
-        self.app.push_screen(ItemDialog(it, self.state["collections"], self.col(it["collection"])), lambda out: self.edited(it, out))
+        col = self.col(it["collection"])
+        wx = self.wx_line(it) if "weather" in (col or {}).get("plugins", []) or "weather" in it["meta"] else ""
+        self.app.push_screen(ItemDialog(it, self.state["collections"], col, wx), lambda out: self.edited(it, out))
 
     @attempt
     async def edited(self, it: dict, out: dict | None) -> None:

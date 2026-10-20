@@ -152,13 +152,17 @@ const empty = (title, msg) => `<div class="empty"><b>${esc(title)}</b>${esc(msg)
 function ctx() {
   const cur = current(), all = scope(cur);
   const key = cur.kind === "col" ? `${cur.col.id}:${cur.tab}` : cur.kind;
-  return {
-    collection: cur.col, tab: cur.tab, items: all.filter(matches), scopeItems: all, filtered: Boolean(state.q),
+  const c = {
+    collection: cur.col, collections: state.collections, tab: cur.tab, items: all.filter(matches), scopeItems: all, filtered: Boolean(state.q),
     pending: state.pending, viewState: (state.viewState[key] ||= {}),
     all: state.items, selected: state.sel, open: openItem,
     row, group, empty, render, setMeta, update, toast,
     setBases: bases => cur.col && setBases(cur.col.id, bases),
+    // Notes for a calendar day from the plugins that are on (on Calendar: on in any collection).
+    dayNote: (day, long = false) => PLUGINS.filter(p => p.day && !p.store && (cur.col ? cur.col.plugins : state.collections.flatMap(x => x.plugins)).includes(p.id))
+      .map(p => p.day(day, c, long)).join(""),
   };
+  return c;
 }
 
 /* ── render ────────────────────────────────────── */

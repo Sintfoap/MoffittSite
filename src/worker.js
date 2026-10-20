@@ -20,6 +20,7 @@
 // can use it, signed in or not.
 import { plugins, installed, install, uninstall, PLUGIN_ID, SANDBOX_CSP } from "./store.js";
 import { hasPlaces, searchPlaces, nameOf } from "./places.js";
+import { forecast } from "./weather.js";
 import { protect, handleAuth, AUTH_PATHS, sameOrigin } from "./account.js";
 import { currentSession, areaOf } from "./auth.js";
 import { handleCli, CLI_PATHS } from "./cli.js";
@@ -36,7 +37,7 @@ import { planDay } from "./routing.js";
 
 // /todo/api/state, /todo/api/version, /todo/api/items[/<id>],
 // /todo/api/collections[/<id>[/shares[/<username>]]]
-const API = /^\/todo\/api\/(state|version|items|collections|installs|places|route)(?:\/([^/]+)(?:\/(shares)(?:\/([^/]+))?)?)?\/?$/;
+const API = /^\/todo\/api\/(state|version|items|collections|installs|places|route|weather)(?:\/([^/]+)(?:\/(shares)(?:\/([^/]+))?)?)?\/?$/;
 const USERNAME = /^[a-z0-9_.-]{1,64}$/;
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -147,6 +148,19 @@ async function todo(request, env, user, pathname) {
       const [lat, lng] = String(q.get("near") || "").split(",").map(Number);
       const results = await searchPlaces(env, q.get("q"), Math.abs(lat) <= 90 && Math.abs(lng) <= 180 ? { lat, lng } : null);
       return results === null ? json({ error: "couldn’t reach the map service" }, 502) : json({ results });
+    }
+
+    // GET weather[?lat=…&lng=…] → {lat, lng, near, days: [{day, code, hi, lo, rain, precip}]}, the next
+    //   16 days there (Weather's forecast, src/weather.js); with no spot, near where you are ({days: []} if
+    //   that isn't known either)
+    if (kind === "weather") {
+      if (method !== "GET" || id) return json({ error: "not found" }, 404);
+      const q = new URL(request.url).searchParams;
+      const at = q.has("lat") ? [Number(q.get("lat")), Number(q.get("lng") ?? NaN)] : [NaN, NaN];
+      if (q.has("lat") && !(Math.abs(at[0]) <= 90 && Math.abs(at[1]) <= 180)) return json({ error: "lat and lng must be coordinates" }, 400);
+      const out = await forecast(request, ...at);
+      if (out?.error) return json(out, 502);
+      return json(out || { lat: null, lng: null, near: true, days: [] });
     }
 
     // GET route?collection=<id>&day=YYYY-MM-DD[&profile=driving-car|foot-walking|cycling-regular][&option=n]

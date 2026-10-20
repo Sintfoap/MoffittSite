@@ -14,13 +14,14 @@ DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 DATETIME = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$")
 
 # Drift's own plugins that bring a view, in the order the page shows them.
-VIEW_LABELS = {"checklist": "Checklist", "event": "Calendar", "list": "List", "graph": "Graph", "location": "Map"}
+VIEW_LABELS = {"checklist": "Checklist", "event": "Calendar", "list": "List", "graph": "Graph", "location": "Map", "weather": "Forecast"}
 BUILT_IN = {
     "checklist": ("Checklist", "Tick items off as done, with an optional priority."),
     "event": ("Events", "Give items a date and time, and see them on a calendar."),
     "list": ("List", "Arrange items in your own order and nest them as an outline."),
     "graph": ("Graph", "Link items to each other and see them as a network."),
     "location": ("Locations", "Give items a place, found by search or pinned on a map, and see each day's events on a map."),
+    "weather": ("Weather", "See the forecast on calendar days, and get a warning when an outdoor item lands on a rainy one."),
 }
 PRIORITY = ["None", "Low", "Medium", "High"]
 
@@ -501,4 +502,85 @@ def fresh_meta(plugins: list[str], quick: dict, *, dated_view: bool = False, day
         meta["graph"] = {"links": [], "x": None, "y": None}
     if "location" in plugins and quick.get("place"):
         meta["location"] = {"place": quick["place"], "lat": None, "lng": None}
+    if "weather" in plugins and any(t in OUTDOOR_TAGS for t in quick.get("tags", [])):
+        meta["weather"] = {"outdoor": True}
     return meta
+
+
+# ── Weather (plugins/weather.js) ───────────────────────────────────────────
+
+WET_CHANCE, WET_MM = 50, 2
+OUTDOOR_TAGS = ["outdoor", "outdoors", "outside"]
+
+
+def sky(code: int | None) -> tuple[str, str]:
+    """What a WMO weather code looks like: (words, a symbol the terminal can draw)."""
+    if code == 0:
+        return "Clear", "☀"
+    if code in (1, 2):
+        return ("Mostly clear" if code == 1 else "Partly cloudy"), "◐"
+    if code == 3:
+        return "Cloudy", "☁"
+    if code in (45, 48):
+        return "Fog", "≡"
+    if code is not None and 51 <= code <= 57:
+        return "Drizzle", "☂"
+    if code is not None and 61 <= code <= 67:
+        return "Rain", "☂"
+    if code is not None and (71 <= code <= 77 or code in (85, 86)):
+        return "Snow", "❄"
+    if code is not None and 80 <= code <= 82:
+        return "Showers", "☂"
+    if code is not None and code >= 95:
+        return "Thunderstorms", "ϟ"
+    return "", "·"
+
+
+def wet(d: dict | None) -> bool:
+    return bool(d) and ((d.get("rain") or 0) >= WET_CHANCE or (d.get("precip") or 0) >= WET_MM or (d.get("code") or 0) >= 95)
+
+
+def temp(c: float | None, fahrenheit: bool = False) -> str:
+    if c is None:
+        return ""
+    return f"{round(c * 9 / 5 + 32 if fahrenheit else c)}°"
+
+
+def hi_lo(d: dict, fahrenheit: bool = False) -> str:
+    return " / ".join(x for x in (temp(d.get("hi"), fahrenheit), temp(d.get("lo"), fahrenheit)) if x)
+
+
+def why(d: dict) -> str:
+    """"Rain, 70% chance" on a wet day, else what the sky does."""
+    if wet(d):
+        return (sky(d.get("code"))[0] or "Rain") + (f", {d['rain']}% chance" if d.get("rain") is not None else "")
+    return sky(d.get("code"))[0]
+
+
+def outdoors(it: dict) -> bool:
+    return bool((it["meta"].get("weather") or {}).get("outdoor"))
+
+
+def day_spot(col: dict | None, d: str) -> dict | None:
+    """Where a day's weather is for: the collection's base that day, else None (near you)."""
+    b = base_for((col or {}).get("bases"), d)
+    return b if placed(b) else None
+
+
+def spot_for(it: dict, d: str, col: dict | None) -> dict | None:
+    loc = it["meta"].get("location")
+    return loc if placed(loc) else day_spot(col, d)
+
+
+def spot_key(spot: dict | None) -> str:
+    return f"{spot['lat']:.2f},{spot['lng']:.2f}" if placed(spot) else "here"
+
+
+def forecast_day(fc: dict | None, d: str) -> dict | None:
+    return next((x for x in (fc or {}).get("days", []) if x["day"] == d), None)
+
+
+def wet_on(it: dict, d: str, fc: dict | None) -> bool:
+    """An outdoor item, still to do, on day d, which looks wet in forecast fc (the one for its spot)."""
+    ev = it["meta"].get("event")
+    return outdoors(it) and is_open(it) and bool(ev) and on_day(ev, d) and wet(forecast_day(fc, d))
