@@ -165,12 +165,20 @@ function* nodes(v, depth = 0) {
   for (const k of ["@graph", "mainEntity", "mainEntityOfPage"]) if (v[k] && typeof v[k] === "object") yield* nodes(v[k], depth + 1);
 }
 
+// "PT1H30M" → 90, or null if it isn't one.
+function minutes(v) {
+  const m = String(v ?? "").trim().match(/^P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:\d+(?:\.\d+)?S)?)?$/i);
+  return m ? ((+m[1] || 0) * 24 + (+m[2] || 0)) * 60 + (+m[3] || 0) : null;
+}
+// 90 → "1 hr 30 min".
+const span = n => [n >= 60 && `${Math.floor(n / 60)} hr`, n % 60 && `${n % 60} min`].filter(Boolean).join(" ");
 // "PT1H30M" → "1 hr 30 min".
-function duration(v) {
-  const m = String(v ?? "").match(/^P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:\d+(?:\.\d+)?S)?)?$/i);
-  if (!m) return "";
-  const hours = (+m[1] || 0) * 24 + (+m[2] || 0), mins = +m[3] || 0;
-  return [hours && `${hours} hr`, mins && `${mins} min`].filter(Boolean).join(" ");
+const duration = v => span(minutes(v) ?? 0);
+// The total time, or prep and cook added up when a page gives only those.
+function totalTime(total, cook, prep) {
+  if (duration(total)) return duration(total);
+  const c = minutes(cook), p = minutes(prep);
+  return c != null && p != null ? span(c + p) : duration(cook) || duration(prep);
 }
 
 function steps(v, depth = 0) {
@@ -204,7 +212,7 @@ function fromJsonLd(html) {
         image: image(n.image),
         yield: text(y ?? ""),
         servings: servingsOf(text([].concat(n.recipeYield ?? []).join(" "))),
-        time: duration(n.totalTime) || duration(n.cookTime) || duration(n.prepTime),
+        time: totalTime(n.totalTime, n.cookTime, n.prepTime),
         ingredients: [].concat(n.recipeIngredient ?? n.ingredients ?? []).map(text).filter(Boolean),
         steps: steps(n.recipeInstructions),
         notes: text(n.description),
@@ -216,9 +224,11 @@ function fromJsonLd(html) {
 
 // Older sites mark the parts up in the page itself instead. So does Recipe
 // Keeper's shared recipe pages (recipekeeperonline.com/recipe/…), with names
-// of its own: recipeIngredients and recipeDirections hold every line as <p>s,
+// of its own: each ingredient is an <li itemprop="ingredient"> (older pages put
+// them all in recipeIngredients as <p>s), the directions are <li>s or <p>s,
 // times and the yield are <meta content>, and the picture is itemprop="photo0".
-const itemprop = name => `itemprop\\s*=\\s*["'](?:[^"']*\\s)?${name}(?:\\s[^"']*)?["']`;
+// The attribute quoted or not (Recipe Keeper writes itemprop=photo0).
+const itemprop = name => `itemprop\\s*=\\s*(?:["'](?:[^"']*\\s)?${name}(?:\\s[^"']*)?["']|${name}(?=[\\s/>]))`;
 const BREAKS = /<\/(p|li|div|h\d)>|<br\s*\/?>/gi;
 
 // From `from` to the tag that closes the one just opened, counting nested ones of the same name.
@@ -243,10 +253,11 @@ function fromMicrodata(html, url) {
     .map(m => text(m[0].match(/content\s*=\s*["']([^"']*)["']/i)?.[1] ?? "")).filter(Boolean);
   const value = name => metas(name)[0] || text(els(name)[0] ?? "");
 
-  const ingredients = lines("recipeIngredient", "recipeIngredients", "ingredients");
+  const ingredients = lines("recipeIngredient", "recipeIngredients", "ingredients", "ingredient");
   if (!ingredients.length) return null;
   const y = value("recipeYield");
-  const time = ["totalTime", "cookTime", "prepTime"].map(value).map(t => duration(t) || (/^P/i.test(t) ? "" : t)).find(Boolean) || "";
+  const [total, cook, prep] = ["totalTime", "cookTime", "prepTime"].map(value);
+  const time = totalTime(total, cook, prep) || [total, cook, prep].find(t => t && !/^P/i.test(t)) || "";
   const pic = html.match(new RegExp(`<img\\b[^>]*${itemprop("(?:photo0|photo|image)")}[^>]*>`, "i"))?.[0].match(/src\s*=\s*["']([^"']+)["']/i)?.[1];
   let img = "";
   try { img = pic ? image(new URL(decode(pic), url || undefined).toString()) : ""; } catch {}

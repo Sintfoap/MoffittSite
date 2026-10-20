@@ -66,11 +66,44 @@ test("Recipe Keeper's shared recipes are read: its own names, every line, meta t
   const r = parseRecipe(KEEPER, "https://recipekeeperonline.com/recipe/Ka7ZNM6UmEm7Y9zoFtaSRg");
   assert.equal(r.title, "Grandma's Chili");
   assert.equal(r.servings, 6);
-  assert.equal(r.time, "1 hr");
+  assert.equal(r.time, "1 hr 15 min");
   assert.equal(r.image, "https://recipekeeperonline.com/images/abc.jpg");
   assert.deepEqual(r.ingredients, ["1 lb beef", "2 (15 oz) cans beans", "1 onion, diced"]);
   assert.deepEqual(r.steps, ["Brown the beef.", "Add the rest and simmer."]);
   assert.equal(r.notes, "Better the next day.\n\nSource: Aunt May");
+});
+
+// Today's shared pages, copied from a real one: one <li itemprop="ingredient"> per
+// ingredient, <li> directions with blank ones between, and an unquoted itemprop=photo0.
+const KEEPER_LI = `<html><head><title>Recipe Keeper - Ribs</title></head><body>
+<article itemtype="http://schema.org/Recipe" itemscope="">
+    <meta content="PT1H" itemprop="prepTime">
+    <meta content="PT3M" itemprop="cookTime">
+    <img src="/recipe/Bf-VsZTIJUS-eyORvzvndw/image" class="img-responsive recipe-photo" itemprop=photo0 />
+    <h2 itemprop="name">Ribs</h2>
+    <meta itemprop="recipeCourse" content="Main Dish">
+    <div class="recipe-property" style="display: none;"><span class="recipe-label">Source: </span><span itemprop="recipeSource"></span></div>
+    <div class="recipe-property" style="display: none;"><span class="recipe-label">Serving size: </span><span itemprop="recipeYield"></span></div>
+    <ul class="list-unstyled recipe-ingredients">
+        <li itemprop="ingredient">Rack of ribs</li>
+        <li itemprop="ingredient">Special rub</li>
+    </ul>
+    <ul itemprop="recipeInstructions" class="recipe-directions list-unstyled">
+        <li>Dry the ribs off and pat the spice rub in.</li>
+        <li></li>
+        <li>Grill each side for 5-10 minutes.</li>
+    </ul>
+</article></body></html>`;
+
+test("Recipe Keeper's current shared pages are read too: <li> ingredients, blank steps dropped, prep and cook added up", () => {
+  const r = parseRecipe(KEEPER_LI, "https://recipekeeperonline.com/recipe/Bf-VsZTIJUS-eyORvzvndw");
+  assert.equal(r.title, "Ribs");
+  assert.deepEqual(r.ingredients, ["Rack of ribs", "Special rub"]);
+  assert.deepEqual(r.steps, ["Dry the ribs off and pat the spice rub in.", "Grill each side for 5-10 minutes."]);
+  assert.equal(r.time, "1 hr 3 min");
+  assert.equal(r.image, "https://recipekeeperonline.com/recipe/Bf-VsZTIJUS-eyORvzvndw/image");
+  assert.equal(r.yield, "");
+  assert.equal(r.notes, "");
 });
 
 let realFetch, pages;
