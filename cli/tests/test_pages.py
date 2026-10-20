@@ -297,7 +297,7 @@ def test_admins_switch_apps_on_and_off_in_the_terminal(admin_site):
         page = app.screen
         assert type(page).__name__ == "AdminPage"
         apps = [a["id"] for a in page.data["apps"]]
-        assert apps == ["drift", "admin", "plugins", "chat", "chat-bridges", "recipes", "notifications"]
+        assert apps == ["drift", "admin", "plugins", "chat", "chat-bridges", "recipes", "sweep", "notifications"]
         # A switch for every app on every account; your own admin one can't be turned off.
         assert len(page.boxes) == len(apps) * len(page.data["users"])
         me = next(i for i, u in enumerate(page.data["users"]) if u["you"])
@@ -436,6 +436,57 @@ def test_g_r_opens_the_terminal_recipe_box(real_site):
     run_app("dashboard", go)
 
 
+# ── sweep ──────────────────────────────────────────────────────────────────
+
+def test_sweep_picks_a_room_sweeps_it_and_accepts_into_drift(real_site):
+    async def sweep(app, pilot):
+        page = app.screen
+        assert type(page).__name__ == "SweepPage"
+        assert page.data["ready"] and page.data["suggestions"] == []
+        rooms = page.query_one("#rooms")
+        names = [r["name"] for r in page.data["rooms"]]
+        assert "Plans" in names
+        rooms.focus()
+        rooms.highlighted = names.index("Plans")
+        await pilot.press("space")
+        await settle(pilot, 0.6)
+        assert next(r for r in page.data["rooms"] if r["name"] == "Plans")["on"]
+        # b: the first sweep looks back further.
+        rooms.highlighted = [r["name"] for r in page.data["rooms"]].index("Plans")
+        await pilot.press("b")
+        await settle(pilot, 0.6)
+        assert next(r for r in page.data["rooms"] if r["name"] == "Plans")["days"] == 14
+        await pilot.press("s")
+        await settle(pilot, 0.8)
+        s = page.current()
+        assert s["title"] == "Dinner at Lucia's" and s["author"] == "Sam"
+        assert "Read 1 message, 1 new suggestion." in str(page.query_one("#status").render())
+        assert "Fri Jan 4, 7:00 PM" in str(page.query_one("#detail").render())
+        # e: edit the title, then accept.
+        await pilot.press("e")
+        await settle(pilot)
+        dialog = app.screen
+        assert type(dialog).__name__ == "EditDialog"
+        dialog.query_one("#title").value = "Dinner with Sam"
+        await pilot.press("ctrl+s")
+        await settle(pilot, 0.8)
+        assert page.data["suggestions"] == []
+        assert page.data["history"][0]["status"] == "accepted"
+        assert "Added “Dinner with Sam” to Inbox." in str(page.query_one("#status").render())
+    run_app("sweep", sweep)
+    item = next(i for i in site.drift_state()["items"] if i["title"] == "Dinner with Sam")
+    assert item["meta"]["event"]["start"] == "2030-01-04T19:00"
+
+
+def test_g_w_opens_the_terminal_sweep(real_site):
+    async def go(app, pilot):
+        await settle(pilot, 0.5)
+        app.go("w")
+        await settle(pilot, 0.5)
+        assert type(app.screen).__name__ == "SweepPage"
+    run_app("dashboard", go)
+
+
 # ── settings ───────────────────────────────────────────────────────────────
 
 def test_settings_renames_and_signs_out_other_devices(real_site):
@@ -492,7 +543,7 @@ def test_chat_makes_a_room_and_posts_to_the_real_site(real_site):
             await pilot.press("enter")
             await settle(pilot, 0.5)
     run_app("chat", chat)
-    [room] = site.chat_state()["rooms"]
+    [room] = [r for r in site.chat_state()["rooms"] if r["name"] != "Plans"]  # Plans is the dev site's, for Sweep
     assert room["name"] == "general" and room["joined"]
     [m] = site.chat_messages(room["id"])["messages"]
     assert m["body"] == "first post, edited" and m["edited_at"], "edited, and the second post deleted"

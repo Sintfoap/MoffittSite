@@ -10,6 +10,7 @@ sintfoap — sintfoap.xyz from the terminal.
   sintfoap chat [ROOM]        chat rooms
   sintfoap notifications      what's pushed to your browsers and phone
   sintfoap recipes            Recipe box: recipes, scaled, onto a Drift shopping list
+  sintfoap sweep              Sweep: Drift suggestions from your chat rooms
   sintfoap admin              which apps each account can use (admins)
   sintfoap app                the Android app: a QR code to scan, and the download
   sintfoap books [--plain]    the book club pick: read about the books and vote (no sign-in needed)
@@ -89,6 +90,7 @@ def main(argv=None):
     for page, what in (("drift", "Drift, in the terminal"), ("store", "the plugin store"), ("settings", "your account settings"),
                        ("notifications", "what's pushed to your browsers and phone"),
                        ("recipes", "Recipe box: recipes, scaled, onto a Drift shopping list"),
+                       ("sweep", "Sweep: Drift suggestions from your chat rooms"),
                        ("admin", "which apps each account can use (admins)")):
         sub.add_parser(page, help=what)
     bk = sub.add_parser("books", help="the book club pick: read about the books and vote (no sign-in needed)")
