@@ -14,8 +14,11 @@
 // (the collection's bases: a home base, and ones for a day or a stretch of
 // days, public/todo/route.js), and "Route" plans the order to go in along the
 // streets, with the few best orders to cycle between (src/routing.js).
+//
+// Range mode shows a stretch of days at once instead: every day's places as
+// pins in that day's colour, a legend to hide and show days, and no routes.
 
-import { esc, icon, today, addDays, dayOf, timeOf, niceDay, niceTime, parseCoords } from "../lib.js";
+import { esc, icon, today, addDays, dayOf, timeOf, niceDay, niceTime, parseCoords, DATE } from "../lib.js";
 import { baseFor, baseScope, isHome, niceDuration, straightNote, PROFILES } from "../route.js";
 
 const BLANK = { place: "", lat: null, lng: null };
@@ -59,6 +62,38 @@ export function dayStops(items, d) {
   return { stops, unplaced, elsewhere };
 }
 
+// ── a stretch of days on one map ───────────────────────────────────────────
+// The Map's Range mode shows several days at once, each day's pins in its own
+// colour, to check that what's planned for different days sits well together.
+export const MAX_RANGE = 14;
+const spanOf = (a, b) => Math.round((Date.parse(b) - Date.parse(a)) / 864e5) + 1;
+
+// Every day from `first` to `last`, inclusive, at most MAX_RANGE of them.
+// Nothing if either isn't a day or they're the wrong way round.
+export function rangeDays(first, last) {
+  if (!DATE.test(first) || !DATE.test(last) || first > last) return [];
+  const days = [];
+  for (let d = first; d <= last && days.length < MAX_RANGE; d = addDays(1, d)) days.push(d);
+  return days;
+}
+
+// Fixes a range after one end was edited (`changed` is "first" or "last"): the
+// end that wasn't touched moves to keep first <= last and at most MAX_RANGE days.
+export function normRange(first, last, changed) {
+  if (first > last) { if (changed === "first") last = first; else first = last; }
+  if (spanOf(first, last) > MAX_RANGE) {
+    if (changed === "first") last = addDays(MAX_RANGE - 1, first); else first = addDays(1 - MAX_RANGE, last);
+  }
+  return { first, last };
+}
+
+// Each of the days with its stops (numbered again from 1), as dayStops gives them.
+export const rangeStops = (items, days) => days.map(day => ({ day, ...dayStops(items, day) }));
+
+// A colour for the i-th day. Stepping the hue by the golden angle keeps days
+// next to each other as different as can be, however many there are.
+export const dayColor = i => `hsl(${Math.round((25 + i * 137.508) % 360)} 70% ${38 + (i % 3) * 7}%)`;
+
 // The middle of the places among `items`, to search near; null if none has one.
 export function centre(items) {
   const pts = items.map(it => it.meta.location).filter(placed);
@@ -99,12 +134,22 @@ class MapView {
     this.route = null; this.routeKey = null; this.baseForm = null;
     el.innerHTML = `<div class="geo">
       <div class="graph-bar">
-        <button class="ghost" data-geo="day" data-step="-1" aria-label="Previous day">‹</button>
-        <input type="date" data-geo="pick" aria-label="Day to show">
-        <button class="ghost" data-geo="day" data-step="1" aria-label="Next day">›</button>
-        <button class="ghost" data-geo="today">Today</button>
+        <span class="seg" role="group" aria-label="Show">
+          <button class="ghost" data-geo="mode" data-mode="day" aria-pressed="true">Day</button>
+          <button class="ghost" data-geo="mode" data-mode="range" aria-pressed="false">Range</button>
+        </span>
+        <button class="ghost" data-only="day" data-geo="day" data-step="-1" aria-label="Previous day">‹</button>
+        <input type="date" data-only="day" data-geo="pick" aria-label="Day to show">
+        <button class="ghost" data-only="day" data-geo="day" data-step="1" aria-label="Next day">›</button>
+        <button class="ghost" data-only="day" data-geo="today">Today</button>
+        <button class="ghost" data-only="range" data-geo="rshift" data-step="-1" aria-label="Earlier days">‹</button>
+        <input type="date" data-only="range" data-geo="rfirst" aria-label="First day">
+        <span class="hint" data-only="range">to</span>
+        <input type="date" data-only="range" data-geo="rlast" aria-label="Last day">
+        <button class="ghost" data-only="range" data-geo="rshift" data-step="1" aria-label="Later days">›</button>
+        <button class="ghost" data-only="range" data-geo="rtoday">Today</button>
         <button class="ghost" data-geo="fit">Fit</button>
-        <button class="ghost" data-geo="route" aria-pressed="false">Route</button>
+        <button class="ghost" data-only="day" data-geo="route" aria-pressed="false">Route</button>
         <select data-geo="profile" aria-label="How you get around" hidden>${Object.entries(PROFILES).map(([k, v]) => `<option value="${k}">${v}</option>`).join("")}</select>
         <span class="hint" data-geo="label"></span>
       </div>
@@ -116,6 +161,10 @@ class MapView {
     el.addEventListener("change", this.onChange = e => {
       const g = e.target.dataset.geo;
       if (g === "pick" && e.target.value) this.setDay(e.target.value);
+      if ((g === "rfirst" || g === "rlast") && e.target.value) {
+        const r = this.range, first = g === "rfirst" ? e.target.value : r.first, last = g === "rlast" ? e.target.value : r.last;
+        this.setRange(...Object.values(normRange(first, last, g === "rfirst" ? "first" : "last")));
+      }
       if (g === "profile") { this.ctx.viewState.profile = e.target.value; this.ctx.viewState.option = 0; this.draw(); }
       if (e.target.name === "scope") this.side.querySelector(".base-dates").hidden = e.target.value !== "range";
     });
@@ -126,6 +175,9 @@ class MapView {
   }
 
   get day() { return this.ctx.viewState.day || today(); }
+  get mode() { return this.ctx.viewState.mode === "range" ? "range" : "day"; }
+  // The days Range mode shows; a week from the day being viewed until the dates are changed.
+  get range() { const vs = this.ctx.viewState; return { first: vs.rangeFirst || this.day, last: vs.rangeLast || addDays(6, this.day) }; }
   get bases() { return this.ctx.collection?.bases || []; }
   startPin(id) {
     this.pinning = this.pinning === id ? null : id;
@@ -134,6 +186,20 @@ class MapView {
   }
   stopPin() { this.pinning = null; this.mapEl.classList.remove("pinning"); this.draw(); }
   setDay(d) { Object.assign(this.ctx.viewState, { day: d, sel: null, option: 0 }); this.baseForm = null; this.draw(); }
+  setRange(first, last) {
+    const days = rangeDays(first, last), vs = this.ctx.viewState;
+    Object.assign(vs, { rangeFirst: first, rangeLast: last, sel: null, hiddenDays: (vs.hiddenDays || []).filter(d => days.includes(d)) });
+    this.draw();
+  }
+  // Day shows one day with routes and bases; Range starts a week from that day.
+  setMode(mode) {
+    const vs = this.ctx.viewState;
+    if (mode === this.mode) return;
+    Object.assign(vs, { mode, sel: null });
+    if (mode === "range") Object.assign(vs, { rangeFirst: this.day, rangeLast: addDays(6, this.day), hiddenDays: [] });
+    this.baseForm = null; this.pinning = null; this.mapEl.classList.remove("pinning"); this.shown = null;
+    this.draw();
+  }
 
   build() {
     const L = this.L;
@@ -170,6 +236,9 @@ class MapView {
   }
 
   draw() {
+    for (const e of this.el.querySelectorAll("[data-only]")) e.hidden = e.dataset.only !== this.mode;
+    for (const b of this.el.querySelectorAll("[data-geo=mode]")) b.setAttribute("aria-pressed", b.dataset.mode === this.mode);
+    if (this.mode === "range") return this.drawRange();
     const { ctx } = this, day = this.day, plan = dayStops(ctx.items, day), far = miles();
     const vs = ctx.viewState, base = baseFor(this.bases, day);
     if (vs.sel && !plan.stops.some(s => s.item.id === vs.sel)) vs.sel = null;
@@ -209,9 +278,7 @@ class MapView {
       : `Nothing with a place on ${esc(niceDay(day))}. Search for one in an event’s dialog, pin one below, or add one with ~ and its name.`}</p>`;
     if (route?.options.length && route.base?.lat != null) side += `<p class="geo-back">${icon(house, 14)} Back to ${esc(placeLabel(route.base))}${route.legs.length ? ` · ${esc(legText(route.legs.at(-1)))}` : ""}</p>`;
     // The day's other events, to pin on the map.
-    const pinnable = (title, list, what) => list.length ? `<h4 class="geo-h">${title}</h4><ul class="geo-pins">${list.map(it => `<li data-id="${esc(it.id)}">
-      <span><b>${esc(it.title)}</b><small>${esc(whenOf(it.meta.event))}${what(it)}</small></span>
-      <button class="link" data-geo="pin" aria-pressed="${this.pinning === it.id}">${this.pinning === it.id ? "Click the map…" : "Pin"}</button></li>`).join("")}</ul>` : "";
+    const pinnable = (title, list, what) => this.pinnable(title, list, what);
     side += pinnable("Not found yet", plan.unplaced, it => ` · “${esc(it.meta.location.place)}”`);
     side += pinnable("No place", plan.elsewhere, () => "");
     side += this.allBasesHtml();
@@ -221,6 +288,86 @@ class MapView {
     this.side.innerHTML = side;
     if (this.baseForm) this.mountBaseForm();
     if (this.map) this.drawMap(stops, route, base);
+  }
+
+  // Events that aren't on the map yet, each with a button to pin it there.
+  pinnable(title, list, what) {
+    return list.length ? `<h4 class="geo-h">${title}</h4><ul class="geo-pins">${list.map(it => `<li data-id="${esc(it.id)}">
+      <span><b>${esc(it.title)}</b><small>${esc(whenOf(it.meta.event))}${what(it)}</small></span>
+      <button class="link" data-geo="pin" aria-pressed="${this.pinning === it.id}">${this.pinning === it.id ? "Click the map…" : "Pin"}</button></li>`).join("")}</ul>` : "";
+  }
+
+  // Range mode: a stretch of days at once, each in its own colour.
+  drawRange() {
+    const { ctx } = this, vs = ctx.viewState, { first, last } = this.range, days = rangeDays(first, last);
+    this.el.querySelector("[data-geo=rfirst]").value = first;
+    this.el.querySelector("[data-geo=rlast]").value = last;
+    this.el.querySelector("[data-geo=profile]").hidden = true;
+    const plan = rangeStops(ctx.items, days), hidden = new Set(vs.hiddenDays || []);
+    const colour = new Map(days.map((d, i) => [d, dayColor(i)]));
+    const visible = plan.filter(d => !hidden.has(d.day));
+    const keys = visible.flatMap(d => d.stops.map(s => `${d.day}|${s.item.id}`));
+    if (vs.sel && !keys.includes(vs.sel)) vs.sel = null;
+    const total = plan.reduce((n, d) => n + d.stops.length, 0);
+    const pinning = this.pinning && ctx.items.find(it => it.id === this.pinning);
+    this.el.querySelector("[data-geo=label]").textContent = pinning ? `Click the map where “${pinning.title}” is (Esc to stop)`
+      : !days.length ? "Pick a first and last day"
+      : `${days.length} day${days.length === 1 ? "" : "s"} · ${total} place${total === 1 ? "" : "s"}`;
+
+    const legend = `<ul class="geo-legend">${plan.map(d => `<li><button class="ghost" data-geo="toggleday" data-day="${esc(d.day)}" aria-pressed="${!hidden.has(d.day)}" style="--c:${colour.get(d.day)}">
+      <i class="dot"></i><span>${esc(niceDay(d.day))}</span><small>${d.stops.length ? `${d.stops.length} place${d.stops.length === 1 ? "" : "s"}` : "none"}</small></button></li>`).join("")}</ul>`;
+    const section = d => {
+      const list = d.stops.length ? `<ol class="geo-list">${d.stops.map(({ item: it, n }) => {
+        const key = `${d.day}|${it.id}`;
+        return `<li class="${key === vs.sel ? "sel" : ""}${it.meta.checklist?.done ? " done" : ""}" data-id="${esc(it.id)}" data-key="${esc(key)}">
+          <button class="go" data-geo="go" aria-label="Show ${esc(it.title)} on the map"><span class="num" style="background:${colour.get(d.day)}">${n}</span>
+            <span class="txt"><b>${esc(it.title)}</b><small>${esc(whenOf(it.meta.event))}</small><small class="where">${esc(placeLabel(it.meta.location))}</small></span></button>
+          <button class="link" data-geo="open">Edit</button></li>`;
+      }).join("")}</ol>` : "";
+      const more = this.pinnable("Not found yet", d.unplaced, it => ` · “${esc(it.meta.location.place)}”`) + this.pinnable("No place", d.elsewhere, () => "");
+      return list || more ? `<section class="geo-day" style="--c:${colour.get(d.day)}"><h4 class="geo-h day"><i class="dot"></i>${esc(niceDay(d.day))}</h4>${list}${more}</section>` : "";
+    };
+    const noEvents = ctx.collection && !ctx.collection.plugins.includes("event");
+    const body = visible.map(section).join("");
+    this.side.innerHTML = days.length ? legend + (body || `<p class="hint">${noEvents ? "Turn on Events in this collection’s settings too, so items have a day to be on the map."
+      : "Nothing with a place in these days. Search for one in an event’s dialog, or add one with ~ and its name."}</p>`) : `<p class="hint">The last day has to be on or after the first, and a range can be at most ${MAX_RANGE} days.</p>`;
+    if (this.map) this.drawRangeMap(visible, colour, plan);
+  }
+
+  drawRangeMap(visible, colour, plan) {
+    const { L, map } = this, vs = this.ctx.viewState;
+    for (const mk of this.markers.values()) mk.remove();
+    this.markers.clear();
+    this.line?.remove(); this.line = null;
+    this.home?.remove(); this.home = null;
+    // Pins at exactly the same spot (the same place on two days) fan out a little so none hides another.
+    const there = new Map();
+    for (const { stops } of visible) for (const { item: it } of stops) { const m = it.meta.location, k = `${m.lat},${m.lng}`; there.set(k, (there.get(k) || 0) + 1); }
+    const used = new Map();
+    for (const { day, stops } of visible) for (const { item: it, n } of stops) {
+      const key = `${day}|${it.id}`, m = it.meta.location, at = `${m.lat},${m.lng}`, many = there.get(at);
+      const i = used.get(at) || 0; used.set(at, i + 1);
+      const dx = many > 1 ? Math.round(10 * Math.cos(2 * Math.PI * i / many)) : 0, dy = many > 1 ? Math.round(10 * Math.sin(2 * Math.PI * i / many)) : 0;
+      const icon = L.divIcon({ className: `geo-pin${key === vs.sel ? " sel" : ""}`, html: `<span style="background:${colour.get(day)}">${n}</span>`, iconSize: [26, 26], iconAnchor: [13 - dx, 13 - dy], popupAnchor: [dx, dy - 12] });
+      const mk = L.marker([m.lat, m.lng], { icon, title: `${niceDay(day)}: ${it.title}`, riseOnHover: true, zIndexOffset: key === vs.sel ? 1000 : 0 }).addTo(map);
+      mk.bindPopup(`<b>${esc(it.title)}</b><br>${esc(niceDay(day))} · ${esc(whenOf(it.meta.event))}<br>${esc(placeLabel(m))}
+        <br><button class="link" data-geo="open" data-id="${esc(it.id)}">Edit</button> · <button class="link" data-geo="pin" data-id="${esc(it.id)}">Move pin</button>
+        · <a href="${esc(osmLink(m))}" target="_blank" rel="noopener">OpenStreetMap</a>`);
+      mk.on("click", () => this.select(key, false));
+      mk.on("popupopen", e => {
+        const el = e.popup.getElement();
+        el?.querySelector("[data-geo=open]")?.addEventListener("click", () => this.ctx.open(it.id));
+        el?.querySelector("[data-geo=pin]")?.addEventListener("click", () => { this.map.closePopup(); this.startPin(it.id); });
+      });
+      this.markers.set(key, mk);
+    }
+    // Frame everything when the days or their places change; hiding a day keeps your view.
+    const frame = "r|" + plan.flatMap(d => d.stops.map(s => `${d.day}|${s.item.id}|${s.item.meta.location.lat},${s.item.meta.location.lng}`)).join(",");
+    if (this.shown !== frame) {
+      this.shown = frame;
+      if (vs.sel) this.flyTo(vs.sel, false);
+      else this.fitPoints(plan.flatMap(d => d.stops.map(s => [s.item.meta.location.lat, s.item.meta.location.lng])));
+    }
   }
 
   // Where the day starts and ends, and the form to change it.
@@ -328,7 +475,11 @@ class MapView {
     const base = baseFor(this.bases, this.day);
     const pts = [...stops.map(s => [s.item.meta.location.lat, s.item.meta.location.lng]), ...(this.route?.path || [])];
     if (this.ctx.viewState.route && placed(base)) pts.push([base.lat, base.lng]);
-    if (!pts.length) return;
+    this.fitPoints(pts);
+  }
+
+  fitPoints(pts) {
+    if (!this.map || !pts.length) return;
     if (pts.length === 1) this.map.setView(pts[0], 16);
     else this.map.fitBounds(pts, { padding: [36, 36], maxZoom: 16 });
   }
@@ -341,23 +492,41 @@ class MapView {
     mk.openPopup();
   }
 
-  // Picks an item: highlights it in the list and on the map, and (from the list) flies there.
-  select(id, fly = true) {
-    this.ctx.viewState.sel = id;
-    for (const li of this.side.querySelectorAll("li[data-id]")) li.classList.toggle("sel", li.dataset.id === id);
-    for (const [k, mk] of this.markers) mk.getElement()?.classList.toggle("sel", k === id);
-    if (fly) this.flyTo(id);
-    else this.side.querySelector(`li[data-id="${CSS.escape(id)}"]`)?.scrollIntoView({ block: "nearest" });
+  // Picks an item (in Range mode, an item on a day: "day|id"): highlights it in the list and on the map, and (from the list) flies there.
+  select(key, fly = true) {
+    this.ctx.viewState.sel = key;
+    const keyOf = li => li.dataset.key ?? li.dataset.id, lis = [...this.side.querySelectorAll("li[data-id]")];
+    for (const li of lis) li.classList.toggle("sel", keyOf(li) === key);
+    for (const [k, mk] of this.markers) { mk.getElement()?.classList.toggle("sel", k === key); mk.setZIndexOffset(k === key ? 1000 : 0); }
+    if (fly) this.flyTo(key);
+    else lis.find(li => keyOf(li) === key)?.scrollIntoView({ block: "nearest" });
   }
 
   click(e) {
     const b = e.target.closest("[data-geo]"); if (!b) return;
     const id = b.dataset.id || b.closest("[data-id]")?.dataset.id, vs = this.ctx.viewState;
     switch (b.dataset.geo) {
+      case "mode": this.setMode(b.dataset.mode); break;
+      case "rshift": {
+        const { first, last } = this.range, n = Math.max(1, rangeDays(first, last).length) * +b.dataset.step;
+        this.setRange(addDays(n, first), addDays(n, last)); break;
+      }
+      case "rtoday": {
+        const { first, last } = this.range, len = Math.max(1, rangeDays(first, last).length);
+        this.setRange(today(), addDays(len - 1, today())); break;
+      }
+      case "toggleday": {
+        const hide = new Set(vs.hiddenDays || []);
+        hide.has(b.dataset.day) ? hide.delete(b.dataset.day) : hide.add(b.dataset.day);
+        vs.hiddenDays = [...hide]; this.draw(); break;
+      }
       case "day": this.setDay(addDays(+b.dataset.step, this.day)); break;
       case "today": this.setDay(today()); break;
-      case "fit": this.fit(this.markers.size ? [...this.markers.keys()].map(id => ({ item: this.ctx.items.find(it => it.id === id) })).filter(s => s.item) : []); break;
-      case "go": this.select(id); break;
+      case "fit":
+        if (this.mode === "range") this.fitPoints([...this.markers.values()].map(mk => mk.getLatLng()));
+        else this.fit(this.markers.size ? [...this.markers.keys()].map(id => ({ item: this.ctx.items.find(it => it.id === id) })).filter(s => s.item) : []);
+        break;
+      case "go": this.select(b.closest("[data-key]")?.dataset.key ?? id); break;
       case "open": if (id) this.ctx.open(id); break;
       case "pin": if (id) this.startPin(id); break;
       case "route": vs.route = !vs.route; vs.option = 0; this.shown = null; this.draw(); break;

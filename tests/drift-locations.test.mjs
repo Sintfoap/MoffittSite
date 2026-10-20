@@ -5,7 +5,7 @@ import { test, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { Browser, makeEnv } from "./helpers.mjs";
 import { parseCoords, parseQuick } from "../public/todo/lib.js";
-import { dayStops, distance, niceDistance, centre } from "../public/todo/plugins/location.js";
+import { dayStops, distance, niceDistance, centre, rangeDays, normRange, rangeStops, dayColor, MAX_RANGE } from "../public/todo/plugins/location.js";
 
 const FERRY = { label: "Ferry Building, San Francisco, CA, USA", lat: 37.7955, lng: -122.3937 };
 const TOWER = { label: "Coit Tower, San Francisco, CA, USA", lat: 37.8024, lng: -122.4058 };
@@ -139,4 +139,49 @@ test("the map shows the day's events with a place, in order, with the distance f
   assert.equal(niceDistance(1234), "1.2 km");
   assert.equal(niceDistance(25000), "25 km");
   assert.equal(niceDistance(1609.344, true), "1.0 mi");
+});
+
+test("a range of days: listed inclusively, capped, and corrected when the ends are backwards", () => {
+  assert.deepEqual(rangeDays("2026-10-30", "2026-11-02"), ["2026-10-30", "2026-10-31", "2026-11-01", "2026-11-02"]);
+  assert.deepEqual(rangeDays("2026-10-20", "2026-10-20"), ["2026-10-20"]);
+  assert.equal(rangeDays("2026-01-01", "2026-12-31").length, MAX_RANGE);
+  assert.deepEqual(rangeDays("2026-10-21", "2026-10-20"), []);
+  assert.deepEqual(rangeDays("", "2026-10-20"), []);
+  assert.deepEqual(rangeDays("tomorrow", "2026-10-20"), []);
+
+  // Moving the first day past the last drags the last along; and the other way round.
+  assert.deepEqual(normRange("2026-10-25", "2026-10-22", "first"), { first: "2026-10-25", last: "2026-10-25" });
+  assert.deepEqual(normRange("2026-10-20", "2026-10-18", "last"), { first: "2026-10-18", last: "2026-10-18" });
+  assert.deepEqual(normRange("2026-10-20", "2026-10-22", "last"), { first: "2026-10-20", last: "2026-10-22" });
+  // Too long: the end you didn't touch moves.
+  assert.deepEqual(normRange("2026-10-01", "2026-12-01", "last"), { first: "2026-11-18", last: "2026-12-01" });
+  assert.deepEqual(normRange("2026-10-01", "2026-12-01", "first"), { first: "2026-10-01", last: "2026-10-14" });
+});
+
+test("the map's range groups each day's stops, numbered again from 1, and colours days apart", () => {
+  const at = (id, start, location, end = null) => ({ id, title: id, meta: { event: { start, end }, ...(location ? { location } : {}) } });
+  const a = { place: "A", lat: 51.52, lng: -0.19 }, b = { place: "B", lat: 51.53, lng: -0.2 };
+  const items = [
+    at("mon1", "2026-10-19T09:00", a), at("mon2", "2026-10-19T11:00", b),
+    at("tue1", "2026-10-20T10:00", b),
+    at("trip", "2026-10-20", a, "2026-10-21"),
+    at("lost", "2026-10-21T09:00", { place: "Atlantis", lat: null, lng: null }),
+    at("nowhere", "2026-10-21T10:00", null),
+    at("late", "2026-10-30T10:00", a),
+    { id: "undated", title: "undated", meta: { location: a } },
+    { id: "plain", title: "plain", meta: {} },
+  ];
+  const r = rangeStops(items, rangeDays("2026-10-19", "2026-10-21"));
+  assert.deepEqual(r.map(d => d.day), ["2026-10-19", "2026-10-20", "2026-10-21"]);
+  assert.deepEqual(r[0].stops.map(s => [s.n, s.item.id]), [[1, "mon1"], [2, "mon2"]]);
+  assert.deepEqual(r[1].stops.map(s => [s.n, s.item.id]), [[1, "trip"], [2, "tue1"]], "all-day first, then by time");
+  assert.deepEqual(r[2].stops.map(s => [s.n, s.item.id]), [[1, "trip"]], "an event over several days is on each of them");
+  assert.deepEqual(r[2].unplaced.map(it => it.id), ["lost"]);
+  assert.deepEqual(r[2].elsewhere.map(it => it.id), ["nowhere"]);
+  assert.deepEqual(rangeStops(items, []), []);
+
+  const colours = Array.from({ length: MAX_RANGE }, (_, i) => dayColor(i));
+  assert.equal(new Set(colours).size, MAX_RANGE);
+  assert.ok(colours.every(c => /^hsl\(\d+(\.\d+)? \d+% \d+%\)$/.test(c)), colours[0]);
+  assert.equal(dayColor(3), dayColor(3));
 });
