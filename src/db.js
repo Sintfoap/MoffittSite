@@ -372,6 +372,14 @@ const SCHEMA = [
      user_id  TEXT PRIMARY KEY,
      swept_at INTEGER NOT NULL
    )`,
+  // Each account's own Anthropic API key, sealed under CHAT_BRIDGE_KEY, so
+  // every sweep is billed to the person who asked for it. hint is its last 4.
+  `CREATE TABLE IF NOT EXISTS sweep_keys (
+     user_id  TEXT PRIMARY KEY,
+     secret   TEXT NOT NULL,
+     hint     TEXT NOT NULL,
+     added_at INTEGER NOT NULL
+   )`,
 ];
 
 // Indexes on columns that ADDED_COLUMNS may have only just added.

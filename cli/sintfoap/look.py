@@ -187,16 +187,16 @@ class Ask(ModalScreen[str | None]):
     """One line of text, or None if cancelled."""
     BINDINGS = [Binding("escape", "cancel", "Cancel")]
 
-    def __init__(self, title: str, hint: str = "", value: str = "", placeholder: str = "", ok: str = "OK"):
+    def __init__(self, title: str, hint: str = "", value: str = "", placeholder: str = "", ok: str = "OK", password: bool = False):
         super().__init__()
-        self._title, self._hint, self._value, self._ph, self._ok = title, hint, value, placeholder, ok
+        self._title, self._hint, self._value, self._ph, self._ok, self._password = title, hint, value, placeholder, ok, password
 
     def compose(self) -> ComposeResult:
         with Vertical(classes="dialog"):
             yield Label(Text(self._title, style=f"bold {INK}"))
             if self._hint:
                 yield Static(Text(self._hint, style=MUTED))
-            yield Input(self._value, placeholder=self._ph, id="answer")
+            yield Input(self._value, placeholder=self._ph, id="answer", password=self._password)
             with Horizontal(classes="buttons"):
                 yield Button(self._ok, id="ok")
                 yield Button("Cancel", id="cancel", classes="quiet")

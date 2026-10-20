@@ -49,9 +49,9 @@
   // GIPHY_API_KEY, also a secret, is a GIPHY API key (developers.giphy.com) for
   // chat's GIF picker; GIF_API_KEY, a KLIPY key, works instead. Without either
   // the picker is off. See src/gifs.js.
-  // ANTHROPIC_API_KEY, also a secret, is a Claude API key (console.anthropic.com)
-  // that Sweep reads chat rooms with. Without it Sweep can't sweep. SWEEP_MODEL,
-  // a Text variable, picks the model (claude-opus-5-5 if it isn't set). See src/sweep.js.
+  // Sweep reads chat rooms with each person's own Claude API key, which they add
+  // on /sweep/ and which is sealed with CHAT_BRIDGE_KEY. SWEEP_MODEL, a Text
+  // variable, picks the model (claude-opus-5-5 if it isn't set). See src/sweep.js.
   // ORS_API_KEY, also a secret, is a free OpenRouteService key (openrouteservice.org)
   // that finds Drift's Locations on the map. Without it place search is off, but
   // pins and pasted coordinates work. See src/places.js.

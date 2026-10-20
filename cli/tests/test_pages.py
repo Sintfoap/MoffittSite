@@ -442,7 +442,18 @@ def test_sweep_picks_a_room_sweeps_it_and_accepts_into_drift(real_site):
     async def sweep(app, pilot):
         page = app.screen
         assert type(page).__name__ == "SweepPage"
-        assert page.data["ready"] and page.data["suggestions"] == []
+        assert not page.data["ready"] and page.data["suggestions"] == []
+        assert "Press k to add your Anthropic API key" in str(page.query_one("#notice").render())
+        # k: your own key, hidden as it's typed.
+        await pilot.press("k")
+        await settle(pilot)
+        answer = app.screen.query_one("#answer")
+        assert answer.password
+        answer.value = "sk-ant-api03-" + "d" * 40
+        await pilot.press("enter")
+        await settle(pilot, 0.8)
+        assert page.data["ready"] and page.data["key"]["hint"] == "dddd"
+        assert "Saved your key ending in …dddd." in str(page.query_one("#status").render())
         rooms = page.query_one("#rooms")
         names = [r["name"] for r in page.data["rooms"]]
         assert "Plans" in names

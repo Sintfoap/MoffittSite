@@ -390,7 +390,7 @@ Push stays off, and the page says so, until the site has a VAPID key pair.
 
 `/sweep/` reads the chat rooms you pick and suggests Drift items from them: events with a date, tasks someone took on, and things for a list ("we need eggs", "watch Severance"). Nothing goes into Drift until you accept it. It's an app in `APPS` with its own toggle on `/admin`, off for everyone; accepting needs Drift too.
 
-- **Setting it up:** it calls Claude, so the Worker needs an Anthropic API key: `npx wrangler secret put ANTHROPIC_API_KEY`. Without one the page says Sweep isn't set up and nothing is sent anywhere. It uses `claude-opus-5-5` (with server-side fallbacks, so a busy model falls back instead of failing); set the `SWEEP_MODEL` variable to use another.
+- **Your own key:** Sweep calls Claude with each person's own Anthropic API key, so nobody's sweeps go on anyone else's bill. You add yours under "Your Anthropic key" on `/sweep/` (or `k` in the terminal). The site checks it with Anthropic, then keeps it sealed with the `CHAT_BRIDGE_KEY` secret (the same as Chat connections' credentials, so that secret has to be set) and never sends it back; the page shows only its last four characters. Without a key nothing is sent anywhere. It uses `claude-opus-5-5` (with server-side fallbacks, so a busy model falls back instead of failing); set the `SWEEP_MODEL` variable to use another.
 - **Rooms:** any room you're a member of, Chat connections' rooms included if you have that app. Tick a room and choose how far back to read it (the last day up to 30 days). Each sweep reads only what's new since the last one, up to 300 messages, oldest first; if there's more, it says so and the next sweep carries on.
 - **Encrypted rooms** can't be read yet, since their keys are only in your browser. The page lists them greyed out. Reading them from the browser, then from a Matrix session of Sweep's own, comes next.
 - **What Claude sees:** the room's name, who said what and when ("Me" for you), today's date in your time zone, the names of your Drift collections, and the suggestions you've accepted and turned down before. The conversation is marked as data, not instructions. Suggestions you already have in Drift, or that were already made from that room, are dropped.
@@ -403,6 +403,7 @@ Push stays off, and the page says so, until the site has a VAPID key pair.
 |---|---|
 | `GET /sweep/api/state` | your rooms, waiting suggestions, recent decisions and collections |
 | `PUT /sweep/api/rooms/<id>` | `{on, days}`: whether to read a room, and how far back |
+| `PUT /sweep/api/key` | `{key}`: check your Anthropic API key and keep it, in place of any before; `DELETE` removes it |
 | `POST /sweep/api/sweep` | `{tz, rooms?}`: read what's new and suggest |
 | `POST /sweep/api/suggestions/<id>/accept` | `{title?, kind?, start?, end?, collection?}`: add it to Drift |
 | `POST /sweep/api/suggestions/<id>/reject` | `{reason?}` |
