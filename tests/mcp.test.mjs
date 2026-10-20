@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { Browser, makeEnv, sql, sqlOne, run, ORIGIN } from "./helpers.mjs";
 import worker from "../src/worker.js";
+import { encodePng, decodePng } from "../src/mapimage.js";
 import { TOOL_NAMES } from "../src/mcp.js";
 
 const PW = "correct horse battery";
@@ -295,4 +296,126 @@ test("agents set a collection's bases and plan a day's route", async () => {
   assert.equal(r.legs.length, 3);
   assert.equal(r.path, undefined, "the street path is left out");
   assert.equal(r.estimated, true);
+});
+
+// ── map pictures, batches, links and place search ──────────────────────────
+
+// Swaps fetch for the test: OpenStreetMap tiles are plain blue squares
+// (or fail when tilesDown), and ORS finds the Ferry Building.
+async function withFakeWeb(fn, { tilesDown = false } = {}) {
+  const real = globalThis.fetch, tiles = [], tile = await encodePng(256, 256, new Uint8Array(256 * 256 * 3).fill(200).map((v, i) => i % 3 === 2 ? 255 : v));
+  globalThis.fetch = async (input, init) => {
+    const url = new URL(input instanceof Request ? input.url : String(input));
+    if (url.hostname === "tile.openstreetmap.org") {
+      tiles.push({ url, agent: new Headers(init?.headers).get("User-Agent") });
+      return tilesDown ? new Response("busy", { status: 503 }) : new Response(tile, { headers: { "Content-Type": "image/png" } });
+    }
+    if (url.pathname === "/geocode/search") return Response.json({ features: [{ geometry: { coordinates: [-122.3937, 37.7955] }, properties: { label: "Ferry Building, San Francisco" } }] });
+    if (url.pathname === "/geocode/reverse") return Response.json({ features: [{ geometry: { coordinates: [+url.searchParams.get("point.lon"), +url.searchParams.get("point.lat")] }, properties: { label: "Somewhere" } }] });
+    return new Response("not found", { status: 404 });
+  };
+  try { return await fn(tiles); } finally { globalThis.fetch = real; }
+}
+const near = (c, want, by = 30) => c.every((v, k) => Math.abs(v - want[k]) <= by);
+
+test("PNGs survive being encoded and decoded", async () => {
+  const rgb = new Uint8Array(7 * 5 * 3).map((_, i) => (i * 37) % 256);
+  const back = await decodePng(await encodePng(7, 5, rgb));
+  assert.equal(back.w, 7); assert.equal(back.h, 5);
+  assert.deepEqual([...back.rgb], [...rgb]);
+  assert.equal(await decodePng(new Uint8Array([1, 2, 3])), null);
+});
+
+test("agents get a picture of a day's map, with the stops in order", async () => {
+  const env = makeEnv(), a = await agent(env, "ryan");
+  const col = (await a.call("drift_get_state")).collections[0];
+  await a.call("drift_update_collection", { id: col.id, plugins: ["checklist", "event", "list", "location"] });
+  for (const [title, start, lng] of [["Breakfast", "2026-10-20T09:00", -0.11], ["Museum", "2026-10-20", -0.13]])
+    await a.call("drift_create_item", { title, collection: col.id, meta: { event: { start }, location: { lat: 51.5, lng } } });
+  await a.call("drift_set_bases", { id: col.id, bases: [{ lat: 51.51, lng: -0.12 }] });
+
+  await withFakeWeb(async tiles => {
+    const j = await a.rpc("tools/call", { name: "drift_get_map", arguments: { collection: col.id, day: "2026-10-20", width: 640, height: 480 } });
+    const [img, text] = j.result.content;
+    assert.equal(img.type, "image"); assert.equal(img.mimeType, "image/png");
+    const png = await decodePng(Buffer.from(img.data, "base64"));
+    assert.equal(png.w, 640); assert.equal(png.h, 480);
+    assert.ok(tiles.length > 0 && tiles.every(t => /^MoffittSite/.test(t.agent)), "tiles are fetched with a User-Agent");
+    const px = (x, y) => [...png.rgb.subarray((y * 640 + x) * 3, (y * 640 + x) * 3 + 3)];
+    let gold = 0, map = 0;
+    for (let y = 0; y < 480; y++) for (let x = 0; x < 640; x++) { const c = px(x, y); if (near(c, [214, 168, 72])) gold++; if (near(c, [208, 208, 255], 12)) map++; }
+    assert.ok(gold > 500, `the route and pins are drawn (${gold} gold pixels)`);
+    assert.ok(map > 100000, "the tiles are under them");
+    assert.deepEqual(px(5, 5), [26, 18, 6], "the title bar is ink");
+
+    const s = JSON.parse(text.text);
+    assert.deepEqual(s.stops.map(x => [x.label, x.title]), [["1", "Breakfast"], ["2", "Museum"]]);
+    assert.equal(s.estimated, true);
+    assert.match(s.note, /OpenRouteService key/);
+  });
+
+  // Without tiles there's still a picture, and a bad day or collection is an error the agent can read.
+  await withFakeWeb(async () => {
+    const j = await a.rpc("tools/call", { name: "drift_get_map", arguments: { collection: col.id, day: "2026-10-20" } });
+    const png = await decodePng(Buffer.from(j.result.content[0].data, "base64"));
+    assert.equal(png.w, 800);
+  }, { tilesDown: true });
+  assert.match((await a.call("drift_get_map", { collection: col.id, day: "tomorrow" })).error, /YYYY-MM-DD/);
+  assert.match((await a.call("drift_get_map", { collection: "c_nope", day: "2026-10-20" })).error, /not found/);
+});
+
+test("agents add and change many items at once", async () => {
+  const env = makeEnv(), a = await agent(env, "ryan");
+  const col = (await a.call("drift_get_state")).collections[0];
+  const made = await a.call("drift_create_items", { items: [
+    { title: "Eggs", collection: col.id }, { title: "", collection: col.id }, { title: "Milk", collection: col.id, meta: { checklist: { done: false, priority: 2 } } },
+  ] });
+  assert.equal(made.done, 2); assert.equal(made.failed, 1);
+  assert.equal(made.results[1].index, 1); assert.match(made.results[1].error, /title/);
+  const [eggs, milk] = [made.results[0].item, made.results[2].item];
+
+  const changed = await a.call("drift_update_items", { items: [{ id: eggs.id, title: "Free-range eggs" }, { id: "i_nope" }, { id: milk.id, deleted: true }] });
+  assert.equal(changed.done, 2);
+  assert.equal(changed.results[0].item.title, "Free-range eggs");
+  assert.match(changed.results[1].error, /not found/);
+  assert.equal((await a.call("drift_get_item", { id: milk.id })).deleted, true);
+  assert.match((await a.call("drift_create_items", { items: [] })).error, /1 to 50/);
+
+  // Someone else's items stay out of reach.
+  const b = await agent(env, "sam");
+  assert.match((await b.call("drift_get_item", { id: eggs.id })).error, /not found/);
+  assert.match((await b.call("drift_update_items", { items: [{ id: eggs.id, title: "mine" }] })).results[0].error, /not found/);
+});
+
+test("agents link items in Graph", async () => {
+  const env = makeEnv(), a = await agent(env, "ryan");
+  const col = (await a.call("drift_get_state")).collections[0];
+  const [x, y] = (await a.call("drift_create_items", { items: [{ title: "Pack", collection: col.id }, { title: "Leave", collection: col.id }] })).results.map(r => r.item);
+
+  const typed = await a.call("drift_link_items", { from: x.id, to: y.id, type: "Leads to" });
+  assert.deepEqual(typed.meta.graph.links, [y.id]);
+  assert.deepEqual(typed.meta.graph.rel, { [y.id]: "leads to" });
+  const plain = await a.call("drift_link_items", { from: x.id, to: y.id });
+  assert.equal(plain.meta.graph.rel, undefined, "a plain link replaces the type");
+  // A plain link the other way is already there.
+  const again = await a.call("drift_link_items", { from: y.id, to: x.id });
+  assert.equal(again.meta.graph, undefined);
+
+  await a.call("drift_link_items", { from: x.id, to: y.id, remove: true });
+  assert.deepEqual((await a.call("drift_get_item", { id: x.id })).meta.graph.links, []);
+  assert.match((await a.call("drift_link_items", { from: x.id, to: x.id })).error, /itself/);
+  assert.match((await a.call("drift_link_items", { from: x.id, to: "i_nope" })).error, /not found/);
+});
+
+test("agents look up places when the site can", async () => {
+  const off = await agent(makeEnv(), "ryan");
+  assert.match((await off.call("drift_find_place", { query: "ferry building" })).error, /OpenRouteService/);
+
+  const a = await agent(makeEnv({ ORS_API_KEY: "ors-key" }), "ryan");
+  await withFakeWeb(async () => {
+    assert.deepEqual((await a.call("drift_find_place", { query: "ferry building", near: { lat: 37.8, lng: -122.4 } })).results,
+      [{ place: "Ferry Building, San Francisco", lat: 37.7955, lng: -122.3937 }]);
+    assert.deepEqual(await a.call("drift_find_place", { lat: 51.5, lng: -0.1 }), { place: "Somewhere", lat: 51.5, lng: -0.1 });
+    assert.match((await a.call("drift_find_place", {})).error, /query/);
+  });
 });

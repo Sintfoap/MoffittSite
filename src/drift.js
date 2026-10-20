@@ -274,6 +274,13 @@ export async function createItem(env, user, fields) {
   return { ...item, id, updated };
 }
 
+// One item you can see, deleted or not, or null.
+export async function getItem(env, user, id) {
+  const d = await db(env);
+  const acc = await itemAccess(d, user, id);
+  return acc ? getRow(d, "drift_items", acc.owner, id, toItem) : null;
+}
+
 // Merges only what was sent, in one SQL statement, so two devices changing
 // different fields (or different plugins' metadata) of one item both keep
 // their change. Each plugin's slice is replaced as a whole.

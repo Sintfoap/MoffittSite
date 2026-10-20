@@ -41,14 +41,14 @@ export function edges(items) {
   return out;
 }
 
-function withLink(g, to, type) {
+export function withLink(g, to, type) {
   const rel = { ...(g.rel || {}) };
   if (type) rel[to] = type; else delete rel[to];
   const out = { ...g, links: g.links.includes(to) ? g.links : [...g.links, to], rel };
   if (!Object.keys(rel).length) delete out.rel;
   return out;
 }
-function withoutLink(g, to) {
+export function withoutLink(g, to) {
   const rel = { ...(g.rel || {}) }; delete rel[to];
   const out = { ...g, links: g.links.filter(x => x !== to), rel };
   if (!Object.keys(rel).length) delete out.rel;

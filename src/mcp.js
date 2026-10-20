@@ -10,9 +10,12 @@
 
 import { findKey, touchKey } from "./apikeys.js";
 import { getUser, areaOf } from "./auth.js";
-import { state, agenda, createItem, updateItem, createCollection, updateCollection, setBases, shareCollection, unshareCollection, BadRequest, ID } from "./drift.js";
+import { state, agenda, getItem, createItem, updateItem, createCollection, updateCollection, setBases, shareCollection, unshareCollection, BadRequest, ID } from "./drift.js";
 import { planDay } from "./routing.js";
-import { PROFILES } from "../public/todo/route.js";
+import { hasPlaces, searchPlaces, nameOf } from "./places.js";
+import { routeImage, stopLabel } from "./mapimage.js";
+import { PROFILES, niceDuration, straightNote } from "../public/todo/route.js";
+import { withLink, withoutLink, label } from "../public/todo/plugins/graph.js";
 import { install, uninstall, PLUGIN_ID } from "./store.js";
 
 export const MCP_PATHS = /^\/mcp\/?$/;
@@ -62,6 +65,81 @@ async function getState(env, user, a) {
   return out;
 }
 
+// A tool result that isn't one block of JSON (drift_get_map's picture).
+class Blocks { constructor(content) { this.content = content; } }
+const base64 = bytes => {
+  let s = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(s);
+};
+
+// Several items at once: each is done in turn, and one that fails doesn't stop the rest.
+const MAX_BATCH = 50;
+async function each(list, run) {
+  if (!Array.isArray(list) || !list.length || list.length > MAX_BATCH) fail(`items must be a list of 1 to ${MAX_BATCH} items`);
+  const results = [];
+  for (const [index, a] of list.entries()) {
+    try {
+      if (!a || typeof a !== "object" || Array.isArray(a)) fail("each item must be an object");
+      results.push({ index, item: await run(a) });
+    } catch (e) {
+      if (!(e instanceof ToolError || e instanceof BadRequest)) throw e;
+      results.push({ index, error: e.message });
+    }
+  }
+  return { done: results.filter(r => r.item).length, failed: results.filter(r => r.error).length, results };
+}
+
+// Links item `from` to item `to` in Graph, or removes the link between them.
+async function linkItems(env, user, a) {
+  const from = needId(a, "i", "from"), to = needId(a, "i", "to");
+  if (from === to) fail("an item can't link to itself");
+  const x = await getItem(env, user, from), y = await getItem(env, user, to);
+  if (!x || x.deleted || !y || y.deleted) fail("item not found");
+  const gx = x.meta.graph || { links: [], x: null, y: null }, gy = y.meta.graph || { links: [], x: null, y: null };
+  if (a.remove) {
+    const out = gx.links.includes(to) ? found(await updateItem(env, user, from, { meta: { graph: withoutLink(gx, to) } })) : x;
+    if (gy.links.includes(from)) await updateItem(env, user, to, { meta: { graph: withoutLink(gy, from) } });
+    return out;
+  }
+  // A plain link stored on the other item already joins them.
+  if (!label(a.type) && gy.links.includes(from) && !gy.rel?.[from] && !gx.links.includes(to)) return x;
+  return found(await updateItem(env, user, from, { meta: { graph: withLink(gx, to, label(a.type)) } }));
+}
+
+async function findPlace(env, user, a) {
+  if (!hasPlaces(env)) fail("place search is off: the site has no OpenRouteService key. Give a location as {lat, lng} instead.");
+  const coord = (lat, lng) => Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180;
+  if (a.query == null) {
+    if (!coord(a.lat, a.lng)) fail("send query, or lat and lng");
+    const place = await nameOf(env, a.lat, a.lng);
+    return place === null ? fail("couldn't reach the map service") : { place, lat: a.lat, lng: a.lng };
+  }
+  if (typeof a.query !== "string" || !a.query.trim()) fail("query must be text");
+  const near = a.near && coord(a.near.lat, a.near.lng) ? a.near : null;
+  const results = await searchPlaces(env, a.query, near);
+  return results === null ? fail("couldn't reach the map service") : { results };
+}
+
+async function getMap(env, user, a) {
+  if (!DAY.test(String(a.day))) fail("day must be YYYY-MM-DD");
+  const plan = found(await planDay(env, user, needId(a, "c", "collection"), a.day, a.profile, a.option));
+  const opt = plan.options[plan.option];
+  const byId = new Map(plan.stops.map(s => [s.id, s]));
+  const stops = (opt ? opt.order.map(id => byId.get(id)) : plan.stops)
+    .map((s, i) => ({ label: stopLabel(i + 1), id: s.id, title: s.title, place: s.place, start: s.start || undefined, late: opt?.late.includes(s.id) || undefined }));
+  const travel = opt ? `${niceDuration(opt.duration)}${opt.distance != null ? `, ${(opt.distance / 1000).toFixed(1)} km` : ""}` : "";
+  const title = [a.day, PROFILES[plan.profile], travel, plan.options.length > 1 ? `option ${plan.option + 1} of ${plan.options.length}` : ""].filter(Boolean).join(" - ");
+  const png = await routeImage(plan, { width: a.width ?? 800, height: a.height ?? 600, title });
+  const summary = {
+    day: plan.day, profile: plan.profile, option: plan.option, options: plan.options.length,
+    base: plan.base && { place: plan.base.place, lat: plan.base.lat, lng: plan.base.lng }, stops,
+    duration: opt?.duration, distance: opt?.distance, streets: plan.streets, estimated: plan.estimated,
+    note: straightNote(plan) || undefined, unplaced: plan.unplaced, elsewhere: plan.elsewhere,
+  };
+  return new Blocks([{ type: "image", data: base64(png), mimeType: "image/png" }, { type: "text", text: JSON.stringify(summary) }]);
+}
+
 const obj = (properties, required = []) => ({ type: "object", properties, required, additionalProperties: false });
 const idProp = (what, prefix) => ({ type: "string", description: `${what} id, like ${prefix}_0123456789 (from drift_get_state)` });
 
@@ -99,6 +177,9 @@ const TOOLS = [
   { name: "drift_get_agenda", description: "Events (items with an event start, not ticked done) that are late or due on a day.",
     inputSchema: obj({ day: { type: "string", description: "YYYY-MM-DD, the date to treat as today." } }, ["day"]),
     run: (env, user, a) => DAY.test(String(a.day)) ? agenda(env, user, a.day) : fail("day must be YYYY-MM-DD") },
+  { name: "drift_get_item", description: "Read one item by id, including deleted ones (deleted: true).",
+    inputSchema: obj({ id: idProp("Item", "i") }, ["id"]),
+    run: async (env, user, a) => found(await getItem(env, user, needId(a, "i"))) },
   { name: "drift_create_item", description: "Add an item to a collection you own or can edit. Plugin data goes in meta, e.g. {checklist: {done: false, priority: 2}} for a task or {event: {start: \"2026-03-01T09:00\"}} for an event.",
     inputSchema: obj(ITEM_FIELDS, ["title", "collection"]), run: (env, user, a) => createItem(env, user, a) },
   { name: "drift_update_item", description: "Change only the fields you send. meta replaces each named plugin's data as a whole. Moving to another collection works within one owner. Send deleted: false to restore a deleted item.",
@@ -107,6 +188,22 @@ const TOOLS = [
   { name: "drift_delete_item", description: "Delete an item (it can be restored with drift_update_item deleted: false).",
     inputSchema: obj({ id: idProp("Item", "i") }, ["id"]),
     run: async (env, user, a) => found(await updateItem(env, user, needId(a, "i"), { deleted: true })) },
+  { name: "drift_create_items", description: `Add up to ${MAX_BATCH} items in one go, each like drift_create_item's arguments. They're added in order, and one that fails doesn't stop the rest: ` +
+      "results lists each one's item or error by its index in your list.",
+    inputSchema: obj({ items: { type: "array", maxItems: MAX_BATCH, items: obj(ITEM_FIELDS, ["title", "collection"]) } }, ["items"]),
+    run: (env, user, a) => each(a.items, it => createItem(env, user, it)) },
+  { name: "drift_update_items", description: `Change up to ${MAX_BATCH} items in one go, each like drift_update_item's arguments ({id, ...fields}). One that fails doesn't stop the rest: ` +
+      "results lists each one's item or error by its index in your list.",
+    inputSchema: obj({ items: { type: "array", maxItems: MAX_BATCH, items: obj({ id: idProp("Item", "i"), ...ITEM_FIELDS, deleted: { type: "boolean" } }, ["id"]) } }, ["items"]),
+    run: (env, user, a) => each(a.items, async it => found(await updateItem(env, user, needId(it, "i"), rest(it)))) },
+  { name: "drift_link_items", description: "Link two items in Graph (switch graph on for the collection to see them). With no type the link is plain and two-way; " +
+      "with a type (like \"leads to\", \"depends on\", \"blocks\", \"part of\") it points from from to to. On a day's route, linked places are visited one after the other, in the link's direction when it has a type. " +
+      "remove: true removes any link between them. Returns the from item.",
+    inputSchema: obj({
+      from: idProp("Item", "i"), to: idProp("Item", "i"),
+      type: { type: "string", description: "Up to 32 characters, or empty for a plain link." },
+      remove: { type: "boolean" },
+    }, ["from", "to"]), run: linkItems },
   { name: "drift_create_collection", description: "Make a collection. Starts with checklist, event and list switched on unless you pass plugins.",
     inputSchema: obj(COLLECTION_FIELDS, ["name"]), run: (env, user, a) => createCollection(env, user.id, a) },
   { name: "drift_update_collection", description: "Change a collection you own: rename, switch plugins on or off, set its view or order, or deleted: true/false. You can't delete your last collection.",
@@ -146,6 +243,25 @@ const TOOLS = [
       const out = found(await planDay(env, user, needId({ id: a.collection }, "c"), a.day, a.profile, a.option));
       return { ...out, path: undefined };
     } },
+  { name: "drift_get_map", description: "A picture (PNG) of a collection's Map for a day: the OpenStreetMap streets, the route from the day's base and back, " +
+      "the base as a house and each stop as a numbered pin in visiting order (1-9, then A-Z; red when you'd likely be late). " +
+      "Also returns the stops in that order with their labels, the travel time and distance, and a note when the route is in straight lines. Same choices as drift_plan_route.",
+    inputSchema: obj({
+      collection: idProp("Collection", "c"),
+      day: { type: "string", description: "YYYY-MM-DD" },
+      profile: { type: "string", enum: Object.keys(PROFILES), description: "How you get around. Default driving-car." },
+      option: { type: "integer", minimum: 0, description: "Which of the route options to draw. Default 0, the best." },
+      width: { type: "integer", minimum: 320, maximum: 1280, description: "Pixels. Default 800." },
+      height: { type: "integer", minimum: 240, maximum: 1280, description: "Pixels. Default 600." },
+    }, ["collection", "day"]), run: getMap },
+  { name: "drift_find_place", description: "Look up a place on the map, to check what a Locations address will find before you use it: " +
+      "query gives the best matches [{place, lat, lng}] (near, {lat, lng}, favours ones close to it); lat and lng without a query give the name of that spot. " +
+      "Needs the site's OpenRouteService key.",
+    inputSchema: obj({
+      query: { type: "string", description: "An address or a place's name." },
+      near: { type: "object", properties: { lat: { type: "number" }, lng: { type: "number" } }, description: "Favour places near here." },
+      lat: { type: "number" }, lng: { type: "number" },
+    }), run: findPlace },
   { name: "drift_install_plugin", description: "Add an approved plugin from the plugin store to your Drift. Its id is in drift_get_state's store list.",
     inputSchema: obj({ id: { type: "string", description: "Store plugin id." } }, ["id"]),
     run: async (env, user, a) => found(PLUGIN_ID.test(String(a.id)) ? await install(env, user.id, String(a.id)) : null) },
@@ -164,7 +280,7 @@ async function callTool(env, user, params) {
   if (!args || typeof args !== "object" || Array.isArray(args)) return { error: [-32602, "arguments must be an object"] };
   try {
     const out = await tool.run(env, user, args);
-    return { result: { content: [{ type: "text", text: JSON.stringify(out) }] } };
+    return { result: { content: out instanceof Blocks ? out.content : [{ type: "text", text: JSON.stringify(out) }] } };
   } catch (e) {
     if (e instanceof ToolError || e instanceof BadRequest) return { result: { isError: true, content: [{ type: "text", text: e.message }] } };
     throw e;
