@@ -22,6 +22,7 @@ public/          the website, served as static files
   notifications/   turning push notifications on, and what they're for
   recipes/         Recipe box (signed-in users with it turned on); scale.js scales ingredient lines, shared with the Worker
   sweep/           Sweep: Drift suggestions read out of your chat rooms, to accept or turn down
+  groceries/       Grocery autopilot: a Drift list and recipes, added up and sent to Kroger or Instacart
   sw.js            the service worker that shows push notifications
   site.webmanifest, icons/   so the site can be added to a phone's home screen
   favicon.svg, favicon.ico   the browser tab icon (the same emblem as icons/)
@@ -46,11 +47,12 @@ src/             the Worker: runs only for the paths in run_worker_first
   notify.js        notifications: settings, browsers, Chat's pushes and Drift's reminders
   recipes.js       Recipe box: recipes read from a link's schema.org data (Recipe Keeper's shared recipes too), and their ingredients sent to a Drift list
   sweep.js         Sweep: reads chosen chat rooms with Claude and suggests Drift events, tasks and list items
+  groceries.js     Grocery autopilot: builds an order from a Drift list and recipes; Kroger's cart API and Instacart's shopping lists
   books.js         the book club pick's list and votes (/books/api), and who voted for admins
   bridges.js       chat connections: other platforms' rooms in chat, with sealed credentials
   matrix.js        the Matrix provider for those
   vendor/uqr.mjs   QR codes for two-factor setup (MIT)
-cli/             the `sintfoap` command: sign in from a terminal; dashboard, Drift, plugin store, chat, Recipe box, Sweep and settings as a terminal UI
+cli/             the `sintfoap` command: sign in from a terminal; dashboard, Drift, plugin store, chat, Recipe box, Sweep, Grocery autopilot and settings as a terminal UI
 apps/todo-esque/ the original Drift app (Python engine, terminal UI, CLI)
 tests/           node --no-warnings --test tests/*.test.mjs  (the CLI's: cd cli && python -m pytest tests)
 wrangler.jsonc   Worker configuration (name, static files, variables, database)
@@ -407,6 +409,35 @@ Push stays off, and the page says so, until the site has a VAPID key pair.
 | `POST /sweep/api/sweep` | `{tz, rooms?}`: read what's new and suggest |
 | `POST /sweep/api/suggestions/<id>/accept` | `{title?, kind?, start?, end?, collection?}`: add it to Drift |
 | `POST /sweep/api/suggestions/<id>/reject` | `{reason?}` |
+
+## Grocery autopilot
+
+`/groceries/` turns what's already on the site into a grocery order, so nothing gets typed in twice: the unticked items on a Drift list (your "Shopping list" unless you pick another) and the ingredients of the recipes you pick from Recipe box, scaled to the servings you choose. Each line is read for an amount, a unit and the thing itself ("1 1/2 cups flour, sifted" is 1.5 cup of flour), and lines for the same thing are added up ("2 eggs" from a recipe and "Eggs" on the list are one line). Things you always have (salt, pepper and water to start with; "Always have" on any line adds it) are left out. It's an app in `APPS` with its own toggle on `/admin`, off for everyone; it reads Drift and Recipe box only if you have those too.
+
+Where an order can go, honestly:
+
+- **Kroger** (and its stores: Ralphs, Fred Meyer, King Soopers, Smith's, Fry's, Harris Teeter and more) has a public API that adds products to a shopper's own cart. Connect your Kroger account once (it's a Kroger sign-in, OAuth), pick your store by ZIP code and pickup or delivery, then **Match products**: each line is searched for at your store and the best match picked, with **Change** to pick another. Whatever you send is remembered for that line, so the next order is already matched. Kroger's API has no checkout, so you pay in Kroger's app or site. Needs the `KROGER_CLIENT_ID` and `KROGER_CLIENT_SECRET` secrets from a Production app at developer.kroger.com with the `cart.basic:write`, `product.compact` and `profile.compact` scopes and `https://<your site>/groceries/kroger/callback` as its redirect URI, plus `CHAT_BRIDGE_KEY`, which each person's Kroger tokens are sealed with.
+- **Instacart**'s Developer Platform makes a shopping-list page from the order (amounts and units included); you open it, choose any store Instacart shops at, and check out there. Needs the `INSTACART_API_KEY` secret (docs.instacart.com); `INSTACART_API_URL` points it at Instacart's development server instead.
+- **Walmart** has no API for shoppers' carts or orders: its APIs are for marketplace sellers, suppliers and advertisers. So each line has a walmart.com search link instead. (Third-party services that buy on Walmart with your password exist, but they're against Walmart's terms, so the site doesn't use them.)
+
+Sending ticks the Drift items that went into the order off (untick "Tick the Drift items off" to leave them) and unpicks the recipes, so the next order starts fresh. Untick a line to leave it out of just this order. Every order sent is kept line by line under "Past orders", ready for a scanner that marks when groceries arrived and when they'll go off.
+
+- **Terminal:** `sintfoap groceries` (`g l`).
+
+| Request | |
+|---|---|
+| `GET /groceries/api/state` | the order (`lines`, and `have` for what's left out), what it's made from, the stores and past orders |
+| `PUT /groceries/api/plan` | any of `{list, recipes: [{id, servings}], pantry: [names]}` |
+| `PUT /groceries/api/pantry` | `{name, have}`: always have it, or not any more |
+| `POST /groceries/api/instacart` | `{skip?, check_off?}` → `{url}`: an Instacart shopping list |
+| `GET /groceries/kroger/connect` | off to Kroger to sign in (and back to `/groceries/kroger/callback`) |
+| `GET /groceries/api/kroger/stores?zip=` | Kroger stores near a ZIP code |
+| `PUT /groceries/api/kroger/store` | `{id?, modality?}`: your store, and `PICKUP` or `DELIVERY` |
+| `POST /groceries/api/kroger/match` | a product at your store for each line, with other choices |
+| `GET /groceries/api/kroger/search?q=` | products at your store |
+| `PUT /groceries/api/matches/<line>` | `{upc, description, ...}`: the product for that line from now on; `DELETE` forgets it |
+| `POST /groceries/api/kroger/cart` | `{lines: [{key, upc or product, quantity}], check_off?}`: into your Kroger cart |
+| `DELETE /groceries/api/kroger` | disconnect Kroger |
 
 ## Phone app
 

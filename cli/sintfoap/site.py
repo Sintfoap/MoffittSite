@@ -683,3 +683,61 @@ def sweep_accept(suggestion: str, changes: dict | None = None) -> dict:
 def sweep_reject(suggestion: str, body: dict | None = None) -> dict:
     """Turns a suggestion down ({reason} optional); returns sweep_state()."""
     return api("POST", f"/sweep/api/suggestions/{_q(suggestion)}/reject", body or {})
+
+
+# ───────────────────────────── grocery autopilot ────────────────────────────
+# /groceries/api/ (src/groceries.js)
+
+def groceries_state() -> dict:
+    """{drift, recipes_on, lists, recipes, plan, list, lines, have, kroger, instacart, orders}."""
+    return _get("/groceries/api/state")
+
+
+def groceries_plan(**changes) -> dict:
+    """Changes what the order is made from: any of list=, recipes=[{id, servings}], pantry=[names]. Returns groceries_state()."""
+    return api("PUT", "/groceries/api/plan", changes)
+
+
+def groceries_pantry(name: str, have: bool) -> dict:
+    """Says you always have something (it's left out of orders), or that you don't any more. Returns groceries_state()."""
+    return api("PUT", "/groceries/api/pantry", {"name": name, "have": bool(have)})
+
+
+def groceries_instacart(skip: list[str], check_off: bool = True) -> dict:
+    """Makes an Instacart shopping list of the order, less the lines in skip: {url, order, checked, state}."""
+    return api("POST", "/groceries/api/instacart", {"skip": skip, "check_off": check_off})
+
+
+def kroger_stores(zip_code: str) -> list[dict]:
+    """Kroger stores near a ZIP code: [{id, name, chain, address}]."""
+    return _get(f"/groceries/api/kroger/stores?zip={_q(zip_code)}")["stores"]
+
+
+def kroger_store(store_id: str | None = None, modality: str | None = None) -> dict:
+    """Picks your Kroger store, and pickup or delivery (PICKUP, DELIVERY). Returns groceries_state()."""
+    body = {k: v for k, v in (("id", store_id), ("modality", modality)) if v}
+    return api("PUT", "/groceries/api/kroger/store", body)
+
+
+def kroger_match() -> dict:
+    """A product at your store for each line: {key: {match, choices, remembered}}."""
+    return api("POST", "/groceries/api/kroger/match", {})["matches"]
+
+
+def kroger_search(q: str) -> list[dict]:
+    """Products at your store for a search: [{upc, description, brand, size, price, image}]."""
+    return _get(f"/groceries/api/kroger/search?q={_q(q)}")["choices"]
+
+
+def grocery_match(key: str, product: dict) -> dict:
+    """Picks the product a line is from now on."""
+    return api("PUT", f"/groceries/api/matches/{_q(key)}", product)
+
+
+def kroger_cart(lines: list[dict], check_off: bool = True) -> dict:
+    """Puts [{key, product, quantity}] in your Kroger cart: {added, checked, order, state}."""
+    return api("POST", "/groceries/api/kroger/cart", {"lines": lines, "check_off": check_off})
+
+
+def kroger_disconnect() -> dict:
+    return api("DELETE", "/groceries/api/kroger")

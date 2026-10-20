@@ -1,6 +1,6 @@
 """
 The site in the terminal (Textual): the dashboard, and from it Drift, the
-plugin store, chat, Recipe box, Sweep, account settings and (for admins) who can use which app,
+plugin store, chat, Recipe box, Sweep, Grocery autopilot, account settings and (for admins) who can use which app,
 in the same colours as the website.
 """
 from __future__ import annotations
@@ -24,7 +24,7 @@ WARN = "#e0b25a"
 REFRESH_EVERY = 30   # seconds
 
 # Which site pages have a terminal version, by the path the dashboard links to.
-IN_TERMINAL = {"/todo/": "drift", "/plugins/": "store", "/chat/": "chat", "/admin": "admin", "/notifications/": "notifications", "/recipes/": "recipes", "/sweep/": "sweep"}
+IN_TERMINAL = {"/todo/": "drift", "/plugins/": "store", "/chat/": "chat", "/admin": "admin", "/notifications/": "notifications", "/recipes/": "recipes", "/sweep/": "sweep", "/groceries/": "groceries"}
 
 
 def account_lines(data: dict) -> Text:
@@ -300,6 +300,9 @@ class SiteApp(App):
         elif name == "sweep":
             from .sweep_page import SweepPage
             self.push_screen(SweepPage())
+        elif name == "groceries":
+            from .groceries_page import GroceriesPage
+            self.push_screen(GroceriesPage())
         elif name == "books":
             from .books_page import BooksPage
             self.push_screen(BooksPage())

@@ -380,6 +380,44 @@ const SCHEMA = [
      hint     TEXT NOT NULL,
      added_at INTEGER NOT NULL
    )`,
+  // Grocery autopilot (src/groceries.js): which Drift list and recipes each
+  // account's order is made from, and what it always has. data is JSON {list, recipes, pantry}.
+  `CREATE TABLE IF NOT EXISTS grocery_plans (
+     user_id    TEXT PRIMARY KEY,
+     data       TEXT NOT NULL,
+     updated_at INTEGER NOT NULL
+   )`,
+  // The product last sent to the store for each thing on an order ("flour"), so the next order picks it again.
+  `CREATE TABLE IF NOT EXISTS grocery_matches (
+     user_id    TEXT NOT NULL,
+     key        TEXT NOT NULL,                     -- the thing, as keyOf() writes it
+     data       TEXT NOT NULL,                     -- JSON {upc, description, brand, size, price, image}
+     updated_at INTEGER NOT NULL,
+     PRIMARY KEY (user_id, key)
+   )`,
+  // Each account's Kroger sign-in (tokens sealed under CHAT_BRIDGE_KEY) and the store it shops at.
+  `CREATE TABLE IF NOT EXISTS grocery_kroger (
+     user_id      TEXT PRIMARY KEY,
+     secret       TEXT NOT NULL,
+     store        TEXT,                            -- JSON {id, name, chain, address}
+     modality     TEXT NOT NULL DEFAULT 'PICKUP',  -- PICKUP or DELIVERY
+     connected_at INTEGER NOT NULL
+   )`,
+  // Sign-ins to Kroger that are under way: the state sent there and back.
+  `CREATE TABLE IF NOT EXISTS grocery_oauth (
+     state      TEXT PRIMARY KEY,
+     user_id    TEXT NOT NULL,
+     created_at INTEGER NOT NULL
+   )`,
+  // Orders sent to a store, line by line, for history (and later, expiry dates).
+  `CREATE TABLE IF NOT EXISTS grocery_orders (
+     id         TEXT PRIMARY KEY,                  -- "o_" + random hex
+     user_id    TEXT NOT NULL,
+     store      TEXT NOT NULL,                     -- kroger or instacart
+     data       TEXT NOT NULL,                     -- JSON {lines: [{key, name, amount, product?}], url?, place?, modality?}
+     created_at INTEGER NOT NULL
+   )`,
+  `CREATE INDEX IF NOT EXISTS grocery_orders_user ON grocery_orders (user_id, created_at)`,
 ];
 
 // Indexes on columns that ADDED_COLUMNS may have only just added.
