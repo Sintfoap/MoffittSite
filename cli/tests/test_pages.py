@@ -97,6 +97,34 @@ def test_drift_quick_add_lands_in_the_collection_with_its_metadata(real_site):
     assert sorted(i["title"] for i in items) == ["Buy milk", "Call Sam"]
 
 
+def test_backslash_hides_the_side_panel_on_every_page_and_remembers(real_site):
+    async def fold(app, pilot):
+        side = app.screen.query_one("#side")
+        assert side.display
+        await pilot.press("shift+tab", "shift+tab")   # into the views, so hiding them has to move focus
+        assert app.focused.id == "nav"
+        await pilot.press("backslash")
+        await settle(pilot)
+        assert not side.display, "the views are hidden"
+        assert app.focused is not None and side not in app.focused.ancestors_with_self
+        assert app.screen.query_one("#pane").size.width > 110, "and the items get the width"
+        app.open_page("chat")
+        await settle(pilot, 0.6)
+        assert not app.screen.query_one("#side").display, "the next page follows"
+        await pilot.press("escape")
+        await settle(pilot)
+    run_app("drift", fold)
+    assert site.load_prefs()["side_hidden"] is True
+
+    async def back(app, pilot):
+        assert not app.screen.query_one("#shelf").display, "remembered the next time"
+        await pilot.press("backslash")
+        await settle(pilot)
+        assert app.screen.query_one("#shelf").display
+    run_app("recipes", back)
+    assert site.load_prefs()["side_hidden"] is False
+
+
 def test_drift_ticks_edits_and_deletes_with_undo(real_site):
     st = site.drift_state()
     col = st["collections"][0]

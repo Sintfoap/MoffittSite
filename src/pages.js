@@ -33,44 +33,65 @@ const ICON = {
   recipes: `<path d="M6 3h11a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H6z"/><path d="M6 3v18M9.5 8h5M9.5 11.5h5"/>`,
   bell: `<path d="M6 16V11a6 6 0 0 1 12 0v5l2 2H4z"/><path d="M10 20.5a2 2 0 0 0 4 0"/>`,
   out: `<path d="M15 4h4v16h-4M10 8l-4 4 4 4M6 12h10"/>`,
+  fold: `<rect x="3" y="4" width="18" height="16" rx="1"/><path d="M9 4v16M16 9l-3 3 3 3"/>`,
 };
 const icon = name => `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON[name]}</svg>`;
 
 // The rail's own styles. Server pages include them in STYLE; withRail() sends
 // them with the rail into static pages, which name their colours differently.
+// Pages give the rail an `auto` column, so its own width sets the column's:
+// 232px, or 60px of icons once it's folded (html.rail-min, from /rail.js).
 const RAIL_CSS = `
-  .rail { position: sticky; top: 0; height: calc(100vh - 38px); overflow-y: auto; display: flex; flex-direction: column; gap: 1px;
+  .rail { width: 232px; position: sticky; top: 0; height: calc(100vh - 38px); overflow-y: auto; display: flex; flex-direction: column; gap: 1px;
           padding: 20px 12px 16px; background: var(--rail); border-right: 1px solid var(--line); font-family: var(--mono); font-size: 14px; }
   .rail .brand { display: flex; align-items: center; gap: 10px; padding: 0 10px 20px; color: var(--gold); text-decoration: none; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; }
   .rail .brand svg { width: 22px; height: 22px; flex: none; }
   .rail h3 { margin: 16px 10px 4px; font: 400 11px var(--mono); letter-spacing: 3px; text-transform: uppercase; color: var(--faint); }
-  .rail a.go { display: flex; align-items: center; gap: 10px; padding: 6px 10px; border-left: 2px solid transparent; color: var(--muted); text-decoration: none; }
-  .rail a.go svg { color: var(--faint); flex: none; width: 16px; height: 16px; }
-  .rail a.go kbd { margin-left: auto; font: 700 11px var(--mono); color: var(--gold); border: 0; background: none; padding: 0; }
-  .rail a.go:hover { background: var(--gold-soft); color: var(--ink); }
-  .rail a.go[aria-current="page"] { background: var(--gold-soft); border-left-color: var(--gold); color: var(--ink); font-weight: 700; }
-  .rail a.go[aria-current="page"] svg { color: var(--gold); }
-  .rail .me { margin-top: auto; padding: 14px 10px 0; border-top: 1px solid var(--line); font-size: 12.5px; color: var(--muted); display: grid; gap: 2px; }
+  .rail .go { display: flex; align-items: center; gap: 10px; padding: 6px 10px; border-left: 2px solid transparent; color: var(--muted); text-decoration: none; }
+  .rail .go svg { color: var(--faint); flex: none; width: 16px; height: 16px; }
+  .rail .go kbd { margin-left: auto; font: 700 11px var(--mono); color: var(--gold); border: 0; background: none; padding: 0; }
+  .rail .go:hover { background: var(--gold-soft); color: var(--ink); }
+  .rail .go[aria-current="page"] { background: var(--gold-soft); border-left-color: var(--gold); color: var(--ink); font-weight: 700; }
+  .rail .go[aria-current="page"] svg { color: var(--gold); }
+  .rail button.go { width: 100%; margin: auto 0 0; background: none; border: 0; border-left: 2px solid transparent; cursor: pointer;
+          color: var(--muted); font: 400 14px var(--mono); letter-spacing: 0; text-transform: none; text-align: left; filter: none; }
+  .rail button.go::before, .rail button.go::after { content: none; }
+  .rail .me { padding: 14px 10px 0; border-top: 1px solid var(--line); font-size: 12.5px; color: var(--muted); display: grid; gap: 2px; }
   .rail .me b, .rail .me .mono { color: var(--ink); font-weight: 700; overflow-wrap: anywhere; }
   .rail .me a { color: var(--gold); text-decoration: none; justify-self: start; margin-top: 6px; }
+  .rail .me a svg { display: none; }
+  @media (min-width: 821px) {
+    .rail-min .rail { width: 60px; padding-inline: 8px; overflow-x: hidden; }
+    .rail-min .rail .brand { justify-content: center; padding: 0 0 20px; }
+    .rail-min .rail .brand span, .rail-min .rail .go span, .rail-min .rail .go kbd, .rail-min .rail .me b, .rail-min .rail .me span { display: none; }
+    .rail-min .rail h3 { height: 1px; margin: 12px 6px; overflow: hidden; color: transparent; background: var(--line); }
+    .rail-min .rail .go { justify-content: center; padding: 8px 0; }
+    .rail-min .rail .go svg { width: 18px; height: 18px; }
+    .rail-min .rail button.go svg { transform: scaleX(-1); }
+    .rail-min .rail .me { padding: 12px 0 0; justify-items: center; }
+    .rail-min .rail .me a { margin: 0; padding: 4px; }
+    .rail-min .rail .me a svg { display: block; }
+  }
   @media (max-width: 820px) {
-    .rail { position: static; height: auto; flex-direction: row; align-items: center; gap: 2px; padding: 8px 10px; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--line); }
+    .rail { width: auto; position: static; height: auto; flex-direction: row; align-items: center; gap: 2px; padding: 8px 10px; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--line); }
     .rail .brand { padding: 0 8px 0 4px; }
-    .rail .brand span, .rail h3, .rail .me b, .rail .me span, .rail a.go kbd, .rail a.go span { display: none; }
-    .rail a.go[aria-current="page"] span { display: inline; }
-    .rail a.go { white-space: nowrap; padding: 6px 9px; border-left: 0; border-bottom: 2px solid transparent; }
-    .rail a.go[aria-current="page"] { border-bottom-color: var(--gold); }
+    .rail .brand span, .rail h3, .rail .me b, .rail .me span, .rail .go kbd, .rail .go span { display: none; }
+    .rail .go[aria-current="page"] span { display: inline; }
+    .rail .go { white-space: nowrap; padding: 6px 9px; border-left: 0; border-bottom: 2px solid transparent; }
+    .rail .go[aria-current="page"] { border-bottom-color: var(--gold); }
+    .rail button.go { display: none; }
     .rail .me { margin: 0 0 0 auto; padding: 0; border: 0; }
     .rail .me a { margin: 0; white-space: nowrap; }
+    .rail .me a span { display: inline; }
   }
 `;
 
 // The server pages' frame: the rail beside the page, the key bar under both.
 const SHELL_CSS = `
-  .shell { display: grid; grid-template-columns: 232px minmax(0, 1fr); min-height: 100vh; padding-bottom: 38px; }
-  .page { padding: 34px clamp(16px, 4vw, 48px) 56px; min-width: 0; }
+  .shell { display: grid; grid-template-columns: auto minmax(0, 1fr); min-height: 100vh; padding-bottom: 38px; }
+  .page { padding: 34px clamp(16px, 3vw, 40px) 56px; min-width: 0; }
   .page > * { max-width: 600px; }
-  .page.wide > * { max-width: 1080px; }
+  .page.wide > * { max-width: none; }
   kbd { font: 700 11px var(--mono); color: var(--gold); }
   .keybar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 5; height: 38px; display: flex; align-items: center; gap: 22px; overflow-x: auto;
             padding: 0 max(16px, env(safe-area-inset-right, 0px)) 0 max(16px, env(safe-area-inset-left, 0px)); white-space: nowrap;
@@ -226,13 +247,15 @@ const FONTS = `<link rel="preconnect" href="https://fonts.googleapis.com"><link 
 // "notifications", "account", "admin").
 export function rail(user, here) {
   const nav = siteNav(user);
-  const link = n => `<a class="go" href="${esc(n.href)}" data-key="${n.key}" aria-label="${esc(n.label)}"${here === n.id ? ` aria-current="page"` : ""}>${icon(n.icon)}<span>${esc(n.label)}</span><kbd aria-hidden="true">g ${n.key}</kbd></a>`;
-  return `<nav class="rail" aria-label="Site">
+  const link = n => `<a class="go" href="${esc(n.href)}" data-key="${n.key}" aria-label="${esc(n.label)}" title="${esc(n.label)}"${here === n.id ? ` aria-current="page"` : ""}>${icon(n.icon)}<span>${esc(n.label)}</span><kbd aria-hidden="true">g ${n.key}</kbd></a>`;
+  // /rail.js runs before the rail is drawn, so a folded rail never flashes open.
+  return `<script src="/rail.js"></script><nav class="rail" aria-label="Site">
     <a class="brand" href="/" aria-label="sintfoap.xyz home">${CREST}<span>sintfoap</span></a>
     ${nav.filter(n => n.group === "site").map(link).join("")}
     <h3>Account</h3>
     ${nav.filter(n => n.group === "account").map(link).join("")}
-    <div class="me"><b>${esc(user.display_name)}</b><span class="mono">${esc(user.username)}</span><a href="/logout">Sign out</a></div>
+    <button type="button" class="go" data-rail-fold aria-label="Collapse sidebar" title="Collapse sidebar">${icon("fold")}<span>Collapse</span><kbd aria-hidden="true">\\</kbd></button>
+    <div class="me"><b>${esc(user.display_name)}</b><span class="mono">${esc(user.username)}</span><a href="/logout" title="Sign out">${icon("out")}<span>Sign out</span></a></div>
   </nav>`;
 }
 
@@ -255,7 +278,7 @@ export function page(title, body, { user, wide = false, here = "" } = {}) {
 <style>${STYLE}</style></head><body>`;
   if (!user) return `${head}<div class="solo"><a class="crest" href="/" aria-label="sintfoap.xyz home">${CREST}<span>SINTFOAP.XYZ</span></a><main>${body}</main></div></body></html>`;
   return `${head}<div class="shell">${rail(user, here)}<main class="page${wide ? " wide" : ""}">${body}</main></div>
-<footer class="keybar" aria-label="Keyboard shortcuts"><span><kbd>g</kbd>then a key from the menu to jump</span><span><kbd>tab</kbd>move</span><span><kbd>↵</kbd>open</span><a class="end" href="/logout" data-key="o"><kbd>g o</kbd>Sign out</a></footer>
+<footer class="keybar" aria-label="Keyboard shortcuts"><span><kbd>g</kbd>then a key from the menu to jump</span><span><kbd>\\</kbd>sidebar</span><span><kbd>tab</kbd>move</span><span><kbd>↵</kbd>open</span><a class="end" href="/logout" data-key="o"><kbd>g o</kbd>Sign out</a></footer>
 <script src="/keys.js" defer></script></body></html>`;
 }
 

@@ -53,7 +53,7 @@ a { color: var(--accent); }
 
 /* ── shell ───────────────────────────────────────── */
 /* the site rail (the server puts it in at the marker in <body>), then Drift's own views and collections, then the page */
-.app { display: grid; grid-template-columns: 232px 220px minmax(0, 1fr); min-height: 100vh; padding-bottom: 38px; }
+.app { display: grid; grid-template-columns: auto 220px minmax(0, 1fr); min-height: 100vh; padding-bottom: 38px; }
 @media (max-width: 820px) { .app { grid-template-columns: 220px minmax(0, 1fr); } .app > .rail { grid-column: 1 / -1; } }
 aside {
   position: sticky; top: 0; height: calc(100vh - 38px); overflow-y: auto;
@@ -78,7 +78,7 @@ aside {
 .nav .n { font-size: 12.5px; color: var(--faint); font-variant-numeric: tabular-nums; }
 .nav .n.hot { color: var(--red); font-weight: 600; }
 .nav .add { color: var(--faint); }
-main { padding: 44px clamp(16px, 5vw, 64px) 120px; max-width: 900px; width: 100%; }
+main { padding: 44px clamp(16px, 5vw, 64px) 120px; width: 100%; min-width: 0; }
 
 /* ── heading ────────────────────────────────────── */
 .head { margin-bottom: 20px; }
@@ -498,12 +498,13 @@ kbd { font: 500 11.5px var(--sans); padding: 1px 6px; border: 1px solid var(--li
       <kbd>⌫</kbd><span>Delete the selected item</span>
       <kbd>/</kbd><span>Filter</span>
       <kbd>esc</kbd><span>Close or clear</span>
+      <kbd>\</kbd><span>Collapse or expand the site sidebar</span>
     </div>
     <div class="acts"><span></span><button class="btn primary">Done</button></div>
   </form>
 </dialog>
 
-<footer class="keybar" aria-label="Keyboard shortcuts"><span><kbd>n</kbd>New item</span><span><kbd>/</kbd>Filter</span><span><kbd>j k</kbd>Move</span><span><kbd>e</kbd>Open</span><span><kbd>?</kbd>All keys</span><span><kbd>g</kbd>then a key from the menu to jump</span><a class="end" href="/logout" data-key="o"><kbd>g o</kbd>Sign out</a></footer>
+<footer class="keybar" aria-label="Keyboard shortcuts"><span><kbd>n</kbd>New item</span><span><kbd>/</kbd>Filter</span><span><kbd>j k</kbd>Move</span><span><kbd>e</kbd>Open</span><span><kbd>?</kbd>All keys</span><span><kbd>g</kbd>then a key from the menu to jump</span><span><kbd>\</kbd>Sidebar</span><a class="end" href="/logout" data-key="o"><kbd>g o</kbd>Sign out</a></footer>
 <script src="/keys.js" defer></script>
 <script type="module" src="app.js"></script>
 </body>

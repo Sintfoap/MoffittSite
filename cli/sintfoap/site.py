@@ -63,6 +63,28 @@ def save_login(data: dict) -> None:
     os.chmod(p, stat.S_IRUSR | stat.S_IWUSR)
 
 
+def prefs_path() -> Path:
+    return config_path().with_name("prefs.json")
+
+
+def load_prefs() -> dict:
+    """The terminal's own settings, such as a folded side panel. {} if there are none yet."""
+    try:
+        data = json.loads(prefs_path().read_text())
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def save_pref(key: str, value: Any) -> None:
+    p = prefs_path()
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps({**load_prefs(), key: value}, indent=2))
+    except OSError:
+        pass   # only a convenience: the setting still holds until the terminal closes
+
+
 def forget_login() -> None:
     try:
         config_path().unlink()

@@ -413,6 +413,7 @@ def render_connections(conns: list[dict], bridges: dict) -> Text:
 
 class ChatPage(Page):
     WEB_PATH = "/chat/"
+    SIDE = "#side"
     DEFAULT_CSS = f"""
     ChatPage #main {{ padding: 1 2 0 2; }}
     ChatPage #side {{ width: 30; margin-right: 1; }}
@@ -438,6 +439,7 @@ class ChatPage(Page):
         Binding("ctrl+g", "gifs", "GIFs"),
         Binding("ctrl+r", "react_pick", "React"),
         Binding("f5", "reload", "Refresh"),
+        Binding("backslash", "fold", "Rooms"),
     ]
 
     def __init__(self, api=site, room: str | None = None):

@@ -67,6 +67,7 @@ Toast.-error {{ border-left: outer {BAD}; }}
 ModalScreen {{ background: rgba(0,0,0,0.6); align: center middle; }}
 .dialog {{ width: 76; max-width: 95%; height: auto; max-height: 95%; background: {PANEL}; border: round {GOLD_DIM}; padding: 1 2; }}
 .dialog .buttons {{ height: auto; margin-top: 1; }}
+Screen.side-hidden .side {{ display: none; }}
 """
 
 
@@ -110,8 +111,12 @@ def open_in_browser(app, url: str) -> None:
 class Page(Screen):
     """A page of the site: the crest and who's signed in at the top, Esc goes back."""
     WEB_PATH = "/dashboard"
+    # The page's own side panel (Drift's views, chat's rooms, Recipe box's
+    # shelf), which \ hides and shows like the web rail's Collapse. None: no panel.
+    SIDE: str | None = None
     BINDINGS = [
         Binding("escape", "back", "Back"),
+        Binding("backslash", "fold", "Side panel", show=False),
         Binding("g", "goto", "Go to"),
         Binding("w", "web", "In browser"),
         Binding("q", "app.quit", "Quit"),
@@ -121,6 +126,33 @@ class Page(Screen):
         with Horizontal(id="top"):
             yield Static("✕ SINTFOAP.XYZ", id="crest")
             yield Static(self.app.who_line(), id="who")
+
+    def on_mount(self) -> None:
+        self.show_side()
+
+    def on_screen_resume(self) -> None:
+        self.show_side()
+
+    def show_side(self) -> None:
+        if self.SIDE:
+            for w in self.query(self.SIDE):
+                w.add_class("side")
+        self.set_class(self.side_hidden(), "side-hidden")
+
+    def side_hidden(self) -> bool:
+        return bool(self.SIDE) and site.load_prefs().get("side_hidden", False)
+
+    def action_fold(self) -> None:
+        """\\: hide or show the side panel, here and on every page after, and remember it."""
+        if not self.SIDE:
+            return
+        hide = not self.side_hidden()
+        site.save_pref("side_hidden", hide)
+        self.show_side()
+        panel = self.query(self.SIDE).first()
+        if hide and self.focused and panel in self.focused.ancestors_with_self:
+            self.focus_next()
+        self.notify("Side panel hidden. Press \\ to show it." if hide else "Side panel shown.", timeout=2)
 
     def set_who(self) -> None:
         for w in self.query("#who"):

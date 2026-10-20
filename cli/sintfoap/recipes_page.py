@@ -112,6 +112,7 @@ class RecipeDialog(ModalScreen[dict | None]):
 
 class RecipesPage(Page):
     WEB_PATH = "/recipes/"
+    SIDE = "#shelf"
     DEFAULT_CSS = f"""
     RecipesPage #body {{ padding: 0 2 0 2; height: 1fr; }}
     RecipesPage #url {{ margin-bottom: 1; }}
@@ -138,6 +139,7 @@ class RecipesPage(Page):
         Binding("s", "send", "Send to list"),
         Binding("d", "delete", "Delete"),
         Binding("r", "refresh", "Refresh"),
+        Binding("backslash", "fold", "Shelf"),
     ]
 
     def __init__(self):
