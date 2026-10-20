@@ -155,6 +155,6 @@ export function niceDuration(s) {
 // Why a route is drawn in straight lines, or "" when it follows the streets.
 export function straightNote(r) {
   if (r.off) return "Straight lines: the site needs an OpenRouteService key to follow the streets.";
-  if (!r.streets) return "Straight lines: OpenRouteService didn’t send the streets just now.";
+  if (!r.streets) return `Straight lines: OpenRouteService didn’t send the streets${r.trouble ? ` (${r.trouble})` : " just now"}.`;
   return r.estimated ? "Travel times are estimates." : "";
 }

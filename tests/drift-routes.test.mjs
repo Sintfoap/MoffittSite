@@ -83,9 +83,9 @@ test("routes flag the timed stops you'd reach late, and prefer ones that don't",
 
 // ── the site ────────────────────────────────────────────────────────────────
 
-let asked, realFetch, matrixDown;
+let asked, realFetch, matrixDown, capped, streetsDown;
 beforeEach(() => {
-  asked = []; realFetch = globalThis.fetch; matrixDown = false;
+  asked = []; realFetch = globalThis.fetch; matrixDown = capped = streetsDown = false;
   globalThis.fetch = async (input, init) => {
     const url = new URL(input instanceof Request ? input.url : String(input));
     if (url.hostname !== "api.openrouteservice.org") return new Response("not found", { status: 404 });
@@ -99,6 +99,10 @@ beforeEach(() => {
       return Response.json({ durations: d, distances: d.map(r => r.map(x => x * 10)) });
     }
     if (url.pathname.startsWith("/v2/directions/")) {
+      // Like ORS: GeoJSON only goes to a request that accepts it.
+      if (!/application\/geo\+json/.test(new Headers(init?.headers).get("Accept") || "")) return Response.json({ error: "Not Acceptable" }, { status: 406 });
+      if (capped && body.radiuses) return Response.json({ error: { code: 2003, message: "Parameter 'radiuses' has incorrect value" } }, { status: 400 });
+      if (streetsDown) return Response.json({ error: { code: 2010, message: "Could not find routable point within a radius of 350.0 meters" } }, { status: 404 });
       // Along "streets": a corner between each pair of points.
       const c = body.coordinates, line = c.flatMap((p, i) => i ? [[p[0], c[i - 1][1]], p] : [p]);
       return Response.json({ features: [{ geometry: { coordinates: line }, properties: { segments: c.slice(1).map((_, i) => ({ duration: 100 + i, distance: 1000 + i })) } }] });
@@ -172,6 +176,18 @@ test("the route goes from the day's base and back, along the streets", async () 
   r = await api(b, "GET", `route?collection=${col.id}&day=2026-10-20&profile=cycling-regular`);
   assert.deepEqual([r.json.estimated, r.json.streets, r.json.off], [true, true, false]);
   matrixDown = false;
+  // A server that won't snap points far: asked again without.
+  capped = true;
+  r = await api(b, "GET", `route?collection=${col.id}&day=2026-10-20&profile=cycling-regular&option=1`);
+  assert.equal(r.json.streets, true);
+  assert.equal(asked.at(-1).body.radiuses, undefined);
+  capped = false;
+  // When ORS can't route at all, the route says what it said.
+  streetsDown = true;
+  r = await api(b, "GET", `route?collection=${col.id}&day=2026-10-20&option=2`);
+  assert.equal(r.json.streets, false);
+  assert.match(r.json.trouble, /streets: 404: Could not find routable point/);
+  streetsDown = false;
 
   assert.equal((await api(b, "GET", `route?collection=${col.id}&day=tomorrow`)).status, 400);
   assert.equal((await api(b, "GET", `route?collection=c_nope&day=2026-10-20`)).status, 404);
