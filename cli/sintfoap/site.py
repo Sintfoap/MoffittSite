@@ -715,3 +715,71 @@ def sweep_accept(suggestion: str, changes: dict | None = None) -> dict:
 def sweep_reject(suggestion: str, body: dict | None = None) -> dict:
     """Turns a suggestion down ({reason} optional); returns sweep_state()."""
     return api("POST", f"/sweep/api/suggestions/{_q(suggestion)}/reject", body or {})
+
+
+# ───────────────────────────── trip planner ─────────────────────────────────
+# /trips/api/ (src/trips.js)
+
+def trips() -> dict:
+    """{trips, drift, search, lists}: your trips, whether you have Drift and place search, and the Drift lists you can add to."""
+    return _get("/trips/api/trips")
+
+
+def trip(trip_id: str) -> dict:
+    """The whole trip: {title, start, end, notes, days, members, plans, places, packing, owned, you}."""
+    return _get(f"/trips/api/trips/{_q(trip_id)}")
+
+
+def add_trip(fields: dict) -> dict:
+    """{title, start, end, notes}; dates are YYYY-MM-DD or ""."""
+    return api("POST", "/trips/api/trips", fields)
+
+
+def update_trip(trip_id: str, changes: dict) -> dict:
+    return api("PATCH", f"/trips/api/trips/{_q(trip_id)}", changes)
+
+
+def delete_trip(trip_id: str) -> dict:
+    """Deletes your trip, or takes you off someone else's: {removed} or {left}."""
+    return api("DELETE", f"/trips/api/trips/{_q(trip_id)}")
+
+
+def add_traveller(trip_id: str, username: str) -> dict:
+    return api("POST", f"/trips/api/trips/{_q(trip_id)}/members", {"username": username})
+
+
+def remove_traveller(trip_id: str, user_id: str) -> dict:
+    return api("DELETE", f"/trips/api/trips/{_q(trip_id)}/members/{_q(user_id)}")
+
+
+def add_to_trip(trip_id: str, kind: str, fields: dict) -> dict:
+    """kind is plans ({day, time, title, place, notes}), places ({place, lat, lng, note, drift}) or packing ({text, who}); the trip."""
+    return api("POST", f"/trips/api/trips/{_q(trip_id)}/{kind}", fields)
+
+
+def change_in_trip(trip_id: str, kind: str, entry_id: str, changes: dict) -> dict:
+    return api("PATCH", f"/trips/api/trips/{_q(trip_id)}/{kind}/{_q(entry_id)}", changes)
+
+
+def remove_from_trip(trip_id: str, kind: str, entry_id: str) -> dict:
+    return api("DELETE", f"/trips/api/trips/{_q(trip_id)}/{kind}/{_q(entry_id)}")
+
+
+def pack(trip_id: str, ids: list[str] | None = None, list_id: str | None = None) -> dict:
+    """The packing list onto a Drift checklist ("Packing: <trip>" without list_id); {list, added, trip}."""
+    body: dict[str, Any] = {}
+    if ids is not None:
+        body["ids"] = ids
+    if list_id:
+        body["list"] = list_id
+    return api("POST", f"/trips/api/trips/{_q(trip_id)}/pack", body)
+
+
+def search_places(q: str) -> list | None:
+    """[{place, lat, lng}] matching q, or None when the site has no place search."""
+    return _get("/trips/api/places?q=" + _q(q))["results"]
+
+
+def drift_places() -> list:
+    """Your Drift items that are on the map: [{id, title, place, lat, lng, collection}]."""
+    return _get("/trips/api/drift-places")["items"]

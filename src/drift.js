@@ -397,7 +397,8 @@ export async function collectionWithItems(env, user, id) {
 }
 
 // ── lists other apps add to ────────────────────────────────────────────────
-// Recipe box sends ingredients here (src/recipes.js).
+// Recipe box sends ingredients here (src/recipes.js), and Trip planner a
+// trip's packing list (src/trips.js).
 
 export const SHOPPING = "Shopping list";
 
@@ -415,16 +416,16 @@ export async function writableCollections(env, user) {
 }
 
 // Adds each line as a checklist item to collection `id`, or when there's none,
-// to your collection called "Shopping list" (made if you don't have one).
+// to your collection called `name` ("Shopping list"; made if you don't have one).
 // `notes` is one note for every line, or a list with one per line.
-export async function addToList(env, user, id, titles, notes = "") {
+export async function addToList(env, user, id, titles, notes = "", name = SHOPPING) {
   let list;
   if (id) {
     list = (await writableCollections(env, user)).find(c => c.id === id);
     if (!list) fail("that list isn't one you can add to");
   } else {
-    list = (await writableCollections(env, user)).find(c => !c.owner_name && c.name.toLowerCase() === SHOPPING.toLowerCase());
-    if (!list) list = await createCollection(env, user.id, { name: SHOPPING, plugins: ["checklist", "list"], view: "checklist" });
+    list = (await writableCollections(env, user)).find(c => !c.owner_name && c.name.toLowerCase() === name.toLowerCase());
+    if (!list) list = await createCollection(env, user.id, { name, plugins: ["checklist", "list"], view: "checklist" });
   }
   let added = 0;
   for (const [i, title] of titles.entries()) {
@@ -432,6 +433,18 @@ export async function addToList(env, user, id, titles, notes = "") {
     added++;
   }
   return { list: { id: list.id, name: list.name }, added };
+}
+
+// Your items that are on the map (Locations), for Trip planner to pin:
+// [{id, title, place, lat, lng, collection}], newest first.
+export async function placedItems(env, user) {
+  const d = await db(env);
+  const names = new Map((await rows(d, "drift_collections", user.id)).map(toCollection).filter(c => !c.deleted).map(c => [c.id, c.name]));
+  return (await rows(d, "drift_items", user.id)).map(toItem)
+    .filter(it => !it.deleted && names.has(it.collection) && it.meta?.location?.lat != null && it.meta.location.lng != null)
+    .sort((a, b) => b.updated.localeCompare(a.updated))
+    .map(it => ({ id: it.id, title: it.title, place: it.meta.location.place || "", lat: it.meta.location.lat, lng: it.meta.location.lng,
+      collection: names.get(it.collection) }));
 }
 
 // ── the old todo list ──────────────────────────────────────────────────────

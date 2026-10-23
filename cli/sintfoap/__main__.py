@@ -12,6 +12,7 @@ sintfoap — sintfoap.xyz from the terminal.
   sintfoap recipes            Recipe box: recipes, scaled, onto a Drift shopping list
   sintfoap meals              Meal plan: the week's dinners around your Drift calendar
   sintfoap sweep              Sweep: Drift suggestions from your chat rooms
+  sintfoap trips              Trip planner: the days, places and packing list, with whoever's going
   sintfoap admin              which apps each account can use (admins)
   sintfoap app                the Android app: a QR code to scan, and the download
   sintfoap books [--plain]    the book club pick: read about the books and vote (no sign-in needed)
@@ -93,6 +94,7 @@ def main(argv=None):
                        ("recipes", "Recipe box: recipes, scaled, onto a Drift shopping list"),
                        ("meals", "Meal plan: the week's dinners around your Drift calendar"),
                        ("sweep", "Sweep: Drift suggestions from your chat rooms"),
+                       ("trips", "Trip planner: the days, places and packing list, with whoever's going"),
                        ("admin", "which apps each account can use (admins)")):
         sub.add_parser(page, help=what)
     bk = sub.add_parser("books", help="the book club pick: read about the books and vote (no sign-in needed)")

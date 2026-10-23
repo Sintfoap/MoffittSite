@@ -18,6 +18,7 @@ sintfoap                    # signs you in the first time, then opens your dashb
 | `sintfoap recipes` | Recipe box: your recipes, scaled, and sent to a Drift shopping list |
 | `sintfoap meals` | Meal plan: the week's dinners around your Drift calendar, and their shopping |
 | `sintfoap sweep` | Sweep: Drift suggestions from your chat rooms, to accept or turn down |
+| `sintfoap trips` | Trip planner: a trip's days, places and packing list, with whoever's going |
 | `sintfoap admin` | which apps each account can use (admins) |
 | `sintfoap app` | the Android app: a QR code to scan with your phone, and the download link |
 | `sintfoap books [--plain]` | the book club pick: read about the books and vote; no sign-in needed |
@@ -45,7 +46,7 @@ nix develop                                  # a shell with Python, Textual and 
 
 ## The dashboard
 
-The same panels as `/dashboard`, in the site's colours: Today (overdue Drift items in red, then what's due today), your account with its checks (two-factor, recovery codes, email), and a card per app your account can use. It refreshes every 30 seconds. Drift, the plugin store, chat, Recipe box, Meal plan, Sweep, notifications, account settings and Admin open here in the terminal; anything else opens in your browser.
+The same panels as `/dashboard`, in the site's colours: Today (overdue Drift items in red, then what's due today), your account with its checks (two-factor, recovery codes, email), and a card per app your account can use. It refreshes every 30 seconds. Drift, the plugin store, chat, Recipe box, Meal plan, Sweep, Trip planner, notifications, account settings and Admin open here in the terminal; anything else opens in your browser.
 
 | Key | |
 |---|---|
@@ -57,7 +58,7 @@ The same panels as `/dashboard`, in the site's colours: Today (overdue Drift ite
 | `o` | sign out this terminal |
 | `q` | quit |
 
-On every page `esc` goes back, `w` opens the same page in your browser and `q` quits. `g` then a letter jumps around, as on the website: `g h` home, `g d` Drift, `g p` plugin store, `g c` chat, `g r` Recipe box, `g m` Meal plan, `g w` Sweep, `g s` settings, `g n` notifications, `g a` admin, `g o` sign out.
+On every page `esc` goes back, `w` opens the same page in your browser and `q` quits. `g` then a letter jumps around, as on the website: `g h` home, `g d` Drift, `g p` plugin store, `g c` chat, `g r` Recipe box, `g m` Meal plan, `g w` Sweep, `g t` Trip planner, `g s` settings, `g n` notifications, `g a` admin, `g o` sign out.
 
 ## Book club pick
 
@@ -179,6 +180,24 @@ The same as `/sweep/`. The rooms Sweep may read are on the left (`space` ticks o
 | `k` | add your Anthropic API key (Sweep reads with it, so its use goes on your account); remove it on the website |
 | `r` | refresh |
 
+## Trip planner
+
+The same trips as `/trips/`: your trips on the left, the open one on the right in three tabs, as on the website. Everyone on a trip sees the same one.
+
+| Key | |
+|---|---|
+| `n` | a new trip: where to, and the dates (`ctrl+s` saves) |
+| `1` `2` `3` | the days, the places, the packing list |
+| `a` | add to the tab you're on: a stop on the highlighted day, a place (searched for, or picked off your Drift map), something to pack |
+| `x` | take the highlighted stop, place or thing to pack off |
+| `space` | on the packing list: tick what to send |
+| `b` | on the packing list: who's bringing it (anyone, then each of you in turn) |
+| `s` | send the ticked packing to a Drift checklist: "Packing: <trip>" (made the first time), or any list you can add to |
+| `m` | add someone to the trip by username (`M` takes someone off); only whoever made it |
+| `e` | edit the trip's name, dates and notes |
+| `d` | delete the trip, or leave someone else's |
+| `r` | refresh |
+
 ## Account settings
 
 Your profile, two-factor, recovery codes, email and sessions, like `/account`. Here you can change your display name, sign out every other device, or sign out this terminal. Anything that needs your password (two-factor, recovery codes, email, the password itself) opens the website instead, so the terminal never asks for it.
@@ -198,6 +217,7 @@ sintfoap/notifications_page.py  what's pushed and where
 sintfoap/recipes_page.py   Recipe box
 sintfoap/meals_page.py     Meal plan
 sintfoap/sweep_page.py     Sweep
+sintfoap/trips_page.py     Trip planner
 sintfoap/recipe_rules.py   scaling ingredient lines, as on the web page (tests/scale_cases.json keeps them the same)
 sintfoap/__main__.py       the command
 tests/                     python -m pytest tests
