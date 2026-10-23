@@ -5,7 +5,7 @@ import { test, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { Browser, makeEnv } from "./helpers.mjs";
 import { parseCoords, parseQuick } from "../public/todo/lib.js";
-import { dayStops, distance, niceDistance, centre, rangeDays, normRange, rangeStops, dayColor, MAX_RANGE } from "../public/todo/plugins/location.js";
+import { dayStops, distance, niceDistance, centre, rangeDays, normRange, rangeStops, undatedStops, dayColor, MAX_RANGE } from "../public/todo/plugins/location.js";
 
 const FERRY = { label: "Ferry Building, San Francisco, CA, USA", lat: 37.7955, lng: -122.3937 };
 const TOWER = { label: "Coit Tower, San Francisco, CA, USA", lat: 37.8024, lng: -122.4058 };
@@ -184,4 +184,20 @@ test("the map's range groups each day's stops, numbered again from 1, and colour
   assert.equal(new Set(colours).size, MAX_RANGE);
   assert.ok(colours.every(c => /^hsl\(\d+(\.\d+)? \d+% \d+%\)$/.test(c)), colours[0]);
   assert.equal(dayColor(3), dayColor(3));
+});
+
+test("undatedStops: items with a place but no event, numbered from 1", () => {
+  const a = { place: "A", lat: 1, lng: 2 };
+  const items = [
+    { id: "d", title: "dated", meta: { event: { start: "2026-10-19T09:00" }, location: a } },
+    { id: "u1", title: "u1", meta: { location: a } },
+    { id: "lost", title: "lost", meta: { location: { place: "Atlantis", lat: null, lng: null } } },
+    { id: "u2", title: "u2", meta: { location: { place: "B", lat: 3, lng: 4 } } },
+    { id: "plain", title: "plain", meta: {} },
+  ];
+  const r = undatedStops(items);
+  assert.deepEqual(r.stops.map(s => [s.n, s.item.id]), [[1, "u1"], [2, "u2"]]);
+  assert.deepEqual(r.unplaced.map(it => it.id), ["lost"]);
+  assert.deepEqual(r.elsewhere, [], "no place at all is not listed");
+  assert.deepEqual(undatedStops([]), { stops: [], unplaced: [], elsewhere: [] });
 });
