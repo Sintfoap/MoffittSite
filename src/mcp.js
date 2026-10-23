@@ -147,7 +147,7 @@ const META = `meta maps a plugin id to that plugin's data for this item; null re
   `checklist {done: boolean, priority: 0-3}; event {start, end} where each is "YYYY-MM-DD" (all day) or "YYYY-MM-DDTHH:MM" and end may be null; ` +
   `list {order: number, parent: item id or null} (an outline); graph {links: [item ids], rel?: {item id: link type}, kind?} ` +
   `(a typed link like "leads to" points from this item to the other; on a day's route, linked places are visited one after the other); ` +
-  `location {place, lat, lng}: send {place: "an address or a place's name"} and the site finds it on the map, or {lat, lng} and it names the spot. Store plugins use their own ids. ` +
+  `location {place, lat, lng}: send {place: "an address or a place's name"} and the site finds it on the map, or {lat, lng} and it names the spot; weather {outdoor: boolean}: an outdoor item, flagged when its day's forecast looks wet. Store plugins use their own ids. ` +
   `A plugin only applies to an item if it is switched on for the item's collection.`;
 const ITEM_FIELDS = {
   title: { type: "string", description: "Up to 500 characters." },
@@ -158,7 +158,7 @@ const ITEM_FIELDS = {
 };
 const COLLECTION_FIELDS = {
   name: { type: "string", description: "Up to 100 characters." },
-  plugins: { type: "array", items: { type: "string" }, description: "Plugin ids switched on: built-in (checklist, event, list, graph, location) or installed store plugins." },
+  plugins: { type: "array", items: { type: "string" }, description: "Plugin ids switched on: built-in (checklist, event, list, graph, location, weather) or installed store plugins." },
   view: { type: "string", description: "Plugin id whose view opens first, or empty." },
   order: { type: "number", description: "Sort position among your collections." },
 };

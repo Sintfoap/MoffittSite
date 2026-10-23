@@ -17,6 +17,8 @@
 //                           those inputs back into meta (null removes it)
 //   mountEditor(fs, item, ctx)  optional: wires up the editor's fieldset once it's drawn
 //                           (for more than plain inputs, like a search box)
+//   day(day, ctx, long)     optional: a note for a day on the Calendar: a few characters
+//                           in a month's cell, or a line (long) above the day's hours
 //   actions                 optional: { name(item, ctx, el) } for data-act="<id>:<name>"
 //   keys                    optional: { key(item, ctx) } for the selected item
 //   view                    optional: a whole view of the items, either
@@ -32,6 +34,7 @@ import events from "./events.js";
 import list from "./list.js";
 import graph from "./graph.js";
 import location from "./location.js";
+import weather from "./weather.js";
 
-export const PLUGINS = [checklist, events, list, graph, location];
+export const PLUGINS = [checklist, events, list, graph, location, weather];
 export const BY_ID = Object.fromEntries(PLUGINS.map(p => [p.id, p]));

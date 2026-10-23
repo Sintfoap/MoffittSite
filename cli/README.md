@@ -16,6 +16,7 @@ sintfoap                    # signs you in the first time, then opens your dashb
 | `sintfoap chat [ROOM]` | chat rooms, opening ROOM if you name one |
 | `sintfoap notifications` | what's pushed to your browsers and phone, and where |
 | `sintfoap recipes` | Recipe box: your recipes, scaled, and sent to a Drift shopping list |
+| `sintfoap meals` | Meal plan: the week's dinners around your Drift calendar, and their shopping |
 | `sintfoap sweep` | Sweep: Drift suggestions from your chat rooms, to accept or turn down |
 | `sintfoap trips` | Trip planner: a trip's days, places and packing list, with whoever's going |
 | `sintfoap admin` | which apps each account can use (admins) |
@@ -45,7 +46,7 @@ nix develop                                  # a shell with Python, Textual and 
 
 ## The dashboard
 
-The same panels as `/dashboard`, in the site's colours: Today (overdue Drift items in red, then what's due today), your account with its checks (two-factor, recovery codes, email), and a card per app your account can use. It refreshes every 30 seconds. Drift, the plugin store, chat, Recipe box, Sweep, Trip planner, notifications, account settings and Admin open here in the terminal; anything else opens in your browser.
+The same panels as `/dashboard`, in the site's colours: Today (overdue Drift items in red, then what's due today), your account with its checks (two-factor, recovery codes, email), and a card per app your account can use. It refreshes every 30 seconds. Drift, the plugin store, chat, Recipe box, Meal plan, Sweep, Trip planner, notifications, account settings and Admin open here in the terminal; anything else opens in your browser.
 
 | Key | |
 |---|---|
@@ -57,7 +58,7 @@ The same panels as `/dashboard`, in the site's colours: Today (overdue Drift ite
 | `o` | sign out this terminal |
 | `q` | quit |
 
-On every page `esc` goes back, `w` opens the same page in your browser and `q` quits. `g` then a letter jumps around, as on the website: `g h` home, `g d` Drift, `g p` plugin store, `g c` chat, `g r` Recipe box, `g w` Sweep, `g t` Trip planner, `g s` settings, `g n` notifications, `g a` admin, `g o` sign out.
+On every page `esc` goes back, `w` opens the same page in your browser and `q` quits. `g` then a letter jumps around, as on the website: `g h` home, `g d` Drift, `g p` plugin store, `g c` chat, `g r` Recipe box, `g m` Meal plan, `g w` Sweep, `g t` Trip planner, `g s` settings, `g n` notifications, `g a` admin, `g o` sign out.
 
 ## Book club pick
 
@@ -74,14 +75,14 @@ The public `/books/` page, where the book club picks its next book: each book wi
 
 ## Drift
 
-Your collections down the left (`tab` to move between them, the composer and the items), with Today and Calendar on top. Calendar shows the picked day by the hour, under a "No set time" list for items with a date but no time. A collection shows its plugins' views: Checklist, Calendar and List, Graph as a list of links with their types and each item's kind, and Map: the picked day's events that have a place, drawn on a map in characters, numbered and joined in the order they happen, with the distance from each to the one before, then the day's events with no place. Moving to one centres the map on it and names it under the map; `o` opens it in OpenStreetMap. The day's base (where it starts and ends) is at the top: `b` sets one for the day, a stretch of days, or every day. `p` plans the route from the base and back, keeping timed events in order and linked items together, with the travel time of each leg; `m` switches between driving, walking and cycling, and `(` `)` cycle through the other good orders. Changes made in the browser or by people you share with show up within a few seconds.
+Your collections down the left (`tab` to move between them, the composer and the items), with Today and Calendar on top. Calendar shows the picked day by the hour, under a "No set time" list for items with a date but no time. A collection shows its plugins' views: Checklist, Calendar and List, Graph as a list of links with their types and each item's kind, and Map: the picked day's events that have a place, drawn on a map in characters, numbered and joined in the order they happen, with the distance from each to the one before, then the day's events with no place. Moving to one centres the map on it and names it under the map; `o` opens it in OpenStreetMap. The day's base (where it starts and ends) is at the top: `b` sets one for the day, a stretch of days, or every day. `p` plans the route from the base and back, keeping timed events in order and linked items together, with the travel time of each leg; `m` switches between driving, walking and cycling, and `(` `)` cycle through the other good orders. With Weather on, Forecast lists the next 16 days with each day's weather and what's on it, the Calendar marks each day's weather beside its date (☂ in red where an outdoor item will get wet) with a line about the picked day above its hours, and outdoor items on wet days carry a warning; `e` has the Outdoors box. Changes made in the browser or by people you share with show up within a few seconds.
 
 The composer takes the same quick-add as the web page: `Lunch #family +home !2 ^fri @1pm ~ Ferry Building, San Francisco` (after `~`, the place).
 
 | Key (on the items) | |
 |---|---|
 | `a` | add an item |
-| `enter` / `e` | edit it: title, notes, tags, collection, priority, date and time, place (an address, a place's name or coordinates; the site finds it) |
+| `enter` / `e` | edit it: title, notes, tags, collection, priority, date and time, place (an address, a place's name or coordinates; the site finds it), outdoors (Weather) |
 | `x` / `space` | tick it off |
 | `0`–`3` | priority |
 | `t` | date it today |
@@ -151,6 +152,21 @@ The same recipes as `/recipes/`: the list on the left, the open one on the right
 | `e` | edit it (`ctrl+s` saves) |
 | `d` | delete it |
 
+## Meal plan
+
+The same week as `/meals/`: the nights down the left, each with its dinner and whether Drift makes it busy; the open night's events and recipe on the right, with the week's shopping under them (`space` unticks what you have).
+
+| Key | |
+|---|---|
+| `f` | fill the empty nights |
+| `r` | shuffle every night that isn't locked |
+| `enter` | pick the night's recipe yourself (it's locked after) |
+| `+` `-` | servings |
+| `l` | lock or unlock the night |
+| `o` | out that night: nothing to cook |
+| `s` | send the ticked shopping to a Drift list |
+| `[` `]` `t` | last week, next week, this week |
+
 ## Sweep
 
 The same as `/sweep/`. The rooms Sweep may read are on the left (`space` ticks one, `b` changes how far back), the waiting suggestions in the middle with the open one's details below.
@@ -199,6 +215,7 @@ sintfoap/settings_page.py  account settings
 sintfoap/chat_page.py      chat
 sintfoap/notifications_page.py  what's pushed and where
 sintfoap/recipes_page.py   Recipe box
+sintfoap/meals_page.py     Meal plan
 sintfoap/sweep_page.py     Sweep
 sintfoap/trips_page.py     Trip planner
 sintfoap/recipe_rules.py   scaling ingredient lines, as on the web page (tests/scale_cases.json keeps them the same)

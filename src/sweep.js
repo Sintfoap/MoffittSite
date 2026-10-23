@@ -67,11 +67,13 @@ export async function setKey(env, user, body) {
   if (!isObj(body)) fail("body must be a JSON object");
   const key = String(body.key ?? "").trim();
   if (!KEY.test(key)) fail("that doesn't look like an Anthropic API key (they start with sk-ant-)");
-  let res;
+  // Only a key Anthropic refuses is turned away. If the check itself can't
+  // get an answer, the key is kept anyway: a sweep says so if it's wrong.
+  let res = null;
   try { res = await fetch(MODELS, { headers: { "x-api-key": key, "anthropic-version": "2023-06-01" } }); }
-  catch { throw new SweepError("Anthropic couldn't be reached to check that key. Try again in a minute."); }
-  if (res.status === 401 || res.status === 403) fail("Anthropic didn't accept that key");
-  if (!res.ok) throw new SweepError("Anthropic couldn't check that key right now. Try again in a minute.");
+  catch (e) { console.error("sweep key check failed:", e?.message || e); }
+  if (res?.status === 401 || res?.status === 403) fail("Anthropic didn't accept that key");
+  if (res && !res.ok) console.error("sweep key check:", res.status, (await res.text().catch(() => "")).slice(0, 300));
   await (await db(env)).prepare(`INSERT INTO sweep_keys (user_id, secret, hint, added_at) VALUES (?, ?, ?, ?)
     ON CONFLICT (user_id) DO UPDATE SET secret = excluded.secret, hint = excluded.hint, added_at = excluded.added_at`)
     .bind(user.id, await seal(env.CHAT_BRIDGE_KEY, keyContext(user), key), key.slice(-4), now()).run();
@@ -335,7 +337,8 @@ async function ask(key, body) {
   if (!res.ok) {
     console.error("sweep model error:", res.status, out?.error?.message);
     throw new SweepError(res.status === 401 || res.status === 403 ? "Anthropic didn't accept your API key. Add a new one below."
-      : res.status === 429 || res.status === 529 ? "Claude is busy right now. Try again in a minute." : "Claude couldn't be reached.");
+      : res.status === 429 || res.status === 529 ? "Claude is busy right now. Try again in a minute."
+      : `Claude couldn't be reached (Anthropic answered ${res.status}${out?.error?.message ? `: ${clip(String(out.error.message), 200)}` : ""}).`);
   }
   if (out.stop_reason === "refusal") throw new SweepError("Claude declined to read that room.");
   if (out.stop_reason === "max_tokens") throw new SweepError("That room had too much to read at once.");

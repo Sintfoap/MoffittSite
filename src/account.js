@@ -566,6 +566,7 @@ async function admin(request, env, me, pathname, method) {
           d.prepare("DELETE FROM push_devices WHERE user_id = ?").bind(target.id),
           d.prepare("DELETE FROM push_prefs WHERE user_id = ?").bind(target.id),
           d.prepare("DELETE FROM push_sent WHERE user_id = ?").bind(target.id),
+          d.prepare("DELETE FROM meal_plans WHERE owner = ?").bind(target.id),
           // Trips they made go, with everything in them; they come off everyone else's.
           ...["trip_entries", "trip_members"].map(t => d.prepare(`DELETE FROM ${t} WHERE trip IN (SELECT id FROM trips WHERE owner = ?)`).bind(target.id)),
           d.prepare("DELETE FROM trips WHERE owner = ?").bind(target.id),

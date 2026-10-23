@@ -297,7 +297,7 @@ def test_admins_switch_apps_on_and_off_in_the_terminal(admin_site):
         page = app.screen
         assert type(page).__name__ == "AdminPage"
         apps = [a["id"] for a in page.data["apps"]]
-        assert apps == ["drift", "admin", "plugins", "chat", "chat-bridges", "recipes", "sweep", "trips", "notifications"]
+        assert apps == ["drift", "admin", "plugins", "chat", "chat-bridges", "recipes", "meals", "sweep", "trips", "notifications"]
         # A switch for every app on every account; your own admin one can't be turned off.
         assert len(page.boxes) == len(apps) * len(page.data["users"])
         me = next(i for i, u in enumerate(page.data["users"]) if u["you"])
@@ -434,6 +434,71 @@ def test_g_r_opens_the_terminal_recipe_box(real_site):
         await settle(pilot, 0.5)
         assert type(app.screen).__name__ == "RecipesPage"
     run_app("dashboard", go)
+
+
+# ── meal plan ──────────────────────────────────────────────────────────────
+
+def test_meal_plan_fills_the_week_around_drift_and_shops_for_it(real_site):
+    import datetime as dt
+    monday = dt.date.today() - dt.timedelta(days=dt.date.today().weekday())
+    tuesday = (monday + dt.timedelta(days=1)).isoformat()
+    tacos = site.add_recipe({"title": "Tacos", "time": "20 min", "servings": 4, "ingredients": "1 lb beef\n8 tortillas"})
+    site.add_recipe({"title": "Stew", "time": "2 hr", "servings": 4, "ingredients": "2 lb chuck\n3 carrots"})
+    inbox = site.drift_state()["collections"][0]["id"]
+    site.add_item({"title": "Soccer", "collection": inbox, "meta": {"event": {"start": f"{tuesday}T18:00", "end": None}}})
+
+    async def meals(app, pilot):
+        page = app.screen
+        assert type(page).__name__ == "MealsPage"
+        assert page.data["start"] == monday.isoformat()
+        assert page.data["days"][1]["busy"] and page.data["days"][1]["why"] == "Soccer at 6 pm"
+        # f fills the week: the busy Tuesday gets the quick recipe.
+        await pilot.press("f")
+        await settle(pilot, 0.6)
+        assert page.data["days"][1]["recipe"] == tacos["id"]
+        assert all(n["recipe"] for n in page.data["days"])
+        # Monday: out tonight; Tuesday: pick Stew yourself, and it's locked.
+        page.query_one("#nights").focus()
+        page.query_one("#nights").highlighted = 0
+        await pilot.press("o")
+        await settle(pilot, 0.5)
+        assert page.data["days"][0]["out"]
+        page.query_one("#nights").highlighted = 1
+        await settle(pilot)
+        await pilot.press("enter")
+        await settle(pilot)
+        assert type(app.screen).__name__ == "PickRecipe"
+        assert app.screen.query_one("#pick").highlighted == 2, "it opens on tonight's recipe"
+        app.screen.query_one("#pick").highlighted = 1     # nothing, Stew, Tacos (by title)
+        await pilot.press("enter")
+        await settle(pilot, 0.6)
+        tue = page.data["days"][1]
+        assert page.recipe(tue["recipe"])["title"] == "Stew" and tue["locked"] and tue["slow"]
+        await pilot.press("plus")
+        await settle(pilot, 0.5)
+        assert page.data["days"][1]["servings"] == 5
+        # Untick the first line and send the rest.
+        lines = [s["line"] for s in page.data["shopping"]]
+        lst = page.query_one("#shopping")
+        lst.focus()
+        lst.highlighted = 0
+        await pilot.press("space")
+        await settle(pilot)
+        assert page.skip == {lines[0]}
+        await pilot.press("s")
+        await settle(pilot, 0.6)
+        drift = site.drift_state()
+        shopping = next(c for c in drift["collections"] if c["name"] == "Shopping list")
+        sent = sorted(it["title"] for it in drift["items"] if it["collection"] == shopping["id"])
+        assert sent == sorted(lines[1:])
+        assert page.data["shopped"]["added"] == len(lines) - 1
+        # ] goes to next week, which is empty.
+        page.query_one("#nights").focus()
+        await pilot.press("right_square_bracket")
+        await settle(pilot, 0.5)
+        assert page.data["start"] == (monday + dt.timedelta(days=7)).isoformat()
+        assert not any(n["recipe"] for n in page.data["days"])
+    run_app("meals", meals)
 
 
 # ── sweep ──────────────────────────────────────────────────────────────────
@@ -847,6 +912,69 @@ def test_drift_map_plans_a_route_from_the_base_and_sets_bases(real_site):
         assert [(b["from"], b["lat"]) for b in bases] == [(None, 51.5154), (R.today(), 51.5033)]
         assert "Base for Today" in text() and "51.50330, -0.11960" in text()
     run_app("drift", route)
+
+
+def test_weather_rules_read_like_the_web_page():
+    assert R.wet({"code": 3, "rain": 50, "precip": 0}) and R.wet({"code": 3, "rain": 10, "precip": 2.5}) and R.wet({"code": 95})
+    assert not R.wet({"code": 61, "rain": 30, "precip": 0.4}) and not R.wet(None)
+    assert R.sky(63) == ("Rain", "☂") and R.sky(0)[0] == "Clear" and R.sky(None) == ("", "·")
+    assert R.temp(21.4) == "21°" and R.temp(21.4, True) == "71°" and R.temp(None) == ""
+    assert R.why({"code": 63, "rain": 80}) == "Rain, 80% chance" and R.why({"code": 0, "rain": 0}) == "Clear"
+    assert R.fresh_meta(["weather"], {"tags": ["outside"]}) == {"weather": {"outdoor": True}}
+    assert R.fresh_meta(["weather"], {"tags": ["food"]}) == {} and R.fresh_meta([], {"tags": ["outdoor"]}) == {}
+    home = {"place": "Home", "lat": 51.5, "lng": -0.1, "from": None, "to": None}
+    it = {"meta": {"event": {"start": "2026-10-21", "end": None}, "weather": {"outdoor": True}}}
+    assert R.spot_for(it, "2026-10-21", {"bases": [home]}) is home and R.spot_for(it, "2026-10-21", None) is None
+    assert R.spot_key(home) == "51.50,-0.10" and R.spot_key(None) == "here"
+    fc = {"days": [{"day": "2026-10-21", "code": 63, "rain": 80, "precip": 5}]}
+    assert R.wet_on(it, "2026-10-21", fc) and not R.wet_on(it, "2026-10-22", fc)
+    assert not R.wet_on({"meta": {**it["meta"], "checklist": {"done": True}}}, "2026-10-21", fc), "done items aren't warned about"
+
+
+def test_drift_weather_warns_about_outdoor_items_on_wet_days(real_site):
+    col = site.drift_state()["collections"][0]
+    site.update_collection(col["id"], {"plugins": col["plugins"] + ["weather"]})
+    rainy = R.add_days(1)          # the stand-in forecast rains tomorrow (tests/devsite.mjs)
+    site.add_item({"title": "Picnic", "collection": col["id"], "meta": {"event": {"start": rainy + "T12:00", "end": None}, "weather": {"outdoor": True}}})
+    site.add_item({"title": "Cinema", "collection": col["id"], "meta": {"event": {"start": rainy + "T19:00", "end": None}, "weather": {"outdoor": False}}})
+
+    async def forecast(app, pilot):
+        page = app.screen
+        page.view = "c:" + col["id"]
+        page.tabs[col["id"]] = "weather"
+        page.render_all()
+        await settle(pilot, 0.8)
+        lst = page.query_one("#items")
+        text = "\n".join(str(lst.get_option_at_index(i).prompt) for i in range(lst.option_count))
+        assert "near you" in text and "TODAY" in text
+        assert "An outdoor item on a wet day" in text
+        assert text.index("An outdoor item") < text.index("Picnic") < text.index("Cinema")
+
+        # The calendar marks the wet day and names the item on it.
+        page.tabs[col["id"]] = "event"
+        page.day = rainy
+        page.render_all()
+        await settle(pilot, 0.5)
+        text = "\n".join(str(lst.get_option_at_index(i).prompt) for i in range(lst.option_count))
+        assert "☂" in text.split("\n")[0] or "☂" in text
+        assert "Looks wet for “Picnic”, which is outdoors." in text
+        assert "Rain, 80% chance" in text, "Picnic's warning chip"
+
+        # Unticking Outdoors in the item dialog stops the warning.
+        lst.focus()
+        lst.highlighted = next(i for i in range(lst.option_count) if lst.get_option_at_index(i).id and "Picnic" in str(lst.get_option_at_index(i).prompt))
+        await pilot.press("e")
+        await settle(pilot)
+        dlg = app.screen
+        assert "80% chance of rain" in str(dlg.query("Static").last().render()) or any("80% chance of rain" in str(s.render()) for s in dlg.query("Static"))
+        dlg.query_one("#outdoor").value = False
+        await pilot.press("ctrl+s")
+        await settle(pilot, 0.5)
+        picnic = next(it for it in site.drift_state()["items"] if it["title"] == "Picnic")
+        assert picnic["meta"]["weather"] == {"outdoor": False}
+        text = "\n".join(str(lst.get_option_at_index(i).prompt) for i in range(lst.option_count))
+        assert "Looks wet for" not in text
+    run_app("drift", forecast)
 
 
 # ── trip planner ───────────────────────────────────────────────────────────

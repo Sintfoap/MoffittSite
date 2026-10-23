@@ -12,9 +12,12 @@
 // one browser to send to, and answers every push as delivered.
 // ryan has Recipe box; https://recipes.test/pancakes is a recipe page to save
 // (serves 4), and any other page there has no recipe on it.
+// ryan has Meal plan too (his Recipe box starts empty).
 // ryan has Sweep, and he and sam are in a room "Plans" where sam asked about
 // dinner. The stand-in for Claude suggests that dinner from the first message
 // it's shown.
+// The weather (Open-Meteo) is the same everywhere: 16 days from today, with
+// rain tomorrow and the day after the clear one; ryan is near London.
 // ryan and sam have Trip planner.
 import http from "node:http";
 import worker from "../../src/worker.js";
@@ -60,12 +63,23 @@ if (notify) {
     return new Response(JSON.stringify({ stop_reason: "end_turn", content: [{ type: "text", text: JSON.stringify({ suggestions }) }] }));
   };
 }
+{
+  const before = globalThis.fetch;
+  globalThis.fetch = async (input, init) => {
+    const u = new URL(input.url || input);
+    if (u.host !== "api.open-meteo.com") return before(input, init);
+    const time = [...Array(16)].map((_, i) => { const d = new Date(); d.setDate(d.getDate() + i); return d.toLocaleDateString("sv"); });
+    const codes = time.map((_, i) => [3, 63, 0, 61][i % 4]);
+    return Response.json({ daily: { time, weather_code: codes, temperature_2m_max: time.map(() => 18), temperature_2m_min: time.map(() => 9),
+      precipitation_probability_max: codes.map(c => c >= 61 ? 80 : 10), precipitation_sum: codes.map(c => c >= 61 ? 5 : 0) } });
+  };
+}
 const env = makeEnv({ CHAT_BRIDGE_KEY: "devsite-bridge-key-0123456789", ...vapid });
 const ryan = new Browser(env), sam = new Browser(env);
 await ryan.signup("ryan", undefined, "Ryan M");
 await sam.signup("sam", undefined, "Sam");
 for (const who of ["ryan", "sam"]) grantApps(env, who, "plugins", "chat");
-grantApps(env, "ryan", "chat-bridges", "recipes", "sweep");
+grantApps(env, "ryan", "chat-bridges", "recipes", "meals", "sweep");
 for (const who of ["ryan", "sam"]) grantApps(env, who, "trips");
 {
   const plans = (await ryan.req("POST", "/chat/api/rooms", { json: { name: "Plans" } })).json.id;
@@ -108,8 +122,10 @@ const server = http.createServer(async (req, res) => {
   const headers = new Headers();
   for (const [k, v] of Object.entries(req.headers)) headers.set(k, Array.isArray(v) ? v.join(", ") : v);
   try {
-    const out = await worker.fetch(new Request(`http://${req.headers.host}${req.url}`,
-      { method: req.method, headers, body: ["GET", "HEAD"].includes(req.method) ? undefined : body }), env);
+    const request = new Request(`http://${req.headers.host}${req.url}`,
+      { method: req.method, headers, body: ["GET", "HEAD"].includes(req.method) ? undefined : body });
+    Object.defineProperty(request, "cf", { value: { latitude: "51.5072", longitude: "-0.1276" } });
+    const out = await worker.fetch(request, env);
     res.writeHead(out.status, Object.fromEntries(out.headers));
     res.end(Buffer.from(await out.arrayBuffer()));
   } catch (e) {

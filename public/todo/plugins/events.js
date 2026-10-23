@@ -52,7 +52,7 @@ function dayView(ctx, events, sel) {
       list.length ? `<ul class="items">${list.map(it => ctx.row(it, opts)).join("")}</ul>`
         : `<button class="slot" data-act="event:at" data-hour="${h}" aria-label="Add an item at ${esc(hourLabel(h))}"></button>`}</li>`;
   }
-  return `<div class="group dayplan"><h2>${esc(niceDay(sel))}<small>${n || ""}</small></h2>
+  return `<div class="group dayplan"><h2>${esc(niceDay(sel))}<small>${n || ""}</small></h2>${ctx.dayNote?.(sel, true) || ""}
     <h3>No set time<small>${untimed.length || ""}</small></h3>
     ${untimed.length ? `<ul class="items">${untimed.map(it => ctx.row(it, untimedOpts)).join("")}</ul>` : `<p class="hint">Items you add without a time land here.</p>`}
     <h3>By the hour</h3>
@@ -71,7 +71,7 @@ function monthGrid(ctx, events) {
     const evs = events.filter(it => onDay(it.meta.event, day)).sort(byStart);
     const cls = ["day", inMonth ? "" : "out", day === today() ? "now" : "", day === sel ? "sel" : ""].join(" ");
     cells.push(`<button class="${cls}" data-act="event:pick" data-day="${day}" aria-label="${esc(niceDay(day))}, ${evs.length} event${evs.length === 1 ? "" : "s"}">
-      <span class="dn">${d.getDate()}</span>
+      <span class="dh"><span class="dn">${d.getDate()}</span>${ctx.dayNote?.(day) || ""}</span>
       ${evs.slice(0, 3).map(it => `<span class="ev ${isOpen(it) ? "" : "past"}">${esc(it.title)}</span>`).join("")}
       ${evs.length > 3 ? `<span class="more">+${evs.length - 3}</span>` : ""}
       <span class="dots">${evs.slice(0, 4).map(() => "<i></i>").join("")}</span>

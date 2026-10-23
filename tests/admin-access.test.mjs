@@ -15,7 +15,7 @@ async function admin(env, name = "ryan") {
 }
 const areas = (env, name) => sql(env, "SELECT area FROM user_areas a JOIN users u ON u.id = a.user_id WHERE u.username = ? ORDER BY area", name).map(r => r.area);
 // Chat connections is part of Chat, so it's tried with Chat on.
-const PATHS = { drift: "/todo/", plugins: "/plugins/", chat: "/chat/", "chat-bridges": "/chat/api/connections", admin: "/admin", notifications: "/notifications/", recipes: "/recipes/", sweep: "/sweep/", trips: "/trips/" };
+const PATHS = { drift: "/todo/", plugins: "/plugins/", chat: "/chat/", "chat-bridges": "/chat/api/connections", admin: "/admin", notifications: "/notifications/", recipes: "/recipes/", meals: "/meals/", sweep: "/sweep/", trips: "/trips/" };
 
 test("every app is its own area, and new accounts only get the ones marked onForNew", async () => {
   assert.equal(new Set(APPS.map(a => a.area)).size, APPS.length, "two apps sharing an area couldn't be toggled apart");

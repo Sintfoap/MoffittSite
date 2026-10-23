@@ -14,13 +14,14 @@ public/          the website, served as static files
     app.js           the page: collections, views, item dialog
     lib.js           dates and quick-add parsing
     plugin-host.js   runs store plugins in the sandbox and cleans what they draw
-    plugins/         Checklist, Events, List, Graph; one file each
+    plugins/         Checklist, Events, List, Graph, Locations, Weather; one file each
   plugins/         the plugin store page (signed-in Drift users)
   sandbox/         the frame store plugins run in
   chat/            chat rooms (signed-in Drift users); gifs.js is the GIF picker, emoji-picker.js the full reaction picker (emoji.js), e2ee.js encryption, carry.js its keys' copy for your other browsers
   m/               the phone app: its own screens for Home, Drift and Chat, on the same APIs as the pages above
   notifications/   turning push notifications on, and what they're for
   recipes/         Recipe box (signed-in users with it turned on); scale.js scales ingredient lines, shared with the Worker
+  meals/           Meal plan: the week's dinners from Recipe box, around the Drift calendar
   sweep/           Sweep: Drift suggestions read out of your chat rooms, to accept or turn down
   trips/           Trip planner: a trip's days, places and packing list, planned with whoever's going
   sw.js            the service worker that shows push notifications
@@ -40,19 +41,21 @@ src/             the Worker: runs only for the paths in run_worker_first
   nav.js           the site's menu: one list, from APPS, that the rail and the terminal UI both use
   db.js            D1 tables (created on first use)
   drift.js         Drift storage: collections and items per account
+  weather.js       the forecast for Drift's Weather plugin: 16 days at a spot, from Open-Meteo
   store.js         the plugin store: drafts, review queue, approved plugins
   chat.js          chat: rooms, members, messages
   gifs.js          chat's GIF picker: search, trending and categories from GIPHY (or KLIPY), and favorites
   push.js          sending Web Push: encryption (RFC 8291) and VAPID signing, with WebCrypto
   notify.js        notifications: settings, browsers, Chat's pushes and Drift's reminders
   recipes.js       Recipe box: recipes read from a link's schema.org data (Recipe Keeper's shared recipes too), and their ingredients sent to a Drift list
+  meals.js         Meal plan: a week of dinners picked from Recipe box, quick ones on busy Drift nights, and the week's shopping sent to a Drift list
   sweep.js         Sweep: reads chosen chat rooms with Claude and suggests Drift events, tasks and list items
   trips.js         Trip planner: shared trips, their itinerary, pinned places, and packing lists sent to Drift
   books.js         the book club pick's list and votes (/books/api), and who voted for admins
   bridges.js       chat connections: other platforms' rooms in chat, with sealed credentials
   matrix.js        the Matrix provider for those
   vendor/uqr.mjs   QR codes for two-factor setup (MIT)
-cli/             the `sintfoap` command: sign in from a terminal; dashboard, Drift, plugin store, chat, Recipe box, Sweep, Trip planner and settings as a terminal UI
+cli/             the `sintfoap` command: sign in from a terminal; dashboard, Drift, plugin store, chat, Recipe box, Meal plan, Sweep, Trip planner and settings as a terminal UI
 apps/todo-esque/ the original Drift app (Python engine, terminal UI, CLI)
 tests/           node --no-warnings --test tests/*.test.mjs  (the CLI's: cd cli && python -m pytest tests)
 wrangler.jsonc   Worker configuration (name, static files, variables, database)
@@ -158,6 +161,7 @@ Drift lives at `/todo/`. Everything in it is an **item**: a title, notes, tags a
 | List (`list`) | `{order, parent}` | an outline you reorder and nest |
 | Graph (`graph`) | `{links, rel?, kind?, x, y}`: linked item ids, an optional type per link (`{id: "depends on"}`, which makes it point one way), an optional kind for the item, and where you pinned it | a network you drag, pan and zoom; "Link items" links or unlinks two items, as a plain link or a typed arrow; kinds colour the nodes, and the legend hides kinds and link types |
 | Locations (`location`) | `{place, lat, lng}`: what the place is called and where it is. You search for it (the site looks it up), pin it on the map, or paste coordinates | a map of the chosen day's events that have a place, numbered and joined in the order they happen, with the distance from each to the one before; picking one in the list flies the map there, and the day's events with no place can be pinned. **Range** shows a stretch of days at once instead (see below) |
+| Weather (`weather`) | `{outdoor}`: whether it happens outdoors. Adding Weather to an item marks it outdoors; so does tagging a new one `#outdoor` (or `#outdoors`, `#outside`) | **Forecast**: the next 16 days, each with its weather and what's on it. With Weather on, the Calendar's days show their weather too, and an outdoor item on a wet day gets a warning (see below) |
 
 Each **collection** picks which plugins are on, and shows a tab for each one's view. One item can carry several plugins' metadata at once, so a dated checklist item is also on the calendar. **Today** and **Calendar** in the sidebar show events from every collection.
 
@@ -175,7 +179,7 @@ Without the key, search is off and typed places stay "not found yet", but pins a
 
 #### Range
 
-The Map's **Day / Range** switch shows several days at once, to check that what you've planned for different days sits well together (for a trip, say, whether something on Tuesday is really nearer Thursday's plans). Pick a first and last day, any length up to 14 days; ‹ › slide the whole stretch by its own length, and Today moves it to start today. Each day's places are pins in that day's colour, numbered again from 1 in the order they happen, with a legend (click a day to hide or show it) and the places listed under each day. An event that runs over several days is on each of them, and pins at exactly the same spot fan out a little so none hides another. Events with no place, or not found yet, are listed under their day and can be pinned. Range draws no route lines and uses no bases; those stay in Day. Switching to Range starts a week from the day you were looking at, and switching back returns to that day. It's all in the page (`rangeDays`, `normRange`, `rangeStops` and `dayColor` in `public/todo/plugins/location.js`); the MCP's `drift_get_map` picture, the phone app and the terminal still show one day.
+The Map's **Day / Range** switch shows several days at once, to check that what you've planned for different days sits well together (for a trip, say, whether something on Tuesday is really nearer Thursday's plans). Pick a first and last day, any length up to 14 days; ‹ › slide the whole stretch by its own length, and Today moves it to start today. Each day's places are pins in that day's colour, numbered again from 1 in the order they happen, with a legend (click a day to hide or show it) and the places listed under each day. An event that runs over several days is on each of them, and pins at exactly the same spot fan out a little so none hides another. Events with no place, or not found yet, are listed under their day and can be pinned. The **Undated** checkbox (off by default) adds items that have a place but no day as one more grey group, listed after the days and hideable from the legend like any other; items with no event and no place at all are left out. Range draws no route lines and uses no bases; those stay in Day. Switching to Range starts a week from the day you were looking at, and switching back returns to that day. It's all in the page (`rangeDays`, `normRange`, `rangeStops`, `undatedStops` and `dayColor` in `public/todo/plugins/location.js`); the MCP's `drift_get_map` picture, the phone app and the terminal still show one day.
 
 #### Bases and routes
 
@@ -188,6 +192,12 @@ Each day starts and ends at a **base**, kept on the collection as `bases: [{plac
 3. Everything else is ordered by travel time. The five best orders are offered to cycle between (‹ ›), and a timed stop you'd likely reach late is flagged.
 
 Travel times come from OpenRouteService's matrix (one call), and the chosen order's streets from its directions (one call), for driving, walking or cycling; answers are cached for a day. Without the key, times are estimated from straight-line distance and the route is drawn straight.
+
+### Weather
+
+The forecast comes from [Open-Meteo](https://open-meteo.com) (no key needed), from the Worker: `GET /todo/api/weather?lat=…&lng=…` gives the next 16 days there (`{lat, lng, near, days: [{day, code, hi, lo, rain, precip}]}`: a WMO weather code, °C, the chance of rain in percent and mm of it), rounded to about a kilometre and cached by Cloudflare for half an hour (`src/weather.js`). Without `lat`, it's near where the request came from (Cloudflare's guess), with `near: true`; when that's unknown too, `days` is empty.
+
+An item's weather is for its place (Locations), else its collection's base for that day, else near you; a day on the Calendar uses the collection's base, else near you. A day is **wet** when rain is at least 50% likely, 2 mm or more is expected, or there are thunderstorms. Then an outdoor item that isn't ticked off gets a ☂ chip (on Today and in its collection too), the day's cell on the Calendar shows ☂ in red, and the day's view names the outdoor items it spoils. Temperatures are in °F in an American English browser (or terminal locale), °C otherwise. The rules are in `public/todo/plugins/weather.js`, and the terminal's copy in `cli/sintfoap/drift_rules.py`.
 
 ### Sharing
 
@@ -387,6 +397,23 @@ Push stays off, and the page says so, until the site has a VAPID key pair.
 | POST | `/notifications/api/devices` | the browser's `PushSubscription.toJSON()`, plus `{label, tz}` |
 | DELETE | `/notifications/api/devices/<id>` | |
 | POST | `/notifications/api/test` | pushes a test to all your browsers → also `{sent, failed}` |
+
+## Meal plan
+
+`/meals/` plans the week's dinners (Monday to Sunday) from your Recipe box, around your Drift calendar. It's an app in `APPS` with its own toggle on `/admin`, off for everyone; it reads the recipes you have in Recipe box, and it needs Drift for the calendar and the shopping list.
+
+- **Busy nights:** a night is busy when an open Drift item that day has a time in the evening (it overlaps 4–9 pm; one with no end is taken to last an hour), or the day has three or more timed things. All-day items show but don't make a night busy.
+- **Filling the week** picks a recipe for each empty night. Busy nights go first and get a quick recipe (30 minutes or less, from the recipe's Time); with none, the quickest there is. No recipe twice in a week while there are others, and last week's dinners only when nothing else is left. **Shuffle** picks again for every night that isn't locked.
+- **Each night:** pick a recipe yourself (that locks it, so filling and shuffling leave it alone), change its servings, lock or unlock it, or mark it **Out** (nothing to cook or buy). A busy night with a slow recipe is flagged.
+- **Shopping:** every planned recipe's ingredients, scaled to that night's servings, with the same line from two recipes listed once. Untick what you have, and the rest go to your Drift Shopping list (made the first time) or any list you can edit, each noting which dinners it's for.
+- **Terminal:** `sintfoap meals` (`g m`).
+
+| Request | |
+|---|---|
+| `GET /meals/api/week?start=<day>` | the week holding that day (this week without it): its nights, what's on in Drift, your recipes and the shopping |
+| `PUT /meals/api/week/<monday>/<day>` | `{recipe?, servings?, out?, locked?}` → the week |
+| `POST /meals/api/week/<monday>/fill` | `{redo?}`: recipes for the empty nights, or every unlocked one → the week |
+| `POST /meals/api/week/<monday>/shop` | `{lines?, list?}`: the week's shopping onto a Drift list → `{list, added, shopped}` |
 
 ## Sweep
 

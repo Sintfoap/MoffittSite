@@ -8,15 +8,15 @@ import { transcript } from "../src/sweep.js";
 
 // Claude, as far as these tests go: each call is recorded, and answers with
 // whatever `reply` gives for it.
-let calls = [], reply = () => ({ suggestions: [] }), status = 200;
+let calls = [], reply = () => ({ suggestions: [] }), status = 200, checkStatus = 200;
 const real = globalThis.fetch;
 beforeEach(() => {
-  calls = []; reply = () => ({ suggestions: [] }); status = 200;
+  calls = []; reply = () => ({ suggestions: [] }); status = 200; checkStatus = 200;
   globalThis.fetch = async (input, init) => {
     const url = new URL(input.url || input);
     if (url.host !== "api.anthropic.com") return real(input, init);
     // Checking a key: only BAD is refused.
-    if (url.pathname === "/v1/models") return new Response("{}", { status: init.headers["x-api-key"] === BAD ? 401 : 200 });
+    if (url.pathname === "/v1/models") return new Response("{}", { status: init.headers["x-api-key"] === BAD ? 401 : checkStatus });
     const body = JSON.parse(init.body);
     calls.push({ headers: init.headers, body });
     if (status !== 200) return new Response(JSON.stringify({ type: "error", error: { message: "busy" } }), { status });
@@ -200,7 +200,10 @@ test("each account sweeps with its own key: checked when added, kept sealed, nev
   const bad = await sweep(sam, "PUT", "key", { key: BAD });
   assert.equal(bad.status, 400);
   assert.match(bad.json.error, /didn't accept/);
+  // If Anthropic can't answer the check (busy, down), the key is kept anyway.
+  checkStatus = 503;
   assert.equal((await sweep(sam, "PUT", "key", { key: SAMS })).json.key.hint, "ssss");
+  checkStatus = 200;
   await chat(sam, "POST", `/rooms/${samRoom}/messages`, { body: "pick up milk" });
   assert.equal((await sweep(sam, "POST", "sweep", {})).status, 200);
   assert.equal(calls.at(-1).headers["x-api-key"], SAMS);

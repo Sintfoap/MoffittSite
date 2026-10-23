@@ -417,6 +417,7 @@ export async function writableCollections(env, user) {
 
 // Adds each line as a checklist item to collection `id`, or when there's none,
 // to your collection called `name` ("Shopping list"; made if you don't have one).
+// `notes` is one note for every line, or a list with one per line.
 export async function addToList(env, user, id, titles, notes = "", name = SHOPPING) {
   let list;
   if (id) {
@@ -427,8 +428,8 @@ export async function addToList(env, user, id, titles, notes = "", name = SHOPPI
     if (!list) list = await createCollection(env, user.id, { name, plugins: ["checklist", "list"], view: "checklist" });
   }
   let added = 0;
-  for (const title of titles) {
-    await createItem(env, user, { title, notes, collection: list.id, meta: { checklist: { done: false, priority: 0 } } });
+  for (const [i, title] of titles.entries()) {
+    await createItem(env, user, { title, notes: Array.isArray(notes) ? notes[i] : notes, collection: list.id, meta: { checklist: { done: false, priority: 0 } } });
     added++;
   }
   return { list: { id: list.id, name: list.name }, added };
