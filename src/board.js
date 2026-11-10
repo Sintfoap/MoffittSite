@@ -1,21 +1,24 @@
-// Recipe board: a shared board where members post recipes under categories
-// (Dinner, Baking, Vegetarian, ...), follow the categories they like, and see
-// what's new in those in their own feed. Anything on the board can be saved
-// into your Recipe box with one button, and anything in your Recipe box can
-// be posted to the board.
+// Recipe board: a shared board where members post recipes, follow the
+// categories they like, and see what's new in those in their own feed.
+// Anything on the board can be saved into your Recipe box with one button,
+// and anything in your Recipe box can be posted to the board.
 //
-// The board is everyone with Recipe board turned on. Anyone can start a
-// category; whoever started it (or an admin) can delete it while it's empty.
-// A post's author (or an admin) can change or delete it.
+// The categories are the label keys from Recipe labels (src/labels.js):
+// Season, Cuisine, Course... A post shows under every key its recipe's labels
+// use, so nobody picks a category, and one recipe can be in several. Removing
+// a key there (or here, for whoever has Recipe labels) removes the category.
 //
-// /board/api/board?day=YYYY-MM-DD          GET → {categories, recipe_box, recipes, unread, featured, you}: featured is
-//                                            the recipe of the day, someone else's post (day is your local date)
-// /board/api/categories                    POST {name} → the new category
-// /board/api/categories/<id>               DELETE → remove it (only while it has no posts)
-// /board/api/categories/<id>/follow        PUT {follow} → the category
-// /board/api/posts?view=&category=&before= GET → {posts, more, unread}: view is feed (the categories you
-//                                            follow; reading it marks it read), all, mine or saved
-// /board/api/posts                         POST {category, title?, note?, recipe? | url? | recipe_id?} → the new post
+// The board is everyone with Recipe board turned on. A post's author (or an
+// admin) can change or delete it.
+//
+// /board/api/board?day=YYYY-MM-DD          GET → {categories, label_list, recipe_box, recipes, unread, featured, you, can_label}:
+//                                            featured is the recipe of the day, someone else's post (day is your local date)
+// /board/api/categories/<key>              DELETE → the key and its labels gone (needs Recipe labels)
+// /board/api/categories/<key>/follow       PUT {follow} → the category
+// /board/api/posts?view=&category=&label=&before=
+//                                          GET → {posts, more, unread}: view is feed (the categories you follow;
+//                                            reading it marks it read), all, mine or saved; category is a key, label one value's id
+// /board/api/posts                         POST {title?, note?, labels?, recipe? | url? | recipe_id?} → the new post
 // /board/api/posts/<id>                    GET → the post; PATCH → change the fields sent; DELETE → remove it
 // /board/api/posts/<id>/save               POST → {recipe, already}: the post's recipe, in your Recipe box
 
@@ -23,15 +26,14 @@ import { db } from "./db.js";
 import { sameOrigin } from "./account.js";
 import { withRail } from "./pages.js";
 import { BadRequest } from "./drift.js";
-import { clean as cleanRecipe, get as getRecipe, create as createRecipe, importFrom, NotARecipe, labelList, withLabels } from "./recipes.js";
+import { clean as cleanRecipe, get as getRecipe, create as createRecipe, importFrom, NotARecipe, labelList, withLabels, cleanLabels, checkLabels } from "./recipes.js";
+import { deleteKey } from "./labels.js";
 
 const fail = msg => { throw new BadRequest(msg); };
 
-// What a new board starts with; members add their own.
-export const STARTING_CATEGORIES = ["Dinner", "Breakfast", "Baking", "Dessert", "Vegetarian", "Quick", "Soups", "Drinks"];
-const LIMITS = { categories: 60, name: 40, title: 200, note: 2000, page: 40, posts: 2000, body: 256 * 1024 };
-const CAT = /^c_[0-9a-f]{10}$/;
-const ROUTE_CAT = /^\/board\/api\/categories(?:\/(c_[0-9a-f]{10})(?:\/(follow))?)?\/?$/;
+const LIMITS = { title: 200, note: 2000, page: 40, posts: 2000, body: 256 * 1024 };
+const LABEL = /^l_[0-9a-f]{10}$/;
+const ROUTE_CAT = /^\/board\/api\/categories\/([^/]+?)(?:\/(follow))?\/?$/;
 const ROUTE_POST = /^\/board\/api\/posts(?:\/(b_[0-9a-f]{10})(?:\/(save))?)?\/?$/;
 const VIEWS = ["feed", "all", "mine", "saved"];
 const RECIPE_FIELDS = ["source", "image", "yield", "servings", "time", "ingredients", "steps", "notes", "labels"];
@@ -65,7 +67,7 @@ function cleanPost(changes) {
   const out = {};
   for (const [f, v] of Object.entries(changes)) {
     switch (f) {
-      case "category": out.category = String(v ?? ""); if (!CAT.test(out.category)) fail("pick a category"); break;
+      case "labels": out.labels = cleanLabels(v); break;
       case "title": out.title = str(f, v, LIMITS.title); break;
       case "note": out.note = str(f, v, LIMITS.note); break;
       case "recipe": out.recipe = recipeFields(v); break;
@@ -91,89 +93,75 @@ async function recipeFrom(d, user, { url, recipe_id }) {
   return null;
 }
 
-// ── categories ─────────────────────────────────────────────────────────────
+// ── categories: the label keys ─────────────────────────────────────────────
 
-async function seed(d) {
-  const { n } = await d.prepare("SELECT COUNT(*) AS n FROM board_categories").first();
-  if (n) return;
-  const t = new Date().toISOString();
-  await d.batch(STARTING_CATEGORIES.map(name =>
-    d.prepare("INSERT OR IGNORE INTO board_categories (id, name, created_by, created) VALUES (?, ?, NULL, ?)").bind(newId("c"), name, t)));
-}
+// A post's recipe has one of key's labels (or the label with that id).
+const HAS_KEY = "EXISTS (SELECT 1 FROM json_each(p.data, '$.recipe.labels') j JOIN recipe_labels l ON l.id = j.value WHERE l.key = ?)";
+const HAS_LABEL = "EXISTS (SELECT 1 FROM json_each(p.data, '$.recipe.labels') j WHERE j.value = ?)";
+const FOLLOWED = `EXISTS (SELECT 1 FROM json_each(p.data, '$.recipe.labels') j JOIN recipe_labels l ON l.id = j.value
+  JOIN board_follows f ON l.key = f.category AND f.user_id = ?)`;
+const canLabel = user => user.areas.has("labels") || isAdmin(user);
 
-// Every category, by name, with how many posts it has and whether you follow it.
+// Every key on the label list, by name, with its values, how many posts each has, and whether you follow it.
 export async function listCategories(env, user) {
   const d = await db(env);
-  await seed(d);
-  const { results } = await d.prepare(`SELECT c.id, c.name, c.created_by,
-      (SELECT COUNT(*) FROM board_posts p WHERE p.category = c.id) AS posts,
-      (SELECT MAX(created) FROM board_posts p WHERE p.category = c.id) AS latest,
-      EXISTS (SELECT 1 FROM board_follows f WHERE f.category = c.id AND f.user_id = ?) AS following,
-      (SELECT COUNT(*) FROM board_follows f WHERE f.category = c.id) AS followers
-    FROM board_categories c ORDER BY c.name COLLATE NOCASE`).bind(user.id).all();
-  return results.map(c => ({ id: c.id, name: c.name, posts: c.posts, followers: c.followers, latest: c.latest || null,
-    following: !!c.following, can_delete: !c.posts && (c.created_by === user.id || isAdmin(user)) }));
+  const labels = await labelList(d);
+  const count = async sql => Object.fromEntries((await d.prepare(sql).all()).results.map(r => [r.k.toLowerCase(), r]));
+  const perKey = await count(`SELECT l.key AS k, COUNT(DISTINCT p.id) AS n, MAX(p.created) AS latest
+    FROM board_posts p, json_each(p.data, '$.recipe.labels') j JOIN recipe_labels l ON l.id = j.value GROUP BY l.key`);
+  const perLabel = await count(`SELECT j.value AS k, COUNT(*) AS n FROM board_posts p, json_each(p.data, '$.recipe.labels') j GROUP BY j.value`);
+  const mine = new Set((await d.prepare("SELECT category FROM board_follows WHERE user_id = ?").bind(user.id).all()).results.map(r => r.category.toLowerCase()));
+  const followers = await count("SELECT category AS k, COUNT(*) AS n FROM board_follows GROUP BY category COLLATE NOCASE");
+  const out = [];
+  for (const l of labels) {
+    const k = l.key.toLowerCase();
+    let c = out.at(-1);
+    if (!c || c.id.toLowerCase() !== k) {
+      out.push(c = { id: l.key, name: l.key, values: [], posts: perKey[k]?.n || 0, latest: perKey[k]?.latest || null,
+        following: mine.has(k), followers: followers[k]?.n || 0, can_delete: canLabel(user) });
+    }
+    if (l.value) c.values.push({ id: l.id, value: l.value, posts: perLabel[l.id.toLowerCase()]?.n || 0 });
+  }
+  return out;
 }
 
-const category = (d, id) => d.prepare("SELECT * FROM board_categories WHERE id = ?").bind(id).first();
-const categoryOut = async (env, user, id) => (await listCategories(env, user)).find(c => c.id === id) || null;
+const keyOf = async (d, key) => (await d.prepare("SELECT key FROM recipe_labels WHERE key = ? LIMIT 1").bind(key).first())?.key || null;
+const categoryOut = async (env, user, key) => (await listCategories(env, user)).find(c => c.id.toLowerCase() === key.toLowerCase()) || null;
 
-export async function createCategory(env, user, body) {
-  if (!isObj(body)) fail("body must be a JSON object");
-  const name = str("name", body.name, LIMITS.name).replace(/\s+/g, " ");
-  if (!name) fail("give the category a name");
-  const d = await db(env);
-  await seed(d);
-  const same = await d.prepare("SELECT id FROM board_categories WHERE name = ?").bind(name).first();
-  if (same) fail(`there's already a ${name} category`);
-  const { n } = await d.prepare("SELECT COUNT(*) AS n FROM board_categories").first();
-  if (n >= LIMITS.categories) fail(`the board has as many categories as it can hold (${LIMITS.categories})`);
-  const id = newId("c");
-  await d.batch([
-    d.prepare("INSERT INTO board_categories (id, name, created_by, created) VALUES (?, ?, ?, ?)").bind(id, name, user.id, new Date().toISOString()),
-    // You follow what you start.
-    d.prepare("INSERT OR IGNORE INTO board_follows (user_id, category, added) VALUES (?, ?, ?)").bind(user.id, id, new Date().toISOString()),
-  ]);
-  return categoryOut(env, user, id);
+// Removing a category is removing its key from Recipe labels, so it's for whoever keeps that list.
+export async function deleteCategory(env, user, key) {
+  if (!canLabel(user)) fail("categories come from Recipe labels; whoever keeps that list can remove one");
+  return deleteKey(env, key);
 }
 
-export async function deleteCategory(env, user, id) {
-  const d = await db(env);
-  const c = await category(d, id);
-  if (!c) return null;
-  if (c.created_by !== user.id && !isAdmin(user)) fail("only whoever started a category (or an admin) can delete it");
-  const { n } = await d.prepare("SELECT COUNT(*) AS n FROM board_posts WHERE category = ?").bind(id).first();
-  if (n) fail("move or delete its recipes first");
-  await d.batch([
-    d.prepare("DELETE FROM board_follows WHERE category = ?").bind(id),
-    d.prepare("DELETE FROM board_categories WHERE id = ?").bind(id),
-  ]);
-  return { removed: true };
-}
-
-export async function follow(env, user, id, body) {
+export async function follow(env, user, key, body) {
   if (!isObj(body) || typeof body.follow !== "boolean") fail("send {follow: true} or {follow: false}");
   const d = await db(env);
-  if (!await category(d, id)) return null;
+  const name = await keyOf(d, key);
+  if (!name) return null;
   await (body.follow
-    ? d.prepare("INSERT OR IGNORE INTO board_follows (user_id, category, added) VALUES (?, ?, ?)").bind(user.id, id, new Date().toISOString())
-    : d.prepare("DELETE FROM board_follows WHERE user_id = ? AND category = ?").bind(user.id, id)).run();
-  return categoryOut(env, user, id);
+    ? d.prepare("INSERT OR IGNORE INTO board_follows (user_id, category, added) SELECT ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM board_follows WHERE user_id = ? AND category = ? COLLATE NOCASE)")
+      .bind(user.id, name, new Date().toISOString(), user.id, name)
+    : d.prepare("DELETE FROM board_follows WHERE user_id = ? AND category = ? COLLATE NOCASE").bind(user.id, name)).run();
+  return categoryOut(env, user, name);
 }
 
 // ── posts ──────────────────────────────────────────────────────────────────
 
-const POST_SELECT = `SELECT p.*, c.name AS category_name, u.username, u.display_name,
+const POST_SELECT = `SELECT p.*, u.username, u.display_name,
     (SELECT COUNT(*) FROM board_saves s WHERE s.post = p.id) AS saves,
     (SELECT recipe_id FROM board_saves s WHERE s.post = p.id AND s.user_id = ?) AS saved_as
-  FROM board_posts p LEFT JOIN board_categories c ON c.id = p.category LEFT JOIN users u ON u.id = p.author`;
+  FROM board_posts p LEFT JOIN users u ON u.id = p.author`;
 
 // A post's recipe keeps label ids, like Recipe box; `labels` is the site's list to read them with.
+// Its categories are the keys of those labels.
 function toPost(r, user, seen, labels = []) {
   const data = JSON.parse(r.data);
+  const mine = data.recipe ? withLabels(labels, data.recipe.labels) : [];
+  const categories = [...new Map(mine.map(l => [l.key.toLowerCase(), l.key])).values()];
   return {
-    id: r.id, category: r.category, category_name: r.category_name || "", title: data.title, note: data.note || "",
-    recipe: data.recipe ? { ...BLANK_RECIPE, ...data.recipe, labels: withLabels(labels, data.recipe.labels) } : null,
+    id: r.id, categories, title: data.title, note: data.note || "",
+    recipe: data.recipe ? { ...BLANK_RECIPE, ...data.recipe, labels: mine } : null,
     by: nameOf(r), yours: r.author === user.id, can_edit: r.author === user.id || isAdmin(user),
     created: r.created, updated: r.updated, saves: r.saves, saved: !!r.saved_as,
     ...(seen !== undefined ? { new: r.author !== user.id && (!seen || r.created > seen) } : {}),
@@ -191,19 +179,20 @@ const seenAt = async (d, user) => (await d.prepare("SELECT seen FROM board_seen 
 // How many posts in the categories you follow are newer than your feed was last read (not counting yours).
 export async function unread(d, user) {
   const seen = await seenAt(d, user);
-  const { n } = await d.prepare(`SELECT COUNT(*) AS n FROM board_posts p JOIN board_follows f ON f.category = p.category AND f.user_id = ?
-    WHERE p.author != ? AND p.created > ?`).bind(user.id, user.id, seen).first();
+  const { n } = await d.prepare(`SELECT COUNT(*) AS n FROM board_posts p WHERE ${FOLLOWED} AND p.author != ? AND p.created > ?`)
+    .bind(user.id, user.id, seen).first();
   return n;
 }
 
 // A page of posts, newest first. `before` is the `created` of the last post on the page before.
-export async function listPosts(env, user, { view = "feed", category: cat = "", before = "" } = {}) {
+export async function listPosts(env, user, { view = "feed", category: cat = "", label = "", before = "" } = {}) {
   if (!VIEWS.includes(view)) fail(`view is one of ${VIEWS.join(", ")}`);
-  if (cat && !CAT.test(cat)) fail("no such category");
+  if (label && !LABEL.test(label)) fail("no such label");
   const d = await db(env);
   const where = [], args = [user.id];
-  if (cat) { where.push("p.category = ?"); args.push(cat); }
-  else if (view === "feed") { where.push("p.category IN (SELECT category FROM board_follows WHERE user_id = ?)"); args.push(user.id); }
+  if (label) { where.push(HAS_LABEL); args.push(label); }
+  else if (cat) { where.push(HAS_KEY); args.push(cat); }
+  else if (view === "feed") { where.push(FOLLOWED); args.push(user.id); }
   else if (view === "mine") { where.push("p.author = ?"); args.push(user.id); }
   else if (view === "saved") { where.push("p.id IN (SELECT post FROM board_saves WHERE user_id = ?)"); args.push(user.id); }
   if (before) { where.push("p.created < ?"); args.push(String(before)); }
@@ -213,7 +202,7 @@ export async function listPosts(env, user, { view = "feed", category: cat = "", 
   const labels = await labelList(d);
   const posts = results.slice(0, LIMITS.page).map(r => toPost(r, user, seen, labels));
   // Reading the top of your feed marks it read.
-  const isFeed = view === "feed" && !cat;
+  const isFeed = view === "feed" && !cat && !label;
   const count = await unread(d, user);
   if (isFeed && !before) {
     await d.prepare(`INSERT INTO board_seen (user_id, seen) VALUES (?, ?) ON CONFLICT (user_id) DO UPDATE SET seen = excluded.seen`)
@@ -242,21 +231,23 @@ async function postRow(d, id) {
 
 export async function createPost(env, user, fields) {
   const d = await db(env);
-  const { url, recipe_id, ...data } = cleanPost(fields);
-  if (!data.category || !await category(d, data.category)) fail("pick a category");
+  const { url, recipe_id, labels, ...data } = cleanPost(fields);
   const { n } = await d.prepare("SELECT COUNT(*) AS n FROM board_posts WHERE author = ?").bind(user.id).first();
   if (n >= LIMITS.posts) fail(`you've posted as many recipes as the board holds for one person (${LIMITS.posts})`);
   const from = await recipeFrom(d, user, { url, recipe_id });
   if (from) { data.title ||= from.title; data.recipe = from.recipe; }
   if (!data.title) fail("give the recipe a title");
   if (!data.recipe) fail("add the recipe: a link, one from your Recipe box, or its ingredients and steps");
+  // Labels sent with the post are the recipe's (and so its categories).
+  if (labels) data.recipe.labels = labels;
+  await checkLabels(d, data.recipe.labels);
   // Each post a moment after the last, so two in the same millisecond still have an order
   // (the feed, its unread count and its pages all go by created).
   const { last } = await d.prepare("SELECT MAX(created) AS last FROM board_posts").first();
   const now = Date.now(), t = new Date(last && Date.parse(last) >= now ? Date.parse(last) + 1 : now).toISOString();
   const id = newId("b");
-  await d.prepare("INSERT INTO board_posts (id, author, category, data, created, updated) VALUES (?, ?, ?, ?, ?, ?)")
-    .bind(id, user.id, data.category, JSON.stringify({ title: data.title, note: data.note || "", recipe: data.recipe }), t, t).run();
+  await d.prepare("INSERT INTO board_posts (id, author, category, data, created, updated) VALUES (?, ?, '', ?, ?, ?)")
+    .bind(id, user.id, JSON.stringify({ title: data.title, note: data.note || "", recipe: data.recipe }), t, t).run();
   return getPost(env, user, id);
 }
 
@@ -265,15 +256,16 @@ export async function updatePost(env, user, id, changes) {
   const r = await postRow(d, id);
   if (!r) return null;
   if (r.author !== user.id && !isAdmin(user)) fail("only whoever posted it can change it");
-  const { url, recipe_id, category: cat, ...patch } = cleanPost(changes);
-  if (cat && !await category(d, cat)) fail("pick a category");
+  const { url, recipe_id, labels, ...patch } = cleanPost(changes);
   const from = await recipeFrom(d, user, { url, recipe_id });
   if (from) patch.recipe = from.recipe;
   if (patch.title === "") fail("give the recipe a title");
   const data = { ...JSON.parse(r.data), ...patch };
   if (!data.recipe) fail("a post needs its recipe");
-  await d.prepare("UPDATE board_posts SET category = ?, data = ?, updated = ? WHERE id = ?")
-    .bind(cat || r.category, JSON.stringify(data), new Date().toISOString(), id).run();
+  if (labels) data.recipe = { ...data.recipe, labels };
+  await checkLabels(d, data.recipe.labels);
+  await d.prepare("UPDATE board_posts SET data = ?, updated = ? WHERE id = ?")
+    .bind(JSON.stringify(data), new Date().toISOString(), id).run();
   return getPost(env, user, id);
 }
 
@@ -300,7 +292,7 @@ export async function saveToBox(env, user, id) {
   }
   const { image, ...r } = p.recipe;
   const recipe = await createRecipe(env, user, { title: p.title, ...r, ...(image.startsWith("https:") ? { image } : {}),
-    notes: [r.notes, p.note, `From the Recipe board (${p.category_name}), shared by ${p.by}.`].filter(Boolean).join("\n\n").slice(0, 5000) });
+    notes: [r.notes, p.note, `From the Recipe board, shared by ${p.by}.`].filter(Boolean).join("\n\n").slice(0, 5000) });
   await d.prepare(`INSERT INTO board_saves (post, user_id, recipe_id, created) VALUES (?, ?, ?, ?)
     ON CONFLICT (post, user_id) DO UPDATE SET recipe_id = excluded.recipe_id, created = excluded.created`)
     .bind(id, user.id, recipe.id, new Date().toISOString()).run();
@@ -345,20 +337,22 @@ export async function board(request, env, user, pathname) {
       const d = await db(env), box = user.areas.has("recipes");
       let recipes = [];
       if (box) {
-        const { results } = await d.prepare("SELECT id, json_extract(data, '$.title') AS title FROM recipes WHERE owner = ?").bind(user.id).all();
-        recipes = results.sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: "base" }));
+        // With their labels, so sharing one starts with them ticked.
+        const { results } = await d.prepare("SELECT id, json_extract(data, '$.title') AS title, json_extract(data, '$.labels') AS labels FROM recipes WHERE owner = ?").bind(user.id).all();
+        recipes = results.map(r => ({ ...r, labels: JSON.parse(r.labels || "[]").map(x => typeof x === "string" ? x : x?.id).filter(Boolean) })).sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: "base" }));
       }
       const categories = await listCategories(env, user);
       const day = new URL(request.url).searchParams.get("day") || "";
-      return json({ categories, recipe_box: box, recipes, unread: await unread(d, user), featured: await featured(env, user, day), you: user.id });
+      return json({ categories, label_list: await labelList(d), recipe_box: box, recipes, unread: await unread(d, user),
+        featured: await featured(env, user, day), you: user.id, can_label: canLabel(user) });
     }
     let m = pathname.match(ROUTE_CAT);
     if (m) {
-      const [, id, sub] = m;
-      if (!id) return method === "POST" ? json(await createCategory(env, user, await readBody(request)), 201) : notAllowed();
-      let out;
-      if (sub && method === "PUT") out = await follow(env, user, id, await readBody(request));
-      else if (!sub && method === "DELETE") out = await deleteCategory(env, user, id);
+      const [, raw, sub] = m;
+      let key, out;
+      try { key = decodeURIComponent(raw); } catch { return json({ error: "not found" }, 404); }
+      if (sub && method === "PUT") out = await follow(env, user, key, await readBody(request));
+      else if (!sub && method === "DELETE") out = await deleteCategory(env, user, key);
       if (out === undefined) return notAllowed();
       return out ? json(out) : json({ error: "not found" }, 404);
     }
@@ -368,7 +362,7 @@ export async function board(request, env, user, pathname) {
     if (!id) {
       if (method === "GET") {
         const q = new URL(request.url).searchParams;
-        return json(await listPosts(env, user, { view: q.get("view") || "feed", category: q.get("category") || "", before: q.get("before") || "" }));
+        return json(await listPosts(env, user, { view: q.get("view") || "feed", category: q.get("category") || "", label: q.get("label") || "", before: q.get("before") || "" }));
       }
       return method === "POST" ? json(await createPost(env, user, await readBody(request)), 201) : notAllowed();
     }

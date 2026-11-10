@@ -293,33 +293,63 @@ def test_admins_review_in_the_terminal(admin_site):
 
 # ── admin ──────────────────────────────────────────────────────────────────
 
-def test_admins_keep_the_recipe_label_list_in_the_terminal(admin_site):
+def test_recipe_labels_keeps_the_list_in_the_terminal(real_site):
+    from sintfoap.labels_page import split_add
+    assert split_add(" Season : Fall, Winter ") == ("Season", "Fall, Winter")
+    assert split_add("Favorite") == ("Favorite", "")
+
     async def labels(app, pilot):
         page = app.screen
-        assert [f"{lb['key']}:{lb['value']}" for lb in page.labels][:2] == ["Course:Breakfast", "Cuisine:Irish"]
-        page.query_one("#labels").focus()
-        # n: a new one, typed as Name: Value.
+        assert type(page).__name__ == "LabelsPage"
+        # Each key, then its values under it (tests/devsite.mjs).
+        assert [k["key"] for k in page.data["keys"]] == ["Course", "Cuisine", "Season"]
+        assert [(kind, x.get("value", x["key"])) for kind, x in page.rows][:3] == [("key", "Course"), ("label", "Breakfast"), ("label", "Dessert")]
+        # n: a new key with several values at once.
         await pilot.press("n")
         await settle(pilot)
-        app.screen.query_one("#answer").value = "Season: Winter"
+        app.screen.query_one("#answer").value = "Diet: Vegan, Vegetarian, vegan"
         await pilot.press("enter")
         await settle(pilot, 0.6)
-        assert any(lb["value"] == "Winter" for lb in site.recipe_labels()["labels"])
-        # e renames the highlighted one (Course: Breakfast) on every recipe.
-        page.query_one("#labels").highlighted = 0
+        assert [lb["value"] for lb in site.recipe_labels()["labels"] if lb["key"] == "Diet"] == ["Vegan", "Vegetarian"]
+        # a: more under the highlighted key (a value of Season counts), skipping what's there.
+        lst = page.query_one("#list")
+        lst.highlighted = next(i for i, (kind, x) in enumerate(page.rows) if kind == "label" and x["value"] == "Fall")
+        await pilot.press("a")
+        await settle(pilot)
+        app.screen.query_one("#answer").value = "Winter, fall"
+        await pilot.press("enter")
+        await settle(pilot, 0.6)
+        assert [lb["value"] for lb in site.recipe_labels()["labels"] if lb["key"] == "Season"] == ["Fall", "Summer", "Winter"]
+        # e renames the highlighted value.
+        lst.highlighted = next(i for i, (kind, x) in enumerate(page.rows) if kind == "label" and x["value"] == "Fall")
         await pilot.press("e")
         await settle(pilot)
-        app.screen.query_one("#answer").value = "Course: Brunch"
+        app.screen.query_one("#answer").value = "Autumn"
         await pilot.press("enter")
         await settle(pilot, 0.6)
-        assert page.labels[0]["value"] == "Brunch"
-        # x removes it, after asking.
+        assert "Autumn" in [lb["value"] for lb in site.recipe_labels()["labels"]]
+        # e on a key renames the key, x on a key removes it and all its values, after asking.
+        lst.highlighted = next(i for i, (kind, x) in enumerate(page.rows) if kind == "key" and x["key"] == "Diet")
+        await pilot.press("e")
+        await settle(pilot)
+        app.screen.query_one("#answer").value = "Eating"
+        await pilot.press("enter")
+        await settle(pilot, 0.6)
+        assert "Eating" in [k["key"] for k in site.recipe_labels()["keys"]]
+        lst.highlighted = next(i for i, (kind, x) in enumerate(page.rows) if kind == "key" and x["key"] == "Eating")
         await pilot.press("x")
         await settle(pilot)
         await pilot.press("y")
         await settle(pilot, 0.6)
-        assert "Brunch" not in [lb["value"] for lb in site.recipe_labels()["labels"]]
-    run_app("admin", labels)
+        assert "Eating" not in [k["key"] for k in site.recipe_labels()["keys"]]
+        # x on a value removes just that one.
+        lst.highlighted = next(i for i, (kind, x) in enumerate(page.rows) if kind == "label" and x["value"] == "Autumn")
+        await pilot.press("x")
+        await settle(pilot)
+        await pilot.press("y")
+        await settle(pilot, 0.6)
+        assert "Autumn" not in [lb["value"] for lb in site.recipe_labels()["labels"]]
+    run_app("labels", labels)
 
 
 def test_admins_switch_apps_on_and_off_in_the_terminal(admin_site):
@@ -327,7 +357,7 @@ def test_admins_switch_apps_on_and_off_in_the_terminal(admin_site):
         page = app.screen
         assert type(page).__name__ == "AdminPage"
         apps = [a["id"] for a in page.data["apps"]]
-        assert apps == ["drift", "admin", "plugins", "chat", "chat-bridges", "recipes", "meals", "sweep", "trips", "board", "food", "notifications"]
+        assert apps == ["drift", "admin", "plugins", "chat", "chat-bridges", "recipes", "meals", "sweep", "trips", "board", "labels", "food", "notifications"]
         # A switch for every app on every account; your own admin one can't be turned off.
         assert len(page.boxes) == len(apps) * len(page.data["users"])
         me = next(i for i, u in enumerate(page.data["users"]) if u["you"])
@@ -503,7 +533,7 @@ def test_recipe_box_labels_filter_and_sort_the_shelf(real_site):
         await pilot.press("e")
         await settle(pilot)
         picker = app.screen.query_one("#labels")
-        assert picker.option_count == 5 and picker.selected == []
+        assert picker.option_count == 6 and picker.selected == []
         picker.select(breakfast)
         await pilot.press("ctrl+s")
         await settle(pilot, 0.6)
@@ -1267,23 +1297,25 @@ def test_g_t_opens_the_terminal_trip_planner(real_site):
 
 # ── recipe board ───────────────────────────────────────────────────────────
 
-def test_recipe_board_follows_a_category_saves_a_post_and_shares_one(real_site):
-    site.add_recipe({"title": "Banana bread", "ingredients": "3 bananas\n2 cups flour", "steps": "Mash\nBake"})
+def test_recipe_board_follows_a_label_key_saves_a_post_and_shares_one(real_site):
+    breakfast, dessert = "l_0000000005", "l_0000000006"   # tests/devsite.mjs
+    site.add_recipe({"title": "Banana bread", "ingredients": "3 bananas\n2 cups flour", "steps": "Mash\nBake", "labels": [breakfast]})
 
     async def board(app, pilot):
         page = app.screen
         assert type(page).__name__ == "BoardPage"
-        # Nothing followed yet, so the feed is empty, but Everything has sam's shortbread.
+        # The categories are the label keys. Nothing followed yet, so the feed is empty.
+        assert [c["name"] for c in page.board["categories"]] == ["Course", "Cuisine", "Season"]
         assert page.posts == []
-        baking = next(c for c in page.board["categories"] if c["name"] == "Baking")
         side = page.query_one("#side", type(page.query_one("#posts")))
         side.focus()
-        side.highlighted = next(i for i in range(side.option_count) if side.get_option_at_index(i).id == "c:" + baking["id"])
-        # f: follow Baking; the shortbread lands in the feed.
+        side.highlighted = next(i for i in range(side.option_count) if side.get_option_at_index(i).id == "c:Course")
+        # f: follow Course; sam's shortbread (Course: Dessert) lands in the feed.
         await pilot.press("f")
         await settle(pilot, 0.6)
-        assert page.cat(baking["id"])["following"]
+        assert page.cat("course")["following"]
         assert [p["title"] for p in page.posts] == ["Shortbread"]
+        assert "Course: Dessert" in str(page.query_one("#post-meta").render())
         # sam's shortbread is ryan's recipe of the day too (it's the only one that isn't his), on top and open.
         assert page.board["featured"]["title"] == "Shortbread" and page.open == "featured"
         assert "Recipe of the day" in str(page.query_one("#post-title").render())
@@ -1295,29 +1327,40 @@ def test_recipe_board_follows_a_category_saves_a_post_and_shares_one(real_site):
         await settle(pilot, 0.6)
         assert page.posts[0]["saved"]
         assert "Shortbread" in [r["title"] for r in site.recipes()["recipes"]]
-        # n: share one of his own, from his Recipe box.
+        # n: share one of his own, from his Recipe box: its labels come ticked, and he adds Season: Fall.
         await pilot.press("n")
         await settle(pilot, 0.4)
         dialog = app.screen
         assert type(dialog).__name__ == "ShareDialog"
         assert dialog.query_one("#from").value == "box"
-        assert dialog.query_one("#category").value == baking["id"]
         dialog.query_one("#recipe_id").value = next(r["id"] for r in page.board["recipes"] if r["title"] == "Banana bread")
+        await settle(pilot, 0.3)
+        assert dialog.picked() == [breakfast]
+        dialog.query_one("#labels").select("l_0000000001")
         dialog.query_one("#note").text = "Use brown ones"
         await pilot.press("ctrl+s")
         await settle(pilot, 0.8)
-        assert page.at["category"] == baking["id"]
+        assert page.at["category"] == "Course"
         assert [p["title"] for p in page.posts] == ["Banana bread", "Shortbread"]
         assert page.current()["title"] == "Banana bread" and page.current()["can_edit"]
-        # c: a new category, followed by whoever starts it.
-        await pilot.press("c")
-        await settle(pilot, 0.3)
-        app.screen.query_one("#answer").value = "Grilling"
-        await pilot.press("enter")
+        assert page.current()["categories"] == ["Course", "Season"]
+        # Course lists its values; one narrows it.
+        assert any(side.get_option_at_index(i).id == "l:" + dessert for i in range(side.option_count))
+        await page.go(category="Course", label=dessert)
+        await settle(pilot, 0.4)
+        assert [p["title"] for p in page.posts] == ["Shortbread"]
+        # x removes a category: its key, from Recipe labels (ryan keeps them), after asking.
+        await page.go(category="Season")
+        await settle(pilot, 0.4)
+        page.query_one("#posts").focus()
+        await pilot.press("x")
+        await settle(pilot)
+        await pilot.press("y")
         await settle(pilot, 0.6)
-        assert page.cat(page.at["category"])["name"] == "Grilling" and page.cat(page.at["category"])["following"]
+        assert [c["name"] for c in page.board["categories"]] == ["Course", "Cuisine"]
+        assert "Season" not in [k["key"] for k in site.recipe_labels()["keys"]]
         # d deletes ryan's post, after asking.
-        await page.go(category=baking["id"])
+        await page.go(category="Course")
         await settle(pilot, 0.4)
         await pilot.press("d")
         await settle(pilot)
@@ -1334,6 +1377,89 @@ def test_g_b_opens_the_terminal_recipe_board(real_site):
         app.go("b")
         await settle(pilot, 0.5)
         assert type(app.screen).__name__ == "BoardPage"
+    run_app("dashboard", go)
+
+
+# ── food club ──────────────────────────────────────────────────────────────
+
+def test_food_club_picks_a_month_marks_it_made_and_keeps_photos(real_site, tmp_path):
+    from datetime import date
+    from sintfoap.food_page import this_month
+    photo = tmp_path / "attempt.jpg"
+    photo.write_bytes(bytes([0xFF, 0xD8, 0xFF, 0xE0, 0, 16]) + b"JFIF" + bytes(20))
+
+    async def food(app, pilot):
+        page = app.screen
+        assert type(page).__name__ == "FoodPage"
+        # sam picked last month; nobody's picked this one, so the page opens sam's.
+        assert [p["title"] for p in page.club["picks"]] == ["Pavlova"]
+        assert page.pick["title"] == "Pavlova" and page.pick["by"] == "Sam" and not page.pick["can_edit"]
+        assert str(page.query_one("#headline").render()).startswith("Nobody's picked")
+
+        # n: ryan picks this month, typing the recipe in.
+        await pilot.press("n")
+        dialog = app.screen
+        assert type(dialog).__name__ == "PickDialog"
+        assert dialog.query_one("#month").value == this_month()
+        dialog.query_one("#title").value = "Shakshuka"
+        dialog.query_one("#blurb").text = "Eggs in spicy tomato."
+        dialog.query_one("#mode").value = "type"
+        await settle(pilot, 0.2)
+        assert dialog.query_one("#typed").display and not dialog.query_one("#from-url").display
+        dialog.query_one("#ingredients").text = "6 eggs\n1 can tomatoes"
+        dialog.query_one("#steps").text = "Simmer\nCrack in the eggs"
+        await pilot.press("ctrl+s")
+        await settle(pilot, 0.6)
+        p = page.pick
+        assert (p["title"], p["month"], p["yours"], p["recipe"]["ingredients"]) == ("Shakshuka", this_month(), True, ["6 eggs", "1 can tomatoes"])
+        assert str(page.query_one("#headline").render()).endswith(": Shakshuka")
+
+        # m, f: made it, and loved it.
+        await pilot.press("m")
+        await settle(pilot, 0.5)
+        assert page.pick["made_by"] == ["Ryan M"]
+        await pilot.press("f")
+        await settle(pilot, 0.5)
+        assert page.pick["mine"] == {"made": True, "favorite": True}
+
+        # p: a photo from a file.
+        await pilot.press("p")
+        await settle(pilot, 0.3)
+        app.screen.query_one("#path").value = str(photo)
+        app.screen.query_one("#caption").value = "Too much chili"
+        await pilot.click("#ok")
+        await settle(pilot, 0.6)
+        assert [(x["by"], x["caption"]) for x in page.pick["photos"]] == [("Ryan M", "Too much chili")]
+        assert page.query_one("#photos").option_count == 1
+
+        # v: just favorites leaves out sam's Pavlova.
+        await pilot.press("v")
+        await settle(pilot)
+        box = page.query_one("#months")
+        ids = [box.get_option_at_index(i).id for i in range(box.option_count)]
+        assert page.pick["id"] in ids and page.club["picks"][1]["id"] not in ids
+
+        # s: into ryan's Recipe box.
+        await pilot.press("s")
+        await settle(pilot, 0.5)
+        assert [r["title"] for r in site.recipes()["recipes"]] == ["Shakshuka"]
+
+        # d deletes it, after asking.
+        await pilot.press("d")
+        await settle(pilot)
+        await pilot.press("y")
+        await settle(pilot, 0.6)
+        assert [p["title"] for p in site.food_club()["picks"]] == ["Pavlova"]
+    run_app("food", food)
+
+
+def test_g_l_opens_the_terminal_recipe_labels(real_site):
+    async def go(app, pilot):
+        await settle(pilot, 0.5)
+        assert any(n["key"] == "l" for n in app.data["nav"])
+        app.go("l")
+        await settle(pilot, 0.5)
+        assert type(app.screen).__name__ == "LabelsPage"
     run_app("dashboard", go)
 
 

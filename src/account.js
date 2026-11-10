@@ -14,10 +14,9 @@ import {
 } from "./auth.js";
 import { createKey, listKeys, revokeKey } from "./apikeys.js";
 import { mailReady, sendMail, MailError } from "./mail.js";
-import { agenda, visitorNow, BadRequest } from "./drift.js";
+import { agenda, visitorNow } from "./drift.js";
 import { installed } from "./store.js";
 import { BOOKS, bookVotes, removeBookVote } from "./books.js";
-import { labelList, labelUse, createLabel, renameLabel, deleteLabel, adminLabelsApi } from "./recipes.js";
 import {
   html, loginPage, signupPage, mfaPage, forgotPage, forgotDonePage, forgotEmailSentPage, resetPage, dashboardPage, accountPage, changePasswordRequiredPage, adminPage, adminClaimPage, messagePage,
 } from "./pages.js";
@@ -471,7 +470,6 @@ async function admin(request, env, me, pathname, method) {
   const d = await db(env);
   if (pathname === "/admin/api/access") return adminAccessApi(request, env, d, me, method);
   if (pathname === "/admin/api/books") return adminBooksApi(request, env, d, method);
-  if (pathname === "/admin/api/labels" || pathname.startsWith("/admin/api/labels/")) return adminLabelsApi(request, env, pathname);
   const show = async (extra = {}, status = 200) => {
     const { results: users } = await d.prepare(`
       SELECT u.id, u.username, u.display_name, u.created_at, u.disabled, u.must_change_pw, u.totp_secret IS NOT NULL AS totp,
@@ -482,7 +480,7 @@ async function admin(request, env, me, pathname, method) {
     const { results: orphans } = await d.prepare(`
       SELECT owner, COUNT(*) AS n FROM todo_tasks WHERE owner NOT IN (SELECT id FROM users) GROUP BY owner`).all();
     return html(adminPage({
-      user: me, apps: APPS, orphans, books: BOOKS, bookVotes: await bookVotes(d), labels: await labelList(d), labelUse: await labelUse(env),
+      user: me, apps: APPS, orphans, books: BOOKS, bookVotes: await bookVotes(d),
       users: users.map(u => ({ ...u, areas: u.areas ? u.areas.split(",") : [] })), ...extra,
     }), { status });
   };
@@ -574,7 +572,7 @@ async function admin(request, env, me, pathname, method) {
           ...["trip_entries", "trip_members"].map(t => d.prepare(`DELETE FROM ${t} WHERE trip IN (SELECT id FROM trips WHERE owner = ?)`).bind(target.id)),
           d.prepare("DELETE FROM trips WHERE owner = ?").bind(target.id),
           d.prepare("DELETE FROM trip_members WHERE user_id = ?").bind(target.id),
-          // Their recipe board posts, follows and saves go; categories they started stay.
+          // Their recipe board posts, follows and saves go.
           d.prepare("DELETE FROM board_saves WHERE user_id = ? OR post IN (SELECT id FROM board_posts WHERE author = ?)").bind(target.id, target.id),
           ...["board_follows", "board_seen"].map(t => d.prepare(`DELETE FROM ${t} WHERE user_id = ?`).bind(target.id)),
           d.prepare("DELETE FROM board_posts WHERE author = ?").bind(target.id),
@@ -584,16 +582,6 @@ async function admin(request, env, me, pathname, method) {
           d.prepare("DELETE FROM users WHERE id = ?").bind(target.id),
         ]);
         return show({ notice: `${target.username} and their tasks are deleted.` });
-      // Recipe box's label list (src/recipes.js).
-      case "/admin/labels/add":
-        await createLabel(env, { key: f.key, value: f.value });
-        return show({ notice: `Added ${f.value ? `${f.key}: ${f.value}` : f.key} to the recipe labels.` });
-      case "/admin/labels/rename":
-        if (!await renameLabel(env, String(f.id ?? ""), { key: f.key, value: f.value })) throw new AuthError("That label isn't on the list.", { status: 404 });
-        return show({ notice: "Label renamed, on every recipe that has it." });
-      case "/admin/labels/delete":
-        if (!await deleteLabel(env, String(f.id ?? ""))) throw new AuthError("That label isn't on the list.", { status: 404 });
-        return show({ notice: "Label removed, from the list and every recipe." });
       case "/admin/books/remove":
         await removeBookVote(d, f.voter);
         return show({ notice: "That book vote is removed." });
@@ -608,7 +596,6 @@ async function admin(request, env, me, pathname, method) {
     }
   } catch (e) {
     if (e instanceof AuthError) return show({ error: e.message }, e.status);
-    if (e instanceof BadRequest) return show({ error: e.message[0].toUpperCase() + e.message.slice(1) + "." }, 400);
     throw e;
   }
   return redirect("/admin");

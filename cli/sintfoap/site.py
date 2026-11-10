@@ -546,25 +546,6 @@ def admin_access() -> dict:
     return _get("/admin/api/access")
 
 
-def recipe_labels() -> dict:
-    """{labels: [{id, key, value, recipes}]}: the one list of labels recipes pick from (admins)."""
-    return _get("/admin/api/labels")
-
-
-def add_recipe_label(key: str, value: str = "") -> dict:
-    return api("POST", "/admin/api/labels", {"key": key, "value": value})
-
-
-def rename_recipe_label(label_id: str, key: str, value: str = "") -> dict:
-    """Renames it on every recipe that has it."""
-    return api("POST", f"/admin/api/labels/{_q(label_id)}", {"key": key, "value": value})
-
-
-def delete_recipe_label(label_id: str) -> dict:
-    """Takes it off the list and every recipe."""
-    return api("POST", f"/admin/api/labels/{_q(label_id)}/delete")
-
-
 def set_access(user_id: str, app: str, on: bool) -> dict:
     """Turns one app on or off for an account; the same as admin_access() after."""
     return api("POST", "/admin/api/access", {"user_id": user_id, "app": app, "on": bool(on)})
@@ -892,27 +873,26 @@ def drift_places() -> list:
 # /board/api/ (src/board.js)
 
 def board() -> dict:
-    """{categories, recipe_box, recipes, unread, featured}: every category (with whether you follow it), your Recipe box's
+    """{categories, label_list, recipe_box, recipes, unread, featured, can_label}: every category (a label key, with its values and
+    whether you follow it), the labels to tick, your Recipe box's
     recipes to share, and today's (by this computer's date) recipe of the day: someone else's post, or None."""
     import datetime
     return _get("/board/api/board?day=" + datetime.date.today().isoformat())
 
 
-def board_posts(view: str = "feed", category: str = "", before: str = "") -> dict:
-    """{posts, more, unread}: a page of posts, newest first. view is feed, all, mine or saved; a category overrides it.
+def board_posts(view: str = "feed", category: str = "", before: str = "", label: str = "") -> dict:
+    """{posts, more, unread}: a page of posts, newest first. view is feed, all, mine or saved; a category (a label key)
+    overrides it, and a label (one value's id) narrows that.
     Reading the top of your feed marks it read."""
-    q = {"category": category} if category else {"view": view}
+    q = {"label": label} if label else {"category": category} if category else {"view": view}
     if before:
         q["before"] = before
     return _get("/board/api/posts?" + urllib.parse.urlencode(q))
 
 
-def add_board_category(name: str) -> dict:
-    return api("POST", "/board/api/categories", {"name": name})
-
-
-def delete_board_category(category_id: str) -> dict:
-    return api("DELETE", f"/board/api/categories/{_q(category_id)}")
+def delete_board_category(key: str) -> dict:
+    """Removes the key, and its values, from Recipe labels (for whoever keeps that list)."""
+    return api("DELETE", f"/board/api/categories/{_q(key)}")
 
 
 def follow_board_category(category_id: str, follow: bool) -> dict:
@@ -921,7 +901,8 @@ def follow_board_category(category_id: str, follow: bool) -> dict:
 
 
 def add_board_post(fields: dict) -> dict:
-    """{category, note?} and the recipe: {recipe_id} from your Recipe box, {url} to read one from a page, or {title, recipe: {...}}."""
+    """{note?, labels?} and the recipe: {recipe_id} from your Recipe box, {url} to read one from a page, or {title, recipe: {...}}.
+    labels (ids from the label list) file it under their keys; from your Recipe box, the recipe's own labels come along unless sent."""
     return api("POST", "/board/api/posts", fields)
 
 
@@ -936,6 +917,39 @@ def delete_board_post(post_id: str) -> dict:
 def save_board_post(post_id: str) -> dict:
     """The post's recipe, copied into your Recipe box: {recipe, already}."""
     return api("POST", f"/board/api/posts/{_q(post_id)}/save")
+# ───────────────────────────── recipe labels ────────────────────────────────
+# /labels/api/ (src/labels.js): the one list of labels recipes pick from, kept by whoever has Recipe labels.
+
+def recipe_labels() -> dict:
+    """{labels: [{id, key, value, recipes, posts}], keys: [{key, values, recipes, posts}]}, by key then value."""
+    return _get("/labels/api/labels")
+
+
+def add_recipe_labels(key: str, values: str | list[str] = "") -> dict:
+    """Values under a key, new or already there: "Fall, Winter" or a list. {added, skipped: [{key, value, why}]}."""
+    return api("POST", "/labels/api/labels", {"key": key, "values": values})
+
+
+def rename_recipe_label(label_id: str, value: str) -> dict:
+    """A new value for it, on every recipe that has it."""
+    return api("PATCH", f"/labels/api/labels/{_q(label_id)}", {"value": value})
+
+
+def delete_recipe_label(label_id: str) -> dict:
+    """Takes it off the list and every recipe."""
+    return api("DELETE", f"/labels/api/labels/{_q(label_id)}")
+
+
+def rename_label_key(key: str, new: str) -> dict:
+    """Every value under a key moves to the new one."""
+    return api("PATCH", f"/labels/api/keys/{_q(key)}", {"key": new})
+
+
+def delete_label_key(key: str) -> dict:
+    """A key and all its values, off every recipe (and off the Recipe board as a category)."""
+    return api("DELETE", f"/labels/api/keys/{_q(key)}")
+
+
 # ────────────────────────────── food club ───────────────────────────────────
 # /food/api/ (src/food.js)
 

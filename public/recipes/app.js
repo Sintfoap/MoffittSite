@@ -71,7 +71,7 @@ function step(r, dir) {
 }
 
 // ── labels ─────────────────────────────────────────────────────────────────
-// From the site's one list (admins keep it on /admin): {id, key, value}.
+// From the site's one list (kept in Recipe labels, /labels/): {id, key, value}.
 
 const low = s => String(s || "").toLowerCase();
 const labelsOf = r => r.labels || [];
@@ -354,7 +354,7 @@ function renderPicker(r) {
   const box = $("#label-picker"), list = data.label_list || [];
   const on = new Set(labelsOf(r || {}).map(l => l.id));
   box.replaceChildren();
-  if (!list.length) { box.append(el("p", { className: "empty", textContent: "No labels yet. An admin adds them on the admin page." })); return; }
+  if (!list.length) { box.append(el("p", { className: "empty", textContent: "No labels yet. Whoever keeps Recipe labels adds them there." })); return; }
   const keys = new Map();
   for (const l of list) keys.set(low(l.key), [...(keys.get(low(l.key)) || []), l]);
   for (const ls of keys.values()) {
