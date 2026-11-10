@@ -21,7 +21,7 @@ import { withRail } from "./pages.js";
 import { readJson, BadRequest, writableCollections, addToList } from "./drift.js";
 import { imageType } from "./food.js";
 import { scaleLine, servingsOf, factorFor, format } from "../public/recipes/scale.js";
-import { photoState, readPhoto, readPhotoBody, saveKey, forgetKey } from "./recipe_photo.js";
+import { photoState, readPhoto, readPhotoBody, saveKey, forgetKey, readText } from "./recipe_photo.js";
 import { SweepError } from "./sweep.js";
 
 const fail = msg => { throw new BadRequest(msg); };
@@ -625,7 +625,8 @@ async function readImport(request) {
 
 // Pictures come from the recipe sites themselves, so img-src allows https.
 const PAGE_CSP = [
-  "default-src 'none'", "script-src 'self'", "connect-src 'self'", "manifest-src 'self'",
+  // worker-src: text recognition (vendor/tesseract) reads photos in a worker, on the device.
+  "default-src 'none'", "script-src 'self'", "connect-src 'self'", "manifest-src 'self'", "worker-src 'self'",
   "style-src 'unsafe-inline' https://fonts.googleapis.com", "font-src https://fonts.gstatic.com", "img-src 'self' data: https:",
   "form-action 'self'", "frame-ancestors 'none'", "base-uri 'none'",
 ].join("; ");
@@ -648,6 +649,7 @@ export async function recipes(request, env, user, pathname) {
     if (method !== "GET" && !sameOrigin(request)) return json({ error: "cross-origin request refused" }, 403);
     const notAllowed = () => json({ error: "method not allowed" }, 405);
     if (/^\/recipes\/api\/photo\/?$/.test(pathname)) return method === "POST" ? json(await readPhoto(env, user, await readPhotoBody(request))) : notAllowed();
+    if (/^\/recipes\/api\/text\/?$/.test(pathname)) return method === "POST" ? json(readText(await readPhotoBody(request))) : notAllowed();
     if (/^\/recipes\/api\/key\/?$/.test(pathname)) {
       if (method === "PUT") return json(await saveKey(env, user, await readJson(request)));
       return method === "DELETE" ? json(await forgetKey(env, user)) : notAllowed();

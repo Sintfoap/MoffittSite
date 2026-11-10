@@ -5,6 +5,8 @@
 import { scaleLine, factorFor, format } from "./scale.js";
 import { splitPages, batches, photoOf, fileKey } from "./split.js";
 import { unzip } from "./unzip.js";
+import { readRecipe } from "./read.js";
+import { arrange } from "./columns.js";
 
 const $ = s => document.querySelector(s);
 const el = (tag, props = {}, ...kids) => {
@@ -323,11 +325,20 @@ async function sendToList(r, list) {
 
 // `draft` is a recipe read from a photo, to check before it's saved: the
 // editor opens as a new recipe with its fields filled and the pictures above.
-function openEditor(r, draft = null, shots = []) {
+// `how` says what read the draft: "claude", "ocr" (text recognition here) or "text" (pasted).
+const HINTS = {
+  claude: "Read by Claude from your photo. Check it against the picture, fix anything it misread, then save.",
+  ocr: "Read from your photo by text recognition on this device. Check it against the picture: fix any misread words, and move lines between the boxes if one landed in the wrong place.",
+  text: "Read from the text you pasted. Check that each line landed in the right box, then save.",
+};
+function openEditor(r, draft = null, shots = [], how = "claude") {
   editing = r || {};
   const f = $("#edit-form");
   $("#edit-title").textContent = r ? "Edit recipe" : draft ? "Check the recipe" : "New recipe";
   $("#edit-hint").hidden = !draft;
+  const check = draft?.check?.length ? ` Look twice at the amounts in ${draft.check.map(l => `“${l}”`).join(", ")}: fractions like ½ and ¾ are easy to misread.` : "";
+  $("#edit-hint-text").textContent = (HINTS[how] || "") + check;
+  $("#with-claude").hidden = !draft || how !== "ocr" || !data.photo?.sealing;
   const pics = $("#edit-photos");
   pics.hidden = !shots.length;
   pics.replaceChildren(...shots.map(src => {
@@ -566,37 +577,122 @@ $("#keyer").addEventListener("close", () => {
   });
 });
 
+// A photo is read on this device by text recognition (Tesseract, in
+// vendor/tesseract: no AI, no key), or by Claude when you've added an
+// Anthropic key, which also reads handwriting. Either way it opens in the
+// editor to check first.
 function pickPhoto() {
-  if (!data) return;
-  if (!data.photo?.ready) return askForKey(() => $("#photo-file").click());
-  $("#photo-file").click();
+  if (data) $("#photo-file").click();
 }
 
-async function fromPhotos(files) {
+const OCR = "/recipes/vendor/tesseract/";
+let tesseract = null;  // the library, loaded the first time it's needed
+function loadTesseract() {
+  tesseract ||= new Promise((ok, bad) => {
+    const s = el("script", { src: OCR + "tesseract.min.js" });
+    s.onload = () => ok(window.Tesseract);
+    s.onerror = () => { tesseract = null; bad(new Error("text recognition couldn't load; check your connection and try again")); };
+    document.head.append(s);
+  });
+  return tesseract;
+}
+
+// A photo at a size text recognition reads well: at most 2400 across, the right way up.
+async function forReading(file) {
+  const bmp = await createImageBitmap(file, { imageOrientation: "from-image" }).catch(() => null);
+  if (!bmp) throw new Error(`${file.name} isn't a picture this browser can read`);
+  const k = Math.min(1, 2400 / Math.max(bmp.width, bmp.height));
+  const canvas = Object.assign(document.createElement("canvas"), { width: Math.round(bmp.width * k), height: Math.round(bmp.height * k) });
+  const ctx = canvas.getContext("2d");
+  ctx.fillStyle = "#fff";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(bmp, 0, 0, canvas.width, canvas.height);
+  return canvas;
+}
+
+// The text in the pictures, read here: page after page.
+async function recognize(files) {
+  const T = await loadTesseract();
+  let page = 0;
+  const worker = await T.createWorker("eng", 1, {
+    workerPath: OCR + "worker.min.js", corePath: OCR, langPath: OCR.slice(0, -1), workerBlobURL: false,
+    logger: m => {
+      if (m.status === "recognizing text") say("done", `Reading ${files.length > 1 ? `photo ${page} of ${files.length}` : "the photo"}… ${Math.round(m.progress * 100)}%`);
+      else if (/loading/.test(m.status)) say("done", "Getting text recognition ready… (the first time takes a moment)");
+    },
+  });
+  try {
+    // Find the page's own layout (columns, blocks), not one block of lines across it.
+    await worker.setParameters({ tessedit_pageseg_mode: T.PSM.AUTO, preserve_interword_spaces: "0" });
+    const texts = [];
+    let title = "";
+    for (const f of files) {
+      page++;
+      const { data: d } = await worker.recognize(await forReading(f), {}, { text: true, blocks: true });
+      const lines = (d.blocks || []).flatMap(b => (b.paragraphs || []).flatMap(p => p.lines || []));
+      const got = lines.length ? arrange(lines) : { text: d.text, title: "" };
+      texts.push(got.text);
+      if (page === 1) title = got.title;
+    }
+    return { text: texts.join("\n\n"), title };
+  } finally {
+    worker.terminate();
+  }
+}
+
+let lastPhotos = [];  // what the open draft was read from, to read again with Claude
+async function fromPhotos(files, { claude = !!data.photo?.ready } = {}) {
   const btn = $("#photo");
   btn.disabled = true;
   btn.textContent = "Reading…";
   const err = await run(async () => {
     if (files.length > 4) throw new Error("pick at most 4 pictures of one recipe");
-    say("done", `Reading ${files.length === 1 ? "the photo" : `${files.length} photos`}… this takes a few seconds.`);
-    const images = await Promise.all(files.map(async f => ({ data: await base64(await shrinkPhoto(f)) })));
-    const { recipe } = await api("POST", "photo", { images });
+    lastPhotos = files;
+    const shots = await Promise.all(files.map(async f => "data:image/jpeg;base64," + await base64(await shrinkPhoto(f))));
+    let recipe;
+    if (claude) {
+      say("done", `Reading ${files.length === 1 ? "the photo" : `${files.length} photos`} with Claude… this takes a few seconds.`);
+      ({ recipe } = await api("POST", "photo", { images: shots.map(s => ({ data: s.slice(s.indexOf(",") + 1) })) }));
+    } else {
+      const { text, title } = await recognize(files);
+      recipe = readRecipe(text, { title });
+      if (!recipe) throw new Error("couldn't find a recipe in that photo. A sharper, straighter photo helps; or add it with Paste text");
+    }
     say("done", "");
-    openEditor(null, recipe, images.map(i => "data:image/jpeg;base64," + i.data));
+    openEditor(null, recipe, shots, claude ? "claude" : "ocr");
   });
   btn.disabled = false;
   btn.textContent = "From a photo";
   $("#photo-file").value = "";
-  // A key Anthropic turned down: the next try asks for another.
+  // A key Anthropic turned down: the next try reads it here instead.
   if (err && /didn't accept your API key/i.test(err.message)) data.photo = { ...data.photo, ready: false };
 }
+
+// From the editor: the same photos again, with Claude (asking for a key first if there isn't one).
+$("#with-claude").addEventListener("click", () => {
+  const files = lastPhotos;
+  $("#editor").close("cancel");
+  const go = () => fromPhotos(files, { claude: true });
+  data.photo?.ready ? go() : askForKey(go);
+});
+
+// ── pasting a recipe's text ────────────────────────────────────────────────
+
+$("#paste").addEventListener("click", () => { $("#paste-form").reset(); $("#paster").showModal(); });
+$("#paster").addEventListener("close", () => {
+  if ($("#paster").returnValue !== "read") return;
+  const recipe = readRecipe($("#paste-form").text.value);
+  if (!recipe) { say("error", "Couldn't find a recipe in that text: no ingredients or steps."); return; }
+  say("error", "");
+  openEditor(null, recipe, [], "text");
+});
 $("#photo").addEventListener("click", pickPhoto);
 $("#photo-file").addEventListener("change", e => e.target.files.length && fromPhotos([...e.target.files]));
 $("#find").addEventListener("input", () => { page = 0; follow = false; renderList(); });
 
 document.addEventListener("keydown", e => {
   const t = e.target;
-  if (e.metaKey || e.ctrlKey || e.altKey || t.isContentEditable || t.matches?.("input, textarea, select") || $("#editor").open || $("#keyer").open) {
+  if (e.metaKey || e.ctrlKey || e.altKey || t.isContentEditable || t.matches?.("input, textarea, select") || $("#editor").open || $("#keyer").open || $("#paster").open) {
     if (e.key === "Escape" && t === $("#find")) { t.value = ""; renderList(); t.blur(); }
     return;
   }
@@ -615,6 +711,7 @@ document.addEventListener("keydown", e => {
     e: () => r && openEditor(r),
     i: () => $("#import-file").click(),
     p: () => pickPhoto(),
+    t: () => $("#paste").click(),
     s: () => r && $("#send") && !$("#send").disabled && $("#send").click(),
   };
   if (keys[e.key]) { e.preventDefault(); keys[e.key](); }

@@ -144,11 +144,15 @@ The same settings as `/notifications/`: what Chat and Drift push to you (direct 
 
 The same recipes as `/recipes/`: the list on the left, the open one on the right. Paste a link to a recipe page in the box at the top (`a` goes there) and the site reads the recipe off it, from the schema.org data most recipe sites publish, or from a recipe shared out of Recipe Keeper (recipekeeperonline.com). If a page has no recipe on it, the editor opens with the link filled in so you can type it. `i` imports a whole file of recipes: give it the path to Recipe Keeper's export (its `recipes.html`, its folder, or its .zip) or a recipe page you saved, and every recipe in it is added, skipping ones already in your box. The export's pictures come too (from the `images` folder beside `recipes.html`), and a recipe already in your box that has no picture gets its own, so importing the export again fills in missing pictures. Courses, categories, collections, ratings and nutrition go in each recipe's notes. Pictures over 600 KB stay behind; the website shrinks them for you.
 
+`p` reads a recipe from a photo of a cookbook page or a screenshot (give it the file's path; a recipe over several pages takes up to 4, separated by commas). It's read on this computer by [Tesseract](https://github.com/tesseract-ocr/tesseract), free text recognition with no AI and no key (`brew install tesseract`, `sudo apt install tesseract-ocr`, or `winget install UB-Mannheim.TesseractOCR`), and the site sorts what it read into the title, ingredients and steps, putting a two-column page's columns back in order. `t` does the same with text you paste. Either way the recipe opens in the editor to check before it's saved. Tesseract is good with printed pages and poor with handwriting; for that, `k` adds your own Anthropic API key (the one Sweep uses), and from then on `p` reads photos with Claude instead.
+
 | Key | |
 |---|---|
 | `a` | save a recipe from a link |
 | `n` | type one in by hand |
 | `i` | import a file of recipes (Recipe Keeper's export, with its pictures, or a saved page) |
+| `p` | read a recipe from a photo (by Tesseract here, or by Claude once you've added a key with `k`), to check before saving |
+| `t` | read a recipe from pasted text, to check before saving |
 | `+` `-` | more or fewer servings (or ×½ steps for a recipe that doesn't say how many it serves); quantities change to match |
 | `space` | on the ingredients: tick which to send |
 | `s` | send the ticked ingredients, scaled, to a Drift list: your Shopping list (made the first time), or any list you can add to |
