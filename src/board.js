@@ -250,7 +250,11 @@ export async function createPost(env, user, fields) {
   if (from) { data.title ||= from.title; data.recipe = from.recipe; }
   if (!data.title) fail("give the recipe a title");
   if (!data.recipe) fail("add the recipe: a link, one from your Recipe box, or its ingredients and steps");
-  const id = newId("b"), t = new Date().toISOString();
+  // Each post a moment after the last, so two in the same millisecond still have an order
+  // (the feed, its unread count and its pages all go by created).
+  const { last } = await d.prepare("SELECT MAX(created) AS last FROM board_posts").first();
+  const now = Date.now(), t = new Date(last && Date.parse(last) >= now ? Date.parse(last) + 1 : now).toISOString();
+  const id = newId("b");
   await d.prepare("INSERT INTO board_posts (id, author, category, data, created, updated) VALUES (?, ?, ?, ?, ?, ?)")
     .bind(id, user.id, data.category, JSON.stringify({ title: data.title, note: data.note || "", recipe: data.recipe }), t, t).run();
   return getPost(env, user, id);
