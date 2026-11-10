@@ -54,8 +54,9 @@ const norm = s => String(s ?? "").toLowerCase().replace(/['’]/g, "").replace(/
 
 const keyContext = user => `sweep key\0${user.id}`;
 
-// The account's key, or null if it has none (or it no longer opens).
-async function keyOf(env, user) {
+// The account's key, or null if it has none (or it no longer opens). Recipe
+// box's photo import (src/recipe_photo.js) reads with the same key.
+export async function keyOf(env, user) {
   if (!bridgeReady(env)) return null;
   const row = await (await db(env)).prepare("SELECT secret FROM sweep_keys WHERE user_id = ?").bind(user.id).first();
   return row ? unseal(env.CHAT_BRIDGE_KEY, keyContext(user), row.secret) : null;
@@ -321,7 +322,9 @@ export function transcript(msgs, tz, me) {
   return out.join("\n");
 }
 
-async function ask(key, body) {
+// One request to Claude, its text back. `what` names what it was reading, for
+// the errors ("that room", "that photo"). Recipe box's photo import uses it too.
+export async function askClaude(key, body, what = "that room") {
   const call = extra => fetch(API, {
     method: "POST",
     headers: { "content-type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01", ...extra.headers },
@@ -335,14 +338,18 @@ async function ask(key, body) {
   }
   const out = await res.json().catch(() => null);
   if (!res.ok) {
-    console.error("sweep model error:", res.status, out?.error?.message);
+    console.error("claude error:", res.status, out?.error?.message);
     throw new SweepError(res.status === 401 || res.status === 403 ? "Anthropic didn't accept your API key. Add a new one below."
       : res.status === 429 || res.status === 529 ? "Claude is busy right now. Try again in a minute."
       : `Claude couldn't be reached (Anthropic answered ${res.status}${out?.error?.message ? `: ${clip(String(out.error.message), 200)}` : ""}).`);
   }
-  if (out.stop_reason === "refusal") throw new SweepError("Claude declined to read that room.");
-  if (out.stop_reason === "max_tokens") throw new SweepError("That room had too much to read at once.");
-  const reply = (out.content || []).filter(b => b.type === "text").map(b => b.text).join("");
+  if (out.stop_reason === "refusal") throw new SweepError(`Claude declined to read ${what}.`);
+  if (out.stop_reason === "max_tokens") throw new SweepError(`${what[0].toUpperCase() + what.slice(1)} had too much to read at once.`);
+  return (out.content || []).filter(b => b.type === "text").map(b => b.text).join("");
+}
+
+async function ask(key, body) {
+  const reply = await askClaude(key, body);
   try { return JSON.parse(reply).suggestions || []; } catch { throw new SweepError("Claude's answer couldn't be read."); }
 }
 

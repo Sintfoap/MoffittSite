@@ -3,8 +3,10 @@
 Your recipes down the left, the open one on the right, scaled to the servings
 you pick (+ and -). Space ticks which ingredients to send, and s sends them to
 a Drift list. A link pasted in the box at the top is read by the site, as on
-the website; n types one in by hand, and i imports a file of them (Recipe
-Keeper's export, with its pictures, or a saved recipe page)."""
+the website; n types one in by hand, i imports a file of them (Recipe
+Keeper's export, with its pictures, or a saved recipe page), and p reads one
+from a photo (a recipe card, a cookbook page, a screenshot) for you to check
+before it's saved."""
 from __future__ import annotations
 
 import asyncio
@@ -77,15 +79,19 @@ class RecipeDialog(ModalScreen[dict | None]):
     RecipeDialog #notes { height: 4; }
     """
 
-    def __init__(self, recipe: dict | None, source: str = ""):
+    def __init__(self, recipe: dict | None, source: str = "", heading: str = "", hint: str = ""):
         super().__init__()
         self.r = recipe or {}
         self.source = source
+        self.heading = heading or ("Edit recipe" if recipe else "New recipe")
+        self.hint = hint
 
     def compose(self) -> ComposeResult:
         r = self.r
         with VerticalScroll(classes="dialog"):
-            yield Label(Text("Edit recipe" if r else "New recipe", style=f"bold {INK}"))
+            yield Label(Text(self.heading, style=f"bold {INK}"))
+            if self.hint:
+                yield Static(Text(self.hint, style=MUTED))
             yield Label("Title", classes="lbl")
             yield Input(r.get("title", ""), id="title", max_length=200)
             with Horizontal(classes="grid"):
@@ -165,6 +171,7 @@ class RecipesPage(Page):
         Binding("a", "add", "From a link"),
         Binding("n", "new", "By hand"),
         Binding("i", "import_file", "Import file"),
+        Binding("p", "photo", "From a photo"),
         Binding("e", "edit", "Edit"),
         Binding("plus,equals_sign", "servings(1)", "More"),
         Binding("minus", "servings(-1)", "Fewer"),
@@ -345,7 +352,7 @@ class RecipesPage(Page):
 
     def check_action(self, action: str, parameters: tuple) -> bool | None:
         # Typing in the link box or the editor shouldn't scale or delete anything.
-        if action in ("servings", "add", "new", "import_file", "edit", "send", "delete", "refresh") and isinstance(self.focused, (Input, TextArea)):
+        if action in ("servings", "add", "new", "import_file", "photo", "edit", "send", "delete", "refresh") and isinstance(self.focused, (Input, TextArea)):
             return False
         return True
 
@@ -502,6 +509,58 @@ class RecipesPage(Page):
         if pointed and not images:
             text += " Their pictures weren't beside the file; give the export's folder or .zip to bring them."
         self.app.notify(text, timeout=10)
+
+    # ── reading one from a photo ──────────────────────────────────────────
+
+    def action_photo(self) -> None:
+        photo = (self.data or {}).get("photo") or {}
+        if photo.get("ready"):
+            self.ask_photo()
+        elif not photo.get("sealing"):
+            self.app.notify("This site can't keep API keys yet, so photos can't be read. Ask its admin to set CHAT_BRIDGE_KEY.",
+                            severity="error", timeout=6)
+        else:
+            async def answer(key: str | None) -> None:
+                if key and key.strip():
+                    await self.save_key(key.strip())
+            self.app.push_screen(Ask("Read recipes from photos",
+                                     "Photos are read by Claude with your own Anthropic API key (console.anthropic.com/settings/keys), "
+                                     "so nobody else is billed for yours. It's kept sealed on the site; Sweep uses the same one.",
+                                     placeholder="sk-ant-…", ok="Save key", password=True), answer)
+
+    @attempt
+    async def save_key(self, key: str) -> None:
+        self.data["photo"] = (await self.fetch(site.recipe_key, key))["photo"]
+        self.app.notify("Key saved.", timeout=2)
+        self.ask_photo()
+
+    def ask_photo(self) -> None:
+        async def answer(paths: str | None) -> None:
+            if paths and paths.strip():
+                await self.from_photo([x.strip() for x in paths.split(",") if x.strip()])
+        self.app.push_screen(Ask("Read a recipe from a photo",
+                                 "A picture of a recipe card, a cookbook page or a screenshot (JPEG, PNG, WebP or GIF). "
+                                 "A recipe over several pages: up to 4 files, separated by commas. You check it before it's saved.",
+                                 placeholder="~/Pictures/recipe-card.jpg", ok="Read it"), answer)
+
+    async def from_photo(self, paths: list[str]) -> None:
+        self.app.notify(f"Reading {'the photo' if len(paths) == 1 else f'{len(paths)} photos'}… this takes a few seconds.", timeout=8)
+        try:
+            out = await asyncio.to_thread(site.read_recipe_photo, paths)
+        except site.SignedOut:
+            self.app.signed_out = True
+            self.app.exit(message="Signed out on the site. Run  sintfoap login  to sign in again.")
+            return
+        except site.SiteError as e:
+            msg = str(e).removeprefix("the site said: ")
+            if "didn't accept your API key" in msg:
+                self.data["photo"] = {**self.data.get("photo", {}), "ready": False}
+                msg = "Anthropic didn't accept your API key. Press p again to add a new one."
+            self.app.notify(msg[:1].upper() + msg[1:], severity="error", timeout=6)
+            return
+        self.app.push_screen(RecipeDialog(out["recipe"], heading="Check the recipe",
+                                          hint="Read from your photo. Check it against the picture, fix anything Claude misread, then save."),
+                             self.after_dialog(None))
 
     def action_delete(self) -> None:
         r = self.current()

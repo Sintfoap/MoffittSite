@@ -475,6 +475,48 @@ def test_recipe_box_imports_a_recipe_keeper_export(real_site, tmp_path):
     run_app("recipes", recipes)
 
 
+# The smallest file that's a JPEG as far as anyone checks: its first bytes.
+JPEG = bytes([0xff, 0xd8, 0xff, 0xe0, 0, 16, 74, 70, 73, 70, 0, 1])
+
+
+def test_recipe_box_reads_a_recipe_from_a_photo_to_check_first(real_site, tmp_path):
+    card = tmp_path / "card.jpg"
+    card.write_bytes(JPEG)
+    (tmp_path / "notes.txt").write_text("not a picture")
+
+    async def recipes(app, pilot):
+        page = app.screen
+        assert page.data["photo"] == {"ready": False, "sealing": True, "key": None}
+        # p without a key asks for one first, then for the picture.
+        await pilot.press("p")
+        await settle(pilot)
+        assert type(app.screen).__name__ == "Ask" and app.screen.query_one("#answer").password
+        app.screen.query_one("#answer").value = "sk-ant-api03-" + "k" * 40
+        await pilot.press("enter")
+        await settle(pilot, 0.6)
+        assert page.data["photo"]["ready"]
+        assert type(app.screen).__name__ == "Ask"
+        app.screen.query_one("#answer").value = f"{tmp_path / 'notes.txt'}"
+        await pilot.press("enter")
+        await settle(pilot, 0.4)
+        assert type(app.screen).__name__ == "RecipesPage", "a file that isn't a picture goes no further"
+        # A picture: what Claude read opens in the editor, saved only when it's saved.
+        await page.from_photo([str(card)])
+        await settle(pilot, 0.6)
+        dialog = app.screen
+        assert type(dialog).__name__ == "RecipeDialog"
+        assert dialog.query_one("#title").value == "Nana's Shortbread"
+        assert dialog.query_one("#servings").value == "24"
+        assert dialog.query_one("#ingredients").text.splitlines()[0] == "2 cups flour"
+        assert site.recipes()["recipes"] == []
+        dialog.query_one("#title").value = "Nana's Shortbread (1974)"
+        await pilot.press("ctrl+s")
+        await settle(pilot, 0.6)
+        assert [x["title"] for x in site.recipes()["recipes"]] == ["Nana's Shortbread (1974)"]
+        assert page.current()["steps"][-1] == "Bake at 325°F for 20 min."
+    run_app("recipes", recipes)
+
+
 def test_g_r_opens_the_terminal_recipe_box(real_site):
     async def go(app, pilot):
         await settle(pilot, 0.5)
