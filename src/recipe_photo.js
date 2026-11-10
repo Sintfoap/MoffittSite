@@ -4,6 +4,13 @@
 //
 // /recipes/api/photo   POST {images: [{data (base64)}, ...]} → {recipe}: up to 4 pictures of one recipe
 // /recipes/api/key     PUT {key} → {photo}; DELETE → {photo}
+// /recipes/api/text    POST {text} or {pages: [[line, ...], ...]} → {recipe}: recipe
+//                      text cut into a recipe, no AI and no key. text is pasted;
+//                      pages are what text recognition read off each photo on your
+//                      own device (Tesseract's lines with their words and where they
+//                      sit), so a two-column page can be put back in order first
+//                      (public/recipes/columns.js). public/recipes/read.js does the
+//                      cutting; the page runs both itself, the terminal sends here.
 //
 // It reads with the person's own Anthropic API key, the one Sweep uses
 // (src/sweep.js): added once, on either page, sealed under CHAT_BRIDGE_KEY and
@@ -16,6 +23,8 @@ import { bridgeReady } from "./bridges.js";
 import { imageType } from "./food.js";
 import { keyOf, setKey, dropKey, askClaude, SweepError, DEFAULT_MODEL } from "./sweep.js";
 import { servingsOf } from "../public/recipes/scale.js";
+import { readRecipe } from "../public/recipes/read.js";
+import { arrange } from "../public/recipes/columns.js";
 
 const fail = msg => { throw new BadRequest(msg); };
 const isObj = v => v && typeof v === "object" && !Array.isArray(v);
@@ -131,4 +140,31 @@ export async function readPhotoBody(request) {
   const raw = await request.text();
   if (raw.length > LIMITS.body) fail("those pictures are too big; send smaller ones");
   try { return JSON.parse(raw); } catch { fail("invalid JSON"); }
+}
+
+const box = b => isObj(b) && ["x0", "y0", "x1", "y1"].every(k => Number.isFinite(b[k]));
+// One recognized line, checked: {text, confidence?, bbox, words: [{text, bbox}]}.
+function lineOf(l) {
+  if (!isObj(l) || typeof l.text !== "string" || !box(l.bbox) || !Array.isArray(l.words) || l.words.length > 200) fail("each line needs {text, bbox, words}");
+  const words = l.words.map(w => {
+    if (!isObj(w) || typeof w.text !== "string" || !box(w.bbox)) fail("each word needs {text, bbox}");
+    return { text: w.text.slice(0, 100), bbox: w.bbox };
+  });
+  return { text: l.text.slice(0, 2000), bbox: l.bbox, words, confidence: Number(l.confidence) || 0 };
+}
+
+export function readText(body) {
+  if (!isObj(body)) fail("body must be a JSON object");
+  let text = body.text, title = "";
+  if (Array.isArray(body.pages)) {
+    if (!body.pages.length || body.pages.length > LIMITS.images || !body.pages.every(p => Array.isArray(p) && p.length <= 2000)) fail(`send 1 to ${LIMITS.images} pages of lines`);
+    const read = body.pages.map(p => arrange(p.map(lineOf)));
+    text = read.map(r => r.text).join("\n\n");
+    title = read[0].title;
+  }
+  if (typeof text !== "string" || !text.trim()) fail("send {text}: the recipe's text");
+  if (text.length > 50000) fail("that's more text than one recipe; send less");
+  const recipe = readRecipe(text, { title });
+  if (!recipe) fail("couldn't find a recipe in that text: no ingredients or steps");
+  return { recipe };
 }

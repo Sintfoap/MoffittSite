@@ -20,7 +20,7 @@ public/          the website, served as static files
   chat/            chat rooms (signed-in Drift users); gifs.js is the GIF picker, emoji-picker.js the full reaction picker (emoji.js), e2ee.js encryption, carry.js its keys' copy for your other browsers
   m/               the phone app: its own screens for Home, Drift and Chat, on the same APIs as the pages above
   notifications/   turning push notifications on, and what they're for
-  recipes/         Recipe box (signed-in users with it turned on); scale.js scales ingredient lines, shared with the Worker
+  recipes/         Recipe box (signed-in users with it turned on); scale.js scales ingredient lines, read.js cuts recipe text into a recipe and columns.js puts a two-column page back in order (all shared with the Worker); vendor/tesseract is text recognition, run in the browser (Apache-2.0)
   meals/           Meal plan: the week's dinners from Recipe box, around the Drift calendar
   sweep/           Sweep: Drift suggestions read out of your chat rooms, to accept or turn down
   board/           Recipe board: recipes shared under their labels' keys, a feed of the keys you follow, and saving any into Recipe box
@@ -51,7 +51,7 @@ src/             the Worker: runs only for the paths in run_worker_first
   push.js          sending Web Push: encryption (RFC 8291) and VAPID signing, with WebCrypto
   notify.js        notifications: settings, browsers, Chat's pushes and Drift's reminders
   recipes.js       Recipe box: recipes (with labels like Season: Fall, picked from the Recipe labels list) read from a link's schema.org data (Recipe Keeper's shared recipes too) or imported in bulk from a file (Recipe Keeper's export, its folder or .zip, with pictures kept in D1), and their ingredients sent to a Drift list
-  recipe_photo.js  Recipe box: a recipe read from a photo (a card, a cookbook page, a screenshot) by Claude, with Sweep's API key, to check before saving
+  recipe_photo.js  Recipe box: a recipe read from a photo (by Claude, with Sweep's API key) or from text (pasted, or read off a photo on the device), to check before saving
   meals.js         Meal plan: a week of dinners picked from Recipe box, quick ones on busy Drift nights, and the week's shopping sent to a Drift list
   sweep.js         Sweep: reads chosen chat rooms with Claude and suggests Drift events, tasks and list items
   board.js         Recipe board: posts (from a link, Recipe box, or typed in) filed under their labels' keys, follows, the feed and its unread count, the recipe of the day, saves into Recipe box

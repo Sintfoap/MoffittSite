@@ -21,7 +21,7 @@ export function fakeD1() {
     // D1 runs a batch as one transaction.
     batch: async list => {
       db.exec("BEGIN");
-      try { const out = list.map(s => db.prepare(s.sql).run(...s.args)); db.exec("COMMIT"); return out; }
+      try { const out = list.map(s => { const r = db.prepare(s.sql).run(...s.args); return { success: true, meta: { changes: Number(r.changes) } }; }); db.exec("COMMIT"); return out; }
       catch (e) { db.exec("ROLLBACK"); throw e; }
     },
     raw: db,

@@ -220,6 +220,47 @@ def test_drift_collections_are_made_and_shared(real_site):
     assert work["shares"] == [{"username": "sam", "name": "Sam", "role": "view"}]
 
 
+def test_drift_deleting_a_collection_moves_its_items_or_takes_them(real_site):
+    inbox = site.drift_state()["collections"][0]
+    shop = site.add_collection({"name": "Shopping", "plugins": ["checklist"]})
+    junk = site.add_collection({"name": "Junk", "plugins": ["checklist"]})
+    for title in ("Milk", "Eggs"):
+        site.add_item({"title": title, "collection": shop["id"]})
+    site.add_item({"title": "Old flyer", "collection": junk["id"]})
+
+    async def delete(app, pilot):
+        page = app.screen
+        page.view = "c:" + shop["id"]
+        await page.action_refresh()
+        page.action_collection()
+        await settle(pilot)
+        app.screen.query_one("#delete").press()
+        await settle(pilot)
+        ask = app.screen
+        assert ask.n == 2
+        assert ask.query_one("#fate").value == inbox["id"], "moving them is the default"
+        ask.query_one("#yes").press()
+        await settle(pilot, 0.6)
+        assert page.view == "c:" + inbox["id"]
+        assert page.undo == ("collection", shop["id"])
+
+        page.view = "c:" + junk["id"]
+        await page.action_refresh()
+        page.action_collection()
+        await settle(pilot)
+        app.screen.query_one("#delete").press()
+        await settle(pilot)
+        app.screen.query_one("#fate").value = ""
+        app.screen.query_one("#yes").press()
+        await settle(pilot, 0.6)
+        assert page.view == "today"
+    run_app("drift", delete)
+    st = site.drift_state()
+    assert [c["name"] for c in st["collections"]] == ["Inbox"]
+    assert sorted(it["title"] for it in st["items"]) == ["Eggs", "Milk"]
+    assert all(it["collection"] == inbox["id"] for it in st["items"])
+
+
 # ── plugin store ───────────────────────────────────────────────────────────
 
 def test_store_lists_plugins_and_adds_them_to_drift(real_site):
@@ -595,41 +636,74 @@ def test_recipe_box_imports_a_recipe_keeper_export(real_site, tmp_path):
 JPEG = bytes([0xff, 0xd8, 0xff, 0xe0, 0, 16, 74, 70, 73, 70, 0, 1])
 
 
-def test_recipe_box_reads_a_recipe_from_a_photo_to_check_first(real_site, tmp_path):
-    card = tmp_path / "card.jpg"
-    card.write_bytes(JPEG)
-    (tmp_path / "notes.txt").write_text("not a picture")
+OCR_PAGE = json.loads((Path(__file__).parent.parent.parent / "tests" / "recipe-ocr-page.json").read_text())
+
+
+def test_recipe_box_reads_a_photo_here_without_a_key(real_site, tmp_path, monkeypatch):
+    page_jpg = tmp_path / "banana-bread.jpg"
+    page_jpg.write_bytes(JPEG)
+    # What tesseract reads off a two-column cookbook page (it needn't be installed for the test).
+    seen = []
+    monkeypatch.setattr(site, "ocr_page", lambda path: seen.append(path) or OCR_PAGE)
 
     async def recipes(app, pilot):
         page = app.screen
         assert page.data["photo"] == {"ready": False, "sealing": True, "key": None}
-        # p without a key asks for one first, then for the picture.
+        # p asks for the picture straight away: no key needed.
         await pilot.press("p")
+        await settle(pilot)
+        assert type(app.screen).__name__ == "Ask" and not app.screen.query_one("#answer").password
+        app.screen.query_one("#answer").value = str(page_jpg)
+        await pilot.press("enter")
+        await settle(pilot, 0.8)
+        assert seen == [str(page_jpg)]
+        dialog = app.screen
+        assert type(dialog).__name__ == "RecipeDialog"
+        assert dialog.query_one("#title").value == "Classic Banana Bread"
+        assert dialog.query_one("#ingredients").text.splitlines()[0] == "3 ripe bananas, mashed"
+        assert dialog.query_one("#steps").text.splitlines()[0].startswith("Preheat the oven")
+        assert site.recipes()["recipes"] == []
+        await pilot.press("ctrl+s")
+        await settle(pilot, 0.6)
+        assert [x["title"] for x in site.recipes()["recipes"]] == ["Classic Banana Bread"]
+    run_app("recipes", recipes)
+
+
+def test_recipe_box_reads_pasted_text_and_photos_with_claude_once_a_key_is_added(real_site, tmp_path):
+    card = tmp_path / "card.jpg"
+    card.write_bytes(JPEG)
+
+    async def recipes(app, pilot):
+        page = app.screen
+        # t: paste a recipe's text.
+        await pilot.press("t")
+        await settle(pilot)
+        assert type(app.screen).__name__ == "PasteDialog"
+        app.screen.query_one("#text").text = "Lemon Garlic Chicken\nServes 4\n2 tablespoons olive oil\n4 chicken thighs\n\nHeat the oil. Cook the chicken."
+        await pilot.press("ctrl+s")
+        await settle(pilot, 0.6)
+        dialog = app.screen
+        assert type(dialog).__name__ == "RecipeDialog"
+        assert dialog.query_one("#title").value == "Lemon Garlic Chicken"
+        assert dialog.query_one("#servings").value == "4"
+        await pilot.press("escape")
+        await settle(pilot)
+        # k adds an Anthropic key; then photos are read by Claude.
+        await pilot.press("k")
         await settle(pilot)
         assert type(app.screen).__name__ == "Ask" and app.screen.query_one("#answer").password
         app.screen.query_one("#answer").value = "sk-ant-api03-" + "k" * 40
         await pilot.press("enter")
         await settle(pilot, 0.6)
         assert page.data["photo"]["ready"]
-        assert type(app.screen).__name__ == "Ask"
-        app.screen.query_one("#answer").value = f"{tmp_path / 'notes.txt'}"
-        await pilot.press("enter")
-        await settle(pilot, 0.4)
-        assert type(app.screen).__name__ == "RecipesPage", "a file that isn't a picture goes no further"
-        # A picture: what Claude read opens in the editor, saved only when it's saved.
         await page.from_photo([str(card)])
         await settle(pilot, 0.6)
         dialog = app.screen
-        assert type(dialog).__name__ == "RecipeDialog"
         assert dialog.query_one("#title").value == "Nana's Shortbread"
         assert dialog.query_one("#servings").value == "24"
-        assert dialog.query_one("#ingredients").text.splitlines()[0] == "2 cups flour"
-        assert site.recipes()["recipes"] == []
-        dialog.query_one("#title").value = "Nana's Shortbread (1974)"
         await pilot.press("ctrl+s")
         await settle(pilot, 0.6)
-        assert [x["title"] for x in site.recipes()["recipes"]] == ["Nana's Shortbread (1974)"]
-        assert page.current()["steps"][-1] == "Bake at 325°F for 20 min."
+        assert [x["title"] for x in site.recipes()["recipes"]] == ["Nana's Shortbread"]
     run_app("recipes", recipes)
 
 

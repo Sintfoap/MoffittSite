@@ -4,9 +4,10 @@ Your recipes down the left, the open one on the right, scaled to the servings
 you pick (+ and -). Space ticks which ingredients to send, and s sends them to
 a Drift list. A link pasted in the box at the top is read by the site, as on
 the website; n types one in by hand, i imports a file of them (Recipe
-Keeper's export, with its pictures, or a saved recipe page), and p reads one
-from a photo (a recipe card, a cookbook page, a screenshot) for you to check
-before it's saved."""
+Keeper's export, with its pictures, or a saved recipe page), p reads one from
+a photo (a cookbook page, a screenshot: by tesseract on this computer, or by
+Claude with your key, k) and t from pasted text, for you to check before
+it's saved."""
 from __future__ import annotations
 
 import asyncio
@@ -227,6 +228,35 @@ class RecipeDialog(ModalScreen[dict | None]):
         self.action_save() if e.button.id == "save" else self.dismiss(None)
 
 
+class PasteDialog(ModalScreen[str | None]):
+    """A recipe's text, pasted. Dismisses with it, or None."""
+    BINDINGS = [Binding("escape", "cancel", "Cancel"), Binding("ctrl+s", "read", "Read it", priority=True)]
+    DEFAULT_CSS = "PasteDialog #text { height: 16; }"
+
+    def compose(self) -> ComposeResult:
+        with Vertical(classes="dialog"):
+            yield Label(Text("Paste a recipe's text", style=f"bold {INK}"))
+            yield Static(Text("Copy the text out of a photo (Live Text on an iPhone, Google Lens on Android) or a page, and paste it here. "
+                              "It's split into the title, ingredients and steps for you to check before saving.", style=MUTED))
+            yield TextArea(id="text", soft_wrap=True)
+            with Horizontal(classes="buttons"):
+                yield Button("Read it", id="read")
+                yield Button("Cancel", id="cancel", classes="quiet")
+            yield Static(Text("ctrl+s reads it, esc cancels", style=FAINT))
+
+    def on_mount(self) -> None:
+        self.query_one("#text", TextArea).focus()
+
+    def action_read(self) -> None:
+        self.dismiss(self.query_one("#text", TextArea).text)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+    def on_button_pressed(self, e: Button.Pressed) -> None:
+        self.action_read() if e.button.id == "read" else self.dismiss(None)
+
+
 class RecipesPage(Page):
     WEB_PATH = "/recipes/"
     SIDE = "#shelf"
@@ -254,6 +284,8 @@ class RecipesPage(Page):
         Binding("n", "new", "By hand"),
         Binding("i", "import_file", "Import file"),
         Binding("p", "photo", "From a photo"),
+        Binding("t", "paste", "Paste text"),
+        Binding("k", "key", "Claude key", show=False),
         Binding("e", "edit", "Edit"),
         Binding("plus,equals_sign", "servings(1)", "More"),
         Binding("minus", "servings(-1)", "Fewer"),
@@ -472,7 +504,7 @@ class RecipesPage(Page):
         # Typing in the link box or the editor shouldn't scale or delete anything.
         if action == "board" and not (self.data or {}).get("board"):
             return None
-        if action in ("servings", "add", "new", "import_file", "photo", "edit", "send", "delete", "refresh", "board", "labels", "sort") and isinstance(self.focused, (Input, TextArea)):
+        if action in ("servings", "add", "new", "import_file", "photo", "paste", "key", "edit", "send", "delete", "refresh", "board", "labels", "sort") and isinstance(self.focused, (Input, TextArea)):
             return False
         return True
 
@@ -667,56 +699,76 @@ class RecipesPage(Page):
 
     # ── reading one from a photo ──────────────────────────────────────────
 
+    # A photo is read on this computer by tesseract (no AI, no key), or by
+    # Claude when you've added an Anthropic key (k), which also reads handwriting.
     def action_photo(self) -> None:
-        photo = (self.data or {}).get("photo") or {}
-        if photo.get("ready"):
-            self.ask_photo()
-        elif not photo.get("sealing"):
-            self.app.notify("This site can't keep API keys yet, so photos can't be read. Ask its admin to set CHAT_BRIDGE_KEY.",
-                            severity="error", timeout=6)
-        else:
-            async def answer(key: str | None) -> None:
-                if key and key.strip():
-                    await self.save_key(key.strip())
-            self.app.push_screen(Ask("Read recipes from photos",
-                                     "Photos are read by Claude with your own Anthropic API key (console.anthropic.com/settings/keys), "
-                                     "so nobody else is billed for yours. It's kept sealed on the site; Sweep uses the same one.",
-                                     placeholder="sk-ant-…", ok="Save key", password=True), answer)
+        async def answer(paths: str | None) -> None:
+            if paths and paths.strip():
+                await self.from_photo([x.strip() for x in paths.split(",") if x.strip()])
+        claude = ((self.data or {}).get("photo") or {}).get("ready")
+        self.app.push_screen(Ask("Read a recipe from a photo",
+                                 "A picture of a cookbook page or a screenshot (a recipe over several pages: up to 4 files, "
+                                 "separated by commas). " + ("Claude reads it, with your key. " if claude else
+                                 "It's read on this computer by tesseract, no AI. ") + "You check it before it's saved.",
+                                 placeholder="~/Pictures/banana-bread.jpg", ok="Read it"), answer)
+
+    def action_key(self) -> None:
+        if not ((self.data or {}).get("photo") or {}).get("sealing"):
+            self.app.notify("This site can't keep API keys yet. Ask its admin to set CHAT_BRIDGE_KEY.", severity="error", timeout=6)
+            return
+
+        async def answer(key: str | None) -> None:
+            if key and key.strip():
+                await self.save_key(key.strip())
+        self.app.push_screen(Ask("Read photos with Claude",
+                                 "Without a key, photos are read by tesseract on this computer, which is good with printed pages. "
+                                 "Claude reads them better, handwriting too, with your own Anthropic API key "
+                                 "(console.anthropic.com/settings/keys), so nobody else is billed for yours. "
+                                 "It's kept sealed on the site; Sweep uses the same one.",
+                                 placeholder="sk-ant-…", ok="Save key", password=True), answer)
 
     @attempt
     async def save_key(self, key: str) -> None:
         self.data["photo"] = (await self.fetch(site.recipe_key, key))["photo"]
-        self.app.notify("Key saved.", timeout=2)
-        self.ask_photo()
-
-    def ask_photo(self) -> None:
-        async def answer(paths: str | None) -> None:
-            if paths and paths.strip():
-                await self.from_photo([x.strip() for x in paths.split(",") if x.strip()])
-        self.app.push_screen(Ask("Read a recipe from a photo",
-                                 "A picture of a recipe card, a cookbook page or a screenshot (JPEG, PNG, WebP or GIF). "
-                                 "A recipe over several pages: up to 4 files, separated by commas. You check it before it's saved.",
-                                 placeholder="~/Pictures/recipe-card.jpg", ok="Read it"), answer)
+        self.app.notify("Key saved: photos are read by Claude now.", timeout=3)
 
     async def from_photo(self, paths: list[str]) -> None:
-        self.app.notify(f"Reading {'the photo' if len(paths) == 1 else f'{len(paths)} photos'}… this takes a few seconds.", timeout=8)
+        claude = ((self.data or {}).get("photo") or {}).get("ready")
+        self.app.notify(f"Reading {'the photo' if len(paths) == 1 else f'{len(paths)} photos'}…", timeout=8)
+        how = "Claude" if claude else "text recognition"
+        await self.review(site.read_recipe_photo if claude else site.read_photo_here, paths,
+                          hint=f"Read from your photo by {how}. Check it against the picture, fix any misread words, "
+                               "and move lines between the boxes if one landed in the wrong place.")
+
+    def action_paste(self) -> None:
+        self.app.push_screen(PasteDialog(), self.after_paste)
+
+    async def after_paste(self, text: str | None) -> None:
+        if text and text.strip():
+            await self.review(lambda: site.read_recipe_text(text), hint="Read from the text you pasted. Check that each line landed in the right box, then save.")
+
+    async def review(self, fn, *args, hint: str) -> bool:
+        """Runs a reader off the UI thread and opens what it found in the editor, to check before saving."""
         try:
-            out = await asyncio.to_thread(site.read_recipe_photo, paths)
+            out = await asyncio.to_thread(fn, *args)
         except site.SignedOut:
             self.app.signed_out = True
             self.app.exit(message="Signed out on the site. Run  sintfoap login  to sign in again.")
-            return
+            return False
         except site.SiteError as e:
             msg = str(e).removeprefix("the site said: ")
             if "didn't accept your API key" in msg:
                 self.data["photo"] = {**self.data.get("photo", {}), "ready": False}
-                msg = "Anthropic didn't accept your API key. Press p again to add a new one."
-            self.app.notify(msg[:1].upper() + msg[1:], severity="error", timeout=6)
-            return
-        self.app.push_screen(RecipeDialog(out["recipe"], heading="Check the recipe",
-                                          hint="Read from your photo. Check it against the picture, fix anything Claude misread, then save.",
-                                          label_list=self.data.get("label_list")),
+                msg = "Anthropic didn't accept your API key, so photos are read here for now. Press k to add a new one."
+            self.app.notify(msg[:1].upper() + msg[1:], severity="error", timeout=8)
+            return False
+        r = out["recipe"]
+        if r.get("check"):
+            hint += " Look twice at the amounts in " + ", ".join(f"“{x}”" for x in r["check"]) + ": fractions like ½ and ¾ are easy to misread."
+        fields = {k: v for k, v in r.items() if k != "check"}
+        self.app.push_screen(RecipeDialog(fields, heading="Check the recipe", hint=hint, label_list=self.data.get("label_list")),
                              self.after_dialog(None))
+        return True
 
     def action_delete(self) -> None:
         r = self.current()

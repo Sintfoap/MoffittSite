@@ -307,8 +307,10 @@ def drift_weather(spot: dict | None = None) -> dict:
     return _get(f"/todo/api/weather{q}")
 
 
-def delete_collection(col_id: str) -> dict:
-    return api("DELETE", f"/todo/api/collections/{_q(col_id)}")
+def delete_collection(col_id: str, move_to: str = "") -> dict:
+    """Deletes a collection; with move_to, its items move into that collection first ({moved})."""
+    q = "?" + urllib.parse.urlencode({"move_to": move_to}) if move_to else ""
+    return api("DELETE", f"/todo/api/collections/{_q(col_id)}{q}")
 
 
 def share(col_id: str, username: str, role: str) -> dict:
@@ -717,6 +719,77 @@ def read_recipe_photo(paths: list[str]) -> dict:
         raise SiteError(f"pick at most {RECIPE_PHOTOS} pictures of one recipe")
     images = [{"data": base64.b64encode(recipe_picture(p)).decode()} for p in paths]
     return api("POST", "/recipes/api/photo", {"images": images}, timeout=180)
+
+
+TESSERACT_HINT = ("Reading photos without a key needs Tesseract, free text recognition: "
+                  "brew install tesseract (macOS), sudo apt install tesseract-ocr (Debian, Ubuntu) "
+                  "or winget install UB-Mannheim.TesseractOCR (Windows)")
+
+
+def tesseract_lines(tsv: str) -> list[dict]:
+    """Tesseract's TSV output as lines with their words and where they sit (what /recipes/api/text takes)."""
+    lines: dict[tuple, dict] = {}
+    rows = tsv.splitlines()
+    for row in rows[1:]:
+        cols = row.split("\t")
+        if len(cols) < 12 or cols[0] != "5":
+            continue
+        word = cols[11].strip()
+        if not word:
+            continue
+        try:
+            x, y, w, h, conf = int(cols[6]), int(cols[7]), int(cols[8]), int(cols[9]), float(cols[10])
+        except ValueError:
+            continue
+        key = tuple(cols[1:5])
+        box = {"x0": x, "y0": y, "x1": x + w, "y1": y + h}
+        line = lines.setdefault(key, {"words": [], "confs": []})
+        line["words"].append({"text": word, "bbox": box})
+        line["confs"].append(conf)
+    out = []
+    for line in lines.values():
+        ws = line["words"]
+        out.append({"text": " ".join(w["text"] for w in ws), "confidence": sum(line["confs"]) / len(ws),
+                    "bbox": {"x0": min(w["bbox"]["x0"] for w in ws), "y0": min(w["bbox"]["y0"] for w in ws),
+                             "x1": max(w["bbox"]["x1"] for w in ws), "y1": max(w["bbox"]["y1"] for w in ws)},
+                    "words": ws})
+    return out
+
+
+def ocr_page(path: str) -> list[dict]:
+    """Reads one picture with the tesseract command, on this computer: its lines. Raises SiteError."""
+    import shutil
+    import subprocess
+    exe = shutil.which("tesseract")
+    if not exe:
+        raise SiteError(TESSERACT_HINT)
+    p = Path(path.strip().strip("'\"")).expanduser()
+    if not p.is_file():
+        raise SiteError(f"couldn't find {p}")
+    try:
+        res = subprocess.run([exe, str(p), "stdout", "--psm", "3", "-l", "eng", "tsv"], capture_output=True, text=True, timeout=120)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        raise SiteError(f"tesseract couldn't read {p.name}: {e}") from None
+    if res.returncode != 0:
+        raise SiteError(f"tesseract couldn't read {p.name}: {(res.stderr or '').strip().splitlines()[-1:] or ['it failed']}"[:300])
+    return tesseract_lines(res.stdout)
+
+
+def read_recipe_text(text: str | None = None, pages: list[list[dict]] | None = None) -> dict:
+    """Recipe text (pasted, or pages of recognized lines) cut into a recipe by the site, no AI: {recipe}, a draft to check."""
+    return api("POST", "/recipes/api/text", {"pages": pages} if pages is not None else {"text": text or ""}, timeout=30)
+
+
+def read_photo_here(paths: list[str]) -> dict:
+    """Pictures of one recipe read by tesseract on this computer, then cut into a recipe by the site: {recipe}."""
+    if not paths:
+        raise SiteError("say which picture")
+    if len(paths) > RECIPE_PHOTOS:
+        raise SiteError(f"pick at most {RECIPE_PHOTOS} pictures of one recipe")
+    pages = [ocr_page(p) for p in paths]
+    if not any(pages):
+        raise SiteError("couldn't find any text in that picture")
+    return read_recipe_text(pages=pages)
 
 
 def recipe_key(key: str) -> dict:
