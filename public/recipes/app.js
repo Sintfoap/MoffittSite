@@ -184,7 +184,9 @@ function renderDetail() {
       pick(data.recipes[0]?.id || null);
     });
   });
-  card.append(el("div", { className: "actions" }, edit, del));
+  // Sharing it on the Recipe board, for anyone with it.
+  const share = data.board ? el("a", { className: "btn quiet", href: `/board/?share=${encodeURIComponent(r.id)}`, textContent: "Share on the board" }) : null;
+  card.append(el("div", { className: "actions" }, edit, share, del));
   box.append(card);
 }
 

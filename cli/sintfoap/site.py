@@ -605,7 +605,7 @@ def send_test() -> dict:
 # /recipes/api/ (src/recipes.js)
 
 def recipes() -> dict:
-    """{recipes, lists, drift}: your recipes, the Drift lists you can send ingredients to, and whether you have Drift."""
+    """{recipes, lists, drift, board}: your recipes, the Drift lists you can send ingredients to, and whether you have Drift."""
     return _get("/recipes/api/recipes")
 
 
@@ -783,3 +783,51 @@ def search_places(q: str) -> list | None:
 def drift_places() -> list:
     """Your Drift items that are on the map: [{id, title, place, lat, lng, collection}]."""
     return _get("/trips/api/drift-places")["items"]
+
+
+# ───────────────────────────── recipe board ─────────────────────────────────
+# /board/api/ (src/board.js)
+
+def board() -> dict:
+    """{categories, recipe_box, recipes, unread}: every category (with whether you follow it), and your Recipe box's recipes to share."""
+    return _get("/board/api/board")
+
+
+def board_posts(view: str = "feed", category: str = "", before: str = "") -> dict:
+    """{posts, more, unread}: a page of posts, newest first. view is feed, all, mine or saved; a category overrides it.
+    Reading the top of your feed marks it read."""
+    q = {"category": category} if category else {"view": view}
+    if before:
+        q["before"] = before
+    return _get("/board/api/posts?" + urllib.parse.urlencode(q))
+
+
+def add_board_category(name: str) -> dict:
+    return api("POST", "/board/api/categories", {"name": name})
+
+
+def delete_board_category(category_id: str) -> dict:
+    return api("DELETE", f"/board/api/categories/{_q(category_id)}")
+
+
+def follow_board_category(category_id: str, follow: bool) -> dict:
+    """The category back, with `following`."""
+    return api("PUT", f"/board/api/categories/{_q(category_id)}/follow", {"follow": follow})
+
+
+def add_board_post(fields: dict) -> dict:
+    """{category, note?} and the recipe: {recipe_id} from your Recipe box, {url} to read one from a page, or {title, recipe: {...}}."""
+    return api("POST", "/board/api/posts", fields)
+
+
+def update_board_post(post_id: str, changes: dict) -> dict:
+    return api("PATCH", f"/board/api/posts/{_q(post_id)}", changes)
+
+
+def delete_board_post(post_id: str) -> dict:
+    return api("DELETE", f"/board/api/posts/{_q(post_id)}")
+
+
+def save_board_post(post_id: str) -> dict:
+    """The post's recipe, copied into your Recipe box: {recipe, already}."""
+    return api("POST", f"/board/api/posts/{_q(post_id)}/save")

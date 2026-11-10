@@ -297,7 +297,7 @@ def test_admins_switch_apps_on_and_off_in_the_terminal(admin_site):
         page = app.screen
         assert type(page).__name__ == "AdminPage"
         apps = [a["id"] for a in page.data["apps"]]
-        assert apps == ["drift", "admin", "plugins", "chat", "chat-bridges", "recipes", "meals", "sweep", "trips", "notifications"]
+        assert apps == ["drift", "admin", "plugins", "chat", "chat-bridges", "recipes", "meals", "sweep", "trips", "board", "notifications"]
         # A switch for every app on every account; your own admin one can't be turned off.
         assert len(page.boxes) == len(apps) * len(page.data["users"])
         me = next(i for i, u in enumerate(page.data["users"]) if u["you"])
@@ -1085,4 +1085,73 @@ def test_g_t_opens_the_terminal_trip_planner(real_site):
         app.go("t")
         await settle(pilot, 0.5)
         assert type(app.screen).__name__ == "TripsPage"
+    run_app("dashboard", go)
+
+
+# ── recipe board ───────────────────────────────────────────────────────────
+
+def test_recipe_board_follows_a_category_saves_a_post_and_shares_one(real_site):
+    site.add_recipe({"title": "Banana bread", "ingredients": "3 bananas\n2 cups flour", "steps": "Mash\nBake"})
+
+    async def board(app, pilot):
+        page = app.screen
+        assert type(page).__name__ == "BoardPage"
+        # Nothing followed yet, so the feed is empty, but Everything has sam's shortbread.
+        assert page.posts == []
+        baking = next(c for c in page.board["categories"] if c["name"] == "Baking")
+        side = page.query_one("#side", type(page.query_one("#posts")))
+        side.focus()
+        side.highlighted = next(i for i in range(side.option_count) if side.get_option_at_index(i).id == "c:" + baking["id"])
+        # f: follow Baking; the shortbread lands in the feed.
+        await pilot.press("f")
+        await settle(pilot, 0.6)
+        assert page.cat(baking["id"])["following"]
+        assert [p["title"] for p in page.posts] == ["Shortbread"]
+        # Posted before ryan last read his feed, so it isn't new to him.
+        assert not page.posts[0]["new"]
+        assert "Three ingredients!" in str(page.query_one("#note").render())
+        # s: into ryan's Recipe box.
+        await pilot.press("s")
+        await settle(pilot, 0.6)
+        assert page.posts[0]["saved"]
+        assert "Shortbread" in [r["title"] for r in site.recipes()["recipes"]]
+        # n: share one of his own, from his Recipe box.
+        await pilot.press("n")
+        await settle(pilot, 0.4)
+        dialog = app.screen
+        assert type(dialog).__name__ == "ShareDialog"
+        assert dialog.query_one("#from").value == "box"
+        assert dialog.query_one("#category").value == baking["id"]
+        dialog.query_one("#recipe_id").value = next(r["id"] for r in page.board["recipes"] if r["title"] == "Banana bread")
+        dialog.query_one("#note").text = "Use brown ones"
+        await pilot.press("ctrl+s")
+        await settle(pilot, 0.8)
+        assert page.at["category"] == baking["id"]
+        assert [p["title"] for p in page.posts] == ["Banana bread", "Shortbread"]
+        assert page.current()["title"] == "Banana bread" and page.current()["can_edit"]
+        # c: a new category, followed by whoever starts it.
+        await pilot.press("c")
+        await settle(pilot, 0.3)
+        app.screen.query_one("#answer").value = "Grilling"
+        await pilot.press("enter")
+        await settle(pilot, 0.6)
+        assert page.cat(page.at["category"])["name"] == "Grilling" and page.cat(page.at["category"])["following"]
+        # d deletes ryan's post, after asking.
+        await page.go(category=baking["id"])
+        await settle(pilot, 0.4)
+        await pilot.press("d")
+        await settle(pilot)
+        await pilot.press("y")
+        await settle(pilot, 0.6)
+        assert [p["title"] for p in site.board_posts("all")["posts"]] == ["Shortbread"]
+    run_app("board", board)
+
+
+def test_g_b_opens_the_terminal_recipe_board(real_site):
+    async def go(app, pilot):
+        await settle(pilot, 0.5)
+        assert any(n["key"] == "b" for n in app.data["nav"])
+        app.go("b")
+        await settle(pilot, 0.5)
+        assert type(app.screen).__name__ == "BoardPage"
     run_app("dashboard", go)

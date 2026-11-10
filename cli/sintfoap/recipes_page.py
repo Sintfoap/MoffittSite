@@ -137,6 +137,7 @@ class RecipesPage(Page):
         Binding("plus,equals_sign", "servings(1)", "More"),
         Binding("minus", "servings(-1)", "Fewer"),
         Binding("s", "send", "Send to list"),
+        Binding("b", "board", "Share on board"),
         Binding("d", "delete", "Delete"),
         Binding("r", "refresh", "Refresh"),
         Binding("backslash", "fold", "Shelf"),
@@ -311,7 +312,9 @@ class RecipesPage(Page):
 
     def check_action(self, action: str, parameters: tuple) -> bool | None:
         # Typing in the link box or the editor shouldn't scale or delete anything.
-        if action in ("servings", "add", "new", "edit", "send", "delete", "refresh") and isinstance(self.focused, (Input, TextArea)):
+        if action == "board" and not (self.data or {}).get("board"):
+            return None
+        if action in ("servings", "add", "new", "edit", "send", "delete", "refresh", "board") and isinstance(self.focused, (Input, TextArea)):
             return False
         return True
 
@@ -388,6 +391,13 @@ class RecipesPage(Page):
             self.query_one("#url", Input).value = ""
         self.app.notify(f"Saved {r['title']}.", timeout=2)
         await self.saved(r)
+
+    def action_board(self) -> None:
+        """b: share the open recipe on the Recipe board (for anyone with it)."""
+        r = self.current()
+        if r and (self.data or {}).get("board"):
+            from .board_page import BoardPage
+            self.app.push_screen(BoardPage(share=r["id"]))
 
     def action_delete(self) -> None:
         r = self.current()

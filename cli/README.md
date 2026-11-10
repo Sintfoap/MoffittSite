@@ -19,6 +19,7 @@ sintfoap                    # signs you in the first time, then opens your dashb
 | `sintfoap meals` | Meal plan: the week's dinners around your Drift calendar, and their shopping |
 | `sintfoap sweep` | Sweep: Drift suggestions from your chat rooms, to accept or turn down |
 | `sintfoap trips` | Trip planner: a trip's days, places and packing list, with whoever's going |
+| `sintfoap board` | Recipe board: recipes shared by category, and a feed of the categories you follow |
 | `sintfoap admin` | which apps each account can use (admins) |
 | `sintfoap app` | the Android app: a QR code to scan with your phone, and the download link |
 | `sintfoap books [--plain]` | the book club pick: read about the books and vote; no sign-in needed |
@@ -46,7 +47,7 @@ nix develop                                  # a shell with Python, Textual and 
 
 ## The dashboard
 
-The same panels as `/dashboard`, in the site's colours: Today (overdue Drift items in red, then what's due today), your account with its checks (two-factor, recovery codes, email), and a card per app your account can use. It refreshes every 30 seconds. Drift, the plugin store, chat, Recipe box, Meal plan, Sweep, Trip planner, notifications, account settings and Admin open here in the terminal; anything else opens in your browser.
+The same panels as `/dashboard`, in the site's colours: Today (overdue Drift items in red, then what's due today), your account with its checks (two-factor, recovery codes, email), and a card per app your account can use. It refreshes every 30 seconds. Drift, the plugin store, chat, Recipe box, Recipe board, Meal plan, Sweep, Trip planner, notifications, account settings and Admin open here in the terminal; anything else opens in your browser.
 
 | Key | |
 |---|---|
@@ -58,7 +59,7 @@ The same panels as `/dashboard`, in the site's colours: Today (overdue Drift ite
 | `o` | sign out this terminal |
 | `q` | quit |
 
-On every page `esc` goes back, `w` opens the same page in your browser and `q` quits. `g` then a letter jumps around, as on the website: `g h` home, `g d` Drift, `g p` plugin store, `g c` chat, `g r` Recipe box, `g m` Meal plan, `g w` Sweep, `g t` Trip planner, `g s` settings, `g n` notifications, `g a` admin, `g o` sign out.
+On every page `esc` goes back, `w` opens the same page in your browser and `q` quits. `g` then a letter jumps around, as on the website: `g h` home, `g d` Drift, `g p` plugin store, `g c` chat, `g r` Recipe box, `g b` Recipe board, `g m` Meal plan, `g w` Sweep, `g t` Trip planner, `g s` settings, `g n` notifications, `g a` admin, `g o` sign out.
 
 ## Book club pick
 
@@ -149,6 +150,7 @@ The same recipes as `/recipes/`: the list on the left, the open one on the right
 | `+` `-` | more or fewer servings (or ×½ steps for a recipe that doesn't say how many it serves); quantities change to match |
 | `space` | on the ingredients: tick which to send |
 | `s` | send the ticked ingredients, scaled, to a Drift list: your Shopping list (made the first time), or any list you can add to |
+| `b` | share the recipe on the Recipe board (if you have it) |
 | `e` | edit it (`ctrl+s` saves) |
 | `d` | delete it |
 
@@ -198,6 +200,20 @@ The same trips as `/trips/`: your trips on the left, the open one on the right i
 | `d` | delete the trip, or leave someone else's |
 | `r` | refresh |
 
+## Recipe board
+
+The same board as `/board/`: your feed (new recipes in the categories you follow), everything, what you've shared and what you've saved down the left, then every category, starred if you follow it. The open view's recipes are on the right, newest first, with the highlighted one's recipe under them. In Recipe box, `b` shares the open recipe here.
+
+| Key | |
+|---|---|
+| `f` | follow the highlighted category (or the open one), or stop |
+| `s` | save the highlighted recipe to your Recipe box |
+| `n` | share a recipe: from your Recipe box, a link, or typed in (`ctrl+s` posts) |
+| `c` | start a category (you follow what you start) |
+| `m` | older recipes |
+| `e` `d` | edit or delete your own post |
+| `r` | refresh |
+
 ## Account settings
 
 Your profile, two-factor, recovery codes, email and sessions, like `/account`. Here you can change your display name, sign out every other device, or sign out this terminal. Anything that needs your password (two-factor, recovery codes, email, the password itself) opens the website instead, so the terminal never asks for it.
@@ -218,6 +234,7 @@ sintfoap/recipes_page.py   Recipe box
 sintfoap/meals_page.py     Meal plan
 sintfoap/sweep_page.py     Sweep
 sintfoap/trips_page.py     Trip planner
+sintfoap/board_page.py     Recipe board
 sintfoap/recipe_rules.py   scaling ingredient lines, as on the web page (tests/scale_cases.json keeps them the same)
 sintfoap/__main__.py       the command
 tests/                     python -m pytest tests

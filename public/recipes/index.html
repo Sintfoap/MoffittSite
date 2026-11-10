@@ -65,6 +65,9 @@ button.btn { display: inline-block; margin: 6px 8px 0 0; padding: 8px 16px; font
 button.btn::before { content: "[ "; } button.btn::after { content: " ]"; }
 button.btn.quiet { background: transparent; color: var(--gold); border-color: var(--line-2); }
 button.btn.danger { background: transparent; color: var(--bad); border-color: color-mix(in oklch, var(--bad) 50%, transparent); }
+a.btn { display: inline-block; margin: 6px 8px 0 0; padding: 8px 16px; font: 700 12.5px var(--mono); letter-spacing: 1.5px; text-transform: uppercase;
+  color: var(--gold); border: 1px solid var(--line-2); text-decoration: none; }
+a.btn::before { content: "[ "; } a.btn::after { content: " ]"; }
 button.btn:disabled { opacity: .45; cursor: default; }
 input[type=text], input[type=url], input[type=search], input[type=number], textarea, select {
   padding: 8px 10px; background: var(--field); border: 1px solid var(--line-2); border-radius: 0; min-width: 0; }

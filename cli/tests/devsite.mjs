@@ -18,7 +18,7 @@
 // it's shown.
 // The weather (Open-Meteo) is the same everywhere: 16 days from today, with
 // rain tomorrow and the day after the clear one; ryan is near London.
-// ryan and sam have Trip planner.
+// ryan and sam have Trip planner, and Recipe board, where sam shared Shortbread under Baking.
 import http from "node:http";
 import worker from "../../src/worker.js";
 import { Browser, makeEnv, sqlOne, run, grantApps } from "../../tests/helpers.mjs";
@@ -80,7 +80,12 @@ await ryan.signup("ryan", undefined, "Ryan M");
 await sam.signup("sam", undefined, "Sam");
 for (const who of ["ryan", "sam"]) grantApps(env, who, "plugins", "chat");
 grantApps(env, "ryan", "chat-bridges", "recipes", "meals", "sweep");
-for (const who of ["ryan", "sam"]) grantApps(env, who, "trips");
+for (const who of ["ryan", "sam"]) grantApps(env, who, "trips", "board");
+{
+  const cats = (await sam.req("GET", "/board/api/board")).json.categories;
+  await sam.req("POST", "/board/api/posts", { json: { category: cats.find(c => c.name === "Baking").id, title: "Shortbread", note: "Three ingredients!",
+    recipe: { ingredients: ["2 cups flour", "1 cup butter", "1/2 cup sugar"], steps: ["Rub together", "Bake at 160C for 40 min"], servings: 12 } } });
+}
 {
   const plans = (await ryan.req("POST", "/chat/api/rooms", { json: { name: "Plans" } })).json.id;
   await sam.req("POST", `/chat/api/rooms/${plans}/join`);

@@ -5,7 +5,7 @@
 // almost every recipe site publishes for search engines), falling back to
 // microdata. Scaling is public/recipes/scale.js, shared with the page.
 //
-// /recipes/api/recipes             GET → {recipes, lists, drift}; POST {url} or {title, ...} → a new recipe
+// /recipes/api/recipes             GET → {recipes, lists, drift, board (has Recipe board)}; POST {url} or {title, ...} → a new recipe
 // /recipes/api/recipes/<id>        PATCH → change the fields sent; DELETE → remove it
 // /recipes/api/recipes/<id>/shop   POST {servings | factor, lines?, list?} → its ingredients onto a Drift list
 
@@ -16,7 +16,7 @@ import { readJson, BadRequest, writableCollections, addToList } from "./drift.js
 import { scaleLine, servingsOf, factorFor, format } from "../public/recipes/scale.js";
 
 const fail = msg => { throw new BadRequest(msg); };
-class NotARecipe extends Error {}
+export class NotARecipe extends Error {}
 
 const LIMITS = { recipes: 500, title: 200, url: 2000, yield: 100, time: 50, lines: 100, ingredient: 300, step: 3000, notes: 5000, page: 3 * 1024 * 1024 };
 const ID = /^r_[0-9a-f]{10}$/;
@@ -56,7 +56,8 @@ function link(f, v, { https = false } = {}) {
   return u.toString();
 }
 
-function clean(changes) {
+// Also the Recipe board's (src/board.js): a post's recipe is cleaned the same way.
+export function clean(changes) {
   if (!isObj(changes)) fail("body must be a JSON object");
   const out = {};
   for (const [f, v] of Object.entries(changes)) {
@@ -92,7 +93,7 @@ export async function list(env, user) {
   return results.map(toRecipe).sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: "base" }));
 }
 
-async function get(d, owner, id) {
+export async function get(d, owner, id) {
   const row = await d.prepare("SELECT id, data, updated FROM recipes WHERE owner = ? AND id = ?").bind(owner, id).first();
   return row ? toRecipe(row) : null;
 }
@@ -380,7 +381,7 @@ export async function recipes(request, env, user, pathname) {
     if (!id) {
       if (method === "GET") {
         const drift = user.areas.has("todo");
-        return json({ recipes: await list(env, user), drift, lists: drift ? await writableCollections(env, user) : [] });
+        return json({ recipes: await list(env, user), drift, board: user.areas.has("board"), lists: drift ? await writableCollections(env, user) : [] });
       }
       if (method !== "POST") return notAllowed();
       const body = await readJson(request);
