@@ -426,6 +426,39 @@ def test_recipe_box_saves_from_a_link_scales_and_sends_to_drift(real_site):
     run_app("recipes", recipes)
 
 
+KEEPER_EXPORT = """<!DOCTYPE html><html><body>
+<div class="recipe-details"><meta content="a1" itemprop="recipeId"><h2 itemprop="name">Alfredo Sauce</h2>
+  <span itemprop="recipeSource"><a href="https://food.test/alfredo">https://food.test/alfredo</a></span>
+  <div class="recipe-ingredients" itemprop="recipeIngredients"><p>&#189; cup butter</p><p>1 cup cream</p></div>
+  <div itemprop="recipeDirections"><p>Melt it.</p></div><hr /></div>
+<div class="recipe-details"><meta content="b2" itemprop="recipeId"><h2 itemprop="name">Brats</h2>
+  <meta content="Main Dish" itemprop="recipeCourse"><div class="recipe-ingredients" itemprop="recipeIngredients"></div><hr /></div>
+</body></html>"""
+
+
+def test_recipe_box_imports_a_recipe_keeper_export(real_site, tmp_path):
+    export = tmp_path / "recipes.html"
+    export.write_text(KEEPER_EXPORT)
+
+    async def recipes(app, pilot):
+        page = app.screen
+        await pilot.press("i")
+        await settle(pilot)
+        assert type(app.screen).__name__ == "Ask"
+        app.screen.query_one("#answer").value = str(export)
+        await pilot.press("enter")
+        await settle(pilot, 0.8)
+        assert [x["title"] for x in page.data["recipes"]] == ["Alfredo Sauce", "Brats"]
+        assert page.current()["title"] == "Alfredo Sauce"
+        assert page.current()["source"] == "https://food.test/alfredo"
+        assert site.recipes()["recipes"][1]["notes"] == "Courses: Main Dish"
+        # The same file again adds nothing.
+        await page.import_file(str(export))
+        await settle(pilot, 0.6)
+        assert len(site.recipes()["recipes"]) == 2
+    run_app("recipes", recipes)
+
+
 def test_g_r_opens_the_terminal_recipe_box(real_site):
     async def go(app, pilot):
         await settle(pilot, 0.5)

@@ -76,3 +76,42 @@ def factor_for(recipe: dict, servings: float | None = None, factor: float | None
     else:
         f = factor or 1
     return min(100, max(0.05, f))
+
+
+# ── importing a file ─────────────────────────────────────────────────────────
+# As public/recipes/split.js: Recipe Keeper's HTML export holds each recipe in a
+# <div class="recipe-details">, sent to the site a few at a time; any other file
+# is one page, sent whole.
+
+_START = re.compile(r"""<div\b[^>]*class\s*=\s*["']?recipe-details\b[^>]*>""", re.I)
+
+
+def split_pages(html: str) -> list[str]:
+    at = [m.start() for m in _START.finditer(html)]
+    if not at:
+        return [html] if html.strip() else []
+    return [html[a:b] for a, b in zip(at, at[1:] + [len(html)])]
+
+
+def batches(pages: list[str], count: int = 10, size: int = 1024 * 1024) -> list[list[str]]:
+    """Pages in groups to send: at most `count` a request, and about `size` characters of HTML."""
+    out: list[list[str]] = []
+    cur: list[str] = []
+    n = 0
+    for p in pages:
+        if cur and (len(cur) >= count or n + len(p) > size):
+            out.append(cur)
+            cur, n = [], 0
+        cur.append(p)
+        n += len(p)
+    if cur:
+        out.append(cur)
+    return out
+
+
+def skipped_summary(skipped: list[dict]) -> str:
+    """Why some weren't imported, counted, as the web page says it: "3 already in your box, 1 had no recipe"."""
+    why: dict[str, int] = {}
+    for s in skipped:
+        why[s["why"]] = why.get(s["why"], 0) + 1
+    return ", ".join(f"{n} {w}" for w, n in why.items())

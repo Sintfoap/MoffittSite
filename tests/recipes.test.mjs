@@ -5,7 +5,8 @@ import { test, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { Browser, makeEnv, grantApps, sqlOne, run } from "./helpers.mjs";
-import { parseRecipe } from "../src/recipes.js";
+import { parseRecipe, parseImported } from "../src/recipes.js";
+import { splitPages, batches } from "../public/recipes/split.js";
 import { scaleLine, servingsOf, factorFor } from "../public/recipes/scale.js";
 
 const CASES = JSON.parse(readFileSync(new URL("../cli/tests/scale_cases.json", import.meta.url)));
@@ -231,4 +232,88 @@ test("ingredients go to a Drift shopping list, scaled, and to a list shared with
   run(env, "DELETE FROM user_areas WHERE user_id = ? AND area = 'todo'", uid);
   assert.equal((await ryan.get("/recipes/api/recipes")).json.drift, false);
   assert.match((await api(ryan, "POST", `recipes/${id}/shop`, {})).json.error, /Drift/);
+});
+
+// Two recipes as Recipe Keeper's HTML export writes them (Settings → Export → HTML).
+const EXPORT_RECIPE = (id, name, { source = "", ingredients = "", nut = "" } = {}) => `
+    <div class="recipe-details">
+        <meta content="${id}" itemprop="recipeId">
+        <meta content="True" itemprop="recipeIsFavourite">
+        <meta content="4" itemprop="recipeRating">
+        <table><tr><td><img src="images/${id}_0.jpg" class="recipe-photo"/></td>
+        <td><h2 itemprop="name">${name}</h2>
+          <div>Courses: <span itemprop="recipeCourse">Main Dish</span></div>
+          <div>Categories: <span>Basic, Italian</span><meta content="Basic" itemprop="recipeCategory"><meta content="Italian" itemprop="recipeCategory"></div>
+          <div>Collections: <span>It&#39;s Complicated</span><meta content="It&#39;s Complicated" itemprop="recipeCollection"></div>
+          <div>Source: <span itemprop="recipeSource">${source}</span></div>
+          <div>Serving size: <span itemprop="recipeYield">10</span></div>
+          <div>Preparation time: <span>10 mins</span><meta content="PT10M" itemprop="prepTime"></div>
+          <div>Cooking time: <span>5 mins</span><meta content="PT5M" itemprop="cookTime"></div>
+        </td></tr>
+        <tr><td><div class="recipe-ingredients" itemprop="recipeIngredients">${ingredients}</div></td>
+        <td><div itemprop="recipeDirections"><p>Melt it.</p><p></p><p>Whisk it.</p></div></td></tr></table>
+        <div class="recipe-notes" itemprop="recipeNotes"><p>So good.</p></div>
+        ${nut}
+        <div class="recipe-photos-div"><img src="images/${id}_0.jpg" class="recipe-photos" itemprop=photo0 /></div>
+        <hr />
+    </div>`;
+const EXPORT = `<!DOCTYPE html><html><head><style>.recipe-details h2 {color: #d24400}</style></head><body>
+${EXPORT_RECIPE("a1", "Alfredo Sauce", { source: '<a href="https://food.test/alfredo">https://food.test/alfredo</a>',
+  ingredients: "<p>&#189; cup butter</p><p></p><p>Sauce:</p><p>1 cup parmesan</p>",
+  nut: '<div>Calories: 329<meta content="329" itemprop="recipeNutCalories"></div><div>Protein: 6g<meta content="6" itemprop="recipeNutProtein"></div>' })}
+${EXPORT_RECIPE("b2", "Brats", { source: "Family Cookbook" })}
+</body></html>`;
+
+test("Recipe Keeper's HTML export: one piece per recipe, its link, extras in the notes, title-only ones kept", () => {
+  const pages = splitPages(EXPORT);
+  assert.equal(pages.length, 2);
+  assert.deepEqual(splitPages("<p>no recipes here</p>"), ["<p>no recipes here</p>"]);
+  assert.deepEqual(splitPages("  "), []);
+  assert.deepEqual(batches(["a", "b", "c"], 2).map(b => b.length), [2, 1]);
+  assert.deepEqual(batches(["aaaa", "bbbb", "c"], 10, 6).map(b => b.length), [1, 2]);
+
+  const a = parseImported(pages[0]);
+  assert.equal(a.title, "Alfredo Sauce");
+  assert.equal(a.source, "https://food.test/alfredo");
+  assert.equal(a.image, "");
+  assert.equal(a.servings, 10);
+  assert.equal(a.time, "15 min");
+  assert.deepEqual(a.ingredients, ["½ cup butter", "Sauce:", "1 cup parmesan"]);
+  assert.deepEqual(a.steps, ["Melt it.", "Whisk it."]);
+  assert.equal(a.notes, "So good.\n\nCourses: Main Dish\nCategories: Basic, Italian\nCollections: It's Complicated\nRating: ★★★★☆\nFavourite\nNutrition per serving: Calories 329 · Protein 6g");
+
+  const b = parseImported(pages[1]);
+  assert.equal(b.title, "Brats");
+  assert.deepEqual(b.ingredients, []);
+  assert.equal(b.source, "");
+  assert.match(b.notes, /^So good\.\n\nSource: Family Cookbook\n\nCourses: Main Dish/);
+
+  // A saved recipe page on its own is read as a link would be.
+  assert.equal(parseImported(PAGE).title, "Best Pancakes & Syrup");
+  assert.equal(parseImported("<html><title>Just a blog</title></html>"), null);
+});
+
+test("importing a file: saved a few at a time, the same recipe twice skipped, the box's limit kept", async () => {
+  const env = makeEnv(), ryan = await cook(env);
+  const pages = [...splitPages(EXPORT), PAGE, "<p>nothing</p>"];
+  const out = await api(ryan, "POST", "recipes/import", { pages });
+  assert.equal(out.status, 200, out.text);
+  assert.deepEqual(out.json.added.map(r => r.title), ["Alfredo Sauce", "Brats", "Best Pancakes & Syrup"]);
+  assert.deepEqual(out.json.skipped, [{ title: "", why: "had no recipe" }]);
+  assert.match(out.json.added[0].id, /^r_[0-9a-f]{10}$/);
+  assert.equal((await ryan.get("/recipes/api/recipes")).json.recipes.length, 3);
+
+  // Again: nothing new.
+  const again = await api(ryan, "POST", "recipes/import", { pages: splitPages(EXPORT) });
+  assert.deepEqual(again.json.added, []);
+  assert.deepEqual(again.json.skipped.map(s => s.why), ["already in your box", "already in your box"]);
+
+  assert.equal((await api(ryan, "POST", "recipes/import", { pages: [] })).status, 400);
+  assert.equal((await api(ryan, "POST", "recipes/import", { pages: Array(11).fill(PAGE) })).status, 400);
+  assert.equal((await ryan.get("/recipes/api/recipes/import")).status, 405);
+  assert.equal((await ryan.req("POST", "/recipes/api/recipes/import", { json: { pages }, origin: "https://evil.test" })).status, 403);
+
+  // Someone else's box is their own.
+  const sam = await cook(env, "sam");
+  assert.equal((await api(sam, "POST", "recipes/import", { pages: splitPages(EXPORT) })).json.added.length, 2);
 });

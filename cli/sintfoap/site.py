@@ -619,6 +619,11 @@ def add_recipe(fields: dict) -> dict:
     return api("POST", "/recipes/api/recipes", fields)
 
 
+def import_recipes(pages: list[str]) -> dict:
+    """Saves the recipes in these pieces of an export file (at most 10): {added, skipped: [{title, why}]}."""
+    return api("POST", "/recipes/api/recipes/import", {"pages": pages})
+
+
 def update_recipe(recipe_id: str, changes: dict) -> dict:
     return api("PATCH", f"/recipes/api/recipes/{_q(recipe_id)}", changes)
 
