@@ -18,7 +18,7 @@
 // it's shown, and reads every photo of a recipe as Nana's Shortbread.
 // The weather (Open-Meteo) is the same everywhere: 16 days from today, with
 // rain tomorrow and the day after the clear one; ryan is near London.
-// ryan and sam have Trip planner, Recipe board, where sam shared Shortbread under Baking,
+// ryan and sam have Trip planner, Recipe board, where sam shared Shortbread (Course: Dessert),
 // and Food club, where sam picked last month (Pavlova).
 import http from "node:http";
 import worker from "../../src/worker.js";
@@ -87,9 +87,14 @@ await sam.signup("sam", undefined, "Sam");
 for (const who of ["ryan", "sam"]) grantApps(env, who, "plugins", "chat");
 grantApps(env, "ryan", "chat-bridges", "recipes", "meals", "sweep");
 for (const who of ["ryan", "sam"]) grantApps(env, who, "trips", "board", "food");
+// The label list (Recipe labels, which ryan keeps): Season (Fall, Summer), Cuisine (Irish, Spanish)
+// and Course (Breakfast, Dessert). Its keys are the Recipe board's categories.
+for (const [n, key, value] of [[1, "Season", "Fall"], [2, "Season", "Summer"], [3, "Cuisine", "Irish"], [4, "Cuisine", "Spanish"], [5, "Course", "Breakfast"], [6, "Course", "Dessert"]]) {
+  run(env, "INSERT INTO recipe_labels (id, key, value, created) VALUES (?, ?, ?, ?)", `l_000000000${n}`, key, value, new Date().toISOString());
+}
+grantApps(env, "ryan", "labels");
 {
-  const cats = (await sam.req("GET", "/board/api/board")).json.categories;
-  await sam.req("POST", "/board/api/posts", { json: { category: cats.find(c => c.name === "Baking").id, title: "Shortbread", note: "Three ingredients!",
+  await sam.req("POST", "/board/api/posts", { json: { labels: ["l_0000000006"], title: "Shortbread", note: "Three ingredients!",
     recipe: { ingredients: ["2 cups flour", "1 cup butter", "1/2 cup sugar"], steps: ["Rub together", "Bake at 160C for 40 min"], servings: 12 } } });
 }
 {
@@ -103,12 +108,6 @@ for (const who of ["ryan", "sam"]) grantApps(env, who, "trips", "board", "food")
   await sam.req("POST", `/chat/api/rooms/${plans}/messages`, { json: { body: "dinner at Lucia's on Friday at 7?" } });
 }
 const id = name => sqlOne(env, "SELECT id FROM users WHERE username = ?", name).id;
-
-// Recipe box's label list, as an admin would make it: Season (Fall, Summer),
-// Cuisine (Irish, Spanish) and Course (Breakfast).
-for (const [n, key, value] of [[1, "Season", "Fall"], [2, "Season", "Summer"], [3, "Cuisine", "Irish"], [4, "Cuisine", "Spanish"], [5, "Course", "Breakfast"]]) {
-  run(env, "INSERT INTO recipe_labels (id, key, value, created) VALUES (?, ?, ?, ?)", `l_000000000${n}`, key, value, new Date().toISOString());
-}
 
 // sam's plugin, approved by an admin (made straight in the database).
 const t = Math.floor(Date.now() / 1000);

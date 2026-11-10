@@ -34,6 +34,7 @@ const ICON = {
   meals: `<path d="M7 3v7a2 2 0 0 0 4 0V3M9 10v11"/><path d="M16 21V3c-2 1-3 4-3 8h3"/>`,
   sweep: `<path d="M4 20 14 10M12 8l4 4M14 6l4 4-3 3-4-4z"/><path d="M5 5v3M3.5 6.5h3M19 15v3M17.5 16.5h3"/>`,
   trips: `<path d="M4 8h16v11H4z"/><path d="M9 8V5h6v3M4 13h16"/>`,
+  labels: `<path d="M3 12V4h8l10 10-8 8z"/><circle cx="7.5" cy="8.5" r="1.5"/>`,
   board: `<rect x="3" y="4" width="18" height="16" rx="1"/><path d="M7 8h4v4H7zM13 8h4M13 11h4M7 15h10"/>`,
   food: `<path d="M3 12h18a9 9 0 0 1-18 0z"/><path d="M9 8c0-1.5 1-2 1-3.5M14 8c0-1.5 1-2 1-3.5"/>`,
   bell: `<path d="M6 16V11a6 6 0 0 1 12 0v5l2 2H4z"/><path d="M10 20.5a2 2 0 0 0 4 0"/>`,
@@ -535,7 +536,7 @@ export function accountPage({ user, error, notice, recoveryLeft, sessionCount, s
 
 const date = t => new Date(t * 1000).toISOString().slice(0, 10);
 
-export function adminPage({ user, users, orphans, apps, books = [], bookVotes = [], labels = [], labelUse = {}, error, notice, tempPassword }) {
+export function adminPage({ user, users, orphans, apps, books = [], bookVotes = [], error, notice, tempPassword }) {
   const post = (action, label, fields, cls = "quiet small", confirm = "") =>
     `<form method="post" action="/admin/${action}">${Object.entries(fields).map(([k, v]) => `<input type="hidden" name="${k}" value="${esc(v)}">`).join("")}${confirm}<button class="${cls}" type="submit">${label}</button></form>`;
   const rows = users.map(u => {
@@ -574,18 +575,6 @@ export function adminPage({ user, users, orphans, apps, books = [], bookVotes = 
       <td>${when(v.updated_at)}${v.updated_at !== v.created_at ? `<br><span class="hint">first voted ${when(v.created_at)}</span>` : ""}</td>
       <td>${post("books/remove", "Remove", { voter: v.voter })}</td></tr>`).join("")}</table>` : `<p class="hint">No votes yet.</p>`}
   </section>`;
-  // Recipe box's labels: the one list recipes pick from, so nobody ends up with Fall and Autumn.
-  const field = (name, value, label, ph, max) => `<input type="text" name="${name}" value="${esc(value)}" placeholder="${ph}" maxlength="${max}" aria-label="${label}" style="width:160px;padding:5px 8px;font-size:14px;margin-right:6px">`;
-  const keys = [...new Set(labels.map(l => l.key))];
-  const labelRows = `<section class="card" id="recipe-labels"><h2>Recipe labels</h2>
-    <p>The labels people can put on recipes in Recipe box, like <b>Season: Fall</b> or <b>Cuisine: Mediterranean</b>, then filter and sort by. Only admins add them, so everyone picks from the same list. Renaming one renames it on every recipe; removing one takes it off every recipe.</p>
-    <form method="post" action="/admin/labels/add" class="row">${field("key", "", "Label name", "Season", 30)}${field("value", "", "Value", "Fall", 60)}<button class="small" type="submit">Add label</button></form>
-    ${keys.length ? `<datalist id="label-keys">${keys.map(k => `<option value="${esc(k)}">`).join("")}</datalist>` : ""}
-    ${labels.length ? `<table><tr><th>Name</th><th>Value</th><th>Recipes</th><th></th></tr>${labels.map(l => `<tr>
-      <td colspan="2"><form method="post" action="/admin/labels/rename" class="row"><input type="hidden" name="id" value="${esc(l.id)}">${field("key", l.key, "Label name", "", 30)}${field("value", l.value, "Value", "(no value)", 60)}<button class="quiet small" type="submit">Rename</button></form></td>
-      <td>${labelUse[l.id] || 0}</td>
-      <td>${post("labels/delete", "Remove", { id: l.id }, "danger small")}</td></tr>`).join("")}</table>` : `<p class="hint">No labels yet. Add the first one above.</p>`}
-  </section>`;
   return page("Admin", `
     <div class="kicker">Admin</div><h1>Accounts</h1>
     ${msg(error)}${msg(notice, "good")}
@@ -598,7 +587,6 @@ export function adminPage({ user, users, orphans, apps, books = [], bookVotes = 
     ${tempPassword ? `<div class="msg good">Temporary password for <strong>${esc(tempPassword.username)}</strong>: <span class="mono">${esc(tempPassword.password)}</span><br>Send it to them privately. They'll have to change it when they sign in, and it won't be shown again.</div>` : ""}
     <section class="card scroll"><table><tr><th>Account</th><th>Apps</th><th>Status</th><th>Actions</th></tr>${rows}</table></section>
     ${orphanRows}
-    ${labelRows}
     ${bookRows}`, { user, wide: true, here: "admin" });
 }
 

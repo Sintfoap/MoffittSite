@@ -157,7 +157,7 @@ class RecipeDialog(ModalScreen[dict | None]):
         self.source = source
         self.heading = heading or ("Edit recipe" if recipe else "New recipe")
         self.hint = hint
-        self.label_list = label_list or []   # the site's labels (admins keep the list) to tick
+        self.label_list = label_list or []   # the site's labels (kept in Recipe labels) to tick
 
     def compose(self) -> ComposeResult:
         r = self.r
@@ -182,13 +182,13 @@ class RecipeDialog(ModalScreen[dict | None]):
             yield TextArea("\n".join(r.get("ingredients", [])), id="ingredients", soft_wrap=True)
             yield Label("Steps, one per line", classes="lbl")
             yield TextArea("\n".join(r.get("steps", [])), id="steps", soft_wrap=True)
-            yield Label("Labels (space ticks; an admin keeps the list)", classes="lbl")
+            yield Label("Labels (space ticks; the list is kept in Recipe labels)", classes="lbl")
             if self.label_list:
                 on = {lb["id"] for lb in r.get("labels", [])}
                 yield SelectionList(*[Selection(Text.assemble((lb["key"], f"bold {GOLD}"), ("  " + lb.get("value", ""), INK)), lb["id"], lb["id"] in on)
                                       for lb in self.label_list], id="labels")
             else:
-                yield Static(Text("No labels yet. An admin adds them on the admin page.", style=FAINT))
+                yield Static(Text("No labels yet. Whoever keeps Recipe labels adds them there.", style=FAINT))
             yield Label("Notes", classes="lbl")
             yield TextArea(r.get("notes", ""), id="notes", soft_wrap=True)
             yield Label("Link", classes="lbl")
