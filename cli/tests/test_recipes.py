@@ -26,3 +26,11 @@ def test_an_export_is_cut_into_recipes_as_on_the_website():
     assert [len(b) for b in R.batches(["a", "b", "c"], 2)] == [2, 1]
     assert [len(b) for b in R.batches(["aaaa", "bbbb", "c"], 10, 6)] == [1, 2]
     assert R.skipped_summary([{"why": "had no recipe"}, {"why": "already in your box"}, {"why": "had no recipe"}]) == "2 had no recipe, 1 already in your box"
+
+
+def test_an_export_piece_points_at_its_picture():
+    assert R.photo_of('<img src="images/a1_0.jpg" class="recipe-photo"/>') == "images/a1_0.jpg"
+    assert R.photo_of('<img src="https://x.test/a.jpg" class="recipe-photo">') == ""
+    assert R.photo_of("<p>none</p>") == ""
+    assert R.file_key("export/images/A1_0.JPG") == "a1_0.jpg"
+    assert R.file_key("images\\b%202.jpg") == "b 2.jpg"
