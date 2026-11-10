@@ -978,6 +978,11 @@ def follow_board_category(category_id: str, follow: bool) -> dict:
     return api("PUT", f"/board/api/categories/{_q(category_id)}/follow", {"follow": follow})
 
 
+def follow_board_label(label_id: str, follow: bool) -> dict:
+    """Follow one value of a category (like Season: Fall); the value back, with `following`."""
+    return api("PUT", f"/board/api/labels/{_q(label_id)}/follow", {"follow": follow})
+
+
 def add_board_post(fields: dict) -> dict:
     """{note?, labels?} and the recipe: {recipe_id} from your Recipe box, {url} to read one from a page, or {title, recipe: {...}}.
     labels (ids from the label list) file it under their keys; from your Recipe box, the recipe's own labels come along unless sent."""

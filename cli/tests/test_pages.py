@@ -1459,6 +1459,21 @@ def test_recipe_board_follows_a_label_key_saves_a_post_and_shares_one(real_site)
         await page.go(category="Course", label=dessert)
         await settle(pilot, 0.4)
         assert [p["title"] for p in page.posts] == ["Shortbread"]
+        # f on a value follows just it: ryan swaps all of Course for Course: Breakfast.
+        side.focus()
+        side.highlighted = next(i for i in range(side.option_count) if side.get_option_at_index(i).id == "c:Course")
+        await pilot.press("f")
+        await settle(pilot, 0.6)
+        assert not page.cat("Course")["following"]
+        side.highlighted = next(i for i in range(side.option_count) if side.get_option_at_index(i).id == "l:" + breakfast)
+        await pilot.press("f")
+        await settle(pilot, 0.6)
+        assert page.value(page.cat("Course"), breakfast)["following"]
+        assert "★" in str(side.get_option_at_index(side.highlighted).prompt)
+        assert [p["title"] for p in site.board_posts("feed")["posts"]] == ["Banana bread"]
+        await page.go(category="Course", label=breakfast)
+        await settle(pilot, 0.4)
+        assert "Course: Breakfast  ★ following" in str(page.query_one("#heading").render())
         # x removes a category: its key, from Recipe labels (ryan keeps them), after asking.
         await page.go(category="Season")
         await settle(pilot, 0.4)

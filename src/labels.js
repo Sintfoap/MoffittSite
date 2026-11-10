@@ -124,7 +124,9 @@ export async function renameLabel(env, id, body) {
 export async function deleteLabel(env, id) {
   const d = await db(env);
   const r = await d.prepare("DELETE FROM recipe_labels WHERE id = ?").bind(id).run();
-  return r.meta.changes ? { removed: true } : null;
+  if (!r.meta.changes) return null;
+  await d.prepare("DELETE FROM board_follows WHERE category = ?").bind(id).run();
+  return { removed: true };
 }
 
 // A key, renamed on all its values (or merged into another key that has none of the same values).
@@ -151,9 +153,11 @@ export async function renameKey(env, from, body) {
 // A whole key: all its values, off every recipe, and off the board as a category.
 export async function deleteKey(env, key) {
   const d = await db(env);
+  const ids = (await d.prepare("SELECT id FROM recipe_labels WHERE key = ?").bind(key).all()).results.map(r => r.id);
   const r = await d.prepare("DELETE FROM recipe_labels WHERE key = ?").bind(key).run();
   if (!r.meta.changes) return null;
   await d.prepare("DELETE FROM board_follows WHERE category = ? COLLATE NOCASE").bind(key).run();
+  for (const id of ids) await d.prepare("DELETE FROM board_follows WHERE category = ?").bind(id).run();
   return { removed: r.meta.changes };
 }
 

@@ -33,6 +33,7 @@ const fail = msg => { throw new BadRequest(msg); };
 
 const LIMITS = { title: 200, note: 2000, page: 40, posts: 2000, body: 256 * 1024 };
 const LABEL = /^l_[0-9a-f]{10}$/;
+const ROUTE_LABEL = /^\/board\/api\/labels\/([^/]+)\/follow\/?$/;
 const ROUTE_CAT = /^\/board\/api\/categories\/([^/]+?)(?:\/(follow))?\/?$/;
 const ROUTE_POST = /^\/board\/api\/posts(?:\/(b_[0-9a-f]{10})(?:\/(save))?)?\/?$/;
 const VIEWS = ["feed", "all", "mine", "saved"];
@@ -99,7 +100,7 @@ async function recipeFrom(d, user, { url, recipe_id }) {
 const HAS_KEY = "EXISTS (SELECT 1 FROM json_each(p.data, '$.recipe.labels') j JOIN recipe_labels l ON l.id = j.value WHERE l.key = ?)";
 const HAS_LABEL = "EXISTS (SELECT 1 FROM json_each(p.data, '$.recipe.labels') j WHERE j.value = ?)";
 const FOLLOWED = `EXISTS (SELECT 1 FROM json_each(p.data, '$.recipe.labels') j JOIN recipe_labels l ON l.id = j.value
-  JOIN board_follows f ON l.key = f.category AND f.user_id = ?)`;
+  JOIN board_follows f ON f.user_id = ? AND (l.key = f.category OR f.category = l.id))`;
 const canLabel = user => user.areas.has("labels") || isAdmin(user);
 
 // Every key on the label list, by name, with its values, how many posts each has, and whether you follow it.
@@ -120,7 +121,10 @@ export async function listCategories(env, user) {
       out.push(c = { id: l.key, name: l.key, values: [], posts: perKey[k]?.n || 0, latest: perKey[k]?.latest || null,
         following: mine.has(k), followers: followers[k]?.n || 0, can_delete: canLabel(user) });
     }
-    if (l.value) c.values.push({ id: l.id, value: l.value, posts: perLabel[l.id.toLowerCase()]?.n || 0 });
+    if (l.value) {
+      const i = l.id.toLowerCase();
+      c.values.push({ id: l.id, value: l.value, posts: perLabel[i]?.n || 0, following: mine.has(i), followers: followers[i]?.n || 0 });
+    }
   }
   return out;
 }
@@ -144,6 +148,19 @@ export async function follow(env, user, key, body) {
       .bind(user.id, name, new Date().toISOString(), user.id, name)
     : d.prepare("DELETE FROM board_follows WHERE user_id = ? AND category = ? COLLATE NOCASE").bind(user.id, name)).run();
   return categoryOut(env, user, name);
+}
+
+// Following one value of a key (like Season: Fall) puts just its posts in your feed.
+export async function followLabel(env, user, id, body) {
+  if (!isObj(body) || typeof body.follow !== "boolean") fail("send {follow: true} or {follow: false}");
+  if (!LABEL.test(id)) return null;
+  const d = await db(env);
+  const l = await d.prepare("SELECT id, key FROM recipe_labels WHERE id = ?").bind(id).first();
+  if (!l) return null;
+  await (body.follow
+    ? d.prepare("INSERT OR IGNORE INTO board_follows (user_id, category, added) VALUES (?, ?, ?)").bind(user.id, l.id, new Date().toISOString())
+    : d.prepare("DELETE FROM board_follows WHERE user_id = ? AND category = ?").bind(user.id, l.id)).run();
+  return (await categoryOut(env, user, l.key))?.values.find(v => v.id === l.id) || null;
 }
 
 // ── posts ──────────────────────────────────────────────────────────────────
@@ -346,7 +363,13 @@ export async function board(request, env, user, pathname) {
       return json({ categories, label_list: await labelList(d), recipe_box: box, recipes, unread: await unread(d, user),
         featured: await featured(env, user, day), you: user.id, can_label: canLabel(user) });
     }
-    let m = pathname.match(ROUTE_CAT);
+    let m = pathname.match(ROUTE_LABEL);
+    if (m) {
+      if (method !== "PUT") return notAllowed();
+      const out = await followLabel(env, user, m[1], await readBody(request));
+      return out ? json(out) : json({ error: "not found" }, 404);
+    }
+    m = pathname.match(ROUTE_CAT);
     if (m) {
       const [, raw, sub] = m;
       let key, out;

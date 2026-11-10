@@ -1,7 +1,7 @@
 """Recipe board in the terminal: the same board as /board/.
 
 Your feed and the other views down the left, then every category, starred if
-you follow it (f stars the highlighted one). The categories are the label keys
+you follow it (f stars the highlighted one, or just one of its values). The categories are the label keys
 from Recipe labels: a post is under every key its labels use, and the open key
 lists its values to narrow it down. The posts of whichever is open sit on the
 right, newest first, with the highlighted one's recipe under them; s saves it
@@ -325,10 +325,12 @@ class BoardPage(Page):
                 t = Text.assemble(("★ " if c["following"] else "☆ ", GOLD if c["following"] else FAINT),
                                   (c["name"], f"bold {INK}" if here and not self.at["label"] else MUTED), (f"  {c['posts']}" if c["posts"] else "", FAINT))
                 side.add_option(Option(t, id="c:" + c["id"]))
-                # The open key's values, to narrow it to one.
-                for v in c["values"] if here else []:
+                # The open key's values, to narrow it to one (and any value you follow, so you can see it).
+                for v in [v for v in c["values"] if here or v.get("following")]:
                     on = self.at["label"] == v["id"]
-                    side.add_option(Option(Text.assemble(("    " + v["value"], f"bold {INK}" if on else MUTED), (f"  {v['posts']}" if v["posts"] else "", FAINT)), id="l:" + v["id"]))
+                    star = v.get("following")
+                    side.add_option(Option(Text.assemble(("  ★ " if star else "  ☆ ", GOLD if star else FAINT), (v["value"], f"bold {INK}" if on else MUTED),
+                                                         (f"  {v['posts']}" if v["posts"] else "", FAINT)), id="l:" + v["id"]))
         if keep is not None:
             side.highlighted = min(keep, side.option_count - 1)
 
@@ -336,15 +338,16 @@ class BoardPage(Page):
         c = self.cat(self.at["category"])
         v = self.value(c, self.at["label"])
         if c:
-            head = (f"{c['name']}: {v['value']}" if v else c["name"]) + ("  ★ following" if c["following"] else "")
-            sub = f"{plural(v['posts'] if v else c['posts'], 'recipe')} · {c['followers']} following {c['name']}" + ("" if c["following"] else " · f to follow") \
+            f, name = (v, f"{c['name']}: {v['value']}") if v else (c, c["name"])
+            head = name + ("  ★ following" if f.get("following") else "")
+            sub = f"{plural(f['posts'], 'recipe')} · {f.get('followers', 0)} following {name}" + ("" if f.get("following") else " · f to follow") \
                 + (" · x removes the category" if c.get("can_delete") and not v else "")
         else:
             head = dict(VIEWS)[self.at["view"]]
             if self.at["view"] == "feed":
-                n = sum(1 for x in self.board["categories"] if x["following"])
-                sub = f"New recipes in the {n} categor{'y' if n == 1 else 'ies'} you follow." if n \
-                    else "Star a category on the left (f) to follow it, and its new recipes show up here."
+                n = self.followed()
+                sub = f"New recipes in what you follow: {', '.join(n)}." if n \
+                    else "Star a category, or one of its values, on the left (f) to follow it, and its new recipes show up here."
             else:
                 sub = BLURB[self.at["view"]]
         self.query_one("#heading", Static).update(head)
@@ -367,7 +370,7 @@ class BoardPage(Page):
                 box.add_option(Option(t, id="featured"))
             if not self.posts:
                 none = "You don't follow any categories yet." if not self.at["category"] and self.at["view"] == "feed" \
-                    and not any(c["following"] for c in self.board["categories"]) else "No recipes here yet. Press n to share one."
+                    and not self.followed() else "No recipes here yet. Press n to share one."
                 box.add_option(Option(Text(none, style=FAINT), disabled=True))
                 return
             for p in self.posts:
@@ -458,6 +461,27 @@ class BoardPage(Page):
                 return self.cat(oid[2:])
         return self.cat(self.at["category"] or "")
 
+    def followed(self) -> list[str]:
+        """What you follow: whole categories, and single values like "Season: Fall"."""
+        return [n for c in self.board["categories"] for n in ([c["name"]] if c["following"] else [])
+                + [f"{c['name']}: {v['value']}" for v in c["values"] if v.get("following")]]
+
+    def highlighted_follow(self) -> tuple[dict | None, dict | None]:
+        """The category and value f follows: the highlighted row on the left, else what's open."""
+        side = self.query_one("#side", OptionList)
+        oid = ""
+        if self.focused is side and side.highlighted is not None:
+            oid = side.get_option_at_index(side.highlighted).id or ""
+        if oid.startswith("l:"):
+            for c in self.board["categories"]:
+                v = self.value(c, oid[2:])
+                if v:
+                    return c, v
+        if oid.startswith("c:"):
+            return self.cat(oid[2:]), None
+        c = self.cat(self.at["category"] or "")
+        return c, self.value(c, self.at["label"])
+
     def check_action(self, action: str, parameters: tuple) -> bool | None:
         if action in ("share", "follow", "save", "remove_category", "older", "edit", "delete", "refresh") and isinstance(self.focused, (Input, TextArea)):
             return False
@@ -467,12 +491,17 @@ class BoardPage(Page):
 
     @attempt
     async def action_follow(self) -> None:
-        c = self.highlighted_category()
+        c, v = self.highlighted_follow()
         if not c:
-            self.app.notify("Highlight a category on the left to follow it.", timeout=3)
+            self.app.notify("Highlight a category, or one of its values, on the left to follow it.", timeout=3)
             return
-        c.update(await self.fetch(site.follow_board_category, c["id"], not c["following"]))
-        self.app.notify(f"Following {c['name']}; its new recipes go in your feed." if c["following"] else f"Stopped following {c['name']}.", timeout=3)
+        if v:
+            v.update(await self.fetch(site.follow_board_label, v["id"], not v.get("following")))
+            f, name = v, f"{c['name']}: {v['value']}"
+        else:
+            c.update(await self.fetch(site.follow_board_category, c["id"], not c["following"]))
+            f, name = c, c["name"]
+        self.app.notify(f"Following {name}; its new recipes go in your feed." if f["following"] else f"Stopped following {name}.", timeout=3)
         if not self.at["category"] and self.at["view"] == "feed":
             await self.load()
         else:

@@ -1,8 +1,8 @@
-// Recipe board: the categories down the side (star one to follow it), and
+// Recipe board: the categories down the side (star one, or one of its values, to follow it), and
 // the posts of whichever view or category is open beside them, newest first.
 // The categories are the label keys from Recipe labels; a post is under each
 // key its labels use, and an open key lists its values to narrow it down.
-// Your feed is the categories you follow. Any post can be saved into your
+// Your feed is the categories, and single values, you follow. Any post can be saved into your
 // Recipe box. The Worker side is src/board.js.
 
 const $ = s => document.querySelector(s);
@@ -92,13 +92,18 @@ function renderSide() {
     star.setAttribute("aria-pressed", String(c.following));
     star.setAttribute("aria-label", `Follow ${c.name}`);
     star.addEventListener("click", () => toggleFollow(c));
-    // The open key's values, to narrow it to one.
-    const values = here ? c.values.map(v => {
+    // The open key's values, to narrow it to one (and any value you follow, so you can see it).
+    const values = c.values.filter(v => here || v.following).map(v => {
       const vb = el("button", { type: "button", className: "go" }, el("span", { textContent: v.value }), el("small", { textContent: v.posts || "" }));
       vb.setAttribute("aria-current", String(at.label === v.id));
       vb.addEventListener("click", () => go({ category: c.id, label: v.id }));
-      return el("li", { className: "value" }, vb);
-    }) : [];
+      const name = `${c.name}: ${v.value}`;
+      const vs = el("button", { type: "button", className: "star", textContent: v.following ? "★" : "☆", title: v.following ? `Stop following ${name}` : `Follow just ${name}` });
+      vs.setAttribute("aria-pressed", String(v.following));
+      vs.setAttribute("aria-label", `Follow ${name}`);
+      vs.addEventListener("click", () => toggleFollowValue(v));
+      return el("li", { className: "value" }, vb, vs);
+    });
     return [el("li", {}, b, star), ...values];
   }));
   if (!board.categories.length) cats.append(el("li", {}, el("span", { className: "go empty", textContent: "No labels yet" })));
@@ -117,6 +122,19 @@ function toggleFollow(c) {
   });
 }
 
+function toggleFollowValue(v) {
+  return run(async () => {
+    const next = await api("PUT", `labels/${encodeURIComponent(v.id)}/follow`, { follow: !v.following });
+    Object.assign(v, next);
+    renderSide();
+    renderTop();
+    if (!at.category && at.view === "feed") await load();
+  });
+}
+
+// What you follow: whole categories and single values.
+const followed = () => board.categories.flatMap(c => [...(c.following ? [c.name] : []), ...c.values.filter(v => v.following).map(v => `${c.name}: ${v.value}`)]);
+
 // ── the posts ──────────────────────────────────────────────────────────────
 
 function renderTop() {
@@ -125,13 +143,14 @@ function renderTop() {
   $("#heading").textContent = val ? `${c.name}: ${val.value}` : c ? c.name : v.name;
   const follow = $("#follow");
   follow.hidden = !c;
-  if (c) follow.textContent = c.following ? `★ Following ${c.name}` : `☆ Follow ${c.name}`;
+  const f = val || c, fname = val ? `${c.name}: ${val.value}` : c?.name;
+  if (c) follow.textContent = f.following ? `★ Following ${fname}` : `☆ Follow ${fname}`;
   $("#remove-cat").hidden = !c?.can_delete || !!val;
   const n = val ? val.posts : c?.posts;
-  let sub = c ? `${n} recipe${n === 1 ? "" : "s"} · ${c.followers} following ${c.name}` : v.blurb;
+  let sub = c ? `${n} recipe${n === 1 ? "" : "s"} · ${f.followers} following ${fname}` : v.blurb;
   if (!c && at.view === "feed") {
-    const n = board.categories.filter(x => x.following).length;
-    sub = n ? `New recipes in the ${n} categor${n === 1 ? "y" : "ies"} you follow.` : "Star a category on the left to follow it, and its new recipes show up here.";
+    const n = followed();
+    sub = n.length ? `New recipes in what you follow: ${n.join(", ")}.` : "Star a category, or one of its values, on the left to follow it, and its new recipes show up here.";
   }
   $("#sub").textContent = sub;
 }
@@ -206,7 +225,7 @@ function renderPosts() {
   box.replaceChildren();
   renderFeatured(box);
   if (!posts.length) {
-    const followsNone = !at.category && at.view === "feed" && !board.categories.some(c => c.following);
+    const followsNone = !at.category && at.view === "feed" && !followed().length;
     box.append(el("p", { className: "empty", textContent: followsNone ? "You don't follow any categories yet." :
       at.view === "saved" && !at.category ? "Nothing saved yet." : "No recipes here yet. Share one!" }));
     return;
@@ -367,7 +386,10 @@ $("#editor").addEventListener("close", () => {
 });
 
 $("#share").addEventListener("click", () => openEditor(null));
-$("#follow").addEventListener("click", () => { const c = catOf(at.category); if (c) toggleFollow(c); });
+$("#follow").addEventListener("click", () => {
+  const c = catOf(at.category), val = valueOf(c, at.label);
+  if (val) toggleFollowValue(val); else if (c) toggleFollow(c);
+});
 // Removing a category removes its key, and all its values, from Recipe labels.
 $("#remove-cat").addEventListener("click", () => {
   const c = catOf(at.category);
