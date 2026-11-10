@@ -239,6 +239,7 @@ async function todo(request, env, user, pathname) {
     }
     // PATCH  → change the fields sent; meta: {plugin: value | null}
     // DELETE → soft delete (PATCH {deleted:false} undoes it)
+    // DELETE collections/<id>?move_to=<id> → move its items into that collection first
     if (!ID.test(id)) return json({ error: "not found" }, 404);
     let changes;
     if (method === "PATCH") changes = await readJson(request);
@@ -246,7 +247,9 @@ async function todo(request, env, user, pathname) {
     else return json({ error: "method not allowed" }, 405);
     // A collection's bases alone can be changed by anyone who can edit it.
     const basesOnly = kind === "collections" && changes && typeof changes === "object" && Object.keys(changes).join() === "bases";
-    const out = basesOnly ? await setBases(env, user, id, changes.bases) : await update(env, as, id, changes);
+    const moveTo = kind === "collections" && method === "DELETE" ? new URL(request.url).searchParams.get("move_to") : null;
+    const out = basesOnly ? await setBases(env, user, id, changes.bases)
+      : moveTo ? await updateCollection(env, user.id, id, changes, { moveTo }) : await update(env, as, id, changes);
     return out ? json(out) : json({ error: "not found" }, 404);
   });
 }

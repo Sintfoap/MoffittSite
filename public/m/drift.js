@@ -426,14 +426,38 @@ function collectionSheet(c) {
       redraw();
     } catch (err) { failed(err); }
   });
-  f.querySelector("[data-delete]")?.addEventListener("click", async () => {
-    if (!confirm(`Delete “${c.name}” and its items?`)) return;
-    d.close();
+  f.querySelector("[data-delete]")?.addEventListener("click", () => { d.close(); deleteSheet(c); });
+}
+
+// Deleting a collection asks what happens to its items: by default they move
+// to another of your collections, or they go with it. Undo brings either back.
+function deleteSheet(c) {
+  const n = data.state.items.filter(it => it.collection === c.id).length;
+  const others = data.state.collections.filter(x => x.role === "owner" && x.id !== c.id);
+  const them = n === 1 ? "it" : "them";
+  const d = sheet(`<form class="form" method="dialog">
+    <h2>Delete “${esc(c.name)}”?</h2>
+    ${n ? `<p>It has ${n} item${n === 1 ? "" : "s"}. What should happen to ${them}?</p>
+    <fieldset><legend>Its items</legend>
+      <label class="toggle wide"><input type="radio" name="fate" value="move" checked><span><b>Move to another collection</b></span></label>
+      <select name="moveTo" aria-label="Collection to move them to">${others.map(x => `<option value="${esc(x.id)}">${esc(x.name)}</option>`).join("")}</select>
+      <label class="toggle wide"><input type="radio" name="fate" value="delete"><span><b>Delete ${them} too</b><small>Gone along with the collection.</small></span></label>
+    </fieldset>` : `<p>It's empty.</p>`}
+    ${c.shares?.length ? `<p class="hint">The people you shared it with lose it too.</p>` : ""}
+    <p class="hint">You can undo it straight after.</p>
+    <div class="buttons"><button class="btn ghost" value="cancel">Cancel</button><button class="btn ghost bad" value="delete">Delete</button></div>
+  </form>`);
+  const f = d.querySelector("form");
+  f.elements.namedItem("moveTo")?.addEventListener("change", () => { f.querySelector("[name=fate][value=move]").checked = true; });
+  f.addEventListener("submit", async e => {
+    if (e.submitter?.value !== "delete") return;
+    const moveTo = f.querySelector("[name=fate]:checked")?.value === "move" ? f.elements.namedItem("moveTo").value : "";
     try {
-      await api("DELETE", "/todo/api/collections/" + c.id);
+      const out = await api("DELETE", "/todo/api/collections/" + c.id + (moveTo ? "?move_to=" + encodeURIComponent(moveTo) : ""));
       await load(true);
-      location.hash = "#drift/today";
-      toast(`Deleted “${c.name}”`, async () => {
+      location.hash = "#drift/" + (moveTo || "today");
+      const where = moveTo && col(moveTo)?.name;
+      toast(where ? `Deleted “${c.name}”, ${out.moved} moved to “${where}”` : `Deleted “${c.name}”`, async () => {
         try { await api("PATCH", "/todo/api/collections/" + c.id, { deleted: false }); await load(true); location.hash = "#drift/" + c.id; } catch (err) { failed(err); }
       });
     } catch (err) { failed(err); }

@@ -220,6 +220,47 @@ def test_drift_collections_are_made_and_shared(real_site):
     assert work["shares"] == [{"username": "sam", "name": "Sam", "role": "view"}]
 
 
+def test_drift_deleting_a_collection_moves_its_items_or_takes_them(real_site):
+    inbox = site.drift_state()["collections"][0]
+    shop = site.add_collection({"name": "Shopping", "plugins": ["checklist"]})
+    junk = site.add_collection({"name": "Junk", "plugins": ["checklist"]})
+    for title in ("Milk", "Eggs"):
+        site.add_item({"title": title, "collection": shop["id"]})
+    site.add_item({"title": "Old flyer", "collection": junk["id"]})
+
+    async def delete(app, pilot):
+        page = app.screen
+        page.view = "c:" + shop["id"]
+        await page.action_refresh()
+        page.action_collection()
+        await settle(pilot)
+        app.screen.query_one("#delete").press()
+        await settle(pilot)
+        ask = app.screen
+        assert ask.n == 2
+        assert ask.query_one("#fate").value == inbox["id"], "moving them is the default"
+        ask.query_one("#yes").press()
+        await settle(pilot, 0.6)
+        assert page.view == "c:" + inbox["id"]
+        assert page.undo == ("collection", shop["id"])
+
+        page.view = "c:" + junk["id"]
+        await page.action_refresh()
+        page.action_collection()
+        await settle(pilot)
+        app.screen.query_one("#delete").press()
+        await settle(pilot)
+        app.screen.query_one("#fate").value = ""
+        app.screen.query_one("#yes").press()
+        await settle(pilot, 0.6)
+        assert page.view == "today"
+    run_app("drift", delete)
+    st = site.drift_state()
+    assert [c["name"] for c in st["collections"]] == ["Inbox"]
+    assert sorted(it["title"] for it in st["items"]) == ["Eggs", "Milk"]
+    assert all(it["collection"] == inbox["id"] for it in st["items"])
+
+
 # ── plugin store ───────────────────────────────────────────────────────────
 
 def test_store_lists_plugins_and_adds_them_to_drift(real_site):

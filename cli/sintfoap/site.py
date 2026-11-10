@@ -307,8 +307,10 @@ def drift_weather(spot: dict | None = None) -> dict:
     return _get(f"/todo/api/weather{q}")
 
 
-def delete_collection(col_id: str) -> dict:
-    return api("DELETE", f"/todo/api/collections/{_q(col_id)}")
+def delete_collection(col_id: str, move_to: str = "") -> dict:
+    """Deletes a collection; with move_to, its items move into that collection first ({moved})."""
+    q = "?" + urllib.parse.urlencode({"move_to": move_to}) if move_to else ""
+    return api("DELETE", f"/todo/api/collections/{_q(col_id)}{q}")
 
 
 def share(col_id: str, username: str, role: str) -> dict:
