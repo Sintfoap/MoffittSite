@@ -232,3 +232,20 @@ test("ingredients go to a Drift shopping list, scaled, and to a list shared with
   assert.equal((await ryan.get("/recipes/api/recipes")).json.drift, false);
   assert.match((await api(ryan, "POST", `recipes/${id}/shop`, {})).json.error, /Drift/);
 });
+
+test("labels: made up as you go, as Key: Value", async () => {
+  const env = makeEnv(), ryan = await cook(env);
+  const r = await api(ryan, "POST", "recipes", { title: "Stew", labels: "Season: Fall\n cuisine :  Irish \nFavorite\nseason: fall\n\n" });
+  assert.equal(r.status, 201, r.text);
+  assert.deepEqual(r.json.labels, [{ key: "Season", value: "Fall" }, { key: "cuisine", value: "Irish" }, { key: "Favorite", value: "" }]);
+  const objs = await api(ryan, "PATCH", `recipes/${r.json.id}`, { labels: [{ key: "Season", value: "Winter" }, "Course: Main"] });
+  assert.deepEqual(objs.json.labels, [{ key: "Season", value: "Winter" }, { key: "Course", value: "Main" }]);
+  assert.deepEqual((await api(ryan, "PATCH", `recipes/${r.json.id}`, { labels: [] })).json.labels, []);
+  for (const bad of [": Fall", "x".repeat(31) + ": y", "Season: " + "y".repeat(61), Array.from({ length: 21 }, (_, i) => `K${i}: v`)]) {
+    assert.equal((await api(ryan, "PATCH", `recipes/${r.json.id}`, { labels: bad })).status, 400, JSON.stringify(bad).slice(0, 40));
+  }
+  // Older recipes, saved before labels, read as having none.
+  const toast = (await api(ryan, "POST", "recipes", { title: "Toast" })).json;
+  run(env, "UPDATE recipes SET data = json_remove(data, '$.labels') WHERE id = ?", toast.id);
+  assert.deepEqual((await ryan.get("/recipes/api/recipes")).json.recipes.find(x => x.id === toast.id).labels, []);
+});

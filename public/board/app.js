@@ -298,7 +298,7 @@ $("#editor").addEventListener("close", () => {
   else {
     body.title = f.title.value;
     body.recipe = { ingredients: f.ingredients.value, steps: f.steps.value, servings: f.servings.value === "" ? null : Number(f.servings.value),
-      yield: f.yield.value, time: f.time.value, source: f.source.value, ...(editing.recipe ? { notes: editing.recipe.notes, image: editing.recipe.image } : {}) };
+      yield: f.yield.value, time: f.time.value, source: f.source.value, ...(editing.recipe ? { notes: editing.recipe.notes, image: editing.recipe.image, labels: editing.recipe.labels } : {}) };
   }
   const was = editing;
   editing = null;

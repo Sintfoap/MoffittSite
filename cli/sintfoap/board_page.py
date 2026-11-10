@@ -146,7 +146,7 @@ class ShareDialog(ModalScreen[dict | None]):
             out["title"] = v("title")
             out["recipe"] = {"ingredients": t("ingredients"), "steps": t("steps"), "servings": serves, "yield": v("yield"),
                              "time": v("time"), "source": v("source"),
-                             **({"notes": was.get("notes", ""), "image": was.get("image", "")} if was else {})}
+                             **({"notes": was.get("notes", ""), "image": was.get("image", ""), "labels": was.get("labels", [])} if was else {})}
         return out
 
     def action_save(self) -> None:

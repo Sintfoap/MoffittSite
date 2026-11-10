@@ -151,6 +151,8 @@ The same recipes as `/recipes/`: the list on the left, the open one on the right
 | `space` | on the ingredients: tick which to send |
 | `s` | send the ticked ingredients, scaled, to a Drift list: your Shopping list (made the first time), or any list you can add to |
 | `b` | share the recipe on the Recipe board (if you have it) |
+| `l` | filter the shelf by labels: tick any (two values of one key show either; different keys show only recipes with both); `c` clears |
+| `o` | sort the shelf by title, then by each label in turn (recipes without that label go last) |
 | `e` | edit it (`ctrl+s` saves) |
 | `d` | delete it |
 

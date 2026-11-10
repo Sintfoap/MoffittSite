@@ -7,6 +7,7 @@
 //
 // /recipes/api/recipes             GET → {recipes, lists, drift, board (has Recipe board)}; POST {url} or {title, ...} → a new recipe
 // /recipes/api/recipes/<id>        PATCH → change the fields sent; DELETE → remove it
+//   A recipe's labels are [{key, value}] (sent as that, or as "Key: Value" lines).
 // /recipes/api/recipes/<id>/shop   POST {servings | factor, lines?, list?} → its ingredients onto a Drift list
 
 import { db } from "./db.js";
@@ -18,13 +19,13 @@ import { scaleLine, servingsOf, factorFor, format } from "../public/recipes/scal
 const fail = msg => { throw new BadRequest(msg); };
 export class NotARecipe extends Error {}
 
-const LIMITS = { recipes: 500, title: 200, url: 2000, yield: 100, time: 50, lines: 100, ingredient: 300, step: 3000, notes: 5000, page: 3 * 1024 * 1024 };
+const LIMITS = { labels: 20, labelKey: 30, labelValue: 60, recipes: 500, title: 200, url: 2000, yield: 100, time: 50, lines: 100, ingredient: 300, step: 3000, notes: 5000, page: 3 * 1024 * 1024 };
 const ID = /^r_[0-9a-f]{10}$/;
 const ROUTE = /^\/recipes\/api\/recipes(?:\/(r_[0-9a-f]{10})(?:\/(shop))?)?\/?$/;
 const nowStamp = () => new Date().toISOString().slice(0, 19);
 const isObj = v => v && typeof v === "object" && !Array.isArray(v);
 
-const RECIPE = { title: "", source: "", image: "", yield: "", servings: null, time: "", ingredients: [], steps: [], notes: "", created: "" };
+const RECIPE = { title: "", source: "", image: "", yield: "", servings: null, time: "", ingredients: [], steps: [], notes: "", labels: [], created: "" };
 
 function newId() {
   const b = crypto.getRandomValues(new Uint8Array(5));
@@ -56,6 +57,31 @@ function link(f, v, { https = false } = {}) {
   return u.toString();
 }
 
+// Labels you make up yourself, like "Season: Fall" or "Cuisine: Mediterranean":
+// [{key, value}], from that list, from "Key: Value" strings, or from text with
+// one per line. A line with no colon is a label with no value ("Favorite").
+// The same key and value twice (in any case) is kept once.
+export function cleanLabels(v) {
+  const list = Array.isArray(v) ? v : String(v ?? "").split(/\r?\n|;/);
+  const out = [], seen = new Set();
+  for (const item of list) {
+    let key, value;
+    if (isObj(item)) { key = item.key; value = item.value; }
+    else { const s = String(item ?? ""); const at = s.indexOf(":"); [key, value] = at < 0 ? [s, ""] : [s.slice(0, at), s.slice(at + 1)]; }
+    key = str("a label's name", key, 1000).replace(/\s+/g, " ");
+    value = str("a label's value", value, 1000).replace(/\s+/g, " ");
+    if (!key) { if (value) fail("a label needs a name before its colon, like Season: Fall"); continue; }
+    if (key.length > LIMITS.labelKey) fail(`a label's name can be at most ${LIMITS.labelKey} characters`);
+    if (value.length > LIMITS.labelValue) fail(`a label's value can be at most ${LIMITS.labelValue} characters`);
+    const id = `${key}\u0000${value}`.toLowerCase();
+    if (seen.has(id)) continue;
+    seen.add(id);
+    out.push({ key, value });
+  }
+  if (out.length > LIMITS.labels) fail(`a recipe can have at most ${LIMITS.labels} labels`);
+  return out;
+}
+
 // Also the Recipe board's (src/board.js): a post's recipe is cleaned the same way.
 export function clean(changes) {
   if (!isObj(changes)) fail("body must be a JSON object");
@@ -77,6 +103,7 @@ export function clean(changes) {
       case "ingredients": out.ingredients = lines(f, v, LIMITS.ingredient); break;
       case "steps": out.steps = lines(f, v, LIMITS.step); break;
       case "notes": out.notes = str(f, v, LIMITS.notes); break;
+      case "labels": out.labels = cleanLabels(v); break;
       default: fail(`unknown field ${JSON.stringify(f)}`);
     }
   }

@@ -426,6 +426,59 @@ def test_recipe_box_saves_from_a_link_scales_and_sends_to_drift(real_site):
     run_app("recipes", recipes)
 
 
+def test_recipe_box_labels_filter_and_sort_the_shelf(real_site):
+    site.add_recipe({"title": "Stew", "labels": "Season: Fall\nCuisine: Irish"})
+    site.add_recipe({"title": "Gazpacho", "labels": "Season: Summer\nCuisine: Spanish"})
+    site.add_recipe({"title": "Apple pie", "labels": "Season: Fall"})
+    site.add_recipe({"title": "Toast"})
+
+    async def labels(app, pilot):
+        page = app.screen
+        shelf = page.query_one("#shelf")
+        ids = lambda: [shelf.get_option_at_index(i).id for i in range(shelf.option_count)]  # noqa: E731
+        title = {r["id"]: r["title"] for r in page.data["recipes"]}
+        assert [title[i] for i in ids()] == ["Apple pie", "Gazpacho", "Stew", "Toast"]
+        # l: tick Season: Fall.
+        await pilot.press("l")
+        await settle(pilot)
+        dialog = app.screen
+        assert type(dialog).__name__ == "LabelFilter"
+        assert [lb["key"] + ":" + lb["value"] for lb, _ in dialog.labels] == ["Cuisine:Irish", "Cuisine:Spanish", "Season:Fall", "Season:Summer"]
+        dialog.query_one("#labels").select(2)
+        await pilot.press("enter")
+        await settle(pilot)
+        assert [title[i] for i in ids()] == ["Apple pie", "Stew"]
+        assert "Season: Fall" in str(page.query_one("#filters").render())
+        # And Summer too: either season.
+        page.filters.append({"key": "season", "value": "SUMMER"})
+        page.reshelve()
+        assert [title[i] for i in ids()] == ["Apple pie", "Gazpacho", "Stew"]
+        # o: by Cuisine, then Season; recipes without the label go last.
+        page.filters = []
+        await pilot.press("o")
+        await settle(pilot)
+        assert page.sort_key == "cuisine"
+        assert [title[i] for i in ids()] == ["Stew", "Gazpacho", "Apple pie", "Toast"]
+        await pilot.press("o")
+        await settle(pilot)
+        assert [title[i] for i in ids()] == ["Apple pie", "Stew", "Gazpacho", "Toast"]
+        await pilot.press("o")
+        await settle(pilot)
+        assert page.sort_key == ""
+        # e: labels are edited with the rest of the recipe.
+        page.open = next(r["id"] for r in page.data["recipes"] if r["title"] == "Toast")
+        page.show_recipe()
+        await pilot.press("e")
+        await settle(pilot)
+        app.screen.query_one("#labels").text = "Course: Breakfast"
+        await pilot.press("ctrl+s")
+        await settle(pilot, 0.6)
+        toast = next(r for r in site.recipes()["recipes"] if r["title"] == "Toast")
+        assert toast["labels"] == [{"key": "Course", "value": "Breakfast"}]
+        assert "Course" in str(page.query_one("#tags").render())
+    run_app("recipes", labels)
+
+
 def test_g_r_opens_the_terminal_recipe_box(real_site):
     async def go(app, pilot):
         await settle(pilot, 0.5)

@@ -17,6 +17,8 @@ let shown = [];           // the ids in the list, as filtered
 let editing = null;       // the recipe in the editor, or {} for a new one
 const scale = new Map();  // recipe id → {servings} or {factor}, while the page is open
 const skip = new Map();   // recipe id → ingredient indexes not to send
+let filters = [];         // [{key, value}] labels a recipe must have: any value of the same key, every key
+let sortKey = "";         // "" sorts by title; a label's key sorts by its value
 
 const store = {
   get(k) { try { return localStorage.getItem(k); } catch { return null; } },
@@ -63,18 +65,102 @@ function step(r, dir) {
   renderDetail();
 }
 
+// ── labels ─────────────────────────────────────────────────────────────────
+// Made up per recipe ("Season: Fall"); keys and values match whatever their case.
+
+const low = s => String(s || "").toLowerCase();
+const labelsOf = r => r.labels || [];
+const labelText = l => l.value ? `${l.key}: ${l.value}` : l.key;
+const has = (r, f) => labelsOf(r).some(l => low(l.key) === low(f.key) && low(l.value) === low(f.value));
+const valueOf = (r, key) => labelsOf(r).find(l => low(l.key) === low(key))?.value;
+
+// Every label in the box: [{key, values: [{value, n}]}], keys and values sorted.
+function allLabels() {
+  const keys = new Map();
+  for (const r of data.recipes) for (const l of labelsOf(r)) {
+    const k = keys.get(low(l.key)) || keys.set(low(l.key), { key: l.key, values: new Map() }).get(low(l.key));
+    const v = k.values.get(low(l.value)) || k.values.set(low(l.value), { value: l.value, n: 0 }).get(low(l.value));
+    v.n++;
+  }
+  const by = (a, b) => a.localeCompare(b, undefined, { sensitivity: "base", numeric: true });
+  return [...keys.values()].sort((a, b) => by(a.key, b.key))
+    .map(k => ({ key: k.key, values: [...k.values.values()].sort((a, b) => by(a.value, b.value)) }));
+}
+
+function passes(r) {
+  const keys = new Map();
+  for (const f of filters) keys.set(low(f.key), [...(keys.get(low(f.key)) || []), f]);
+  return [...keys.values()].every(fs => fs.some(f => has(r, f)));
+}
+
+function toggleFilter(f) {
+  const at = filters.findIndex(x => low(x.key) === low(f.key) && low(x.value) === low(f.value));
+  filters = at < 0 ? [...filters, { key: f.key, value: f.value }] : filters.filter((_, i) => i !== at);
+  renderFilters();
+  renderList();
+  renderDetail();
+}
+
+function renderFilters() {
+  const labels = allLabels();
+  const sel = $("#label-filter");
+  sel.replaceChildren(new Option(labels.length ? "Filter by label…" : "No labels yet", ""));
+  sel.disabled = !labels.length;
+  for (const k of labels) {
+    const g = document.createElement("optgroup");
+    g.label = k.key;
+    for (const v of k.values) {
+      const o = new Option(`${v.value || "(set)"}  ·  ${v.n}`, JSON.stringify({ key: k.key, value: v.value }));
+      o.disabled = filters.some(f => low(f.key) === low(k.key) && low(f.value) === low(v.value));
+      g.append(o);
+    }
+    sel.append(g);
+  }
+  const sort = $("#sort");
+  sort.replaceChildren(new Option("Sort: title", ""), ...labels.map(k => new Option(`Sort: ${k.key}`, low(k.key))));
+  if (!labels.some(k => low(k.key) === sortKey)) sortKey = "";
+  sort.value = sortKey;
+  sort.disabled = !labels.length;
+  $("#active").replaceChildren(...filters.map(f => {
+    const b = el("button", { type: "button", className: "chip on", title: "Stop filtering by this" }, el("b", { textContent: f.key }), f.value ? f.value : "", " ×");
+    b.addEventListener("click", () => toggleFilter(f));
+    return b;
+  }));
+}
+
+$("#label-filter").addEventListener("change", e => {
+  if (e.target.value) toggleFilter(JSON.parse(e.target.value));
+  e.target.value = "";
+});
+$("#sort").addEventListener("change", e => {
+  sortKey = e.target.value;
+  store.set("recipes:sort", sortKey);
+  renderList();
+});
+
 // ── the list ───────────────────────────────────────────────────────────────
 
 function renderList() {
   const q = $("#find").value.trim().toLowerCase();
-  const match = data.recipes.filter(r => !q || r.title.toLowerCase().includes(q) || r.ingredients.some(i => i.toLowerCase().includes(q)));
+  const by = (a, b) => a.localeCompare(b, undefined, { sensitivity: "base", numeric: true });
+  let match = data.recipes.filter(r => passes(r) && (!q || r.title.toLowerCase().includes(q) || r.ingredients.some(i => i.toLowerCase().includes(q))
+    || labelsOf(r).some(l => low(labelText(l)).includes(q))));
+  // By a label: its value, then the title; recipes without it go last.
+  if (sortKey) match = [...match].sort((a, b) => {
+    const x = valueOf(a, sortKey), y = valueOf(b, sortKey);
+    if ((x === undefined) !== (y === undefined)) return x === undefined ? 1 : -1;
+    return by(x || "", y || "") || by(a.title, b.title);
+  });
   shown = match.map(r => r.id);
   const ul = $("#recipes");
   ul.replaceChildren();
   if (!data.recipes.length) ul.append(el("li", { className: "empty", textContent: "No recipes yet. Paste a link above." }));
   else if (!match.length) ul.append(el("li", { className: "empty", textContent: "Nothing matches." }));
   for (const r of match) {
-    const b = el("button", { type: "button" }, r.title, el("small", { textContent: [r.time, hostOf(r.source)].filter(Boolean).join(" · ") || `${r.ingredients.length} ingredients` }));
+    const sorted = sortKey && valueOf(r, sortKey);
+    const tags = labelsOf(r).map(labelText).join(" · ");
+    const b = el("button", { type: "button" }, r.title, el("small", { textContent: [sorted, r.time, hostOf(r.source)].filter(Boolean).join(" · ") || `${r.ingredients.length} ingredients` }),
+      tags ? el("span", { className: "tagline", textContent: tags }) : null);
     b.setAttribute("aria-current", String(r.id === open));
     b.addEventListener("click", () => pick(r.id));
     ul.append(el("li", {}, b));
@@ -120,6 +206,15 @@ function renderDetail() {
     facts.append(el("a", { href: r.source, textContent: hostOf(r.source) || "source", target: "_blank", rel: "noopener noreferrer" }));
   }
   card.append(facts);
+  if (labelsOf(r).length) {
+    card.append(el("div", { className: "chips" }, ...labelsOf(r).map(l => {
+      const on = filters.some(f => low(f.key) === low(l.key) && low(f.value) === low(l.value));
+      const b = el("button", { type: "button", className: "chip" + (on ? " on" : ""), title: on ? "Stop filtering by this" : "Show only recipes with this label" },
+        el("b", { textContent: l.key }), l.value ? l.value : "");
+      b.addEventListener("click", () => toggleFilter(l));
+      return b;
+    })));
+  }
 
   const { factor, servings } = amountFor(r);
   const less = el("button", { type: "button", textContent: "−", title: "Fewer (-)" }), more = el("button", { type: "button", textContent: "+", title: "More (+)" });
@@ -181,6 +276,7 @@ function renderDetail() {
     run(async () => {
       await api("DELETE", "recipes/" + r.id);
       data.recipes = data.recipes.filter(x => x.id !== r.id);
+      renderFilters();
       pick(data.recipes[0]?.id || null);
     });
   });
@@ -215,6 +311,7 @@ function openEditor(r) {
   f.ingredients.value = (r?.ingredients || []).join("\n");
   f.steps.value = (r?.steps || []).join("\n");
   f.notes.value = r?.notes || "";
+  f.labels.value = labelsOf(r || {}).map(labelText).join("\n");
   f.source.value = r?.source || (r ? "" : $("#url").value.trim());
   $("#editor").showModal();
   f.title.focus();
@@ -225,7 +322,7 @@ $("#editor").addEventListener("close", () => {
   const f = $("#edit-form");
   const body = {
     title: f.title.value, servings: f.servings.value === "" ? null : Number(f.servings.value), yield: f.yield.value, time: f.time.value,
-    ingredients: f.ingredients.value, steps: f.steps.value, notes: f.notes.value, source: f.source.value,
+    ingredients: f.ingredients.value, steps: f.steps.value, notes: f.notes.value, source: f.source.value, labels: f.labels.value,
   };
   const was = editing;
   editing = null;
@@ -234,6 +331,7 @@ $("#editor").addEventListener("close", () => {
     data.recipes = [...data.recipes.filter(x => x.id !== saved.id), saved].sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: "base" }));
     if (was.servings !== saved.servings) scale.delete(saved.id);
     if (!was.id) $("#url").value = "";
+    renderFilters();
     pick(saved.id);
   });
 });
@@ -269,6 +367,7 @@ document.addEventListener("keydown", e => {
   const at = shown.indexOf(open);
   const keys = {
     n: () => $("#url").focus(),
+    l: () => $("#label-filter").disabled || $("#label-filter").focus(),
     "/": () => $("#find").focus(),
     j: () => shown.length && pick(shown[Math.min(shown.length - 1, at + 1)]),
     k: () => shown.length && pick(shown[Math.max(0, at - 1)]),
@@ -284,6 +383,8 @@ run(async () => {
   data = await api("GET", "recipes");
   const want = location.hash.slice(1);
   open = data.recipes.some(r => r.id === want) ? want : data.recipes[0]?.id || null;
+  sortKey = store.get("recipes:sort") || "";
+  renderFilters();
   renderList();
   renderDetail();
 });

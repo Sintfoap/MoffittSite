@@ -192,3 +192,12 @@ test("the recipe of the day is someone else's, the same all day", async () => {
   // A bad day falls back to today (UTC).
   assert.equal((await day("tomorrow")).json.featured.day, new Date().toISOString().slice(0, 10));
 });
+
+test("a recipe's labels go to the board and back into Recipe box", async () => {
+  const env = makeEnv(), ryan = await member(env, "ryan", "recipes"), sam = await member(env, "sam", "recipes");
+  const mine = (await ryan.req("POST", "/recipes/api/recipes", { json: { title: "Stew", ...RECIPE, labels: "Season: Fall\nCuisine: Irish" } })).json;
+  const p = (await api(ryan, "POST", "posts", { category: await catId(ryan, "Dinner"), recipe_id: mine.id })).json;
+  assert.deepEqual(p.recipe.labels, mine.labels);
+  const saved = (await api(sam, "POST", `posts/${p.id}/save`)).json.recipe;
+  assert.deepEqual(saved.labels, [{ key: "Season", value: "Fall" }, { key: "Cuisine", value: "Irish" }]);
+});
