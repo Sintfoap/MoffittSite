@@ -19,7 +19,8 @@ sintfoap                    # signs you in the first time, then opens your dashb
 | `sintfoap meals` | Meal plan: the week's dinners around your Drift calendar, and their shopping |
 | `sintfoap sweep` | Sweep: Drift suggestions from your chat rooms, to accept or turn down |
 | `sintfoap trips` | Trip planner: a trip's days, places and packing list, with whoever's going |
-| `sintfoap board` | Recipe board: recipes shared by category, and a feed of the categories you follow |
+| `sintfoap board` | Recipe board: recipes shared by their labels, and a feed of the label keys you follow |
+| `sintfoap labels` | Recipe labels: the one list of labels recipes pick from |
 | `sintfoap food` | Food club: the month's food, its recipe, favorites and everyone's photos |
 | `sintfoap admin` | which apps each account can use (admins) |
 | `sintfoap app` | the Android app: a QR code to scan with your phone, and the download link |
@@ -48,7 +49,7 @@ nix develop                                  # a shell with Python, Textual and 
 
 ## The dashboard
 
-The same panels as `/dashboard`, in the site's colours: Today (overdue Drift items in red, then what's due today), your account with its checks (two-factor, recovery codes, email), and a card per app your account can use. It refreshes every 30 seconds. Drift, the plugin store, chat, Recipe box, Recipe board, Meal plan, Sweep, Trip planner, Food club, notifications, account settings and Admin open here in the terminal; anything else opens in your browser.
+The same panels as `/dashboard`, in the site's colours: Today (overdue Drift items in red, then what's due today), your account with its checks (two-factor, recovery codes, email), and a card per app your account can use. It refreshes every 30 seconds. Drift, the plugin store, chat, Recipe box, Recipe board, Recipe labels, Meal plan, Sweep, Trip planner, Food club, notifications, account settings and Admin open here in the terminal; anything else opens in your browser.
 
 | Key | |
 |---|---|
@@ -60,7 +61,7 @@ The same panels as `/dashboard`, in the site's colours: Today (overdue Drift ite
 | `o` | sign out this terminal |
 | `q` | quit |
 
-On every page `esc` goes back, `w` opens the same page in your browser and `q` quits. `g` then a letter jumps around, as on the website: `g h` home, `g d` Drift, `g p` plugin store, `g c` chat, `g r` Recipe box, `g b` Recipe board, `g m` Meal plan, `g w` Sweep, `g t` Trip planner, `g f` Food club, `g s` settings, `g n` notifications, `g a` admin, `g o` sign out.
+On every page `esc` goes back, `w` opens the same page in your browser and `q` quits. `g` then a letter jumps around, as on the website: `g h` home, `g d` Drift, `g p` plugin store, `g c` chat, `g r` Recipe box, `g b` Recipe board, `g l` Recipe labels, `g m` Meal plan, `g w` Sweep, `g t` Trip planner, `g f` Food club, `g s` settings, `g n` notifications, `g a` admin, `g o` sign out.
 
 ## Book club pick
 
@@ -159,7 +160,7 @@ The same recipes as `/recipes/`: the list on the left, the open one on the right
 | `b` | share the recipe on the Recipe board (if you have it) |
 | `l` | filter the shelf by labels: tick any (two values of one key show either; different keys show only recipes with both); `c` clears |
 | `o` | sort the shelf by title, then by each label in turn (recipes without that label go last) |
-| `e` | edit it (`ctrl+s` saves); labels are ticked from the list admins keep, so everyone uses the same ones |
+| `e` | edit it (`ctrl+s` saves); labels are ticked from the Recipe labels list, so everyone uses the same ones |
 | `c` | give it a picture from a file (JPEG, PNG, WebP or GIF up to 600 KB), or leave the path empty to take its picture off; on the website the editor has a Picture field that shrinks bigger ones |
 | `d` | delete it |
 
@@ -211,16 +212,28 @@ The same trips as `/trips/`: your trips on the left, the open one on the right i
 
 ## Recipe board
 
-The same board as `/board/`: your feed (new recipes in the categories you follow), everything, what you've shared and what you've saved down the left, then every category, starred if you follow it. Your feed and Everything start with the recipe of the day: one of someone else's posts, a new one each day. The open view's recipes are on the right, newest first, with the highlighted one's recipe under them. In Recipe box, `b` shares the open recipe here.
+The same board as `/board/`: your feed (new recipes in the categories you follow), everything, what you've shared and what you've saved down the left, then every category, starred if you follow it. The categories are the label keys from Recipe labels (Season, Cuisine...): a recipe shows under every key its labels use, and the open key lists its values to narrow it to one. Your feed and Everything start with the recipe of the day: one of someone else's posts, a new one each day. The open view's recipes are on the right, newest first, with the highlighted one's recipe under them. In Recipe box, `b` shares the open recipe here.
 
 | Key | |
 |---|---|
 | `f` | follow the highlighted category (or the open one), or stop |
 | `s` | save the highlighted recipe to your Recipe box |
-| `n` | share a recipe: from your Recipe box, a link, or typed in (`ctrl+s` posts) |
-| `c` | start a category (you follow what you start) |
+| `n` | share a recipe: from your Recipe box (its labels come ticked), a link, or typed in, ticking its labels (`ctrl+s` posts) |
+| `x` | remove the highlighted category, which removes its key from Recipe labels (if you have that app) |
 | `m` | older recipes |
 | `e` `d` | edit or delete your own post |
+| `r` | refresh |
+
+## Recipe labels
+
+The same list as `/labels/`: the labels everyone ticks on recipes in Recipe box, each key (Season, Cuisine...) with its values under it. The keys are the Recipe board's categories too. Renaming a label or a key changes it on every recipe that has it, and removing one takes it off them all.
+
+| Key | |
+|---|---|
+| `n` | add labels: a key and its values, separated by commas, like `Season: Fall, Winter` (a key already on the list gets the new values; ones it has are skipped) |
+| `a` | add more values under the highlighted key (or one of its values) |
+| `e` | rename the highlighted value, or the whole key |
+| `x` | remove the highlighted value, or the whole key and all its values |
 | `r` | refresh |
 
 ## Food club
@@ -260,6 +273,7 @@ sintfoap/meals_page.py     Meal plan
 sintfoap/sweep_page.py     Sweep
 sintfoap/trips_page.py     Trip planner
 sintfoap/board_page.py     Recipe board
+sintfoap/labels_page.py    Recipe labels
 sintfoap/food_page.py      Food club
 sintfoap/recipe_rules.py   scaling ingredient lines, as on the web page (tests/scale_cases.json keeps them the same)
 sintfoap/__main__.py       the command
@@ -272,5 +286,3 @@ The site's side is `src/cli.js` (signing in, the dashboard and settings) and the
 ## Admin
 
 For admins: every account, with a switch for each app on the site (the same list as the website's menu, so a new app shows up here by itself, off for everyone). `tab` moves between switches and `space` turns one on or off; your own Admin switch stays on. Passwords, two-factor and disabling or deleting accounts are on the website: `w` opens `/admin`.
-
-Below the accounts is the Recipe labels list, the one list every Recipe box label comes from. `n` adds one (type `Season: Fall`), `e` renames the highlighted one and `x` removes it. Renaming changes it on every recipe that has it, and removing takes it off them all.

@@ -1,9 +1,11 @@
 """Recipe board in the terminal: the same board as /board/.
 
 Your feed and the other views down the left, then every category, starred if
-you follow it (f stars the highlighted one). The posts of whichever is open
-sit on the right, newest first, with the highlighted one's recipe under them;
-s saves it into your Recipe box, n shares one of yours."""
+you follow it (f stars the highlighted one). The categories are the label keys
+from Recipe labels: a post is under every key its labels use, and the open key
+lists its values to narrow it down. The posts of whichever is open sit on the
+right, newest first, with the highlighted one's recipe under them; s saves it
+into your Recipe box, n shares one of yours (tick its labels to file it)."""
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -13,13 +15,19 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
-from textual.widgets import Button, Footer, Input, Label, OptionList, Select, Static, TextArea
+from textual.widgets import Button, Footer, Input, Label, OptionList, Select, SelectionList, Static, TextArea
 from textual.widgets.option_list import Option
+from textual.widgets.selection_list import Selection
 
 from . import site
 from .look import FAINT, GOLD, GOLD_DIM, INK, MUTED, Ask, Confirm, Page, attempt, plural
 
 VIEWS = [("feed", "Your feed"), ("all", "Everything"), ("mine", "Shared by you"), ("saved", "Saved")]
+def label_line(p: dict) -> str:
+    """"Course: Dinner · Cuisine: Irish"."""
+    return " · ".join(f"{lb['key']}: {lb['value']}" if lb["value"] else lb["key"] for lb in (p.get("recipe") or {}).get("labels", []))
+
+
 BLURB = {"all": "Every recipe on the board.", "mine": "The recipes you've posted.", "saved": "Recipes you've saved to your Recipe box."}
 
 
@@ -49,13 +57,13 @@ class ShareDialog(ModalScreen[dict | None]):
     ShareDialog #ingredients, ShareDialog #steps { height: 7; }
     ShareDialog #note { height: 3; }
     ShareDialog .part { height: auto; }
+    ShareDialog #labels { height: auto; max-height: 10; background: transparent; border: none; padding: 0; }
     """
 
-    def __init__(self, board: dict, category: str = "", post: dict | None = None, recipe_id: str = ""):
+    def __init__(self, board: dict, label: str = "", post: dict | None = None, recipe_id: str = ""):
         super().__init__()
         self.board, self.post = board, post
-        self.category = (post or {}).get("category") or category or next((c["id"] for c in board["categories"] if c["following"]), "") \
-            or (board["categories"][0]["id"] if board["categories"] else "")
+        self.label = label   # the value open on the board, ticked to start with
         self.recipe_id = recipe_id
         froms = [("Type it in", "typed")] if post else []
         if not post:
@@ -69,8 +77,6 @@ class ShareDialog(ModalScreen[dict | None]):
         r = p.get("recipe") or {}
         with VerticalScroll(classes="dialog"):
             yield Label(Text("Edit post" if self.post else "Share a recipe", style=f"bold {INK}"))
-            yield Label("Category", classes="lbl")
-            yield Select([(c["name"], c["id"]) for c in self.board["categories"]], value=self.category or Select.BLANK, allow_blank=False, id="category")
             if not self.post:
                 yield Label("The recipe", classes="lbl")
                 yield Select(self.froms, value=self.froms[0][1], allow_blank=False, id="from")
@@ -103,6 +109,12 @@ class ShareDialog(ModalScreen[dict | None]):
                 yield TextArea("\n".join(r.get("steps", [])), id="steps", soft_wrap=True)
                 yield Label("Link (optional)", classes="lbl")
                 yield Input(r.get("source", ""), id="source")
+            yield Label("Labels: it shows under each one's category (space ticks)", classes="lbl")
+            if self.board.get("label_list"):
+                yield SelectionList(*[Selection(Text.assemble((lb["key"], f"bold {GOLD}"), ("  " + (lb["value"] or "yes"), INK)), lb["id"])
+                                      for lb in self.board["label_list"]], id="labels")
+            else:
+                yield Static(Text("No labels yet, so it goes in Everything only. Whoever keeps Recipe labels adds them.", style=FAINT))
             yield Label("A note for everyone (optional)", classes="lbl")
             yield TextArea(p.get("note", ""), id="note", soft_wrap=True)
             with Horizontal(classes="buttons"):
@@ -114,7 +126,34 @@ class ShareDialog(ModalScreen[dict | None]):
         if self.recipe_id and any(v == "box" for _, v in self.froms):
             self.query_one("#from", Select).value = "box"
         self.show_from()
-        self.query_one("#category", Select).focus()
+        self.tick(self.start_labels())
+        self.query_one("#from" if not self.post else "#title").focus()
+
+    def start_labels(self) -> list[str]:
+        if self.post:
+            return [lb["id"] for lb in self.post["recipe"].get("labels", [])]
+        if self.chosen() == "box":
+            return self.box_labels()
+        return [self.label] if self.label else []
+
+    def box_labels(self) -> list[str]:
+        """The labels of the recipe picked from your Recipe box."""
+        rid = self.query_one("#recipe_id", Select).value if self.query("#recipe_id") else ""
+        return next((x.get("labels", []) for x in self.board.get("recipes", []) if x["id"] == rid), [])
+
+    def tick(self, ids: list[str]) -> None:
+        if not self.query("#labels"):
+            return
+        box = self.query_one("#labels", SelectionList)
+        box.deselect_all()
+        for i in ids:
+            try:
+                box.select(i)
+            except Exception:
+                pass
+
+    def picked(self) -> list[str]:
+        return list(self.query_one("#labels", SelectionList).selected) if self.query("#labels") else []
 
     def chosen(self) -> str:
         return "typed" if self.post else self.query_one("#from", Select).value
@@ -127,11 +166,15 @@ class ShareDialog(ModalScreen[dict | None]):
     def on_select_changed(self, e: Select.Changed) -> None:
         if e.select.id == "from":
             self.show_from()
+            if e.value == "box":
+                self.tick(self.box_labels())
+        elif e.select.id == "recipe_id":
+            self.tick(self.box_labels())
 
     def fields(self) -> dict:
         v = lambda i: self.query_one(f"#{i}", Input).value.strip()  # noqa: E731
         t = lambda i: self.query_one(f"#{i}", TextArea).text  # noqa: E731
-        out = {"category": self.query_one("#category", Select).value, "note": t("note").strip()}
+        out = {"note": t("note").strip(), "labels": self.picked()}
         f = self.chosen()
         if f == "box":
             out["recipe_id"] = self.query_one("#recipe_id", Select).value
@@ -146,7 +189,7 @@ class ShareDialog(ModalScreen[dict | None]):
             out["title"] = v("title")
             out["recipe"] = {"ingredients": t("ingredients"), "steps": t("steps"), "servings": serves, "yield": v("yield"),
                              "time": v("time"), "source": v("source"),
-                             **({"notes": was.get("notes", ""), "image": was.get("image", ""), "labels": was.get("labels", [])} if was else {})}
+                             **({"notes": was.get("notes", ""), "image": was.get("image", "")} if was else {})}
         return out
 
     def action_save(self) -> None:
@@ -188,7 +231,7 @@ class BoardPage(Page):
         Binding("n", "share", "Share"),
         Binding("f", "follow", "Follow"),
         Binding("s", "save", "Save to box"),
-        Binding("c", "category", "New category"),
+        Binding("x", "remove_category", "Remove category", show=False),
         Binding("m", "older", "Older"),
         Binding("e", "edit", "Edit", show=False),
         Binding("d", "delete", "Delete", show=False),
@@ -199,7 +242,7 @@ class BoardPage(Page):
     def __init__(self, share: str = ""):
         super().__init__()
         self.board: dict | None = None
-        self.at: dict = {"view": "feed", "category": ""}
+        self.at: dict = {"view": "feed", "category": "", "label": ""}
         self.posts: list[dict] = []
         self.more = False
         self.open: str | None = None
@@ -243,7 +286,7 @@ class BoardPage(Page):
 
     async def load(self, older: bool = False) -> None:
         before = self.posts[-1]["created"] if older and self.posts else ""
-        out = await self.fetch(site.board_posts, self.at["view"], self.at["category"], before)
+        out = await self.fetch(site.board_posts, self.at["view"], self.at["category"], before, self.at["label"])
         self.posts = self.posts + out["posts"] if older else out["posts"]
         self.more = out["more"]
         if not self.at["category"] and self.at["view"] == "feed" and not older:
@@ -256,7 +299,10 @@ class BoardPage(Page):
         self.show_post()
 
     def cat(self, cid: str) -> dict | None:
-        return next((c for c in (self.board or {}).get("categories", []) if c["id"] == cid), None)
+        return next((c for c in (self.board or {}).get("categories", []) if cid and c["id"].casefold() == cid.casefold()), None)
+
+    def value(self, c: dict | None, lid: str) -> dict | None:
+        return next((v for v in (c or {}).get("values", []) if v["id"] == lid), None)
 
     def show_nav(self) -> None:
         if not self.board:
@@ -272,19 +318,27 @@ class BoardPage(Page):
                     t.append(f"  {self.board['unread']} new", style=f"bold {GOLD}")
                 side.add_option(Option(t, id="v:" + vid))
             side.add_option(Option(Text("\nCATEGORIES   f follows", style=FAINT), disabled=True))
+            if not self.board["categories"]:
+                side.add_option(Option(Text("No labels yet: the categories\nare Recipe labels' keys.", style=FAINT), disabled=True))
             for c in self.board["categories"]:
-                here = self.at["category"] == c["id"]
+                here = (self.at["category"] or "").casefold() == c["id"].casefold()
                 t = Text.assemble(("★ " if c["following"] else "☆ ", GOLD if c["following"] else FAINT),
-                                  (c["name"], f"bold {INK}" if here else MUTED), (f"  {c['posts']}" if c["posts"] else "", FAINT))
+                                  (c["name"], f"bold {INK}" if here and not self.at["label"] else MUTED), (f"  {c['posts']}" if c["posts"] else "", FAINT))
                 side.add_option(Option(t, id="c:" + c["id"]))
+                # The open key's values, to narrow it to one.
+                for v in c["values"] if here else []:
+                    on = self.at["label"] == v["id"]
+                    side.add_option(Option(Text.assemble(("    " + v["value"], f"bold {INK}" if on else MUTED), (f"  {v['posts']}" if v["posts"] else "", FAINT)), id="l:" + v["id"]))
         if keep is not None:
             side.highlighted = min(keep, side.option_count - 1)
 
     def show_top(self) -> None:
         c = self.cat(self.at["category"])
+        v = self.value(c, self.at["label"])
         if c:
-            head, sub = c["name"] + ("  ★ following" if c["following"] else ""), \
-                f"{plural(c['posts'], 'recipe')} · {c['followers']} following" + ("" if c["following"] else " · f to follow")
+            head = (f"{c['name']}: {v['value']}" if v else c["name"]) + ("  ★ following" if c["following"] else "")
+            sub = f"{plural(v['posts'] if v else c['posts'], 'recipe')} · {c['followers']} following {c['name']}" + ("" if c["following"] else " · f to follow") \
+                + (" · x removes the category" if c.get("can_delete") and not v else "")
         else:
             head = dict(VIEWS)[self.at["view"]]
             if self.at["view"] == "feed":
@@ -308,8 +362,8 @@ class BoardPage(Page):
             f = self.featured()
             if f:
                 t = Text.assemble(("★ RECIPE OF THE DAY  ", f"bold {GOLD}"), (f["title"], f"bold {INK}"), ("  ✓ saved" if f["saved"] else "", GOLD_DIM))
-                t.append(f"\n{f['category_name']}", style=GOLD_DIM)
-                t.append(f" · shared by {f['by']}", style=FAINT)
+                t.append("\n" + (label_line(f) + " · " if label_line(f) else ""), style=GOLD_DIM)
+                t.append(f"shared by {f['by']}", style=FAINT)
                 box.add_option(Option(t, id="featured"))
             if not self.posts:
                 none = "You don't follow any categories yet." if not self.at["category"] and self.at["view"] == "feed" \
@@ -319,8 +373,8 @@ class BoardPage(Page):
             for p in self.posts:
                 t = Text.assemble((p["title"], f"bold {INK}"), ("  new" if p.get("new") else "", f"bold {GOLD}"),
                                   ("  ✓ saved" if p["saved"] else "", GOLD_DIM))
-                t.append(f"\n{p['category_name']}", style=GOLD_DIM)
-                t.append(f" · {p['by']} · {ago(p['created'])}" + (f" · saved {p['saves']}×" if p["saves"] else ""), style=FAINT)
+                t.append("\n" + (label_line(p) + " · " if label_line(p) else ""), style=GOLD_DIM)
+                t.append(f"{p['by']} · {ago(p['created'])}" + (f" · saved {p['saves']}×" if p["saves"] else ""), style=FAINT)
                 box.add_option(Option(t, id=p["id"]))
             if self.more:
                 box.add_option(Option(Text("Older…  m", style=GOLD_DIM), id="more"))
@@ -342,7 +396,7 @@ class BoardPage(Page):
         r = p["recipe"]
         self.query_one("#post-title", Static).update(("★ Recipe of the day: " if self.open == "featured" else "") + p["title"])
         bits = [b for b in (r.get("time"), f"serves {r['servings']:g}" if r.get("servings") else r.get("yield"), r.get("source")) if b]
-        meta = Text(f"{p['category_name']} · shared by {p['by']}", style=GOLD_DIM)
+        meta = Text((label_line(p) + " · " if label_line(p) else "") + f"shared by {p['by']}", style=GOLD_DIM)
         if bits:
             meta.append("\n" + " · ".join(bits), style=FAINT)
         if self.board.get("recipe_box"):
@@ -374,6 +428,8 @@ class BoardPage(Page):
                 await self.go(view=oid[2:])
             elif oid.startswith("c:"):
                 await self.go(category=oid[2:])
+            elif oid.startswith("l:"):
+                await self.go(category=self.at["category"], label=oid[2:])
             if self.posts:
                 self.query_one("#posts", OptionList).focus()
         elif e.option_list.id == "posts" and oid == "more":
@@ -385,8 +441,8 @@ class BoardPage(Page):
             self.show_post()
 
     @attempt
-    async def go(self, view: str = "feed", category: str = "") -> None:
-        self.at = {"view": view, "category": category}
+    async def go(self, view: str = "feed", category: str = "", label: str = "") -> None:
+        self.at = {"view": view, "category": category, "label": label}
         await self.load()
 
     @attempt
@@ -400,10 +456,10 @@ class BoardPage(Page):
             oid = side.get_option_at_index(side.highlighted).id or ""
             if oid.startswith("c:"):
                 return self.cat(oid[2:])
-        return self.cat(self.at["category"])
+        return self.cat(self.at["category"] or "")
 
     def check_action(self, action: str, parameters: tuple) -> bool | None:
-        if action in ("share", "follow", "save", "category", "older", "edit", "delete", "refresh") and isinstance(self.focused, (Input, TextArea)):
+        if action in ("share", "follow", "save", "remove_category", "older", "edit", "delete", "refresh") and isinstance(self.focused, (Input, TextArea)):
             return False
         return True
 
@@ -439,22 +495,33 @@ class BoardPage(Page):
         self.show_posts()
         self.show_post()
 
-    def action_category(self) -> None:
-        async def made(name: str | None) -> None:
-            if name and name.strip():
-                await self.new_category(name.strip())
-        self.app.push_screen(Ask("New category", "Anyone on the board can post in it. You follow what you start.", placeholder="Grilling", ok="Add"), made)
+    def action_remove_category(self) -> None:
+        """x: remove the highlighted (or open) category, which is its key in Recipe labels."""
+        c = self.highlighted_category()
+        if not c:
+            return
+        if not c.get("can_delete"):
+            self.app.notify("Categories come from Recipe labels; whoever keeps that list can remove one.", timeout=4)
+            return
+
+        async def answer(yes: bool | None) -> None:
+            if yes:
+                await self.remove_category(c)
+        self.app.push_screen(Confirm(f"Remove the {c['name']} category?",
+                                     f"That takes {c['name']} and its {plural(len(c['values']), 'value')} off Recipe labels, and off every recipe "
+                                     "and post that has them. The recipes and posts stay.", yes="Remove", danger=True), answer)
 
     @attempt
-    async def new_category(self, name: str) -> None:
-        c = await self.fetch(site.add_board_category, name)
-        self.board["categories"] = sorted(self.board["categories"] + [c], key=lambda x: x["name"].casefold())
-        await self.go(category=c["id"])
+    async def remove_category(self, c: dict) -> None:
+        await self.fetch(site.delete_board_category, c["id"])
+        self.board = await self.fetch(site.board)
+        self.app.notify(f"Removed the {c['name']} category.", timeout=3)
+        await self.go(view="all")
 
     def action_share(self, recipe_id: str = "") -> None:
-        if not self.board or not self.board["categories"]:
+        if not self.board:
             return
-        self.app.push_screen(ShareDialog(self.board, self.at["category"], recipe_id=recipe_id), self.after(None))
+        self.app.push_screen(ShareDialog(self.board, self.at["label"], recipe_id=recipe_id), self.after(None))
 
     def action_edit(self) -> None:
         p = self.current()
@@ -482,8 +549,9 @@ class BoardPage(Page):
             self.app.notify("Reading that page…", timeout=2)
         p = await self.fetch(site.add_board_post, fields)
         self.board = await self.fetch(site.board)
-        self.app.notify(f"Posted {p['title']} in {p['category_name']}.", timeout=3)
-        self.at = {"view": "feed", "category": p["category"]}
+        self.app.notify(f"Posted {p['title']} in {', '.join(p['categories'])}." if p["categories"]
+                        else f"Posted {p['title']}. Give it labels to put it in categories.", timeout=3)
+        self.at = {"view": "feed", "category": p["categories"][0], "label": ""} if p["categories"] else {"view": "mine", "category": "", "label": ""}
         await self.load()
         self.open = p["id"]
         self.show_posts()

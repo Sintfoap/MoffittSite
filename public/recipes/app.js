@@ -73,7 +73,7 @@ function step(r, dir) {
 }
 
 // ── labels ─────────────────────────────────────────────────────────────────
-// From the site's one list (admins keep it on /admin): {id, key, value}.
+// From the site's one list (kept in Recipe labels, /labels/): {id, key, value}.
 
 const low = s => String(s || "").toLowerCase();
 const labelsOf = r => r.labels || [];
@@ -331,13 +331,14 @@ const HINTS = {
   ocr: "Read from your photo by text recognition on this device. Check it against the picture: fix any misread words, and move lines between the boxes if one landed in the wrong place.",
   text: "Read from the text you pasted. Check that each line landed in the right box, then save.",
 };
-function openEditor(r, draft = null, shots = [], how = "claude") {
+function openEditor(r, draft = null, shots = [], how = "claude", why = "") {
   editing = r || {};
   const f = $("#edit-form");
   $("#edit-title").textContent = r ? "Edit recipe" : draft ? "Check the recipe" : "New recipe";
   $("#edit-hint").hidden = !draft;
   const check = draft?.check?.length ? ` Look twice at the amounts in ${draft.check.map(l => `“${l}”`).join(", ")}: fractions like ½ and ¾ are easy to misread.` : "";
-  $("#edit-hint-text").textContent = (HINTS[how] || "") + check;
+  const fell = why ? `Claude couldn't read it (${why}), so text recognition read it instead. ` : "";
+  $("#edit-hint-text").textContent = fell + (HINTS[how] || "") + check;
   $("#with-claude").hidden = !draft || how !== "ocr" || !data.photo?.sealing;
   const pics = $("#edit-photos");
   pics.hidden = !shots.length;
@@ -387,7 +388,7 @@ function renderPicker(r) {
   const box = $("#label-picker"), list = data.label_list || [];
   const on = new Set(labelsOf(r || {}).map(l => l.id));
   box.replaceChildren();
-  if (!list.length) { box.append(el("p", { className: "empty", textContent: "No labels yet. An admin adds them on the admin page." })); return; }
+  if (!list.length) { box.append(el("p", { className: "empty", textContent: "No labels yet. Whoever keeps Recipe labels adds them there." })); return; }
   const keys = new Map();
   for (const l of list) keys.set(low(l.key), [...(keys.get(low(l.key)) || []), l]);
   for (const ls of keys.values()) {
@@ -677,23 +678,30 @@ async function fromPhotos(files, { claude = !!data.photo?.ready } = {}) {
     if (files.length > 4) throw new Error("pick at most 4 pictures of one recipe");
     lastPhotos = files;
     const shots = await Promise.all(files.map(async f => "data:image/jpeg;base64," + await base64(await shrinkPhoto(f))));
-    let recipe;
+    let recipe, how = "ocr", why = "";
     if (claude) {
       say("done", `Reading ${files.length === 1 ? "the photo" : `${files.length} photos`} with Claude… this takes a few seconds.`);
-      ({ recipe } = await api("POST", "photo", { images: shots.map(s => ({ data: s.slice(s.indexOf(",") + 1) })) }));
-    } else {
+      try {
+        ({ recipe } = await api("POST", "photo", { images: shots.map(s => ({ data: s.slice(s.indexOf(",") + 1) })) }));
+        how = "claude";
+      } catch (e) {
+        // A key that was revoked or ran out, Claude busy, no connection: read it here instead.
+        if (/didn't accept your API key/i.test(e.message)) data.photo = { ...data.photo, ready: false };
+        if (/couldn't find a recipe/i.test(e.message)) throw e;  // Claude read it and found none: text recognition won't do better
+        why = e.message.split(/\.\s/)[0].replace(/\.$/, "");
+      }
+    }
+    if (how === "ocr") {
       const { text, title } = await recognize(files);
       recipe = readRecipe(text, { title });
-      if (!recipe) throw new Error("couldn't find a recipe in that photo. A sharper, straighter photo helps; or add it with Paste text");
+      if (!recipe) throw new Error(`${why ? `Claude couldn't read it (${why}), and text recognition ` : ""}couldn't find a recipe in that photo. A sharper, straighter photo helps; or add it with Paste text`);
     }
     say("done", "");
-    openEditor(null, recipe, shots, claude ? "claude" : "ocr");
+    openEditor(null, recipe, shots, how, why);
   });
   btn.disabled = false;
   btn.textContent = "From a photo";
   $("#photo-file").value = "";
-  // A key Anthropic turned down: the next try reads it here instead.
-  if (err && /didn't accept your API key/i.test(err.message)) data.photo = { ...data.photo, ready: false };
 }
 
 // From the editor: the same photos again, with Claude (asking for a key first if there isn't one).

@@ -1,5 +1,7 @@
 // Recipe board: the categories down the side (star one to follow it), and
 // the posts of whichever view or category is open beside them, newest first.
+// The categories are the label keys from Recipe labels; a post is under each
+// key its labels use, and an open key lists its values to narrow it down.
 // Your feed is the categories you follow. Any post can be saved into your
 // Recipe box. The Worker side is src/board.js.
 
@@ -17,8 +19,8 @@ const VIEWS = [
   { id: "saved", name: "Saved", blurb: "Recipes you've saved to your Recipe box." },
 ];
 
-let board = null;      // GET /board/api/board: {categories, recipe_box, recipes, unread}
-let at = { view: "feed", category: "" };
+let board = null;      // GET /board/api/board: {categories, label_list, recipe_box, recipes, unread, featured, can_label}
+let at = { view: "feed", category: "", label: "" };
 let posts = [], more = false;
 let openId = null, focus = -1;
 let editing = null;    // the post in the editor, or {} for a new one
@@ -59,7 +61,15 @@ function ago(iso) {
 const today = () => new Date().toLocaleDateString("sv");
 const loadBoard = () => api("GET", "board?day=" + today());
 let featuredOpen = false;
-const catOf = id => board.categories.find(c => c.id === id);
+const low = s => String(s || "").toLowerCase();
+const catOf = id => id ? board.categories.find(c => low(c.id) === low(id)) : null;
+const valueOf = (c, id) => c?.values.find(v => v.id === id);
+// "Course: Dinner · Cuisine: Irish", for a post's line.
+function labelChips(p) {
+  const ls = p.recipe?.labels || [];
+  if (!ls.length) return null;
+  return el("span", { className: "chips" }, ...ls.map(l => el("span", { className: "tag" }, el("b", { textContent: l.key + (l.value ? ": " : "") }), l.value)));
+}
 
 // ── the side ───────────────────────────────────────────────────────────────
 
@@ -73,21 +83,33 @@ function renderSide() {
     return el("li", {}, b);
   }));
   const cats = $("#cats");
-  cats.replaceChildren(...board.categories.map(c => {
+  cats.replaceChildren(...board.categories.flatMap(c => {
+    const here = low(at.category) === low(c.id);
     const b = el("button", { type: "button", className: "go" }, el("span", { textContent: c.name }), el("small", { textContent: c.posts || "" }));
-    b.setAttribute("aria-current", String(at.category === c.id));
+    b.setAttribute("aria-current", String(here && !at.label));
     b.addEventListener("click", () => go({ category: c.id }));
     const star = el("button", { type: "button", className: "star", textContent: c.following ? "★" : "☆", title: c.following ? `Stop following ${c.name}` : `Follow ${c.name}` });
     star.setAttribute("aria-pressed", String(c.following));
     star.setAttribute("aria-label", `Follow ${c.name}`);
     star.addEventListener("click", () => toggleFollow(c));
-    return el("li", {}, b, star);
+    // The open key's values, to narrow it to one.
+    const values = here ? c.values.map(v => {
+      const vb = el("button", { type: "button", className: "go" }, el("span", { textContent: v.value }), el("small", { textContent: v.posts || "" }));
+      vb.setAttribute("aria-current", String(at.label === v.id));
+      vb.addEventListener("click", () => go({ category: c.id, label: v.id }));
+      return el("li", { className: "value" }, vb);
+    }) : [];
+    return [el("li", {}, b, star), ...values];
   }));
+  if (!board.categories.length) cats.append(el("li", {}, el("span", { className: "go empty", textContent: "No labels yet" })));
+  const hint = $("#cats-hint");
+  hint.replaceChildren("These are the label keys from Recipe labels. A recipe is in every one its labels use.");
+  if (board.can_label) hint.append(" ", el("a", { href: "/labels/", textContent: "Edit the labels" }));
 }
 
 function toggleFollow(c) {
   return run(async () => {
-    const next = await api("PUT", `categories/${c.id}/follow`, { follow: !c.following });
+    const next = await api("PUT", `categories/${encodeURIComponent(c.id)}/follow`, { follow: !c.following });
     Object.assign(c, next);
     renderSide();
     renderTop();
@@ -98,13 +120,15 @@ function toggleFollow(c) {
 // ── the posts ──────────────────────────────────────────────────────────────
 
 function renderTop() {
-  const c = at.category && catOf(at.category);
+  const c = catOf(at.category), val = valueOf(c, at.label);
   const v = VIEWS.find(x => x.id === at.view);
-  $("#heading").textContent = c ? c.name : v.name;
+  $("#heading").textContent = val ? `${c.name}: ${val.value}` : c ? c.name : v.name;
   const follow = $("#follow");
   follow.hidden = !c;
-  if (c) follow.textContent = c.following ? "★ Following" : "☆ Follow";
-  let sub = c ? `${c.posts} recipe${c.posts === 1 ? "" : "s"} · ${c.followers} following` : v.blurb;
+  if (c) follow.textContent = c.following ? `★ Following ${c.name}` : `☆ Follow ${c.name}`;
+  $("#remove-cat").hidden = !c?.can_delete || !!val;
+  const n = val ? val.posts : c?.posts;
+  let sub = c ? `${n} recipe${n === 1 ? "" : "s"} · ${c.followers} following ${c.name}` : v.blurb;
   if (!c && at.view === "feed") {
     const n = board.categories.filter(x => x.following).length;
     sub = n ? `New recipes in the ${n} categor${n === 1 ? "y" : "ies"} you follow.` : "Star a category on the left to follow it, and its new recipes show up here.";
@@ -144,8 +168,7 @@ function recipeBody(p) {
       run(async () => {
         await api("DELETE", "posts/" + p.id);
         posts = posts.filter(x => x.id !== p.id);
-        const c = catOf(p.category);
-        if (c) c.posts--;
+        board = await loadBoard();
         renderSide(); renderTop(); renderPosts();
       });
     });
@@ -164,7 +187,7 @@ function renderFeatured(box) {
   card.append(el("div", {},
     el("div", { className: "kicker", textContent: "Recipe of the day" }),
     el("h2", { textContent: p.title }),
-    el("div", { className: "meta" }, el("span", { className: "tag", textContent: p.category_name }), ` · shared by ${p.by}`),
+    el("div", { className: "meta" }, labelChips(p), `${p.recipe.labels.length ? " · " : ""}shared by ${p.by}`),
     p.note ? el("p", { className: "note", textContent: p.note }) : null));
   if (p.recipe.image) {
     const img = el("img", { className: "thumb", src: p.recipe.image, alt: "", referrerPolicy: "no-referrer", loading: "lazy" });
@@ -193,7 +216,7 @@ function renderPosts() {
     card.dataset.id = p.id;
     const main = el("div", {},
       el("h2", { textContent: p.title }),
-      el("div", { className: "meta" }, el("span", { className: "tag", textContent: p.category_name }), ` · ${p.by} · ${ago(p.created)}`,
+      el("div", { className: "meta" }, labelChips(p), `${p.recipe.labels.length ? " · " : ""}${p.by} · ${ago(p.created)}`,
         p.saves ? ` · saved ${p.saves}×` : "", p.new ? el("span", { className: "new", textContent: "new" }) : null),
       p.note ? el("p", { className: "note", textContent: p.note }) : null);
     card.append(main);
@@ -222,7 +245,7 @@ function toggle(id, i) {
 }
 
 async function load(older = false) {
-  const q = new URLSearchParams(at.category ? { category: at.category } : { view: at.view });
+  const q = new URLSearchParams(at.label ? { label: at.label } : at.category ? { category: at.category } : { view: at.view });
   if (older && posts.length) q.set("before", posts.at(-1).created);
   const out = await api("GET", "posts?" + q);
   posts = older ? [...posts, ...out.posts] : out.posts;
@@ -234,8 +257,9 @@ async function load(older = false) {
 }
 
 function go(where) {
-  at = { view: where.view || "feed", category: where.category || "" };
-  try { history.replaceState(null, "", at.category ? `#c=${at.category}` : at.view === "feed" ? location.pathname : `#${at.view}`); } catch {}
+  at = { view: where.view || "feed", category: where.category || "", label: where.label || "" };
+  const hash = at.label ? `#l=${at.label}` : at.category ? `#c=${encodeURIComponent(at.category)}` : at.view === "feed" ? "" : `#${at.view}`;
+  try { history.replaceState(null, "", location.pathname + hash); } catch {}
   renderSide();
   renderTop();
   return run(() => load());
@@ -261,13 +285,27 @@ function showFrom() {
   f.title.required = from === "typed";
 }
 
+// The site's labels as checkboxes, by key, with `on` ticked.
+function renderPicker(on) {
+  const box = $("#label-picker"), list = board.label_list || [];
+  const ticked = new Set(on);
+  box.replaceChildren();
+  if (!list.length) { box.append(el("p", { className: "empty", textContent: "No labels yet, so this goes in Everything only. Whoever keeps Recipe labels adds them." })); return; }
+  const keys = new Map();
+  for (const l of list) keys.set(low(l.key), [...(keys.get(low(l.key)) || []), l]);
+  for (const ls of keys.values()) {
+    box.append(el("div", { className: "pick" }, el("b", { textContent: ls[0].key }),
+      ...ls.map(l => el("label", { className: "chip" }, el("input", { type: "checkbox", value: l.id, checked: ticked.has(l.id) }), l.value || "yes"))));
+  }
+}
+const pickedLabels = () => [...document.querySelectorAll("#label-picker input:checked")].map(i => i.value);
+const boxLabels = id => board.recipes.find(r => r.id === id)?.labels || [];
+
 function openEditor(p, { recipe } = {}) {
   editing = p || {};
   const f = $("#edit-form");
   $("#edit-title").textContent = p ? "Edit post" : "Share a recipe";
   $("#post-btn").textContent = p ? "Save" : "Post";
-  f.category.replaceChildren(...board.categories.map(c => new Option(c.name, c.id)));
-  f.category.value = p?.category || at.category || board.categories.find(c => c.following)?.id || board.categories[0]?.id || "";
   f.recipe_id.replaceChildren(...board.recipes.map(r => new Option(r.title, r.id)));
   if (recipe) f.recipe_id.value = recipe;
   const boxLabel = $("#from").querySelector('input[value="box"]').closest("label");
@@ -284,21 +322,24 @@ function openEditor(p, { recipe } = {}) {
   f.url.value = "";
   f.note.value = p?.note || "";
   f.from.value = p ? "typed" : recipe || (!boxLabel.hidden && board.recipes.length) ? "box" : "url";
+  // A new post starts with the open category's value ticked; one from your box, with its own labels.
+  renderPicker(p ? p.recipe.labels.map(l => l.id) : f.from.value === "box" ? boxLabels(f.recipe_id.value) : at.label ? [at.label] : []);
   showFrom();
   $("#editor").showModal();
 }
 for (const r of document.querySelectorAll('input[name="from"]')) r.addEventListener("change", showFrom);
+$("#edit-form").recipe_id.addEventListener("change", e => renderPicker(boxLabels(e.target.value)));
 
 $("#editor").addEventListener("close", () => {
   if ($("#editor").returnValue !== "save" || !editing) return;
   const f = $("#edit-form"), from = f.from.value;
-  const body = { category: f.category.value, note: f.note.value };
+  const body = { note: f.note.value, labels: pickedLabels() };
   if (from === "box") body.recipe_id = f.recipe_id.value;
   else if (from === "url") body.url = f.url.value.trim();
   else {
     body.title = f.title.value;
     body.recipe = { ingredients: f.ingredients.value, steps: f.steps.value, servings: f.servings.value === "" ? null : Number(f.servings.value),
-      yield: f.yield.value, time: f.time.value, source: f.source.value, ...(editing.recipe ? { notes: editing.recipe.notes, image: editing.recipe.image, labels: editing.recipe.labels } : {}) };
+      yield: f.yield.value, time: f.time.value, source: f.source.value, ...(editing.recipe ? { notes: editing.recipe.notes, image: editing.recipe.image } : {}) };
   }
   const was = editing;
   editing = null;
@@ -308,12 +349,12 @@ $("#editor").addEventListener("close", () => {
     try {
       const saved = was.id ? await api("PATCH", "posts/" + was.id, body) : await api("POST", "posts", body);
       board = await loadBoard();
-      if (!was.id) say("done", `Posted ${saved.title} in ${saved.category_name}.`);
+      if (!was.id) say("done", saved.categories.length ? `Posted ${saved.title} in ${saved.categories.join(", ")}.` : `Posted ${saved.title}. Give it labels to put it in categories.`);
       if (was.id) {
         posts = posts.map(x => x.id === saved.id ? saved : x);
         renderSide(); renderTop(); renderPosts();
       } else {
-        await go({ category: saved.category });
+        await go(saved.categories.length ? { category: saved.categories[0] } : { view: "mine" });
         openId = saved.id; focus = 0;
         renderPosts();
       }
@@ -327,13 +368,15 @@ $("#editor").addEventListener("close", () => {
 
 $("#share").addEventListener("click", () => openEditor(null));
 $("#follow").addEventListener("click", () => { const c = catOf(at.category); if (c) toggleFollow(c); });
-$("#newcat").addEventListener("submit", e => {
-  e.preventDefault();
+// Removing a category removes its key, and all its values, from Recipe labels.
+$("#remove-cat").addEventListener("click", () => {
+  const c = catOf(at.category);
+  if (!c || !confirm(`Remove the ${c.name} category? That takes ${c.name} and its ${c.values.length || ""} value${c.values.length === 1 ? "" : "s"} off Recipe labels, and off every recipe and post that has them. The recipes and posts stay.`)) return;
   run(async () => {
-    const c = await api("POST", "categories", { name: $("#catname").value });
-    $("#catname").value = "";
-    board.categories = [...board.categories, c].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
-    await go({ category: c.id });
+    await api("DELETE", `categories/${encodeURIComponent(c.id)}`);
+    board = await loadBoard();
+    say("done", `Removed the ${c.name} category.`);
+    await go({ view: "all" });
   });
 });
 
@@ -361,7 +404,9 @@ document.addEventListener("keydown", e => {
 run(async () => {
   board = await loadBoard();
   const h = location.hash.slice(1), share = new URLSearchParams(location.search).get("share");
-  const where = h.startsWith("c=") && catOf(h.slice(2)) ? { category: h.slice(2) } : VIEWS.some(v => v.id === h) ? { view: h } : { view: "feed" };
+  const key = h.startsWith("c=") ? catOf(decodeURIComponent(h.slice(2))) : null;
+  const lab = h.startsWith("l=") ? board.categories.find(c => valueOf(c, h.slice(2))) : null;
+  const where = lab ? { category: lab.id, label: h.slice(2) } : key ? { category: key.id } : VIEWS.some(v => v.id === h) ? { view: h } : { view: "feed" };
   await go(where);
   // From Recipe box's "Share on the board".
   if (share && board.recipes.some(r => r.id === share)) {

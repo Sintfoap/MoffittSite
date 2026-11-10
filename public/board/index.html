@@ -71,6 +71,7 @@ input[type=text], input[type=url], input[type=number], textarea, select {
   padding: 8px 10px; background: var(--field); border: 1px solid var(--line-2); border-radius: 0; min-width: 0; color: var(--ink); }
 textarea { width: 100%; resize: vertical; font: inherit; line-height: 1.5; }
 label.field { display: grid; gap: 4px; margin-bottom: 12px; color: var(--muted); font-size: 13px; }
+div.field { display: grid; gap: 4px; margin-bottom: 12px; color: var(--muted); font-size: 13px; }
 label.field input, label.field textarea, label.field select { width: 100%; font-size: 14px; }
 .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .empty { color: var(--faint); }
@@ -90,9 +91,18 @@ label.field input, label.field textarea, label.field select { width: 100%; font-
 .nav .star { width: 38px; flex: none; background: none; border: 0; border-left: 1px dashed var(--line); cursor: pointer; color: var(--faint); font-size: 16px; }
 .nav .star[aria-pressed="true"] { color: var(--gold); }
 .nav .star:hover { color: var(--gold); background: var(--gold-soft); }
-.newcat { display: flex; gap: 6px; margin-top: 10px; }
-.newcat input { flex: 1; }
-.newcat .btn { margin: 0; padding: 8px 10px; }
+.nav li.value .go { padding-left: 26px; font-size: 13px; }
+.side .hint { font-size: 12.5px; color: var(--faint); margin: 10px 0 0; }
+.chips { display: inline-flex; flex-wrap: wrap; gap: 4px 10px; }
+.chips .tag b { color: var(--gold); font-weight: 400; opacity: .75; }
+#label-picker { display: grid; gap: 8px; padding: 10px; border: 1px solid var(--line-2); background: var(--field); }
+#label-picker .pick { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+#label-picker .pick > b { min-width: 9ch; color: var(--gold); font-size: 12.5px; }
+#label-picker .chip { display: inline-flex; align-items: baseline; gap: 4px; padding: 2px 8px; font: 400 12px var(--mono); border: 1px solid var(--line-2); color: var(--muted); cursor: pointer; }
+#label-picker .chip:hover { border-color: var(--gold); color: var(--ink); }
+#label-picker .chip input { accent-color: var(--gold); margin: 0 4px 0 0; }
+#label-picker .chip:has(input:checked) { background: var(--gold); border-color: var(--gold); color: var(--on-gold); }
+#label-picker .chip:has(input:focus-visible) { outline: 2px solid var(--gold); }
 
 .top { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
 .top h2 { font-size: clamp(17px, 2.6vw, 21px); margin: 0; }
@@ -144,7 +154,7 @@ dialog .three { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
   .nav .go { padding: 6px 10px; border-left: 0; white-space: nowrap; }
   .nav .go[aria-current="true"] { box-shadow: inset 0 -2px 0 var(--gold); }
   .nav .star { width: 32px; }
-  .newcat { margin-bottom: 8px; }
+  .nav li.value .go { padding-left: 10px; }
   .post .thumb { width: 72px; height: 56px; }
   dialog .three { grid-template-columns: 1fr; }
 }
@@ -156,7 +166,7 @@ dialog .three { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
 <main>
   <div class="kicker">Recipe board</div>
   <h1>Shared recipes</h1>
-  <p class="lede">Recipes everyone shares, by category. Star the categories you like and anything new in them shows up in your feed. Save any of them to your Recipe box. Each day you get a recipe of the day from someone else's posts.</p>
+  <p class="lede">Recipes everyone shares. Each one is filed under the keys of its labels, like Season or Cuisine, so a recipe can be in several categories. Star the ones you like and anything new in them shows up in your feed. Save any of them to your Recipe box. Each day you get a recipe of the day from someone else's posts.</p>
   <div id="error" class="msg bad" role="alert" hidden></div>
   <div id="done" class="msg good" role="status" hidden></div>
 
@@ -166,16 +176,14 @@ dialog .three { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
       <ul class="nav" id="views"></ul>
       <h3>Categories <span class="empty" style="letter-spacing:0;text-transform:none">· ★ to follow</span></h3>
       <ul class="nav cats" id="cats"></ul>
-      <form class="newcat" id="newcat">
-        <input type="text" id="catname" maxlength="40" placeholder="New category" aria-label="New category" required>
-        <button class="btn quiet">Add</button>
-      </form>
+      <p class="hint" id="cats-hint"></p>
     </aside>
     <section>
       <div class="top">
         <h2 id="heading">Your feed</h2>
         <div class="row">
           <button class="btn quiet" type="button" id="follow" hidden></button>
+          <button class="btn danger" type="button" id="remove-cat" hidden>Remove category</button>
           <button class="btn" type="button" id="share">Share a recipe</button>
         </div>
         <p id="sub" class="empty"></p>
@@ -189,7 +197,6 @@ dialog .three { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
 <dialog id="editor">
   <form method="dialog" id="edit-form">
     <h2 id="edit-title">Share a recipe</h2>
-    <label class="field">Category<select name="category" required></select></label>
     <div class="from" id="from" role="radiogroup" aria-label="Where the recipe comes from">
       <label><input type="radio" name="from" value="box"> From my Recipe box</label>
       <label><input type="radio" name="from" value="url"> From a link</label>
@@ -208,6 +215,7 @@ dialog .three { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
       <label class="field">Steps, one per line<textarea name="steps" rows="6"></textarea></label>
       <label class="field">Link (optional)<input type="url" name="source" maxlength="2000"></label>
     </div>
+    <div class="field">Labels: the recipe shows under each one's category<div id="label-picker"></div></div>
     <label class="field">A note for everyone (optional)<textarea name="note" rows="2" maxlength="2000" placeholder="Why you love it, what you'd change"></textarea></label>
     <div class="row"><button class="btn" value="save" id="post-btn">Post</button><button class="btn quiet" value="cancel" formnovalidate>Cancel</button></div>
   </form>

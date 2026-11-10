@@ -413,7 +413,7 @@ const SCHEMA = [
      created TEXT NOT NULL,
      PRIMARY KEY (trip, id)
    )`,
-  // Recipe box's labels (src/recipes.js): one list, kept by admins, that recipes pick from.
+  // Recipe labels (src/labels.js): the one list recipes pick from; its keys are the Recipe board's categories.
   `CREATE TABLE IF NOT EXISTS recipe_labels (
      id      TEXT PRIMARY KEY,                     -- "l_" + random hex
      key     TEXT NOT NULL COLLATE NOCASE,         -- Season
@@ -421,27 +421,20 @@ const SCHEMA = [
      created TEXT NOT NULL,
      UNIQUE (key, value)
    )`,
-  // Recipe board (src/board.js): categories, recipes posted under them, who
-  // follows which, when each person last read their feed, and who saved what.
-  `CREATE TABLE IF NOT EXISTS board_categories (
-     id         TEXT PRIMARY KEY,                  -- "c_" + random hex
-     name       TEXT NOT NULL UNIQUE COLLATE NOCASE,
-     created_by TEXT,                              -- user id, or NULL for the ones the board starts with
-     created    TEXT NOT NULL
-   )`,
+  // Recipe board (src/board.js): recipes posted (filed under their labels' keys), who
+  // follows which key, when each person last read their feed, and who saved what.
   `CREATE TABLE IF NOT EXISTS board_posts (
      id       TEXT PRIMARY KEY,                    -- "b_" + random hex
      author   TEXT NOT NULL,
-     category TEXT NOT NULL,
+     category TEXT NOT NULL,                       -- unused now ('': the recipe's labels file it)
      data     TEXT NOT NULL,                       -- JSON {title, note, recipe}
      created  TEXT NOT NULL,
      updated  TEXT NOT NULL
    )`,
-  `CREATE INDEX IF NOT EXISTS board_posts_category ON board_posts (category, created)`,
   `CREATE INDEX IF NOT EXISTS board_posts_created ON board_posts (created)`,
   `CREATE TABLE IF NOT EXISTS board_follows (
      user_id  TEXT NOT NULL,
-     category TEXT NOT NULL,
+     category TEXT NOT NULL,                       -- a label key, as Recipe labels spells it
      added    TEXT NOT NULL,
      PRIMARY KEY (user_id, category)
    )`,

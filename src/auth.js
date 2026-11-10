@@ -39,7 +39,8 @@ export const APPS = [
   { id: "meals", area: "meals", name: "Meal plan", href: "/meals/", icon: "meals", key: "m", blurb: "Plans the week's dinners from your recipes around your Drift calendar." },
   { id: "sweep", area: "sweep", name: "Sweep", href: "/sweep/", icon: "sweep", key: "w", blurb: "Suggests Drift events, tasks and list items from your chat rooms." },
   { id: "trips", area: "trips", name: "Trip planner", href: "/trips/", icon: "trips", key: "t", blurb: "Plan a trip together: the days, the places, and a packing list for Drift." },
-  { id: "board", area: "board", name: "Recipe board", href: "/board/", icon: "board", key: "b", blurb: "Share recipes under categories, follow the ones you like, and save what turns up in your feed." },
+  { id: "board", area: "board", name: "Recipe board", href: "/board/", icon: "board", key: "b", blurb: "Share recipes, follow the label categories you like, and save what turns up in your feed." },
+  { id: "labels", area: "labels", name: "Recipe labels", href: "/labels/", icon: "labels", key: "l", blurb: "Keep the one list of labels, like Season: Fall, that recipes and the Recipe board's categories use." },
   { id: "food", area: "food", name: "Food club", href: "/food/", icon: "food", key: "f", blurb: "A food a month, picked by one of us and made by everyone: recipes, favorites and photos." },
   { id: "notifications", area: "notifications", name: "Notifications", href: "/notifications/", icon: "bell", key: "n", blurb: "Alerts on your phone or computer for Chat and Drift.", group: "account" },
 ];
