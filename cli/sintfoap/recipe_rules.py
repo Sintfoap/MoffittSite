@@ -115,3 +115,24 @@ def skipped_summary(skipped: list[dict]) -> str:
     for s in skipped:
         why[s["why"]] = why.get(s["why"], 0) + 1
     return ", ".join(f"{n} {w}" for w, n in why.items())
+
+
+_PHOTO_IMG = re.compile(r"""<img\b[^>]*class\s*=\s*["']?recipe-photo\b[^>]*>""", re.I)
+_PHOTO0 = re.compile(r"""<img\b[^>]*itemprop\s*=\s*["']?photo0\b[^>]*>""", re.I)
+_SRC = re.compile(r"""src\s*=\s*["']([^"']+)["']""", re.I)
+_URLISH = re.compile(r"^[a-z][a-z0-9+.-]*:|^//", re.I)
+IMAGE_EXT = (".jpg", ".jpeg", ".png", ".webp", ".gif")
+
+
+def photo_of(page: str) -> str:
+    """The picture an export piece points at ("images/<id>_0.jpg"), or "" when none or a web link."""
+    m = _PHOTO_IMG.search(page) or _PHOTO0.search(page)
+    src = (_SRC.search(m[0]) if m else None)
+    s = src[1] if src else ""
+    return "" if not s or _URLISH.search(s) else s
+
+
+def file_key(path: str) -> str:
+    """Matching a picture to a file by its name alone, whatever folder it's in (as file_key in split.js)."""
+    from urllib.parse import unquote
+    return unquote(re.split(r"[\\/]", path)[-1]).lower()

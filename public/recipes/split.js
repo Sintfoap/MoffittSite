@@ -23,3 +23,18 @@ export function batches(pages, count = 10, bytes = 1024 * 1024) {
   if (cur.length) out.push(cur);
   return out;
 }
+
+// The picture a Recipe Keeper export piece points at ("images/<id>_0.jpg"),
+// a file beside the export, or "" when it has none or links to the web.
+export function photoOf(page) {
+  const img = page.match(/<img\b[^>]*class\s*=\s*["']?recipe-photo\b[^>]*>/i)?.[0]
+    || page.match(/<img\b[^>]*itemprop\s*=\s*["']?photo0\b[^>]*>/i)?.[0] || "";
+  const src = img.match(/src\s*=\s*["']([^"']+)["']/i)?.[1] || "";
+  return src && !/^[a-z][a-z0-9+.-]*:|^\/\//i.test(src) ? src : "";
+}
+
+// Matching a picture to a file: by its name alone, whatever folder it came in.
+export function fileKey(path) {
+  const name = String(path).split(/[\\/]/).pop() || "";
+  try { return decodeURIComponent(name).toLowerCase(); } catch { return name.toLowerCase(); }
+}

@@ -5,6 +5,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -427,7 +428,7 @@ def test_recipe_box_saves_from_a_link_scales_and_sends_to_drift(real_site):
 
 
 KEEPER_EXPORT = """<!DOCTYPE html><html><body>
-<div class="recipe-details"><meta content="a1" itemprop="recipeId"><h2 itemprop="name">Alfredo Sauce</h2>
+<div class="recipe-details"><meta content="a1" itemprop="recipeId"><img src="images/a1_0.jpg" class="recipe-photo"/><h2 itemprop="name">Alfredo Sauce</h2>
   <span itemprop="recipeSource"><a href="https://food.test/alfredo">https://food.test/alfredo</a></span>
   <div class="recipe-ingredients" itemprop="recipeIngredients"><p>&#189; cup butter</p><p>1 cup cream</p></div>
   <div itemprop="recipeDirections"><p>Melt it.</p></div><hr /></div>
@@ -439,6 +440,7 @@ KEEPER_EXPORT = """<!DOCTYPE html><html><body>
 def test_recipe_box_imports_a_recipe_keeper_export(real_site, tmp_path):
     export = tmp_path / "recipes.html"
     export.write_text(KEEPER_EXPORT)
+    jpeg = bytes([0xFF, 0xD8, 0xFF, 0xE0, 0, 16, 0x4A, 0x46, 0x49, 0x46, 0, 1, 0xFF, 0xD9])
 
     async def recipes(app, pilot):
         page = app.screen
@@ -452,10 +454,24 @@ def test_recipe_box_imports_a_recipe_keeper_export(real_site, tmp_path):
         assert page.current()["title"] == "Alfredo Sauce"
         assert page.current()["source"] == "https://food.test/alfredo"
         assert site.recipes()["recipes"][1]["notes"] == "Courses: Main Dish"
-        # The same file again adds nothing.
+        # Its picture wasn't beside it, so it has none yet.
+        assert page.current()["image"] == ""
+        # The same file again, now with its images folder: nothing new, but the picture is filled in.
+        (tmp_path / "images").mkdir()
+        (tmp_path / "images" / "a1_0.jpg").write_bytes(jpeg)
         await page.import_file(str(export))
         await settle(pilot, 0.6)
-        assert len(site.recipes()["recipes"]) == 2
+        mine = site.recipes()["recipes"]
+        assert len(mine) == 2
+        assert mine[0]["image"].startswith("/recipes/api/photos/p_")
+        assert page.current()["image"] == mine[0]["image"]
+        # A zip of the export works too (and changes nothing more).
+        with zipfile.ZipFile(tmp_path / "export.zip", "w") as z:
+            z.write(export, "export/recipes.html")
+            z.write(tmp_path / "images" / "a1_0.jpg", "export/images/a1_0.jpg")
+        await page.import_file(str(tmp_path / "export.zip"))
+        await settle(pilot, 0.6)
+        assert site.recipes()["recipes"][0]["image"] == mine[0]["image"]
     run_app("recipes", recipes)
 
 

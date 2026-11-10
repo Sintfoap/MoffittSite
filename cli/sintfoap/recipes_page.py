@@ -4,13 +4,15 @@ Your recipes down the left, the open one on the right, scaled to the servings
 you pick (+ and -). Space ticks which ingredients to send, and s sends them to
 a Drift list. A link pasted in the box at the top is read by the site, as on
 the website; n types one in by hand, i imports a file of them (Recipe
-Keeper's HTML export, or a saved recipe page), and p reads one from a photo
-(a recipe card, a cookbook page, a screenshot) for you to check before it's
-saved."""
+Keeper's export, with its pictures, or a saved recipe page), and p reads one
+from a photo (a recipe card, a cookbook page, a screenshot) for you to check
+before it's saved."""
 from __future__ import annotations
 
 import asyncio
+import zipfile
 from pathlib import Path
+from typing import Callable
 from urllib.parse import urlparse
 
 from rich.text import Text
@@ -38,6 +40,33 @@ def host(url: str) -> str:
 
 def by_title(recipes: list[dict]) -> list[dict]:
     return sorted(recipes, key=lambda r: r["title"].casefold())
+
+
+def gather(where: Path) -> tuple[list[str], dict[str, Callable[[], bytes]]]:
+    """The recipe HTML at `where` (a file, the export's folder, or its .zip) and its pictures,
+    by name, each read only when it's sent. Beside a lone .html, its images/ folder is looked in."""
+    html: list[str] = []
+    images: dict[str, Callable[[], bytes]] = {}
+    if where.suffix.lower() == ".zip":
+        z = zipfile.ZipFile(where)
+        for name in z.namelist():
+            if name.endswith("/") or "__MACOSX/" in name:
+                continue
+            if name.lower().endswith((".html", ".htm")):
+                html.append(z.read(name).decode("utf-8", "replace"))
+            elif name.lower().endswith(R.IMAGE_EXT):
+                images[R.file_key(name)] = lambda n=name: z.read(n)
+        return html, images
+    if where.is_dir():
+        files = sorted(p for p in where.rglob("*") if p.is_file())
+        html = [p.read_text(encoding="utf-8", errors="replace") for p in files if p.suffix.lower() in (".html", ".htm")]
+    else:
+        html = [where.read_text(encoding="utf-8", errors="replace")]
+        files = sorted(p for p in (where.parent / "images").glob("*") if p.is_file()) if (where.parent / "images").is_dir() else []
+    for p in files:
+        if p.suffix.lower() in R.IMAGE_EXT:
+            images[R.file_key(p.name)] = p.read_bytes
+    return html, images
 
 
 class RecipeDialog(ModalScreen[dict | None]):
@@ -228,6 +257,8 @@ class RecipesPage(Page):
             return
         self.query_one("#title", Static).update(r["title"])
         bits = [b for b in (r.get("time"), r.get("yield") if r.get("yield") and not r["yield"].replace(".", "").isdigit() else "", host(r.get("source", ""))) if b]
+        if r.get("image"):
+            bits.append("has a picture (w shows it)")
         self.query_one("#facts", Static).update(" · ".join(bits))
         f, servings = self.amounts(r)
         line = Text("−  ", style=GOLD)
@@ -406,45 +437,78 @@ class RecipesPage(Page):
             if path and path.strip():
                 await self.import_file(path.strip())
         self.app.push_screen(Ask("Import recipes from a file",
-                                 "An HTML file: Recipe Keeper's export (its recipes.html), or a recipe page you saved. "
-                                 "Recipes already in your box are skipped.",
+                                 "Recipe Keeper's export (its recipes.html, its folder, or its .zip), or a recipe page you saved. "
+                                 "The export's pictures come too. Recipes already in your box are skipped, "
+                                 "but get their picture if they have none.",
                                  placeholder="~/Downloads/recipes.html", ok="Import"), answer)
 
     @attempt
     async def import_file(self, path: str) -> None:
-        file = Path(path.strip("'\"")).expanduser()
+        where = Path(path.strip("'\"")).expanduser()
         try:
-            html = await asyncio.to_thread(file.read_text, encoding="utf-8", errors="replace")
-        except OSError as e:
-            self.app.notify(f"Couldn't read {file}: {e.strerror or e}.", severity="error", timeout=5)
+            html, images = await asyncio.to_thread(gather, where)
+        except (OSError, zipfile.BadZipFile) as e:
+            self.app.notify(f"Couldn't read {where}: {getattr(e, 'strerror', None) or e}.", severity="error", timeout=5)
             return
-        pages = R.split_pages(html)
-        if not pages:
-            self.app.notify("That file is empty.", severity="error", timeout=3)
+        if not html:
+            self.app.notify("There's no recipe file (.html) there.", severity="error", timeout=4)
             return
         added: list[dict] = []
         skipped: list[dict] = []
-        done = 0
-        for group in R.batches(pages):
-            self.app.notify(f"Importing {file.name}: {done} of {len(pages)}…", timeout=2)
-            out = await self.fetch(site.import_recipes, group)
-            added += out["added"]
-            skipped += out["skipped"]
-            done += len(group)
-            if out["added"]:
-                # Shown as they come, so a failure part way keeps what got in.
-                self.data["recipes"] = by_title(self.data["recipes"] + out["added"])
-                self.open = self.open or out["added"][0]["id"]
-                self.show_shelf()
-        if not added and len(pages) == 1 and skipped and skipped[0]["why"] == "had no recipe":
+        wants: list[tuple[str, str]] = []      # (recipe id, picture) for recipes without one yet
+        pointed = done = total = 0
+        for text in html:
+            pages = R.split_pages(text)
+            total += len(pages)
+            for group in R.batches(pages):
+                self.app.notify(f"Importing {where.name}: {done} of {total}…", timeout=2)
+                out = await self.fetch(site.import_recipes, group)
+                added += out["added"]
+                skipped += out["skipped"]
+                for page, r in zip(group, out.get("pages") or [None] * len(group)):
+                    photo = R.photo_of(page)
+                    pointed += bool(photo)
+                    if photo and r and not r["image"] and R.file_key(photo) in images:
+                        wants.append((r["id"], photo))
+                done += len(group)
+                if out["added"]:
+                    # Shown as they come, so a failure part way keeps what got in.
+                    self.data["recipes"] = by_title(self.data["recipes"] + out["added"])
+                    self.open = self.open or out["added"][0]["id"]
+                    self.show_shelf()
+        if not added and not wants and total == 1 and skipped and skipped[0]["why"] == "had no recipe":
             self.app.notify("Couldn't find a recipe in that file.", severity="error", timeout=4)
             return
-        if added:
-            self.open = added[0]["id"]
+        pictures = too_big = 0
+        for n, (rid, photo) in enumerate(wants):
+            if n % 10 == 0:
+                self.app.notify(f"Adding pictures: {n} of {len(wants)}…", timeout=2)
+            raw = await asyncio.to_thread(images[R.file_key(photo)])
+            if len(raw) > site.RECIPE_PHOTO_BYTES:
+                too_big += 1
+                continue
+            r = await self.fetch(site.set_recipe_photo, rid, raw)
+            self.data["recipes"] = by_title([x for x in self.data["recipes"] if x["id"] != r["id"]] + [r])
+            pictures += 1
+        if added or wants:
+            self.open = (added[0]["id"] if added else wants[0][0])
             self.show_shelf()
             self.show_recipe()
-        extra = f" Skipped {len(skipped)}: {R.skipped_summary(skipped)}." if skipped else ""
-        self.app.notify(f"Imported {plural(len(added), 'recipe')} from {file.name}.{extra}", timeout=8)
+        # Only filling in pictures: say that, not that every recipe was skipped.
+        fill_only = not added and pictures
+        if fill_only:
+            text = f"Added {plural(pictures, 'picture')} from {where.name} to recipes already in your box."
+            skipped = [x for x in skipped if x["why"] != "already in your box"]
+        else:
+            text = f"Imported {plural(len(added), 'recipe')} from {where.name}"
+            text += f" and added {plural(pictures, 'picture')}." if pictures else "."
+        if skipped:
+            text += f" Skipped {len(skipped)}: {R.skipped_summary(skipped)}."
+        if too_big:
+            text += f" {plural(too_big, 'picture')} over {site.RECIPE_PHOTO_BYTES // 1024} KB stayed behind; the website shrinks them."
+        if pointed and not images:
+            text += " Their pictures weren't beside the file; give the export's folder or .zip to bring them."
+        self.app.notify(text, timeout=10)
 
     # ── reading one from a photo ──────────────────────────────────────────
 

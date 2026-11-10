@@ -133,7 +133,7 @@ dialog .two { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
 <main>
   <div class="kicker">Recipe box</div>
   <h1>Recipes</h1>
-  <p class="lede">Paste a link to a recipe (any recipe site, or one shared from Recipe Keeper) to keep it here, snap a photo of a recipe card or cookbook page, or import a whole file of them, like Recipe Keeper's HTML export. Scale it to the servings you need and send what to buy to a Drift list.</p>
+  <p class="lede">Paste a link to a recipe (any recipe site, or one shared from Recipe Keeper) to keep it here, snap a photo of a recipe card or cookbook page, or import a whole file of them, like Recipe Keeper's export (its folder or .zip brings the pictures too, and importing it again fills in any that are missing). Scale it to the servings you need and send what to buy to a Drift list.</p>
   <div id="error" class="msg bad" role="alert" hidden></div>
   <div id="done" class="msg good" role="status" hidden></div>
 
@@ -142,8 +142,10 @@ dialog .two { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
     <button class="btn" id="save">Save</button>
     <button class="btn quiet" type="button" id="by-hand">Add by hand</button>
     <button class="btn quiet" type="button" id="import" title="Import (i)">Import file</button>
+    <button class="btn quiet" type="button" id="import-dir">Import folder</button>
     <button class="btn quiet" type="button" id="photo" title="From a photo (p)">From a photo</button>
-    <input type="file" id="import-file" accept=".html,.htm,text/html" hidden>
+    <input type="file" id="import-file" accept=".html,.htm,text/html,.zip,application/zip,image/*" multiple hidden>
+    <input type="file" id="import-folder" webkitdirectory hidden>
     <input type="file" id="photo-file" accept="image/*" multiple hidden>
   </form>
 
