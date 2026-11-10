@@ -640,6 +640,20 @@ def set_recipe_photo(recipe_id: str, raw: bytes) -> dict:
     return api("POST", f"/recipes/api/recipes/{_q(recipe_id)}/photo", {"data": base64.b64encode(raw).decode()})
 
 
+def suggest_recipe_labels() -> dict:
+    """{suggestions: [{id, title, labels: [{id, key, value, word, where}]}], checked, labels}: labels from the
+    Recipe labels list that each recipe's words point to (its name, or keywords set on it), that it hasn't got yet."""
+    return _get("/recipes/api/recipes/suggest-labels")
+
+
+ADD_LABELS_BATCH = 200     # recipes per add-labels request (ADD_BATCH in src/recipes.js)
+
+
+def add_labels_to_recipes(add: list[dict]) -> dict:
+    """[{id, labels: [label ids]}] (at most 200) added to what each recipe has: {recipes, labels, full}."""
+    return api("POST", "/recipes/api/recipes/add-labels", {"add": add})
+
+
 def update_recipe(recipe_id: str, changes: dict) -> dict:
     return api("PATCH", f"/recipes/api/recipes/{_q(recipe_id)}", changes)
 
@@ -1051,7 +1065,7 @@ def save_board_post(post_id: str) -> dict:
 # /labels/api/ (src/labels.js): the one list of labels recipes pick from, kept by whoever has Recipe labels.
 
 def recipe_labels() -> dict:
-    """{labels: [{id, key, value, recipes, posts}], keys: [{key, values, recipes, posts}]}, by key then value."""
+    """{labels: [{id, key, value, keywords, recipes, posts}], keys: [{key, values, recipes, posts}]}, by key then value."""
     return _get("/labels/api/labels")
 
 
@@ -1063,6 +1077,11 @@ def add_recipe_labels(key: str, values: str | list[str] = "") -> dict:
 def rename_recipe_label(label_id: str, value: str) -> dict:
     """A new value for it, on every recipe that has it."""
     return api("PATCH", f"/labels/api/labels/{_q(label_id)}", {"value": value})
+
+
+def set_label_keywords(label_id: str, keywords: str) -> dict:
+    """"pumpkin, squash": the words that make Recipe box's Suggest labels offer this label ("-fall apart" ignores a phrase)."""
+    return api("PATCH", f"/labels/api/labels/{_q(label_id)}", {"keywords": keywords})
 
 
 def delete_recipe_label(label_id: str) -> dict:

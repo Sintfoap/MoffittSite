@@ -419,6 +419,7 @@ const SCHEMA = [
      key     TEXT NOT NULL COLLATE NOCASE,         -- Season
      value   TEXT NOT NULL DEFAULT '' COLLATE NOCASE,  -- Fall
      created TEXT NOT NULL,
+     keywords TEXT NOT NULL DEFAULT '',            -- "pumpkin, squash": what Suggest labels looks for (src/autolabel.js)
      UNIQUE (key, value)
    )`,
   // Recipe board (src/board.js): recipes posted (filed under their labels' keys), who
@@ -504,6 +505,7 @@ const ADDED_COLUMNS = {
     "crypto_vault TEXT", "crypto_saved_at INTEGER NOT NULL DEFAULT 0", "crypto_seen_at INTEGER NOT NULL DEFAULT 0"],
   chat_crypto_inbox: ["taken INTEGER NOT NULL DEFAULT 0"],
   push_prefs: ["chat_bridges INTEGER NOT NULL DEFAULT 1"],
+  recipe_labels: ["keywords TEXT NOT NULL DEFAULT ''"],
   chat_rooms: ["kind TEXT NOT NULL DEFAULT 'open'", "connection TEXT", "ext_id TEXT", "encrypted INTEGER NOT NULL DEFAULT 0", "ext_typing TEXT", "ext_typing_at INTEGER", "ext_read TEXT", "ext_back TEXT", "ext_invite TEXT"],
 };
 

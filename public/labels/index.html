@@ -92,6 +92,7 @@ label.field input, label.field textarea, label.field select { width: 100%; font-
 .values button { background: none; border: 0; border-left: 1px dashed var(--line); color: var(--faint); cursor: pointer; padding: 0 8px; }
 .values button:hover { color: var(--gold); background: var(--gold-soft); }
 .values button.x:hover { color: var(--bad); }
+.values button.kw { max-width: 28ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
 .more-values { display: flex; gap: 6px; }
 .more-values input { flex: 1; }
 .more-values .btn { margin: 0; padding: 6px 12px; }
@@ -122,7 +123,7 @@ label.field input, label.field textarea, label.field select { width: 100%; font-
     <button class="btn" id="add-btn">Add</button>
     <datalist id="key-list"></datalist>
   </form>
-  <p class="hint">Typing a key that's already on the list adds the values under it. You can also type it all in the key box, like <b>Season: Fall, Winter</b>.</p>
+  <p class="hint">Typing a key that's already on the list adds the values under it. You can also type it all in the key box, like <b>Season: Fall, Winter</b>. Give a value keywords (<b>+ keywords</b>, like pumpkin, squash for Fall) and Recipe box's Suggest labels offers it for recipes that mention them.</p>
 
   <div class="keys" id="keys"><p class="empty">Loading…</p></div>
 </main>

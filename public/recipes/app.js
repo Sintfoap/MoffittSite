@@ -8,6 +8,7 @@ import { unzip } from "./unzip.js";
 import { readRecipe } from "./read.js";
 import { arrange } from "./columns.js";
 import { findPicture } from "./picture.js";
+import { openSuggestions } from "./suggest.js";
 
 const $ = s => document.querySelector(s);
 const el = (tag, props = {}, ...kids) => {
@@ -767,12 +768,23 @@ $("#paster").addEventListener("close", () => {
   openEditor(null, recipe, [], "text");
 });
 $("#photo").addEventListener("click", pickPhoto);
+
+// Suggest labels: any button marked data-suggest-labels, wherever it sits.
+async function reload() {
+  const fresh = await api("GET", "recipes");
+  data = { ...data, ...fresh };
+  renderFilters();
+  renderList();
+  renderDetail();
+}
+const suggest = () => run(() => openSuggestions({ api, say, done: reload }));
+document.addEventListener("click", e => { if (e.target.closest("[data-suggest-labels]")) suggest(); });
 $("#photo-file").addEventListener("change", e => e.target.files.length && fromPhotos([...e.target.files]));
 $("#find").addEventListener("input", () => { page = 0; follow = false; renderList(); });
 
 document.addEventListener("keydown", e => {
   const t = e.target;
-  if (e.metaKey || e.ctrlKey || e.altKey || t.isContentEditable || t.matches?.("input, textarea, select") || $("#editor").open || $("#keyer").open || $("#paster").open) {
+  if (e.metaKey || e.ctrlKey || e.altKey || t.isContentEditable || t.matches?.("input, textarea, select") || $("#editor").open || $("#keyer").open || $("#paster").open || $("#suggester")?.open) {
     if (e.key === "Escape" && t === $("#find")) { t.value = ""; renderList(); t.blur(); }
     return;
   }
@@ -792,6 +804,7 @@ document.addEventListener("keydown", e => {
     i: () => $("#import-file").click(),
     p: () => pickPhoto(),
     t: () => $("#paste").click(),
+    L: () => suggest(),
     s: () => r && $("#send") && !$("#send").disabled && $("#send").click(),
   };
   if (keys[e.key]) { e.preventDefault(); keys[e.key](); }

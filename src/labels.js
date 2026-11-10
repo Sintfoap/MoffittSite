@@ -8,10 +8,13 @@
 // ids (src/recipes.js), so renaming one renames it everywhere and removing one
 // takes it off every recipe and board post.
 //
-// /labels/api/labels         GET → {labels: [{id, key, value, recipes, posts}], keys: [{key, values, recipes, posts}]}
+// A label can also have keywords ("pumpkin, squash"): words in a recipe that
+// mean it should have that label, for Recipe box's Suggest labels (src/autolabel.js).
+//
+// /labels/api/labels         GET → {labels: [{id, key, value, keywords, recipes, posts}], keys: [{key, values, recipes, posts}]}
 //                            POST {key, values: ["Fall", "Winter"] or "Fall, Winter"} (or {key, value}) →
 //                            {added: [{id, key, value}], skipped: [{key, value, why}]}: many at once, under a new key or one already there
-// /labels/api/labels/<id>    PATCH {key?, value?} → renamed; DELETE → gone
+// /labels/api/labels/<id>    PATCH {key?, value?, keywords?: "pumpkin, squash" or [...]} → renamed, or its keywords set; DELETE → gone
 // /labels/api/keys/<key>     PATCH {key} → every label under it renamed to the new key; DELETE → the key and all its values gone
 
 import { db } from "./db.js";
@@ -19,9 +22,10 @@ import { sameOrigin } from "./account.js";
 import { withRail } from "./pages.js";
 import { readJson, BadRequest } from "./drift.js";
 import { labelList } from "./recipes.js";
+import { splitKeywords, KEYWORD_LIMITS } from "./autolabel.js";
 
 const fail = msg => { throw new BadRequest(msg); };
-export const LIMITS = { list: 300, key: 30, value: 60, batch: 50 };
+export const LIMITS = { list: 300, key: 30, value: 60, batch: 50, ...KEYWORD_LIMITS };
 const isObj = v => v && typeof v === "object" && !Array.isArray(v);
 const text = (f, v) => String(v ?? "").replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim();
 const named = l => l.value ? `${l.key}: ${l.value}` : l.key;
@@ -37,6 +41,13 @@ function cleanKey(v) {
   if (key.length > LIMITS.key) fail(`a label's name can be at most ${LIMITS.key} characters`);
   if (key.includes(":")) fail("a label's name can't have a colon in it (that's what splits the name from the value)");
   return key;
+}
+function cleanKeywords(v) {
+  if (v !== null && typeof v !== "string" && !Array.isArray(v)) fail("keywords must be text, separated by commas, or a list");
+  const kws = splitKeywords(v ?? "");
+  if (kws.length > LIMITS.keywords) fail(`a label can have at most ${LIMITS.keywords} keywords`);
+  if (kws.some(k => k.length > LIMITS.keyword)) fail(`a keyword can be at most ${LIMITS.keyword} characters`);
+  return kws.join(", ");
 }
 function cleanValue(v) {
   const value = text("value", v);
@@ -66,10 +77,16 @@ export async function labelUse(d) {
   return use;
 }
 
+// Each label's keywords: id → "pumpkin, squash".
+export async function keywordsOf(d) {
+  const { results } = await d.prepare("SELECT id, keywords FROM recipe_labels WHERE keywords != ''").all();
+  return new Map(results.map(r => [r.id, r.keywords]));
+}
+
 export async function listLabels(env) {
   const d = await db(env);
-  const use = await labelUse(d);
-  const labels = (await labelList(d)).map(l => ({ ...l, recipes: use[l.id]?.recipes || 0, posts: use[l.id]?.posts || 0 }));
+  const use = await labelUse(d), kw = await keywordsOf(d);
+  const labels = (await labelList(d)).map(l => ({ ...l, keywords: kw.get(l.id) || "", recipes: use[l.id]?.recipes || 0, posts: use[l.id]?.posts || 0 }));
   const keys = [];
   for (const l of labels) {
     let k = keys.at(-1);
@@ -113,12 +130,13 @@ async function clash(d, key, value, except) {
 export async function renameLabel(env, id, body) {
   if (!isObj(body)) fail("body must be a JSON object");
   const d = await db(env);
-  const l = await d.prepare("SELECT id, key, value FROM recipe_labels WHERE id = ?").bind(id).first();
+  const l = await d.prepare("SELECT id, key, value, keywords FROM recipe_labels WHERE id = ?").bind(id).first();
   if (!l) return null;
   const key = "key" in body ? cleanKey(body.key) : l.key, value = "value" in body ? cleanValue(body.value) : l.value;
+  const keywords = "keywords" in body ? cleanKeywords(body.keywords) : l.keywords;
   await clash(d, key, value, id);
-  await d.prepare("UPDATE recipe_labels SET key = ?, value = ? WHERE id = ?").bind(key, value, id).run();
-  return { id, key, value };
+  await d.prepare("UPDATE recipe_labels SET key = ?, value = ?, keywords = ? WHERE id = ?").bind(key, value, keywords, id).run();
+  return { id, key, value, keywords };
 }
 
 export async function deleteLabel(env, id) {

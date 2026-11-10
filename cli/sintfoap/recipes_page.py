@@ -7,7 +7,9 @@ the website; n types one in by hand, i imports a file of them (Recipe
 Keeper's export, with its pictures, or a saved recipe page), p reads one from
 a photo (a cookbook page, a screenshot: by tesseract on this computer, or by
 Claude with your key, k) and t from pasted text, for you to check before
-it's saved."""
+it's saved. L suggests labels for the whole box from each recipe's words
+(a label's name, or the keywords set on it in Recipe labels), to untick any
+that don't fit before they're added."""
 from __future__ import annotations
 
 import asyncio
@@ -263,6 +265,86 @@ class PasteDialog(ModalScreen[str | None]):
         self.action_read() if e.button.id == "read" else self.dismiss(None)
 
 
+def by_label(suggestions: list[dict]) -> list[tuple[dict, list[dict]]]:
+    """Per recipe [{id, title, labels}] → per label [(label, [{id, title, word, where}])], by the label's name."""
+    groups: dict[str, tuple[dict, list[dict]]] = {}
+    for s in suggestions:
+        for lb in s["labels"]:
+            groups.setdefault(lb["id"], ({"id": lb["id"], "key": lb["key"], "value": lb["value"]}, []))[1].append(
+                {"id": s["id"], "title": s["title"], "word": lb["word"], "where": lb["where"]})
+    return sorted(groups.values(), key=lambda g: label_text(g[0]).casefold())
+
+
+class SuggestLabels(ModalScreen[list | None]):
+    """Suggested labels, grouped by label, all ticked: untick any that don't fit. Dismisses with
+    [{id, labels}] per recipe to add, or None."""
+    BINDINGS = [Binding("escape", "cancel", "Cancel"), Binding("enter", "done", "Add", priority=True),
+                Binding("a", "all(True)", "Tick all"), Binding("u", "all(False)", "Untick all"),
+                Binding("g", "group", "Tick or untick this label")]
+    DEFAULT_CSS = """
+    SuggestLabels .dialog { width: 96; max-height: 90%; }
+    SuggestLabels SelectionList { height: auto; max-height: 30; background: transparent; border: none; padding: 0; margin: 1 0; }
+    """
+
+    def __init__(self, out: dict):
+        super().__init__()
+        self.out = out
+        self.groups = by_label(out["suggestions"])
+        self.rows: list[tuple[str, str] | None] = []   # (recipe id, label id), or None for a label's heading
+        self.items: list[Selection] = []
+        for lb, recipes in self.groups:
+            self.rows.append(None)
+            self.items.append(Selection(Text.assemble((lb["key"], f"bold {GOLD}"), (f"  {lb['value']}" if lb["value"] else "", INK),
+                                                      (f"   {plural(len(recipes), 'recipe')}", FAINT)), len(self.items), False, disabled=True))
+            for r in recipes:
+                self.rows.append((r["id"], lb["id"]))
+                self.items.append(Selection(Text.assemble(("  " + r["title"], INK), (f"   {r['word']} in {r['where']}", FAINT)),
+                                            len(self.items), True))
+
+    def compose(self) -> ComposeResult:
+        total = len(self.rows) - len(self.groups)
+        with VerticalScroll(classes="dialog"):
+            yield Label(Text("Suggested labels", style=f"bold {INK}"))
+            yield Static(Text(f"Checked {plural(self.out['checked'], 'recipe')} against {plural(self.out['labels'], 'label')}: "
+                              f"{plural(total, 'suggestion')} for {plural(len(self.out['suggestions']), 'recipe')}, from each label's "
+                              "name and the keywords set on it in Recipe labels. Untick any that don't fit.", style=MUTED))
+            yield Static(Text("space ticks one · g the whole label · a all · u none · enter adds · esc cancels", style=FAINT))
+            yield SelectionList(*self.items, id="suggestions")
+
+    def on_mount(self) -> None:
+        box = self.query_one(SelectionList)
+        box.focus()
+        box.highlighted = 1 if len(self.rows) > 1 else 0
+
+    def action_all(self, on: bool) -> None:
+        box = self.query_one(SelectionList)
+        (box.select_all if on else box.deselect_all)()
+
+    def action_group(self) -> None:
+        """Ticks every recipe under the highlighted one's label, or unticks them if they all are."""
+        box = self.query_one(SelectionList)
+        at = box.highlighted
+        if at is None:
+            return
+        start = next(i for i in range(at, -1, -1) if self.rows[i] is None)
+        end = next((i for i in range(start + 1, len(self.rows)) if self.rows[i] is None), len(self.rows))
+        mine = list(range(start + 1, end))
+        on = set(box.selected)
+        for i in mine:
+            (box.deselect if all(j in on for j in mine) else box.select)(i)
+
+    def action_done(self) -> None:
+        per: dict[str, list[str]] = {}
+        for i in sorted(self.query_one(SelectionList).selected):
+            if self.rows[i]:
+                rid, lid = self.rows[i]
+                per.setdefault(rid, []).append(lid)
+        self.dismiss([{"id": rid, "labels": ids} for rid, ids in per.items()])
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
 class RecipesPage(Page):
     WEB_PATH = "/recipes/"
     SIDE = "#shelf"
@@ -298,6 +380,7 @@ class RecipesPage(Page):
         Binding("minus", "servings(-1)", "Fewer"),
         Binding("s", "send", "Send to list"),
         Binding("l", "labels", "Filter"),
+        Binding("L", "suggest", "Suggest labels"),
         Binding("o", "sort", "Sort"),
         Binding("b", "board", "Share on board"),
         Binding("d", "delete", "Delete"),
@@ -512,7 +595,7 @@ class RecipesPage(Page):
         # Typing in the link box or the editor shouldn't scale or delete anything.
         if action == "board" and not (self.data or {}).get("board"):
             return None
-        if action in ("servings", "add", "new", "import_file", "photo", "paste", "key", "edit", "picture", "send", "delete", "refresh", "board", "labels", "sort") and isinstance(self.focused, (Input, TextArea)):
+        if action in ("servings", "add", "new", "import_file", "photo", "paste", "key", "edit", "picture", "send", "delete", "refresh", "board", "labels", "suggest", "sort") and isinstance(self.focused, (Input, TextArea)):
             return False
         return True
 
@@ -647,6 +730,38 @@ class RecipesPage(Page):
                 self.filters = picked
                 self.reshelve()
         self.app.push_screen(LabelFilter(labels, self.filters), chosen)
+
+    @attempt
+    async def action_suggest(self) -> None:
+        """L: labels for the whole box, from each recipe's words, to check before they're added."""
+        self.app.notify("Looking through your recipes…", timeout=2)
+        out = await self.fetch(site.suggest_recipe_labels)
+        if not out["labels"]:
+            self.app.notify("There are no labels to suggest yet. Whoever keeps Recipe labels adds them there, like Season: Fall.", timeout=5)
+            return
+        if not out["suggestions"]:
+            self.app.notify(f"Checked {plural(out['checked'], 'recipe')} against {plural(out['labels'], 'label')}: nothing new to suggest. "
+                            "A label is matched by its name, and by keywords set on it in Recipe labels.", timeout=6)
+            return
+
+        async def chosen(add: list | None) -> None:
+            if add:
+                await self.add_labels(add)
+        self.app.push_screen(SuggestLabels(out), chosen)
+
+    @attempt
+    async def add_labels(self, add: list[dict]) -> None:
+        recipes = labels = full = 0
+        for i in range(0, len(add), site.ADD_LABELS_BATCH):
+            if len(add) > site.ADD_LABELS_BATCH:
+                self.app.notify(f"Adding labels: {i} of {len(add)} recipes…", timeout=2)
+            out = await self.fetch(site.add_labels_to_recipes, add[i:i + site.ADD_LABELS_BATCH])
+            recipes += out["recipes"]
+            labels += out["labels"]
+            full += out["full"]
+        await self.action_refresh()
+        extra = f" {plural(full, 'recipe')} already had 20 labels, the most one can have, so got only some." if full else ""
+        self.app.notify(f"Added {plural(labels, 'label')} to {plural(recipes, 'recipe')}.{extra}", timeout=6)
 
     def action_sort(self) -> None:
         """o: sort by title, then by each label's key in turn."""
