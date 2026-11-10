@@ -248,8 +248,8 @@ class BoardPage(Page):
         self.more = out["more"]
         if not self.at["category"] and self.at["view"] == "feed" and not older:
             self.board["unread"] = 0
-        if not older or not any(p["id"] == self.open for p in self.posts):
-            self.open = self.posts[0]["id"] if self.posts and not older else self.open
+        if not older:
+            self.open = "featured" if self.featured() else self.posts[0]["id"] if self.posts else None
         self.show_nav()
         self.show_top()
         self.show_posts()
@@ -296,10 +296,21 @@ class BoardPage(Page):
         self.query_one("#heading", Static).update(head)
         self.query_one("#sub", Static).update(sub)
 
+    def featured(self) -> dict | None:
+        """The recipe of the day, when the feed or Everything is open."""
+        f = (self.board or {}).get("featured")
+        return f if f and not self.at["category"] and self.at["view"] in ("feed", "all") else None
+
     def show_posts(self) -> None:
         box = self.query_one("#posts", OptionList)
         with self.prevent(OptionList.OptionHighlighted):
             box.clear_options()
+            f = self.featured()
+            if f:
+                t = Text.assemble(("★ RECIPE OF THE DAY  ", f"bold {GOLD}"), (f["title"], f"bold {INK}"), ("  ✓ saved" if f["saved"] else "", GOLD_DIM))
+                t.append(f"\n{f['category_name']}", style=GOLD_DIM)
+                t.append(f" · shared by {f['by']}", style=FAINT)
+                box.add_option(Option(t, id="featured"))
             if not self.posts:
                 none = "You don't follow any categories yet." if not self.at["category"] and self.at["view"] == "feed" \
                     and not any(c["following"] for c in self.board["categories"]) else "No recipes here yet. Press n to share one."
@@ -313,9 +324,12 @@ class BoardPage(Page):
                 box.add_option(Option(t, id=p["id"]))
             if self.more:
                 box.add_option(Option(Text("Older…  m", style=GOLD_DIM), id="more"))
-            box.highlighted = next((i for i, p in enumerate(self.posts) if p["id"] == self.open), 0)
+            skip = 1 if f else 0
+            box.highlighted = 0 if self.open == "featured" else next((i + skip for i, p in enumerate(self.posts) if p["id"] == self.open), 0)
 
     def current(self) -> dict | None:
+        if self.open == "featured":
+            return self.featured()
         return next((p for p in self.posts if p["id"] == self.open), None)
 
     def show_post(self) -> None:
@@ -326,7 +340,7 @@ class BoardPage(Page):
             self.query_one("#post-title", Static).update("")
             return
         r = p["recipe"]
-        self.query_one("#post-title", Static).update(p["title"])
+        self.query_one("#post-title", Static).update(("★ Recipe of the day: " if self.open == "featured" else "") + p["title"])
         bits = [b for b in (r.get("time"), f"serves {r['servings']:g}" if r.get("servings") else r.get("yield"), r.get("source")) if b]
         meta = Text(f"{p['category_name']} · shared by {p['by']}", style=GOLD_DIM)
         if bits:
@@ -418,8 +432,9 @@ class BoardPage(Page):
             self.app.notify("Ask the site's admin for Recipe box to save recipes from here.", timeout=4)
             return
         out = await self.fetch(site.save_board_post, p["id"])
-        if not p["saved"]:
-            p["saved"], p["saves"] = True, p["saves"] + 1
+        for x in [p, (self.board or {}).get("featured"), *self.posts]:
+            if x and x["id"] == p["id"] and not x["saved"]:
+                x["saved"], x["saves"] = True, x["saves"] + 1
         self.app.notify(f"{p['title']} is already in your Recipe box." if out["already"] else f"Saved {p['title']} to your Recipe box.", timeout=3)
         self.show_posts()
         self.show_post()

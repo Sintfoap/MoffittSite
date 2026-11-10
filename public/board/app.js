@@ -55,6 +55,10 @@ function ago(iso) {
   if (s < 86400 * 7) return `${Math.floor(s / 86400)} day${s < 86400 * 2 ? "" : "s"} ago`;
   return new Date(iso).toLocaleDateString(undefined, { day: "numeric", month: "short", year: new Date(iso).getFullYear() === new Date().getFullYear() ? undefined : "numeric" });
 }
+// Your local date, so the recipe of the day changes at your midnight.
+const today = () => new Date().toLocaleDateString("sv");
+const loadBoard = () => api("GET", "board?day=" + today());
+let featuredOpen = false;
 const catOf = id => board.categories.find(c => c.id === id);
 
 // ── the side ───────────────────────────────────────────────────────────────
@@ -152,9 +156,32 @@ function recipeBody(p) {
   return full;
 }
 
+// The recipe of the day, at the top of your feed and Everything.
+function renderFeatured(box) {
+  const p = board.featured;
+  if (!p || at.category || !["feed", "all"].includes(at.view)) return;
+  const card = el("article", { className: "card post featured", tabIndex: 0 });
+  card.append(el("div", {},
+    el("div", { className: "kicker", textContent: "Recipe of the day" }),
+    el("h2", { textContent: p.title }),
+    el("div", { className: "meta" }, el("span", { className: "tag", textContent: p.category_name }), ` · shared by ${p.by}`),
+    p.note ? el("p", { className: "note", textContent: p.note }) : null));
+  if (p.recipe.image) {
+    const img = el("img", { className: "thumb", src: p.recipe.image, alt: "", referrerPolicy: "no-referrer", loading: "lazy" });
+    img.addEventListener("error", () => img.remove());
+    card.append(img);
+  } else card.append(el("span"));
+  if (featuredOpen) card.append(recipeBody(p));
+  const flip = () => { featuredOpen = !featuredOpen; renderPosts(); };
+  card.addEventListener("click", flip);
+  card.addEventListener("keydown", e => { if (e.key === "Enter" && e.target === card) flip(); });
+  box.append(card);
+}
+
 function renderPosts() {
   const box = $("#posts");
   box.replaceChildren();
+  renderFeatured(box);
   if (!posts.length) {
     const followsNone = !at.category && at.view === "feed" && !board.categories.some(c => c.following);
     box.append(el("p", { className: "empty", textContent: followsNone ? "You don't follow any categories yet." :
@@ -217,7 +244,7 @@ function go(where) {
 async function saveIt(p) {
   await run(async () => {
     const out = await api("POST", `posts/${p.id}/save`);
-    if (!p.saved) { p.saved = true; p.saves++; }
+    for (const x of [p, board.featured, ...posts.filter(y => y.id === p.id)]) if (x && x.id === p.id && !x.saved) { x.saved = true; x.saves++; }
     const open = el("a", { href: `/recipes/#${out.recipe.id}`, textContent: "Open it" });
     say("done", out.already ? `${p.title} is already in your Recipe box.` : `Saved ${p.title} to your Recipe box.`, open);
     renderPosts();
@@ -280,7 +307,7 @@ $("#editor").addEventListener("close", () => {
   run(async () => {
     try {
       const saved = was.id ? await api("PATCH", "posts/" + was.id, body) : await api("POST", "posts", body);
-      board = await api("GET", "board");
+      board = await loadBoard();
       if (!was.id) say("done", `Posted ${saved.title} in ${saved.category_name}.`);
       if (was.id) {
         posts = posts.map(x => x.id === saved.id ? saved : x);
@@ -332,7 +359,7 @@ document.addEventListener("keydown", e => {
 });
 
 run(async () => {
-  board = await api("GET", "board");
+  board = await loadBoard();
   const h = location.hash.slice(1), share = new URLSearchParams(location.search).get("share");
   const where = h.startsWith("c=") && catOf(h.slice(2)) ? { category: h.slice(2) } : VIEWS.some(v => v.id === h) ? { view: h } : { view: "feed" };
   await go(where);

@@ -789,8 +789,10 @@ def drift_places() -> list:
 # /board/api/ (src/board.js)
 
 def board() -> dict:
-    """{categories, recipe_box, recipes, unread}: every category (with whether you follow it), and your Recipe box's recipes to share."""
-    return _get("/board/api/board")
+    """{categories, recipe_box, recipes, unread, featured}: every category (with whether you follow it), your Recipe box's
+    recipes to share, and today's (by this computer's date) recipe of the day: someone else's post, or None."""
+    import datetime
+    return _get("/board/api/board?day=" + datetime.date.today().isoformat())
 
 
 def board_posts(view: str = "feed", category: str = "", before: str = "") -> dict:

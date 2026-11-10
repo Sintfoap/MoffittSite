@@ -8,7 +8,8 @@
 // category; whoever started it (or an admin) can delete it while it's empty.
 // A post's author (or an admin) can change or delete it.
 //
-// /board/api/board                         GET → {categories, recipe_box, recipes, unread, you}
+// /board/api/board?day=YYYY-MM-DD          GET → {categories, recipe_box, recipes, unread, featured, you}: featured is
+//                                            the recipe of the day, someone else's post (day is your local date)
 // /board/api/categories                    POST {name} → the new category
 // /board/api/categories/<id>               DELETE → remove it (only while it has no posts)
 // /board/api/categories/<id>/follow        PUT {follow} → the category
@@ -219,6 +220,20 @@ export async function listPosts(env, user, { view = "feed", category: cat = "", 
   return { posts, more: results.length > LIMITS.page, unread: isFeed && !before ? 0 : count };
 }
 
+// The recipe of the day: one of everyone else's posts, picked by the day and
+// who's asking, so it stays the same all day and differs from person to person.
+const DAY = /^\d{4}-\d{2}-\d{2}$/;
+export async function featured(env, user, day = "") {
+  if (!DAY.test(day)) day = new Date().toISOString().slice(0, 10);
+  const d = await db(env);
+  const { n } = await d.prepare("SELECT COUNT(*) AS n FROM board_posts WHERE author != ?").bind(user.id).first();
+  if (!n) return null;
+  const hash = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`${user.id}|${day}`)));
+  const at = ((hash[0] << 24) | (hash[1] << 16) | (hash[2] << 8) | hash[3]) >>> 0;
+  const r = await d.prepare(`${POST_SELECT} WHERE p.author != ? ORDER BY p.id LIMIT 1 OFFSET ?`).bind(user.id, user.id, at % n).first();
+  return r ? { ...toPost(r, user), day } : null;
+}
+
 async function postRow(d, id) {
   return d.prepare("SELECT * FROM board_posts WHERE id = ?").bind(id).first();
 }
@@ -328,7 +343,8 @@ export async function board(request, env, user, pathname) {
         recipes = results.sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: "base" }));
       }
       const categories = await listCategories(env, user);
-      return json({ categories, recipe_box: box, recipes, unread: await unread(d, user), you: user.id });
+      const day = new URL(request.url).searchParams.get("day") || "";
+      return json({ categories, recipe_box: box, recipes, unread: await unread(d, user), featured: await featured(env, user, day), you: user.id });
     }
     let m = pathname.match(ROUTE_CAT);
     if (m) {

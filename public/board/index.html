@@ -107,6 +107,8 @@ label.field input, label.field textarea, label.field select { width: 100%; font-
 .post .meta .tag { color: var(--gold); }
 .post .meta .new { color: var(--on-gold); background: var(--gold); padding: 0 6px; font-weight: 700; margin-left: 6px; }
 .post .note { margin: 4px 0 0; color: var(--muted); }
+.post.featured { border-color: var(--gold); background: color-mix(in oklch, var(--gold) 7%, var(--panel)); }
+.post.featured .kicker { font-size: 11px; letter-spacing: .4em; margin-bottom: 4px; }
 .post .full { grid-column: 1 / -1; cursor: auto; border-top: 1px dashed var(--line); margin-top: 10px; padding-top: 4px; }
 .post .full .hero { width: 100%; max-height: 260px; object-fit: cover; display: block; margin: 10px 0; border: 1px solid var(--line); }
 .facts { color: var(--faint); font-size: 13px; }
@@ -154,7 +156,7 @@ dialog .three { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
 <main>
   <div class="kicker">Recipe board</div>
   <h1>Shared recipes</h1>
-  <p class="lede">Recipes everyone shares, by category. Star the categories you like and anything new in them shows up in your feed. Save any of them to your Recipe box.</p>
+  <p class="lede">Recipes everyone shares, by category. Star the categories you like and anything new in them shows up in your feed. Save any of them to your Recipe box. Each day you get a recipe of the day from someone else's posts.</p>
   <div id="error" class="msg bad" role="alert" hidden></div>
   <div id="done" class="msg good" role="status" hidden></div>
 

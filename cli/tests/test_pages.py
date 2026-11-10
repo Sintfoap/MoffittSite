@@ -1107,6 +1107,9 @@ def test_recipe_board_follows_a_category_saves_a_post_and_shares_one(real_site):
         await settle(pilot, 0.6)
         assert page.cat(baking["id"])["following"]
         assert [p["title"] for p in page.posts] == ["Shortbread"]
+        # sam's shortbread is ryan's recipe of the day too (it's the only one that isn't his), on top and open.
+        assert page.board["featured"]["title"] == "Shortbread" and page.open == "featured"
+        assert "Recipe of the day" in str(page.query_one("#post-title").render())
         # Posted before ryan last read his feed, so it isn't new to him.
         assert not page.posts[0]["new"]
         assert "Three ingredients!" in str(page.query_one("#note").render())

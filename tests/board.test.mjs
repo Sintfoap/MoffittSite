@@ -170,3 +170,25 @@ test("cross-origin writes are refused", async () => {
   assert.equal(r.status, 403);
   assert.equal(sql(env, "SELECT * FROM board_categories WHERE name = 'Evil'").length, 0);
 });
+
+test("the recipe of the day is someone else's, the same all day", async () => {
+  const env = makeEnv(), ryan = await member(env, "ryan"), sam = await member(env, "sam"), kim = await member(env, "kim");
+  const baking = await catId(ryan, "Baking");
+  assert.equal((await api(ryan, "GET", "board")).json.featured, null, "nothing on the board yet");
+  await api(ryan, "POST", "posts", { category: baking, title: "Ryan's own", recipe: RECIPE });
+  assert.equal((await api(ryan, "GET", "board")).json.featured, null, "never your own");
+  for (const [b, t] of [[sam, "Scones"], [kim, "Flapjacks"], [sam, "Rolls"]]) await api(b, "POST", "posts", { category: baking, title: t, recipe: RECIPE });
+  const day = d => api(ryan, "GET", `board?day=${d}`);
+  const today = (await day("2026-11-10")).json.featured;
+  assert.ok(["Scones", "Flapjacks", "Rolls"].includes(today.title));
+  assert.equal(today.day, "2026-11-10");
+  assert.ok(today.recipe.ingredients.length);
+  assert.equal((await day("2026-11-10")).json.featured.id, today.id);
+  // Over a month, more than one recipe gets a turn.
+  const picks = new Set();
+  for (let i = 1; i <= 30; i++) picks.add((await day(`2026-12-${String(i).padStart(2, "0")}`)).json.featured.title);
+  assert.ok(picks.size > 1, [...picks].join());
+  assert.ok(![...picks].includes("Ryan's own"));
+  // A bad day falls back to today (UTC).
+  assert.equal((await day("tomorrow")).json.featured.day, new Date().toISOString().slice(0, 10));
+});
