@@ -18,7 +18,7 @@
 // it's shown.
 // The weather (Open-Meteo) is the same everywhere: 16 days from today, with
 // rain tomorrow and the day after the clear one; ryan is near London.
-// ryan and sam have Trip planner.
+// ryan and sam have Trip planner, and Food club, where sam picked last month (Pavlova).
 import http from "node:http";
 import worker from "../../src/worker.js";
 import { Browser, makeEnv, sqlOne, run, grantApps } from "../../tests/helpers.mjs";
@@ -80,7 +80,12 @@ await ryan.signup("ryan", undefined, "Ryan M");
 await sam.signup("sam", undefined, "Sam");
 for (const who of ["ryan", "sam"]) grantApps(env, who, "plugins", "chat");
 grantApps(env, "ryan", "chat-bridges", "recipes", "meals", "sweep");
-for (const who of ["ryan", "sam"]) grantApps(env, who, "trips");
+for (const who of ["ryan", "sam"]) grantApps(env, who, "trips", "food");
+{
+  const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - 1);
+  await sam.req("POST", "/food/api/picks", { json: { month: d.toLocaleDateString("sv").slice(0, 7), title: "Pavlova", kind: "dessert",
+    blurb: "Crisp outside, marshmallow inside.", recipe: { ingredients: ["4 egg whites", "1 cup sugar"], steps: ["Whisk", "Bake low and slow"] } } });
+}
 {
   const plans = (await ryan.req("POST", "/chat/api/rooms", { json: { name: "Plans" } })).json.id;
   await sam.req("POST", `/chat/api/rooms/${plans}/join`);

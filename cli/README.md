@@ -19,6 +19,7 @@ sintfoap                    # signs you in the first time, then opens your dashb
 | `sintfoap meals` | Meal plan: the week's dinners around your Drift calendar, and their shopping |
 | `sintfoap sweep` | Sweep: Drift suggestions from your chat rooms, to accept or turn down |
 | `sintfoap trips` | Trip planner: a trip's days, places and packing list, with whoever's going |
+| `sintfoap food` | Food club: the month's food, its recipe, favorites and everyone's photos |
 | `sintfoap admin` | which apps each account can use (admins) |
 | `sintfoap app` | the Android app: a QR code to scan with your phone, and the download link |
 | `sintfoap books [--plain]` | the book club pick: read about the books and vote; no sign-in needed |
@@ -46,7 +47,7 @@ nix develop                                  # a shell with Python, Textual and 
 
 ## The dashboard
 
-The same panels as `/dashboard`, in the site's colours: Today (overdue Drift items in red, then what's due today), your account with its checks (two-factor, recovery codes, email), and a card per app your account can use. It refreshes every 30 seconds. Drift, the plugin store, chat, Recipe box, Meal plan, Sweep, Trip planner, notifications, account settings and Admin open here in the terminal; anything else opens in your browser.
+The same panels as `/dashboard`, in the site's colours: Today (overdue Drift items in red, then what's due today), your account with its checks (two-factor, recovery codes, email), and a card per app your account can use. It refreshes every 30 seconds. Drift, the plugin store, chat, Recipe box, Meal plan, Sweep, Trip planner, Food club, notifications, account settings and Admin open here in the terminal; anything else opens in your browser.
 
 | Key | |
 |---|---|
@@ -58,7 +59,7 @@ The same panels as `/dashboard`, in the site's colours: Today (overdue Drift ite
 | `o` | sign out this terminal |
 | `q` | quit |
 
-On every page `esc` goes back, `w` opens the same page in your browser and `q` quits. `g` then a letter jumps around, as on the website: `g h` home, `g d` Drift, `g p` plugin store, `g c` chat, `g r` Recipe box, `g m` Meal plan, `g w` Sweep, `g t` Trip planner, `g s` settings, `g n` notifications, `g a` admin, `g o` sign out.
+On every page `esc` goes back, `w` opens the same page in your browser and `q` quits. `g` then a letter jumps around, as on the website: `g h` home, `g d` Drift, `g p` plugin store, `g c` chat, `g r` Recipe box, `g m` Meal plan, `g w` Sweep, `g t` Trip planner, `g f` Food club, `g s` settings, `g n` notifications, `g a` admin, `g o` sign out.
 
 ## Book club pick
 
@@ -198,6 +199,22 @@ The same trips as `/trips/`: your trips on the left, the open one on the right i
 | `d` | delete the trip, or leave someone else's |
 | `r` | refresh |
 
+## Food club
+
+The same club as `/food/`: every month's pick on the left (coming up, this month, before), the open one on the right with why it was picked, who made it and who loved it, everyone's photos and the recipe.
+
+| Key | |
+|---|---|
+| `n` | pick a month: the month, the food, why, and its recipe (from a link, your Recipe box, or typed in; `ctrl+s` saves) |
+| `m` | you made it (or didn't) |
+| `f` | one of your favorites (a favorite counts as made) |
+| `p` | add a photo of yours from a file (JPEG, PNG, WebP or GIF up to 1.2 MB; the website shrinks bigger ones) |
+| `o` | open the highlighted photo in your browser (`x` takes your own off) |
+| `s` | save the recipe to your Recipe box |
+| `v` | show all, just your favorites, or just what you've made |
+| `e` `d` | edit or delete the pick; only whoever picked it (or an admin) |
+| `r` | refresh |
+
 ## Account settings
 
 Your profile, two-factor, recovery codes, email and sessions, like `/account`. Here you can change your display name, sign out every other device, or sign out this terminal. Anything that needs your password (two-factor, recovery codes, email, the password itself) opens the website instead, so the terminal never asks for it.
@@ -218,6 +235,7 @@ sintfoap/recipes_page.py   Recipe box
 sintfoap/meals_page.py     Meal plan
 sintfoap/sweep_page.py     Sweep
 sintfoap/trips_page.py     Trip planner
+sintfoap/food_page.py      Food club
 sintfoap/recipe_rules.py   scaling ingredient lines, as on the web page (tests/scale_cases.json keeps them the same)
 sintfoap/__main__.py       the command
 tests/                     python -m pytest tests
