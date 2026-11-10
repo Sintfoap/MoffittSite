@@ -42,25 +42,21 @@ def label_text(label: dict) -> str:
     return f"{label['key']}: {label['value']}" if label.get("value") else label["key"]
 
 
-def label_id(label: dict) -> tuple[str, str]:
-    return label["key"].casefold(), (label.get("value") or "").casefold()
-
-
 def all_labels(recipes: list[dict]) -> list[tuple[dict, int]]:
-    """Every label in the box, once, with how many recipes have it: sorted by key, then value."""
-    seen: dict[tuple[str, str], list] = {}
+    """The labels your recipes use (from the site's list), once each, with how many have it: by key, then value."""
+    seen: dict[str, list] = {}
     for r in recipes:
         for lb in r.get("labels", []):
-            seen.setdefault(label_id(lb), [lb, 0])[1] += 1
-    return [(lb, n) for lb, n in sorted(seen.values(), key=lambda x: label_id(x[0]))]
+            seen.setdefault(lb["id"], [lb, 0])[1] += 1
+    return [(lb, n) for lb, n in sorted(seen.values(), key=lambda x: (x[0]["key"].casefold(), x[0].get("value", "").casefold()))]
 
 
 def passes(r: dict, filters: list[dict]) -> bool:
     """Any of the chosen values for a key, and every key chosen."""
-    have = {label_id(lb) for lb in r.get("labels", [])}
+    have = {lb["id"] for lb in r.get("labels", [])}
     keys: dict[str, set] = {}
     for f in filters:
-        keys.setdefault(label_id(f)[0], set()).add(label_id(f))
+        keys.setdefault(f["key"].casefold(), set()).add(f["id"])
     return all(have & want for want in keys.values())
 
 
@@ -87,9 +83,9 @@ class LabelFilter(ModalScreen[list | None]):
     def __init__(self, labels: list[tuple[dict, int]], chosen: list[dict]):
         super().__init__()
         self.labels = labels
-        on = {label_id(f) for f in chosen}
+        on = {f["id"] for f in chosen}
         self.items = [Selection(Text.assemble((lb["key"], f"bold {GOLD}"), (f"  {lb.get('value', '')}", INK), (f"   {n}", FAINT)),
-                                i, label_id(lb) in on) for i, (lb, n) in enumerate(labels)]
+                                i, lb["id"] in on) for i, (lb, n) in enumerate(labels)]
 
     def compose(self) -> ComposeResult:
         with VerticalScroll(classes="dialog"):
@@ -117,13 +113,15 @@ class RecipeDialog(ModalScreen[dict | None]):
     RecipeDialog .grid { height: auto; }
     RecipeDialog .grid > Vertical { height: auto; width: 1fr; margin-right: 1; }
     RecipeDialog #ingredients, RecipeDialog #steps { height: 8; }
-    RecipeDialog #notes, RecipeDialog #labels { height: 4; }
+    RecipeDialog #notes { height: 4; }
+    RecipeDialog #labels { height: auto; max-height: 8; background: transparent; border: none; padding: 0; }
     """
 
-    def __init__(self, recipe: dict | None, source: str = ""):
+    def __init__(self, recipe: dict | None, source: str = "", label_list: list | None = None):
         super().__init__()
         self.r = recipe or {}
         self.source = source
+        self.label_list = label_list or []   # the site's labels (admins keep the list) to tick
 
     def compose(self) -> ComposeResult:
         r = self.r
@@ -146,8 +144,13 @@ class RecipeDialog(ModalScreen[dict | None]):
             yield TextArea("\n".join(r.get("ingredients", [])), id="ingredients", soft_wrap=True)
             yield Label("Steps, one per line", classes="lbl")
             yield TextArea("\n".join(r.get("steps", [])), id="steps", soft_wrap=True)
-            yield Label("Labels, one per line (Season: Fall)", classes="lbl")
-            yield TextArea("\n".join(label_text(lb) for lb in r.get("labels", [])), id="labels", soft_wrap=True)
+            yield Label("Labels (space ticks; an admin keeps the list)", classes="lbl")
+            if self.label_list:
+                on = {lb["id"] for lb in r.get("labels", [])}
+                yield SelectionList(*[Selection(Text.assemble((lb["key"], f"bold {GOLD}"), ("  " + lb.get("value", ""), INK)), lb["id"], lb["id"] in on)
+                                      for lb in self.label_list], id="labels")
+            else:
+                yield Static(Text("No labels yet. An admin adds them on the admin page.", style=FAINT))
             yield Label("Notes", classes="lbl")
             yield TextArea(r.get("notes", ""), id="notes", soft_wrap=True)
             yield Label("Link", classes="lbl")
@@ -169,7 +172,8 @@ class RecipeDialog(ModalScreen[dict | None]):
         except ValueError:
             serves = None
         return {"title": v("title"), "servings": serves, "yield": v("yield"), "time": v("time"),
-                "ingredients": t("ingredients"), "steps": t("steps"), "notes": t("notes").strip(), "source": v("source"), "labels": t("labels")}
+                "ingredients": t("ingredients"), "steps": t("steps"), "notes": t("notes").strip(), "source": v("source"),
+                "labels": list(self.query_one("#labels", SelectionList).selected) if self.label_list else [lb["id"] for lb in self.r.get("labels", [])]}
 
     def action_save(self) -> None:
         f = self.fields()
@@ -462,7 +466,7 @@ class RecipesPage(Page):
             if "by hand" in str(e):
                 # No recipe on the page: type it in, with the link filled in.
                 self.app.notify("Couldn't find a recipe on that page, so type it in here.", timeout=4)
-                self.app.push_screen(RecipeDialog(None, url), self.after_dialog(None))
+                self.app.push_screen(RecipeDialog(None, url, self.data.get("label_list")), self.after_dialog(None))
             else:
                 self.app.notify(str(e).removeprefix("the site said: ").capitalize(), severity="error", timeout=5)
             return
@@ -480,12 +484,12 @@ class RecipesPage(Page):
 
     def action_new(self) -> None:
         url = self.query_one("#url", Input).value.strip()
-        self.app.push_screen(RecipeDialog(None, url), self.after_dialog(None))
+        self.app.push_screen(RecipeDialog(None, url, self.data.get("label_list")), self.after_dialog(None))
 
     def action_edit(self) -> None:
         r = self.current()
         if r:
-            self.app.push_screen(RecipeDialog(r), self.after_dialog(r))
+            self.app.push_screen(RecipeDialog(r, label_list=self.data.get("label_list")), self.after_dialog(r))
 
     def after_dialog(self, was: dict | None):
         async def done(fields: dict | None) -> None:
@@ -509,7 +513,7 @@ class RecipesPage(Page):
         """l: filter the shelf by labels."""
         labels = all_labels((self.data or {}).get("recipes", []))
         if not labels:
-            self.app.notify("No labels yet. Press e and add some, like Season: Fall.", timeout=4)
+            self.app.notify("None of your recipes have labels yet. Press e to tick some.", timeout=4)
             return
 
         def chosen(picked: list | None) -> None:

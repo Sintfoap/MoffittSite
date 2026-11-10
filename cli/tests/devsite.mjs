@@ -93,6 +93,12 @@ for (const who of ["ryan", "sam"]) grantApps(env, who, "trips", "board");
 }
 const id = name => sqlOne(env, "SELECT id FROM users WHERE username = ?", name).id;
 
+// Recipe box's label list, as an admin would make it: Season (Fall, Summer),
+// Cuisine (Irish, Spanish) and Course (Breakfast).
+for (const [n, key, value] of [[1, "Season", "Fall"], [2, "Season", "Summer"], [3, "Cuisine", "Irish"], [4, "Cuisine", "Spanish"], [5, "Course", "Breakfast"]]) {
+  run(env, "INSERT INTO recipe_labels (id, key, value, created) VALUES (?, ?, ?, ?)", `l_000000000${n}`, key, value, new Date().toISOString());
+}
+
 // sam's plugin, approved by an admin (made straight in the database).
 const t = Math.floor(Date.now() / 1000);
 run(env, "INSERT INTO store_plugins (id, owner, created_at) VALUES ('stars', ?, ?)", id("sam"), t);

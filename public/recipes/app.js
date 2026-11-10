@@ -18,7 +18,10 @@ let editing = null;       // the recipe in the editor, or {} for a new one
 const scale = new Map();  // recipe id → {servings} or {factor}, while the page is open
 const skip = new Map();   // recipe id → ingredient indexes not to send
 let filters = [];         // [{key, value}] labels a recipe must have: any value of the same key, every key
-let sortKey = "";         // "" sorts by title; a label's key sorts by its value
+let sortKey = "";
+// The shelf shows a page of recipes at a time; it turns to the open one's page.
+const PAGE = 20;
+let page = 0, follow = true;         // "" sorts by title; a label's key sorts by its value
 
 const store = {
   get(k) { try { return localStorage.getItem(k); } catch { return null; } },
@@ -66,25 +69,25 @@ function step(r, dir) {
 }
 
 // ── labels ─────────────────────────────────────────────────────────────────
-// Made up per recipe ("Season: Fall"); keys and values match whatever their case.
+// From the site's one list (admins keep it on /admin): {id, key, value}.
 
 const low = s => String(s || "").toLowerCase();
 const labelsOf = r => r.labels || [];
 const labelText = l => l.value ? `${l.key}: ${l.value}` : l.key;
-const has = (r, f) => labelsOf(r).some(l => low(l.key) === low(f.key) && low(l.value) === low(f.value));
+const has = (r, f) => labelsOf(r).some(l => l.id === f.id);
 const valueOf = (r, key) => labelsOf(r).find(l => low(l.key) === low(key))?.value;
 
-// Every label in the box: [{key, values: [{value, n}]}], keys and values sorted.
+// The labels your recipes use: [{key, values: [{...label, n}]}], in the list's order.
 function allLabels() {
+  const n = new Map();
+  for (const r of data.recipes) for (const l of labelsOf(r)) n.set(l.id, (n.get(l.id) || 0) + 1);
   const keys = new Map();
-  for (const r of data.recipes) for (const l of labelsOf(r)) {
-    const k = keys.get(low(l.key)) || keys.set(low(l.key), { key: l.key, values: new Map() }).get(low(l.key));
-    const v = k.values.get(low(l.value)) || k.values.set(low(l.value), { value: l.value, n: 0 }).get(low(l.value));
-    v.n++;
+  for (const l of data.label_list || []) {
+    if (!n.has(l.id)) continue;
+    if (!keys.has(low(l.key))) keys.set(low(l.key), { key: l.key, values: [] });
+    keys.get(low(l.key)).values.push({ ...l, n: n.get(l.id) });
   }
-  const by = (a, b) => a.localeCompare(b, undefined, { sensitivity: "base", numeric: true });
-  return [...keys.values()].sort((a, b) => by(a.key, b.key))
-    .map(k => ({ key: k.key, values: [...k.values.values()].sort((a, b) => by(a.value, b.value)) }));
+  return [...keys.values()];
 }
 
 function passes(r) {
@@ -94,8 +97,9 @@ function passes(r) {
 }
 
 function toggleFilter(f) {
-  const at = filters.findIndex(x => low(x.key) === low(f.key) && low(x.value) === low(f.value));
-  filters = at < 0 ? [...filters, { key: f.key, value: f.value }] : filters.filter((_, i) => i !== at);
+  const at = filters.findIndex(x => x.id === f.id);
+  filters = at < 0 ? [...filters, f] : filters.filter((_, i) => i !== at);
+  page = 0;
   renderFilters();
   renderList();
   renderDetail();
@@ -110,8 +114,8 @@ function renderFilters() {
     const g = document.createElement("optgroup");
     g.label = k.key;
     for (const v of k.values) {
-      const o = new Option(`${v.value || "(set)"}  ·  ${v.n}`, JSON.stringify({ key: k.key, value: v.value }));
-      o.disabled = filters.some(f => low(f.key) === low(k.key) && low(f.value) === low(v.value));
+      const o = new Option(`${v.value || "(set)"}  ·  ${v.n}`, v.id);
+      o.disabled = filters.some(f => f.id === v.id);
       g.append(o);
     }
     sel.append(g);
@@ -129,7 +133,8 @@ function renderFilters() {
 }
 
 $("#label-filter").addEventListener("change", e => {
-  if (e.target.value) toggleFilter(JSON.parse(e.target.value));
+  const l = (data.label_list || []).find(x => x.id === e.target.value);
+  if (l) toggleFilter(l);
   e.target.value = "";
 });
 $("#sort").addEventListener("change", e => {
@@ -152,11 +157,15 @@ function renderList() {
     return by(x || "", y || "") || by(a.title, b.title);
   });
   shown = match.map(r => r.id);
+  const pages = Math.max(1, Math.ceil(match.length / PAGE));
+  if (follow && shown.includes(open)) page = Math.floor(shown.indexOf(open) / PAGE);
+  follow = true;
+  page = Math.min(Math.max(0, page), pages - 1);
   const ul = $("#recipes");
   ul.replaceChildren();
   if (!data.recipes.length) ul.append(el("li", { className: "empty", textContent: "No recipes yet. Paste a link above." }));
   else if (!match.length) ul.append(el("li", { className: "empty", textContent: "Nothing matches." }));
-  for (const r of match) {
+  for (const r of match.slice(page * PAGE, page * PAGE + PAGE)) {
     const sorted = sortKey && valueOf(r, sortKey);
     const tags = labelsOf(r).map(labelText).join(" · ");
     const b = el("button", { type: "button" }, r.title, el("small", { textContent: [sorted, r.time, hostOf(r.source)].filter(Boolean).join(" · ") || `${r.ingredients.length} ingredients` }),
@@ -164,6 +173,16 @@ function renderList() {
     b.setAttribute("aria-current", String(r.id === open));
     b.addEventListener("click", () => pick(r.id));
     ul.append(el("li", {}, b));
+  }
+  const pager = $("#pager");
+  pager.hidden = pages < 2;
+  if (pages > 1) {
+    const turn = d => { page += d; follow = false; renderList(); $("#recipes button")?.focus(); };
+    const prev = el("button", { type: "button", className: "btn quiet", textContent: "‹ Prev", disabled: page === 0, title: "[" });
+    const next = el("button", { type: "button", className: "btn quiet", textContent: "Next ›", disabled: page >= pages - 1, title: "]" });
+    prev.addEventListener("click", () => turn(-1));
+    next.addEventListener("click", () => turn(1));
+    pager.replaceChildren(prev, el("span", { textContent: `${page * PAGE + 1}–${Math.min(match.length, page * PAGE + PAGE)} of ${match.length}` }), next);
   }
 }
 
@@ -208,7 +227,7 @@ function renderDetail() {
   card.append(facts);
   if (labelsOf(r).length) {
     card.append(el("div", { className: "chips" }, ...labelsOf(r).map(l => {
-      const on = filters.some(f => low(f.key) === low(l.key) && low(f.value) === low(l.value));
+      const on = filters.some(f => f.id === l.id);
       const b = el("button", { type: "button", className: "chip" + (on ? " on" : ""), title: on ? "Stop filtering by this" : "Show only recipes with this label" },
         el("b", { textContent: l.key }), l.value ? l.value : "");
       b.addEventListener("click", () => toggleFilter(l));
@@ -311,10 +330,24 @@ function openEditor(r) {
   f.ingredients.value = (r?.ingredients || []).join("\n");
   f.steps.value = (r?.steps || []).join("\n");
   f.notes.value = r?.notes || "";
-  f.labels.value = labelsOf(r || {}).map(labelText).join("\n");
+  renderPicker(r);
   f.source.value = r?.source || (r ? "" : $("#url").value.trim());
   $("#editor").showModal();
   f.title.focus();
+}
+
+// The editor's labels: the site's list, a row of ticks per name.
+function renderPicker(r) {
+  const box = $("#label-picker"), list = data.label_list || [];
+  const on = new Set(labelsOf(r || {}).map(l => l.id));
+  box.replaceChildren();
+  if (!list.length) { box.append(el("p", { className: "empty", textContent: "No labels yet. An admin adds them on the admin page." })); return; }
+  const keys = new Map();
+  for (const l of list) keys.set(low(l.key), [...(keys.get(low(l.key)) || []), l]);
+  for (const ls of keys.values()) {
+    box.append(el("div", { className: "pick" }, el("b", { textContent: ls[0].key }),
+      ...ls.map(l => el("label", { className: "chip" }, el("input", { type: "checkbox", value: l.id, checked: on.has(l.id) }), l.value || "yes"))));
+  }
 }
 
 $("#editor").addEventListener("close", () => {
@@ -322,7 +355,8 @@ $("#editor").addEventListener("close", () => {
   const f = $("#edit-form");
   const body = {
     title: f.title.value, servings: f.servings.value === "" ? null : Number(f.servings.value), yield: f.yield.value, time: f.time.value,
-    ingredients: f.ingredients.value, steps: f.steps.value, notes: f.notes.value, source: f.source.value, labels: f.labels.value,
+    ingredients: f.ingredients.value, steps: f.steps.value, notes: f.notes.value, source: f.source.value,
+    labels: [...document.querySelectorAll("#label-picker input:checked")].map(i => i.value),
   };
   const was = editing;
   editing = null;
@@ -355,7 +389,7 @@ $("#add").addEventListener("submit", async e => {
   if (err?.manual) openEditor(null);
 });
 $("#by-hand").addEventListener("click", () => openEditor(null));
-$("#find").addEventListener("input", renderList);
+$("#find").addEventListener("input", () => { page = 0; follow = false; renderList(); });
 
 document.addEventListener("keydown", e => {
   const t = e.target;
@@ -369,6 +403,8 @@ document.addEventListener("keydown", e => {
     n: () => $("#url").focus(),
     l: () => $("#label-filter").disabled || $("#label-filter").focus(),
     "/": () => $("#find").focus(),
+    "[": () => $("#pager button:first-child")?.click(),
+    "]": () => $("#pager button:last-child")?.click(),
     j: () => shown.length && pick(shown[Math.min(shown.length - 1, at + 1)]),
     k: () => shown.length && pick(shown[Math.max(0, at - 1)]),
     "+": () => r && step(r, 1), "=": () => r && step(r, 1),

@@ -292,6 +292,35 @@ def test_admins_review_in_the_terminal(admin_site):
 
 # ── admin ──────────────────────────────────────────────────────────────────
 
+def test_admins_keep_the_recipe_label_list_in_the_terminal(admin_site):
+    async def labels(app, pilot):
+        page = app.screen
+        assert [f"{lb['key']}:{lb['value']}" for lb in page.labels][:2] == ["Course:Breakfast", "Cuisine:Irish"]
+        page.query_one("#labels").focus()
+        # n: a new one, typed as Name: Value.
+        await pilot.press("n")
+        await settle(pilot)
+        app.screen.query_one("#answer").value = "Season: Winter"
+        await pilot.press("enter")
+        await settle(pilot, 0.6)
+        assert any(lb["value"] == "Winter" for lb in site.recipe_labels()["labels"])
+        # e renames the highlighted one (Course: Breakfast) on every recipe.
+        page.query_one("#labels").highlighted = 0
+        await pilot.press("e")
+        await settle(pilot)
+        app.screen.query_one("#answer").value = "Course: Brunch"
+        await pilot.press("enter")
+        await settle(pilot, 0.6)
+        assert page.labels[0]["value"] == "Brunch"
+        # x removes it, after asking.
+        await pilot.press("x")
+        await settle(pilot)
+        await pilot.press("y")
+        await settle(pilot, 0.6)
+        assert "Brunch" not in [lb["value"] for lb in site.recipe_labels()["labels"]]
+    run_app("admin", labels)
+
+
 def test_admins_switch_apps_on_and_off_in_the_terminal(admin_site):
     async def access(app, pilot):
         page = app.screen
@@ -427,9 +456,10 @@ def test_recipe_box_saves_from_a_link_scales_and_sends_to_drift(real_site):
 
 
 def test_recipe_box_labels_filter_and_sort_the_shelf(real_site):
-    site.add_recipe({"title": "Stew", "labels": "Season: Fall\nCuisine: Irish"})
-    site.add_recipe({"title": "Gazpacho", "labels": "Season: Summer\nCuisine: Spanish"})
-    site.add_recipe({"title": "Apple pie", "labels": "Season: Fall"})
+    fall, summer, irish, spanish, breakfast = (f"l_000000000{n}" for n in range(1, 6))   # tests/devsite.mjs
+    site.add_recipe({"title": "Stew", "labels": [fall, irish]})
+    site.add_recipe({"title": "Gazpacho", "labels": [summer, spanish]})
+    site.add_recipe({"title": "Apple pie", "labels": [fall]})
     site.add_recipe({"title": "Toast"})
 
     async def labels(app, pilot):
@@ -443,6 +473,7 @@ def test_recipe_box_labels_filter_and_sort_the_shelf(real_site):
         await settle(pilot)
         dialog = app.screen
         assert type(dialog).__name__ == "LabelFilter"
+        # Only the labels in use, not Course: Breakfast.
         assert [lb["key"] + ":" + lb["value"] for lb, _ in dialog.labels] == ["Cuisine:Irish", "Cuisine:Spanish", "Season:Fall", "Season:Summer"]
         dialog.query_one("#labels").select(2)
         await pilot.press("enter")
@@ -450,7 +481,7 @@ def test_recipe_box_labels_filter_and_sort_the_shelf(real_site):
         assert [title[i] for i in ids()] == ["Apple pie", "Stew"]
         assert "Season: Fall" in str(page.query_one("#filters").render())
         # And Summer too: either season.
-        page.filters.append({"key": "season", "value": "SUMMER"})
+        page.filters.append(next(lb for lb in page.data["label_list"] if lb["id"] == summer))
         page.reshelve()
         assert [title[i] for i in ids()] == ["Apple pie", "Gazpacho", "Stew"]
         # o: by Cuisine, then Season; recipes without the label go last.
@@ -470,11 +501,13 @@ def test_recipe_box_labels_filter_and_sort_the_shelf(real_site):
         page.show_recipe()
         await pilot.press("e")
         await settle(pilot)
-        app.screen.query_one("#labels").text = "Course: Breakfast"
+        picker = app.screen.query_one("#labels")
+        assert picker.option_count == 5 and picker.selected == []
+        picker.select(breakfast)
         await pilot.press("ctrl+s")
         await settle(pilot, 0.6)
         toast = next(r for r in site.recipes()["recipes"] if r["title"] == "Toast")
-        assert toast["labels"] == [{"key": "Course", "value": "Breakfast"}]
+        assert toast["labels"] == [{"id": breakfast, "key": "Course", "value": "Breakfast"}]
         assert "Course" in str(page.query_one("#tags").render())
     run_app("recipes", labels)
 

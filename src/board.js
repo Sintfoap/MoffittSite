@@ -23,7 +23,7 @@ import { db } from "./db.js";
 import { sameOrigin } from "./account.js";
 import { withRail } from "./pages.js";
 import { BadRequest } from "./drift.js";
-import { clean as cleanRecipe, get as getRecipe, create as createRecipe, importFrom, NotARecipe } from "./recipes.js";
+import { clean as cleanRecipe, get as getRecipe, create as createRecipe, importFrom, NotARecipe, labelList, withLabels } from "./recipes.js";
 
 const fail = msg => { throw new BadRequest(msg); };
 
@@ -168,11 +168,12 @@ const POST_SELECT = `SELECT p.*, c.name AS category_name, u.username, u.display_
     (SELECT recipe_id FROM board_saves s WHERE s.post = p.id AND s.user_id = ?) AS saved_as
   FROM board_posts p LEFT JOIN board_categories c ON c.id = p.category LEFT JOIN users u ON u.id = p.author`;
 
-function toPost(r, user, seen) {
+// A post's recipe keeps label ids, like Recipe box; `labels` is the site's list to read them with.
+function toPost(r, user, seen, labels = []) {
   const data = JSON.parse(r.data);
   return {
     id: r.id, category: r.category, category_name: r.category_name || "", title: data.title, note: data.note || "",
-    recipe: data.recipe ? { ...BLANK_RECIPE, ...data.recipe } : null,
+    recipe: data.recipe ? { ...BLANK_RECIPE, ...data.recipe, labels: withLabels(labels, data.recipe.labels) } : null,
     by: nameOf(r), yours: r.author === user.id, can_edit: r.author === user.id || isAdmin(user),
     created: r.created, updated: r.updated, saves: r.saves, saved: !!r.saved_as,
     ...(seen !== undefined ? { new: r.author !== user.id && (!seen || r.created > seen) } : {}),
@@ -182,7 +183,7 @@ function toPost(r, user, seen) {
 export async function getPost(env, user, id) {
   const d = await db(env);
   const r = await d.prepare(`${POST_SELECT} WHERE p.id = ?`).bind(user.id, id).first();
-  return r ? toPost(r, user) : null;
+  return r ? toPost(r, user, undefined, await labelList(d)) : null;
 }
 
 const seenAt = async (d, user) => (await d.prepare("SELECT seen FROM board_seen WHERE user_id = ?").bind(user.id).first())?.seen || "";
@@ -209,7 +210,8 @@ export async function listPosts(env, user, { view = "feed", category: cat = "", 
   const { results } = await d.prepare(`${POST_SELECT} ${where.length ? "WHERE " + where.join(" AND ") : ""}
     ORDER BY p.created DESC, p.id DESC LIMIT ?`).bind(...args, LIMITS.page + 1).all();
   const seen = await seenAt(d, user);
-  const posts = results.slice(0, LIMITS.page).map(r => toPost(r, user, seen));
+  const labels = await labelList(d);
+  const posts = results.slice(0, LIMITS.page).map(r => toPost(r, user, seen, labels));
   // Reading the top of your feed marks it read.
   const isFeed = view === "feed" && !cat;
   const count = await unread(d, user);
@@ -231,7 +233,7 @@ export async function featured(env, user, day = "") {
   const hash = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`${user.id}|${day}`)));
   const at = ((hash[0] << 24) | (hash[1] << 16) | (hash[2] << 8) | hash[3]) >>> 0;
   const r = await d.prepare(`${POST_SELECT} WHERE p.author != ? ORDER BY p.id LIMIT 1 OFFSET ?`).bind(user.id, user.id, at % n).first();
-  return r ? { ...toPost(r, user), day } : null;
+  return r ? { ...toPost(r, user, undefined, await labelList(d)), day } : null;
 }
 
 async function postRow(d, id) {

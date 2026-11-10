@@ -1,7 +1,9 @@
 """Admin in the terminal: which apps each account can use, as on /admin.
 
 There's a switch for every app in the site's app list (APPS in src/auth.js), so
-a new app shows up here by itself, off for everyone. The rest of /admin
+a new app shows up here by itself, off for everyone. Under them is Recipe
+box's label list (n adds one, e renames the highlighted one, x removes it),
+the labels everyone picks from for their recipes. The rest of /admin
 (passwords, two-factor, disabling and deleting accounts) is on the website:
 press w to open it."""
 from __future__ import annotations
@@ -10,10 +12,17 @@ from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.widgets import Checkbox, Footer, Static
+from textual.widgets import Checkbox, Footer, OptionList, Static
+from textual.widgets.option_list import Option
 
 from . import site
-from .look import BAD, FAINT, INK, MUTED, Page, attempt, plural
+from .look import BAD, FAINT, GOLD, INK, MUTED, Ask, Confirm, Page, attempt, plural
+
+
+def split_label(text: str) -> tuple[str, str]:
+    """"Season: Fall" → ("Season", "Fall"); no colon, no value."""
+    key, _, value = text.partition(":")
+    return key.strip(), value.strip()
 
 
 class AdminPage(Page):
@@ -25,8 +34,10 @@ class AdminPage(Page):
     AdminPage .who {{ width: 30; }}
     AdminPage .switches {{ height: auto; width: 1fr; }}
     AdminPage .switches Checkbox {{ width: auto; height: 1; margin-right: 2; }}
+    AdminPage #labels {{ height: auto; max-height: 16; }}
     """
-    BINDINGS = [Binding("r", "refresh", "Refresh")]
+    BINDINGS = [Binding("r", "refresh", "Refresh"), Binding("n", "add_label", "New label"),
+                Binding("e", "rename_label", "Rename label"), Binding("x", "delete_label", "Remove label")]
 
     def __init__(self):
         super().__init__()
@@ -41,6 +52,11 @@ class AdminPage(Page):
             yield Static(Text("Space turns an app on or off for that account. New apps start off for everyone. "
                               "Passwords, two-factor and disabling or deleting accounts are on the website: press w.", style=MUTED), classes="sub")
             yield Vertical(id="people", classes="card")
+            yield Static(Text("Recipe labels", style=f"bold {INK}"), classes="h1")
+            yield Static(Text("The labels people tick on their recipes in Recipe box, like Season: Fall, to filter and sort by. "
+                              "One list, so nobody ends up with Fall and Autumn. n adds one, e renames the highlighted one "
+                              "(on every recipe), x removes it (from every recipe).", style=MUTED), classes="sub")
+            yield OptionList(id="labels", classes="card")
         yield Footer()
 
     async def on_mount(self) -> None:
@@ -49,6 +65,60 @@ class AdminPage(Page):
     @attempt
     async def action_refresh(self) -> None:
         await self.show(await self.fetch(site.admin_access))
+        self.show_labels(await self.fetch(site.recipe_labels))
+
+    def show_labels(self, data: dict) -> None:
+        self.labels = data["labels"]
+        box = self.query_one("#labels", OptionList)
+        at = box.highlighted
+        box.clear_options()
+        if not self.labels:
+            box.add_option(Option(Text("No labels yet. Press n to add the first, like Season: Fall.", style=FAINT), disabled=True))
+        for lb in self.labels:
+            box.add_option(Option(Text.assemble((lb["key"], f"bold {GOLD}"), ("  " + lb["value"], INK),
+                                                (f"   {plural(lb['recipes'], 'recipe')}", FAINT)), id=lb["id"]))
+        box.border_title = plural(len(self.labels), "label")
+        if self.labels:
+            box.highlighted = min(at or 0, len(self.labels) - 1)
+
+    def current_label(self) -> dict | None:
+        box = self.query_one("#labels", OptionList)
+        if box.highlighted is None or not getattr(self, "labels", None):
+            return None
+        return self.labels[box.highlighted] if box.highlighted < len(self.labels) else None
+
+    def action_add_label(self) -> None:
+        async def made(text: str | None) -> None:
+            if text and text.strip():
+                await self.label_call(site.add_recipe_label, *split_label(text))
+        self.app.push_screen(Ask("New recipe label", "A name and a value, like Season: Fall (or just a name, like Favorite).", placeholder="Season: Fall", ok="Add"), made)
+
+    def action_rename_label(self) -> None:
+        lb = self.current_label()
+        if not lb:
+            return
+
+        async def renamed(text: str | None) -> None:
+            if text and text.strip():
+                await self.label_call(site.rename_recipe_label, lb["id"], *split_label(text))
+        now = f"{lb['key']}: {lb['value']}" if lb["value"] else lb["key"]
+        self.app.push_screen(Ask("Rename label", "It changes on every recipe that has it.", value=now, ok="Rename"), renamed)
+
+    def action_delete_label(self) -> None:
+        lb = self.current_label()
+        if not lb:
+            return
+
+        async def answer(yes: bool | None) -> None:
+            if yes:
+                await self.label_call(site.delete_recipe_label, lb["id"])
+        name = f"{lb['key']}: {lb['value']}" if lb["value"] else lb["key"]
+        self.app.push_screen(Confirm(f"Remove {name}?", f"It comes off the list and {plural(lb['recipes'], 'recipe')}.", yes="Remove", danger=True), answer)
+
+    @attempt
+    async def label_call(self, fn, *args) -> None:
+        await self.fetch(fn, *args)
+        self.show_labels(await self.fetch(site.recipe_labels))
 
     async def show(self, data: dict) -> None:
         self.data = data

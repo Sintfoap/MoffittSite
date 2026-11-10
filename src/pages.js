@@ -534,7 +534,7 @@ export function accountPage({ user, error, notice, recoveryLeft, sessionCount, s
 
 const date = t => new Date(t * 1000).toISOString().slice(0, 10);
 
-export function adminPage({ user, users, orphans, apps, books = [], bookVotes = [], error, notice, tempPassword }) {
+export function adminPage({ user, users, orphans, apps, books = [], bookVotes = [], labels = [], labelUse = {}, error, notice, tempPassword }) {
   const post = (action, label, fields, cls = "quiet small", confirm = "") =>
     `<form method="post" action="/admin/${action}">${Object.entries(fields).map(([k, v]) => `<input type="hidden" name="${k}" value="${esc(v)}">`).join("")}${confirm}<button class="${cls}" type="submit">${label}</button></form>`;
   const rows = users.map(u => {
@@ -573,6 +573,18 @@ export function adminPage({ user, users, orphans, apps, books = [], bookVotes = 
       <td>${when(v.updated_at)}${v.updated_at !== v.created_at ? `<br><span class="hint">first voted ${when(v.created_at)}</span>` : ""}</td>
       <td>${post("books/remove", "Remove", { voter: v.voter })}</td></tr>`).join("")}</table>` : `<p class="hint">No votes yet.</p>`}
   </section>`;
+  // Recipe box's labels: the one list recipes pick from, so nobody ends up with Fall and Autumn.
+  const field = (name, value, label, ph, max) => `<input type="text" name="${name}" value="${esc(value)}" placeholder="${ph}" maxlength="${max}" aria-label="${label}" style="width:160px;padding:5px 8px;font-size:14px;margin-right:6px">`;
+  const keys = [...new Set(labels.map(l => l.key))];
+  const labelRows = `<section class="card" id="recipe-labels"><h2>Recipe labels</h2>
+    <p>The labels people can put on recipes in Recipe box, like <b>Season: Fall</b> or <b>Cuisine: Mediterranean</b>, then filter and sort by. Only admins add them, so everyone picks from the same list. Renaming one renames it on every recipe; removing one takes it off every recipe.</p>
+    <form method="post" action="/admin/labels/add" class="row">${field("key", "", "Label name", "Season", 30)}${field("value", "", "Value", "Fall", 60)}<button class="small" type="submit">Add label</button></form>
+    ${keys.length ? `<datalist id="label-keys">${keys.map(k => `<option value="${esc(k)}">`).join("")}</datalist>` : ""}
+    ${labels.length ? `<table><tr><th>Name</th><th>Value</th><th>Recipes</th><th></th></tr>${labels.map(l => `<tr>
+      <td colspan="2"><form method="post" action="/admin/labels/rename" class="row"><input type="hidden" name="id" value="${esc(l.id)}">${field("key", l.key, "Label name", "", 30)}${field("value", l.value, "Value", "(no value)", 60)}<button class="quiet small" type="submit">Rename</button></form></td>
+      <td>${labelUse[l.id] || 0}</td>
+      <td>${post("labels/delete", "Remove", { id: l.id }, "danger small")}</td></tr>`).join("")}</table>` : `<p class="hint">No labels yet. Add the first one above.</p>`}
+  </section>`;
   return page("Admin", `
     <div class="kicker">Admin</div><h1>Accounts</h1>
     ${msg(error)}${msg(notice, "good")}
@@ -585,6 +597,7 @@ export function adminPage({ user, users, orphans, apps, books = [], bookVotes = 
     ${tempPassword ? `<div class="msg good">Temporary password for <strong>${esc(tempPassword.username)}</strong>: <span class="mono">${esc(tempPassword.password)}</span><br>Send it to them privately. They'll have to change it when they sign in, and it won't be shown again.</div>` : ""}
     <section class="card scroll"><table><tr><th>Account</th><th>Apps</th><th>Status</th><th>Actions</th></tr>${rows}</table></section>
     ${orphanRows}
+    ${labelRows}
     ${bookRows}`, { user, wide: true, here: "admin" });
 }
 

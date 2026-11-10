@@ -413,6 +413,14 @@ const SCHEMA = [
      created TEXT NOT NULL,
      PRIMARY KEY (trip, id)
    )`,
+  // Recipe box's labels (src/recipes.js): one list, kept by admins, that recipes pick from.
+  `CREATE TABLE IF NOT EXISTS recipe_labels (
+     id      TEXT PRIMARY KEY,                     -- "l_" + random hex
+     key     TEXT NOT NULL COLLATE NOCASE,         -- Season
+     value   TEXT NOT NULL DEFAULT '' COLLATE NOCASE,  -- Fall
+     created TEXT NOT NULL,
+     UNIQUE (key, value)
+   )`,
   // Recipe board (src/board.js): categories, recipes posted under them, who
   // follows which, when each person last read their feed, and who saved what.
   `CREATE TABLE IF NOT EXISTS board_categories (

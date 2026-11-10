@@ -90,6 +90,8 @@ label.field input, label.field textarea { width: 100%; color: var(--ink); font-s
 .recipes button:hover { background: var(--gold-soft); color: var(--ink); }
 .recipes button[aria-current="true"] { background: var(--gold-soft); border-left-color: var(--gold); color: var(--ink); font-weight: 700; }
 .empty { color: var(--faint); }
+.pager { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 10px; color: var(--faint); font-size: 12.5px; }
+.pager .btn { margin: 0; padding: 6px 10px; font-size: 11.5px; }
 .filters { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 6px; margin-bottom: 8px; }
 .filters select { width: 100%; font-size: 12.5px; padding: 6px 8px; }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -101,6 +103,12 @@ label.field input, label.field textarea { width: 100%; color: var(--ink); font-s
 .chip.on { background: var(--gold); border-color: var(--gold); color: var(--on-gold); }
 .chip.on b { color: var(--on-gold); }
 .recipe .chips { margin: 0 0 12px; }
+#label-picker { display: grid; gap: 8px; padding: 10px; border: 1px solid var(--line-2); background: var(--field); }
+#label-picker .pick { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+#label-picker .pick > b { min-width: 9ch; color: var(--gold); font-size: 12.5px; }
+#label-picker .chip input { accent-color: var(--gold); margin: 0 4px 0 0; }
+#label-picker .chip:has(input:checked) { background: var(--gold); border-color: var(--gold); color: var(--on-gold); }
+#label-picker .chip:has(input:focus-visible) { outline: 2px solid var(--gold); }
 .recipes .tagline { display: block; color: var(--gold); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .recipe { max-width: 1100px; }
@@ -145,7 +153,7 @@ dialog .two { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
 <main>
   <div class="kicker">Recipe box</div>
   <h1>Recipes</h1>
-  <p class="lede">Paste a link to a recipe (any recipe site, or one shared from Recipe Keeper) to keep it here. Scale it to the servings you need and send what to buy to a Drift list. Give recipes labels like <b>Season: Fall</b> to filter and sort them.</p>
+  <p class="lede">Paste a link to a recipe (any recipe site, or one shared from Recipe Keeper) to keep it here. Scale it to the servings you need and send what to buy to a Drift list. Give recipes labels like <b>Season: Fall</b> (from the list an admin keeps) to filter and sort them.</p>
   <div id="error" class="msg bad" role="alert" hidden></div>
   <div id="done" class="msg good" role="status" hidden></div>
 
@@ -164,6 +172,7 @@ dialog .two { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
       </div>
       <div class="chips" id="active"></div>
       <ul class="recipes" id="recipes"></ul>
+      <div class="pager" id="pager" hidden></div>
     </aside>
     <section id="detail"><p class="empty">Loading…</p></section>
   </div>
@@ -181,14 +190,14 @@ dialog .two { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
     </div>
     <label class="field">Ingredients, one per line<textarea name="ingredients" rows="8"></textarea></label>
     <label class="field">Steps, one per line<textarea name="steps" rows="8"></textarea></label>
-    <label class="field">Labels, one per line<textarea name="labels" rows="3" placeholder="Season: Fall&#10;Cuisine: Mediterranean"></textarea></label>
+    <div class="field">Labels<div id="label-picker"></div></div>
     <label class="field">Notes<textarea name="notes" rows="3"></textarea></label>
     <label class="field">Link<input type="url" name="source" maxlength="2000"></label>
     <div class="row"><button class="btn" value="save">Save</button><button class="btn quiet" value="cancel" formnovalidate>Cancel</button></div>
   </form>
 </dialog>
 
-<footer class="keybar" aria-label="Keyboard shortcuts"><span><kbd>n</kbd>new from a link</span><span><kbd>/</kbd>find</span><span><kbd>l</kbd>filter by label</span><span><kbd>j k</kbd>next, previous</span><span><kbd>+ -</kbd>servings</span><span><kbd>s</kbd>send to list</span><span><kbd>e</kbd>edit</span><span><kbd>g</kbd>then a key from the menu to jump</span><span><kbd>\</kbd>Sidebar</span><a class="end" href="/logout" data-key="o"><kbd>g o</kbd>Sign out</a></footer>
+<footer class="keybar" aria-label="Keyboard shortcuts"><span><kbd>n</kbd>new from a link</span><span><kbd>/</kbd>find</span><span><kbd>l</kbd>filter by label</span><span><kbd>j k</kbd>next, previous</span><span><kbd>[ ]</kbd>page</span><span><kbd>+ -</kbd>servings</span><span><kbd>s</kbd>send to list</span><span><kbd>e</kbd>edit</span><span><kbd>g</kbd>then a key from the menu to jump</span><span><kbd>\</kbd>Sidebar</span><a class="end" href="/logout" data-key="o"><kbd>g o</kbd>Sign out</a></footer>
 <script src="/keys.js" defer></script>
 <script type="module" src="/recipes/app.js"></script>
 </body>

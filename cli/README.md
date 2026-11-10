@@ -153,7 +153,7 @@ The same recipes as `/recipes/`: the list on the left, the open one on the right
 | `b` | share the recipe on the Recipe board (if you have it) |
 | `l` | filter the shelf by labels: tick any (two values of one key show either; different keys show only recipes with both); `c` clears |
 | `o` | sort the shelf by title, then by each label in turn (recipes without that label go last) |
-| `e` | edit it (`ctrl+s` saves) |
+| `e` | edit it (`ctrl+s` saves); labels are ticked from the list admins keep, so everyone uses the same ones |
 | `d` | delete it |
 
 ## Meal plan
@@ -248,3 +248,5 @@ The site's side is `src/cli.js` (signing in, the dashboard and settings) and the
 ## Admin
 
 For admins: every account, with a switch for each app on the site (the same list as the website's menu, so a new app shows up here by itself, off for everyone). `tab` moves between switches and `space` turns one on or off; your own Admin switch stays on. Passwords, two-factor and disabling or deleting accounts are on the website: `w` opens `/admin`.
+
+Below the accounts is the Recipe labels list, the one list every Recipe box label comes from. `n` adds one (type `Season: Fall`), `e` renames the highlighted one and `x` removes it. Renaming changes it on every recipe that has it, and removing takes it off them all.

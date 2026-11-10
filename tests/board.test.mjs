@@ -4,7 +4,7 @@
 // Run with:  node --no-warnings --test tests/*.test.mjs
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { Browser, makeEnv, grantApps, sql } from "./helpers.mjs";
+import { Browser, makeEnv, grantApps, sql, run } from "./helpers.mjs";
 import { STARTING_CATEGORIES } from "../src/board.js";
 
 async function member(env, name, ...apps) {
@@ -195,9 +195,14 @@ test("the recipe of the day is someone else's, the same all day", async () => {
 
 test("a recipe's labels go to the board and back into Recipe box", async () => {
   const env = makeEnv(), ryan = await member(env, "ryan", "recipes"), sam = await member(env, "sam", "recipes");
-  const mine = (await ryan.req("POST", "/recipes/api/recipes", { json: { title: "Stew", ...RECIPE, labels: "Season: Fall\nCuisine: Irish" } })).json;
+  const t = new Date().toISOString();
+  run(env, "INSERT INTO recipe_labels (id, key, value, created) VALUES ('l_00000000aa', 'Season', 'Fall', ?), ('l_00000000bb', 'Cuisine', 'Irish', ?)", t, t);
+  const mine = (await ryan.req("POST", "/recipes/api/recipes", { json: { title: "Stew", ...RECIPE, labels: ["l_00000000aa", "l_00000000bb"] } })).json;
   const p = (await api(ryan, "POST", "posts", { category: await catId(ryan, "Dinner"), recipe_id: mine.id })).json;
   assert.deepEqual(p.recipe.labels, mine.labels);
   const saved = (await api(sam, "POST", `posts/${p.id}/save`)).json.recipe;
-  assert.deepEqual(saved.labels, [{ key: "Season", value: "Fall" }, { key: "Cuisine", value: "Irish" }]);
+  assert.deepEqual(saved.labels.map(l => l.value), ["Irish", "Fall"]);
+  // A label taken off the list comes off posts too.
+  run(env, "DELETE FROM recipe_labels WHERE id = 'l_00000000bb'");
+  assert.deepEqual((await api(sam, "GET", `posts/${p.id}`)).json.recipe.labels.map(l => l.value), ["Fall"]);
 });
