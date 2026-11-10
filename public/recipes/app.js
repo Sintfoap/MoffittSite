@@ -333,8 +333,7 @@ const HINTS = {
   text: "Read from the text you pasted. Check that each line landed in the right box, then save.",
 };
 // `picture`, for a draft from a photo: {blob, whole}, the dish's photo cut from
-// it (or, whole, the photo itself), which becomes the recipe's picture when it's saved, if ticked.
-let draftPicture = null;
+// it (or, whole, the photo itself), put in as the recipe's picture to keep on Save.
 function openEditor(r, draft = null, shots = [], how = "claude", why = "", picture = null) {
   editing = r || {};
   const f = $("#edit-form");
@@ -342,7 +341,8 @@ function openEditor(r, draft = null, shots = [], how = "claude", why = "", pictu
   $("#edit-hint").hidden = !draft;
   const check = draft?.check?.length ? ` Look twice at the amounts in ${draft.check.map(l => `“${l}”`).join(", ")}: fractions like ½ and ¾ are easy to misread.` : "";
   const fell = why ? `Claude couldn't read it (${why}), so text recognition read it instead. ` : "";
-  $("#edit-hint-text").textContent = fell + (HINTS[how] || "") + check;
+  const pic = picture ? (picture.whole ? " Its picture is the whole photo" : " Its picture is the dish's photo from the page") + "; change it or take it off below." : "";
+  $("#edit-hint-text").textContent = fell + (HINTS[how] || "") + check + pic;
   $("#with-claude").hidden = !draft || how !== "ocr" || !data.photo?.sealing;
   const pics = $("#edit-photos");
   pics.hidden = !shots.length;
@@ -351,14 +351,6 @@ function openEditor(r, draft = null, shots = [], how = "claude", why = "", pictu
     img.addEventListener("click", () => img.classList.toggle("big"));
     return img;
   }));
-  draftPicture = picture?.blob || null;
-  const use = $("#edit-picture");
-  use.hidden = !draftPicture;
-  if (draftPicture) {
-    $("#use-picture-what").textContent = picture.whole ? "the whole photo" : "this";
-    base64(draftPicture).then(b => { use.querySelector("img").src = "data:image/jpeg;base64," + b; });  // img-src takes data:, not blob:
-    $("#use-picture").checked = true;
-  }
   r = r || draft;
   f.title.value = r?.title || "";
   f.servings.value = r?.servings ?? "";
@@ -368,10 +360,36 @@ function openEditor(r, draft = null, shots = [], how = "claude", why = "", pictu
   f.steps.value = (r?.steps || []).join("\n");
   f.notes.value = r?.notes || "";
   renderPicker(r);
+  showPicture(r?.image || "");
+  if (picture) {
+    const file = new File([picture.blob], "picture.jpg", { type: "image/jpeg" });
+    showPicture(URL.createObjectURL(file), file);
+  }
   f.source.value = r?.source || (r || draft ? "" : $("#url").value.trim());
   $("#editor").showModal();
   f.title.focus();
 }
+
+// The editor's picture: what the recipe has, or the one picked to replace it.
+// Nothing changes until Save; then a picked one is shrunk and kept here.
+let picChange = null;     // null (as it is), a File (this instead), or "remove"
+function showPicture(src, change = null) {
+  picChange = change;
+  const img = $("#pic-preview");
+  if (img.src.startsWith("blob:")) URL.revokeObjectURL(img.src);
+  img.hidden = !src;
+  if (src) img.src = src; else img.removeAttribute("src");
+  $("#pic-none").hidden = !!src;
+  $("#pic-remove").hidden = !src;
+  $("#pic-choose").textContent = src ? "Change it" : "Choose a picture";
+}
+$("#pic-choose").addEventListener("click", () => $("#pic-file").click());
+$("#pic-file").addEventListener("change", e => {
+  const file = e.target.files[0];
+  if (file) showPicture(URL.createObjectURL(file), file);
+  e.target.value = "";
+});
+$("#pic-remove").addEventListener("click", () => showPicture("", "remove"));
 
 // The editor's labels: the site's list, a row of ticks per name.
 function renderPicker(r) {
@@ -395,12 +413,16 @@ $("#editor").addEventListener("close", () => {
     ingredients: f.ingredients.value, steps: f.steps.value, notes: f.notes.value, source: f.source.value,
     labels: [...document.querySelectorAll("#label-picker input:checked")].map(i => i.value),
   };
-  const was = editing, picture = !was.id && $("#use-picture").checked ? draftPicture : null;
+  const was = editing, change = picChange;
   editing = null;
-  draftPicture = null;
   run(async () => {
     let saved = was.id ? await api("PATCH", "recipes/" + was.id, body) : await api("POST", "recipes", body);
-    if (picture) saved = await api("POST", `recipes/${saved.id}/photo`, { data: await base64(picture) });
+    if (change === "remove" && saved.image) saved = await api("DELETE", `recipes/${saved.id}/photo`);
+    else if (change instanceof File) {
+      const small = await shrink(change);
+      if (!small) throw new Error("the recipe is saved, but that picture couldn't be read or made small enough");
+      saved = await api("POST", `recipes/${saved.id}/photo`, { data: await base64(small) });
+    }
     data.recipes = [...data.recipes.filter(x => x.id !== saved.id), saved].sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: "base" }));
     if (was.servings !== saved.servings) scale.delete(saved.id);
     if (!was.id) $("#url").value = "";

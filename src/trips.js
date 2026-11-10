@@ -153,7 +153,8 @@ export async function getTrip(env, user, id) {
   const d = await db(env);
   const acc = await access(d, user, id);
   if (!acc) return null;
-  const { results } = await d.prepare("SELECT id, kind, data, created FROM trip_entries WHERE trip = ?").bind(id).all();
+  // In the order they were added (rowid), so two added in the same millisecond keep it; the key alone is random.
+  const { results } = await d.prepare("SELECT id, kind, data, created FROM trip_entries WHERE trip = ? ORDER BY rowid").bind(id).all();
   const of = kind => results.filter(r => r.kind === kind).map(r => ({ ...BLANK[kind], ...JSON.parse(r.data), id: r.id, created: r.created }));
   const pack = of("pack").sort((a, b) => a.created.localeCompare(b.created))
     .map(({ sent, ...p }) => ({ ...p, in_drift: sent.includes(user.id) }));
