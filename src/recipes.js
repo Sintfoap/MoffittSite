@@ -5,11 +5,13 @@
 // almost every recipe site publishes for search engines), falling back to
 // microdata. Scaling is public/recipes/scale.js, shared with the page.
 //
-// /recipes/api/recipes             GET → {recipes, lists, drift, photo}; POST {url} or {title, ...} → a new recipe
+// /recipes/api/recipes             GET → {recipes, label_list, lists, drift, board (has Recipe board), photo}; POST {url} or {title, ...} → a new recipe
 // /recipes/api/recipes/import      POST {pages: [html, ...]} → {added, skipped}: many at once, from an export file
 // /recipes/api/recipes/<id>/photo  POST {data (base64)} → the recipe, with that as its picture (kept here)
 // /recipes/api/photos/<photo>      GET → a picture kept here
 // /recipes/api/recipes/<id>        PATCH → change the fields sent; DELETE → remove it
+//   A recipe's labels come from the site's list (see labelList): sent as ids, read back as [{id, key, value}].
+//   GET also sends label_list, the whole list to pick from.
 // /recipes/api/recipes/<id>/shop   POST {servings | factor, lines?, list?} → its ingredients onto a Drift list
 // /recipes/api/photo, /recipes/api/key   a recipe read from a photo, and the API key it's read with (src/recipe_photo.js)
 
@@ -25,7 +27,7 @@ import { SweepError } from "./sweep.js";
 const fail = msg => { throw new BadRequest(msg); };
 export class NotARecipe extends Error {}
 
-const LIMITS = { recipes: 1000, importPages: 10, importBody: 4 * 1024 * 1024, title: 200, url: 2000, yield: 100, time: 50, lines: 100, ingredient: 300, step: 3000, notes: 5000, page: 3 * 1024 * 1024 };
+const LIMITS = { labels: 20, labelList: 300, labelKey: 30, labelValue: 60, recipes: 1000, importPages: 10, importBody: 4 * 1024 * 1024, title: 200, url: 2000, yield: 100, time: 50, lines: 100, ingredient: 300, step: 3000, notes: 5000, page: 3 * 1024 * 1024 };
 const ID = /^r_[0-9a-f]{10}$/;
 const ROUTE = /^\/recipes\/api\/recipes(?:\/(import)|\/(r_[0-9a-f]{10})(?:\/(shop|photo))?)?\/?$/;
 const PHOTO = /^\/recipes\/api\/photos\/(p_[0-9a-f]{10})$/;
@@ -35,7 +37,7 @@ export const PHOTO_BYTES = 600 * 1024;
 const nowStamp = () => new Date().toISOString().slice(0, 19);
 const isObj = v => v && typeof v === "object" && !Array.isArray(v);
 
-export const RECIPE = { title: "", source: "", image: "", yield: "", servings: null, time: "", ingredients: [], steps: [], notes: "", created: "" };
+export const RECIPE = { title: "", source: "", image: "", yield: "", servings: null, time: "", ingredients: [], steps: [], notes: "", labels: [], created: "" };
 
 function newId() {
   const b = crypto.getRandomValues(new Uint8Array(5));
@@ -67,7 +69,116 @@ function link(f, v, { https = false } = {}) {
   return u.toString();
 }
 
-// Also Food club's (src/food.js): a pick's recipe is cleaned the same way.
+// Labels: the site's one list of them, kept by admins (/admin), like
+// "Season: Fall" or "Cuisine: Mediterranean", so everyone picks the same ones
+// instead of typing "Fall" and "Autumn". A recipe keeps the ids of its labels
+// and reads back [{id, key, value}]; a label an admin deletes drops off every
+// recipe. Ids can be sent as "l_…" or {id}.
+const LABEL = /^l_[0-9a-f]{10}$/;
+export function cleanLabels(v) {
+  if (!Array.isArray(v)) fail("labels must be a list of label ids");
+  const out = [];
+  for (const item of v) {
+    const id = String(isObj(item) ? item.id : item ?? "");
+    if (!LABEL.test(id)) fail("labels must be ids from the site's label list");
+    if (!out.includes(id)) out.push(id);
+  }
+  if (out.length > LIMITS.labels) fail(`a recipe can have at most ${LIMITS.labels} labels`);
+  return out;
+}
+
+// Every label on the list, by key then value: [{id, key, value}].
+export async function labelList(d) {
+  const { results } = await d.prepare("SELECT id, key, value FROM recipe_labels ORDER BY key COLLATE NOCASE, value COLLATE NOCASE").all();
+  return results;
+}
+// A recipe's stored ids as {id, key, value}, in the list's order, leaving out deleted ones.
+export function withLabels(list, ids) {
+  const want = new Set(Array.isArray(ids) ? ids.map(x => isObj(x) ? x.id : x) : []);
+  return list.filter(l => want.has(l.id));
+}
+async function checkLabels(d, ids) {
+  if (!ids?.length) return;
+  const known = new Set((await labelList(d)).map(l => l.id));
+  if (ids.some(id => !known.has(id))) fail("that label isn't on the site's list (an admin may have just removed it)");
+}
+
+function labelFields(body) {
+  if (!isObj(body)) fail("body must be a JSON object");
+  const key = str("the label's name", body.key, 1000).replace(/\s+/g, " ");
+  const value = str("the label's value", body.value, 1000).replace(/\s+/g, " ");
+  if (!key) fail("give the label a name, like Season");
+  if (key.length > LIMITS.labelKey) fail(`a label's name can be at most ${LIMITS.labelKey} characters`);
+  if (value.length > LIMITS.labelValue) fail(`a label's value can be at most ${LIMITS.labelValue} characters`);
+  return { key, value };
+}
+async function sameLabel(d, { key, value }, except = "") {
+  const other = await d.prepare("SELECT id FROM recipe_labels WHERE key = ? AND value = ? AND id != ?").bind(key, value, except).first();
+  if (other) fail(`${value ? `${key}: ${value}` : key} is already on the list`);
+}
+
+export async function createLabel(env, body) {
+  const d = await db(env), l = labelFields(body);
+  await sameLabel(d, l);
+  const { n } = await d.prepare("SELECT COUNT(*) AS n FROM recipe_labels").first();
+  if (n >= LIMITS.labelList) fail(`the list holds at most ${LIMITS.labelList} labels`);
+  const id = "l_" + newId().slice(2);
+  await d.prepare("INSERT INTO recipe_labels (id, key, value, created) VALUES (?, ?, ?, ?)").bind(id, l.key, l.value, new Date().toISOString()).run();
+  return { id, ...l };
+}
+
+// Renaming one renames it on every recipe that has it.
+export async function renameLabel(env, id, body) {
+  const d = await db(env), l = labelFields(body);
+  if (!await d.prepare("SELECT 1 FROM recipe_labels WHERE id = ?").bind(id).first()) return null;
+  await sameLabel(d, l, id);
+  await d.prepare("UPDATE recipe_labels SET key = ?, value = ? WHERE id = ?").bind(l.key, l.value, id).run();
+  return { id, ...l };
+}
+
+export async function deleteLabel(env, id) {
+  const d = await db(env);
+  const r = await d.prepare("DELETE FROM recipe_labels WHERE id = ?").bind(id).run();
+  return r.meta.changes ? { removed: true } : null;
+}
+
+// How many recipes have each label, for the admin page.
+export async function labelUse(env) {
+  const d = await db(env);
+  const { results } = await d.prepare(`SELECT j.value AS id, COUNT(*) AS n FROM recipes r, json_each(r.data, '$.labels') j GROUP BY j.value`).all();
+  return Object.fromEntries(results.map(r => [r.id, r.n]));
+}
+
+// /admin/api/labels              GET → {labels: [{id, key, value, recipes}]}; POST {key, value} → the new label
+// /admin/api/labels/<id>         POST {key, value} → renamed
+// /admin/api/labels/<id>/delete  POST → gone (and off every recipe)
+// (Only GET and POST: the /admin paths take no others.)
+// For admins only: src/account.js sends /admin/api/labels here.
+export async function adminLabelsApi(request, env, pathname) {
+  const method = request.method;
+  try {
+    const m = pathname.match(/^\/admin\/api\/labels(?:\/(l_[0-9a-f]{10})(\/delete)?)?\/?$/);
+    if (!m) return json({ error: "not found" }, 404);
+    if (method !== "GET" && !sameOrigin(request)) return json({ error: "cross-origin request refused" }, 403);
+    const [, id, del] = m;
+    if (!id) {
+      if (method === "GET") {
+        const use = await labelUse(env);
+        return json({ labels: (await labelList(await db(env))).map(l => ({ ...l, recipes: use[l.id] || 0 })) });
+      }
+      if (method === "POST") return json(await createLabel(env, await readJson(request)), 201);
+      return json({ error: "method not allowed" }, 405);
+    }
+    const out = method !== "POST" ? undefined : del ? await deleteLabel(env, id) : await renameLabel(env, id, await readJson(request));
+    if (out === undefined) return json({ error: "method not allowed" }, 405);
+    return out ? json(out) : json({ error: "not found" }, 404);
+  } catch (e) {
+    if (e instanceof BadRequest) return json({ error: e.message }, 400);
+    throw e;
+  }
+}
+
+// Also the Recipe board's (src/board.js) and Food club's (src/food.js): a post's or pick's recipe is cleaned the same way.
 export function clean(changes) {
   if (!isObj(changes)) fail("body must be a JSON object");
   const out = {};
@@ -88,6 +199,7 @@ export function clean(changes) {
       case "ingredients": out.ingredients = lines(f, v, LIMITS.ingredient); break;
       case "steps": out.steps = lines(f, v, LIMITS.step); break;
       case "notes": out.notes = str(f, v, LIMITS.notes); break;
+      case "labels": out.labels = cleanLabels(v); break;
       default: fail(`unknown field ${JSON.stringify(f)}`);
     }
   }
@@ -96,17 +208,21 @@ export function clean(changes) {
 
 // ── storage ────────────────────────────────────────────────────────────────
 
-const toRecipe = row => ({ ...RECIPE, ...JSON.parse(row.data), id: row.id, updated: row.updated });
+const toRecipe = (row, labels = []) => {
+  const data = JSON.parse(row.data);
+  return { ...RECIPE, ...data, labels: withLabels(labels, data.labels), id: row.id, updated: row.updated };
+};
 
 export async function list(env, user) {
   const d = await db(env);
   const { results } = await d.prepare("SELECT id, data, updated FROM recipes WHERE owner = ?").bind(user.id).all();
-  return results.map(toRecipe).sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: "base" }));
+  const labels = await labelList(d);
+  return results.map(r => toRecipe(r, labels)).sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: "base" }));
 }
 
 export async function get(d, owner, id) {
   const row = await d.prepare("SELECT id, data, updated FROM recipes WHERE owner = ? AND id = ?").bind(owner, id).first();
-  return row ? toRecipe(row) : null;
+  return row ? toRecipe(row, await labelList(d)) : null;
 }
 
 export async function create(env, user, fields) {
@@ -115,16 +231,18 @@ export async function create(env, user, fields) {
   if (n >= LIMITS.recipes) fail(`recipe limit reached (${LIMITS.recipes})`);
   const data = clean(fields);
   if (!data.title) fail("a recipe needs a title");
+  await checkLabels(d, data.labels);
   if (data.servings === undefined) data.servings = servingsOf(data.yield);
   const recipe = { ...RECIPE, ...data, created: nowStamp() };
   const id = newId(), updated = new Date().toISOString();
   await d.prepare("INSERT INTO recipes (owner, id, data, updated) VALUES (?, ?, ?, ?)").bind(user.id, id, JSON.stringify(recipe), updated).run();
-  return { ...recipe, id, updated };
+  return { ...recipe, labels: withLabels(await labelList(d), recipe.labels), id, updated };
 }
 
 export async function update(env, user, id, changes) {
   const d = await db(env);
   const patch = clean(changes);
+  await checkLabels(d, patch.labels);
   const res = await d.prepare("UPDATE recipes SET data = json_patch(data, ?), updated = ? WHERE owner = ? AND id = ?")
     .bind(JSON.stringify(patch), new Date().toISOString(), user.id, id).run();
   return res.meta.changes ? get(d, user.id, id) : null;
@@ -543,7 +661,7 @@ export async function recipes(request, env, user, pathname) {
     if (!id) {
       if (method === "GET") {
         const drift = user.areas.has("todo");
-        return json({ recipes: await list(env, user), drift, lists: drift ? await writableCollections(env, user) : [], photo: await photoState(env, user) });
+        return json({ recipes: await list(env, user), label_list: await labelList(await db(env)), drift, board: user.areas.has("board"), lists: drift ? await writableCollections(env, user) : [], photo: await photoState(env, user) });
       }
       if (method !== "POST") return notAllowed();
       const body = await readJson(request);

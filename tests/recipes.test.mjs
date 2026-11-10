@@ -236,6 +236,61 @@ test("ingredients go to a Drift shopping list, scaled, and to a list shared with
   assert.match((await api(ryan, "POST", `recipes/${id}/shop`, {})).json.error, /Drift/);
 });
 
+async function admin(env, name = "boss") {
+  const b = await cook(env, name);
+  const { id } = sqlOne(env, "SELECT id FROM users WHERE username = ?", name);
+  run(env, "INSERT INTO user_areas (user_id, area) VALUES (?, 'admin')", id);
+  run(env, "UPDATE users SET totp_secret = 'AAAAAAAAAAAAAAAA' WHERE id = ?", id);
+  return b;
+}
+const labels = (b, method, path = "", json) => b.req(method, "/admin/api/labels" + path, { json });
+
+test("labels come from one list that only admins keep", async () => {
+  const env = makeEnv(), boss = await admin(env), ryan = await cook(env);
+  assert.equal((await labels(ryan, "GET")).status, 403, "not an admin");
+  assert.equal((await labels(ryan, "POST", "", { key: "Season", value: "Fall" })).status, 403);
+  const fall = await labels(boss, "POST", "", { key: " Season ", value: "Fall" });
+  assert.equal(fall.status, 201, fall.text);
+  assert.deepEqual([fall.json.key, fall.json.value], ["Season", "Fall"]);
+  assert.match((await labels(boss, "POST", "", { key: "season", value: "FALL" })).json.error, /already/);
+  for (const bad of [{ key: "", value: "x" }, { key: "x".repeat(31) }, { key: "Season", value: "y".repeat(61) }]) {
+    assert.equal((await labels(boss, "POST", "", bad)).status, 400, JSON.stringify(bad));
+  }
+  const irish = (await labels(boss, "POST", "", { key: "Cuisine", value: "Irish" })).json;
+  const fave = (await labels(boss, "POST", "", { key: "Favorite" })).json;
+  assert.equal(fave.value, "");
+
+  // Recipes pick them by id, and read them back by name, in the list's order.
+  const box = (await ryan.get("/recipes/api/recipes")).json;
+  assert.deepEqual(box.label_list.map(l => l.key), ["Cuisine", "Favorite", "Season"]);
+  const r = await api(ryan, "POST", "recipes", { title: "Stew", labels: [fall.json.id, { id: irish.id }, fall.json.id] });
+  assert.equal(r.status, 201, r.text);
+  assert.deepEqual(r.json.labels.map(l => `${l.key}:${l.value}`), ["Cuisine:Irish", "Season:Fall"]);
+  for (const bad of ["Season: Fall", ["Season: Fall"], ["l_0000000000"]]) {
+    assert.equal((await api(ryan, "PATCH", `recipes/${r.json.id}`, { labels: bad })).status, 400, JSON.stringify(bad));
+  }
+  assert.equal((await labels(boss, "GET")).json.labels.find(l => l.id === fall.json.id).recipes, 1);
+
+  // Renaming renames it everywhere; removing takes it off every recipe.
+  const renamed = await labels(boss, "POST", "/" + fall.json.id, { key: "Season", value: "Autumn" });
+  assert.equal(renamed.status, 200, renamed.text);
+  const read = () => api(ryan, "GET", "recipes").then(x => x.json.recipes[0].labels.map(l => l.value));
+  assert.deepEqual(await read(), ["Irish", "Autumn"]);
+  assert.match((await labels(boss, "POST", "/" + irish.id, { key: "Season", value: "autumn" })).json.error, /already/);
+  assert.equal((await labels(boss, "POST", "/" + irish.id + "/delete")).json.removed, true);
+  assert.deepEqual(await read(), ["Autumn"]);
+  assert.equal((await labels(boss, "POST", "/" + irish.id + "/delete")).status, 404);
+  assert.equal((await boss.req("POST", "/admin/api/labels", { json: { key: "Evil" }, origin: "https://evil.test" })).status, 403);
+
+  // And the admin page's forms.
+  const page = await boss.get("/admin");
+  assert.match(page.text, /Recipe labels/);
+  assert.match(page.text, /Autumn/);
+  assert.equal((await boss.post("/admin/labels/add", { key: "Course", value: "Main" })).status, 200);
+  assert.ok(sqlOne(env, "SELECT 1 FROM recipe_labels WHERE key = 'Course'"));
+  assert.match((await boss.post("/admin/labels/add", { key: "", value: "x" })).text, /give the label a name/i);
+});
+
 // Two recipes as Recipe Keeper's HTML export writes them (Settings → Export → HTML).
 const EXPORT_RECIPE = (id, name, { source = "", ingredients = "", nut = "" } = {}) => `
     <div class="recipe-details">

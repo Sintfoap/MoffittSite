@@ -23,6 +23,7 @@ public/          the website, served as static files
   recipes/         Recipe box (signed-in users with it turned on); scale.js scales ingredient lines, shared with the Worker
   meals/           Meal plan: the week's dinners from Recipe box, around the Drift calendar
   sweep/           Sweep: Drift suggestions read out of your chat rooms, to accept or turn down
+  board/           Recipe board: recipes shared under categories, a feed of the ones you follow, and saving any into Recipe box
   trips/           Trip planner: a trip's days, places and packing list, planned with whoever's going
   food/            Food club: a food a month, picked by one member and made by all, with favorites and photos of everyone's attempts
   sw.js            the service worker that shows push notifications
@@ -48,17 +49,18 @@ src/             the Worker: runs only for the paths in run_worker_first
   gifs.js          chat's GIF picker: search, trending and categories from GIPHY (or KLIPY), and favorites
   push.js          sending Web Push: encryption (RFC 8291) and VAPID signing, with WebCrypto
   notify.js        notifications: settings, browsers, Chat's pushes and Drift's reminders
-  recipes.js       Recipe box: recipes read from a link's schema.org data (Recipe Keeper's shared recipes too) or imported in bulk from a file (Recipe Keeper's export, its folder or .zip, with pictures kept in D1), and their ingredients sent to a Drift list
+  recipes.js       Recipe box: recipes (with labels like Season: Fall, picked from a list admins keep on /admin) read from a link's schema.org data (Recipe Keeper's shared recipes too) or imported in bulk from a file (Recipe Keeper's export, its folder or .zip, with pictures kept in D1), and their ingredients sent to a Drift list
   recipe_photo.js  Recipe box: a recipe read from a photo (a card, a cookbook page, a screenshot) by Claude, with Sweep's API key, to check before saving
   meals.js         Meal plan: a week of dinners picked from Recipe box, quick ones on busy Drift nights, and the week's shopping sent to a Drift list
   sweep.js         Sweep: reads chosen chat rooms with Claude and suggests Drift events, tasks and list items
+  board.js         Recipe board: categories, posts (from a link, Recipe box, or typed in), follows, the feed and its unread count, the recipe of the day, saves into Recipe box
   trips.js         Trip planner: shared trips, their itinerary, pinned places, and packing lists sent to Drift
   food.js          Food club: the month's pick and its recipe (from a link or Recipe box), who made and loved it, and photos kept in D1
   books.js         the book club pick's list and votes (/books/api), and who voted for admins
   bridges.js       chat connections: other platforms' rooms in chat, with sealed credentials
   matrix.js        the Matrix provider for those
   vendor/uqr.mjs   QR codes for two-factor setup (MIT)
-cli/             the `sintfoap` command: sign in from a terminal; dashboard, Drift, plugin store, chat, Recipe box, Meal plan, Sweep, Trip planner, Food club and settings as a terminal UI
+cli/             the `sintfoap` command: sign in from a terminal; dashboard, Drift, plugin store, chat, Recipe box, Recipe board, Meal plan, Sweep, Trip planner, Food club and settings as a terminal UI
 apps/todo-esque/ the original Drift app (Python engine, terminal UI, CLI)
 tests/           node --no-warnings --test tests/*.test.mjs  (the CLI's: cd cli && python -m pytest tests)
 wrangler.jsonc   Worker configuration (name, static files, variables, database)

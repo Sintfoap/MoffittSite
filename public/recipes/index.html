@@ -65,6 +65,9 @@ button.btn { display: inline-block; margin: 6px 8px 0 0; padding: 8px 16px; font
 button.btn::before { content: "[ "; } button.btn::after { content: " ]"; }
 button.btn.quiet { background: transparent; color: var(--gold); border-color: var(--line-2); }
 button.btn.danger { background: transparent; color: var(--bad); border-color: color-mix(in oklch, var(--bad) 50%, transparent); }
+a.btn { display: inline-block; margin: 6px 8px 0 0; padding: 8px 16px; font: 700 12.5px var(--mono); letter-spacing: 1.5px; text-transform: uppercase;
+  color: var(--gold); border: 1px solid var(--line-2); text-decoration: none; }
+a.btn::before { content: "[ "; } a.btn::after { content: " ]"; }
 button.btn:disabled { opacity: .45; cursor: default; }
 input[type=text], input[type=url], input[type=search], input[type=number], textarea, select {
   padding: 8px 10px; background: var(--field); border: 1px solid var(--line-2); border-radius: 0; min-width: 0; }
@@ -78,7 +81,7 @@ label.field input, label.field textarea { width: 100%; color: var(--ink); font-s
 .add button.btn { margin: 0; }
 
 .box { display: grid; grid-template-columns: minmax(220px, 300px) minmax(0, 1fr); gap: 24px; align-items: start; }
-.shelf { position: sticky; top: 16px; }
+.shelf { position: sticky; top: 16px; min-width: 0; }
 .shelf input { width: 100%; margin-bottom: 8px; }
 .recipes { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--line); }
 .recipes button { display: block; width: 100%; text-align: left; padding: 9px 10px; background: none; border: 0; border-bottom: 1px dashed var(--line);
@@ -87,6 +90,26 @@ label.field input, label.field textarea { width: 100%; color: var(--ink); font-s
 .recipes button:hover { background: var(--gold-soft); color: var(--ink); }
 .recipes button[aria-current="true"] { background: var(--gold-soft); border-left-color: var(--gold); color: var(--ink); font-weight: 700; }
 .empty { color: var(--faint); }
+.pager { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 10px; color: var(--faint); font-size: 12.5px; }
+.pager .btn { margin: 0; padding: 6px 10px; font-size: 11.5px; }
+.filters { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 6px; margin-bottom: 8px; }
+.filters select { width: 100%; font-size: 12.5px; padding: 6px 8px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+#active:not(:empty) { margin-bottom: 8px; }
+.chip { display: inline-flex; align-items: baseline; gap: 4px; padding: 2px 8px; font: 400 12px var(--mono); border: 1px solid var(--line-2);
+  background: transparent; color: var(--muted); cursor: pointer; }
+.chip b { color: var(--gold); font-weight: 700; }
+.chip:hover { border-color: var(--gold); color: var(--ink); }
+.chip.on { background: var(--gold); border-color: var(--gold); color: var(--on-gold); }
+.chip.on b { color: var(--on-gold); }
+.recipe .chips { margin: 0 0 12px; }
+#label-picker { display: grid; gap: 8px; padding: 10px; border: 1px solid var(--line-2); background: var(--field); }
+#label-picker .pick { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+#label-picker .pick > b { min-width: 9ch; color: var(--gold); font-size: 12.5px; }
+#label-picker .chip input { accent-color: var(--gold); margin: 0 4px 0 0; }
+#label-picker .chip:has(input:checked) { background: var(--gold); border-color: var(--gold); color: var(--on-gold); }
+#label-picker .chip:has(input:focus-visible) { outline: 2px solid var(--gold); }
+.recipes .tagline { display: block; color: var(--gold); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .recipe { max-width: 1100px; }
 .recipe .hero { width: 100%; max-height: 280px; object-fit: cover; display: block; margin-bottom: 16px; border: 1px solid var(--line); }
@@ -133,7 +156,7 @@ dialog .two { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
 <main>
   <div class="kicker">Recipe box</div>
   <h1>Recipes</h1>
-  <p class="lede">Paste a link to a recipe (any recipe site, or one shared from Recipe Keeper) to keep it here, snap a photo of a recipe card or cookbook page, or import a whole file of them, like Recipe Keeper's export (its folder or .zip brings the pictures too, and importing it again fills in any that are missing). Scale it to the servings you need and send what to buy to a Drift list.</p>
+  <p class="lede">Paste a link to a recipe (any recipe site, or one shared from Recipe Keeper) to keep it here, snap a photo of a recipe card or cookbook page, or import a whole file of them, like Recipe Keeper's export (its folder or .zip brings the pictures too, and importing it again fills in any that are missing). Scale it to the servings you need and send what to buy to a Drift list. Give recipes labels like <b>Season: Fall</b> (from the list an admin keeps) to filter and sort them.</p>
   <div id="error" class="msg bad" role="alert" hidden></div>
   <div id="done" class="msg good" role="status" hidden></div>
 
@@ -152,7 +175,13 @@ dialog .two { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
   <div class="box">
     <aside class="shelf">
       <input type="search" id="find" placeholder="Find a recipe" aria-label="Find a recipe">
+      <div class="filters">
+        <select id="label-filter" aria-label="Filter by a label"></select>
+        <select id="sort" aria-label="Sort by"></select>
+      </div>
+      <div class="chips" id="active"></div>
       <ul class="recipes" id="recipes"></ul>
+      <div class="pager" id="pager" hidden></div>
     </aside>
     <section id="detail"><p class="empty">Loading…</p></section>
   </div>
@@ -172,6 +201,7 @@ dialog .two { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
     </div>
     <label class="field">Ingredients, one per line<textarea name="ingredients" rows="8"></textarea></label>
     <label class="field">Steps, one per line<textarea name="steps" rows="8"></textarea></label>
+    <div class="field">Labels<div id="label-picker"></div></div>
     <label class="field">Notes<textarea name="notes" rows="3"></textarea></label>
     <label class="field">Link<input type="url" name="source" maxlength="2000"></label>
     <div class="row"><button class="btn" value="save">Save</button><button class="btn quiet" value="cancel" formnovalidate>Cancel</button></div>
@@ -187,7 +217,7 @@ dialog .two { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
   </form>
 </dialog>
 
-<footer class="keybar" aria-label="Keyboard shortcuts"><span><kbd>n</kbd>new from a link</span><span><kbd>/</kbd>find</span><span><kbd>j k</kbd>next, previous</span><span><kbd>+ -</kbd>servings</span><span><kbd>s</kbd>send to list</span><span><kbd>e</kbd>edit</span><span><kbd>p</kbd>from a photo</span><span><kbd>i</kbd>import a file</span><span><kbd>g</kbd>then a key from the menu to jump</span><span><kbd>\</kbd>Sidebar</span><a class="end" href="/logout" data-key="o"><kbd>g o</kbd>Sign out</a></footer>
+<footer class="keybar" aria-label="Keyboard shortcuts"><span><kbd>n</kbd>new from a link</span><span><kbd>/</kbd>find</span><span><kbd>l</kbd>filter by label</span><span><kbd>j k</kbd>next, previous</span><span><kbd>[ ]</kbd>page</span><span><kbd>+ -</kbd>servings</span><span><kbd>s</kbd>send to list</span><span><kbd>e</kbd>edit</span><span><kbd>p</kbd>from a photo</span><span><kbd>i</kbd>import a file</span><span><kbd>g</kbd>then a key from the menu to jump</span><span><kbd>\</kbd>Sidebar</span><a class="end" href="/logout" data-key="o"><kbd>g o</kbd>Sign out</a></footer>
 <script src="/keys.js" defer></script>
 <script type="module" src="/recipes/app.js"></script>
 </body>

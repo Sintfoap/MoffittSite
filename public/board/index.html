@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Recipe board · sintfoap.xyz</title>
+<meta name="robots" content="noindex">
+<meta name="theme-color" content="#0b0f0a">
+<link rel="icon" href="/favicon.ico" sizes="32x32"><link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="manifest" href="/site.webmanifest">
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+/* The Console look (src/pages.js): monospace, square double-ruled panels,
+   gold on green-black, the shared rail and the key bar. */
+:root { color-scheme: light;
+  --bg:#f2f0e6; --rail:#ebe8dc; --panel:#fbfaf4; --field:#ffffff; --line:#cfc9b0; --line-2:#a9a283;
+  --gold:#8a6510; --gold-soft:#e9e1c2; --on-gold:#fbf7ea; --ink:#1c1d16; --muted:#4d4c3f; --faint:#7a7764;
+  --bad:#b4412f; --good:#2f7a52; --warn:#946c0c; --mono:'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace;
+  --surface:var(--rail); --accent:var(--gold); --accent-soft:var(--gold-soft); --sans:var(--mono); }
+@media (prefers-color-scheme: dark) { :root { color-scheme: dark;
+  --bg:#0b0f0a; --rail:#0e140e; --panel:#121a12; --field:#0e140e; --line:#4a4430; --line-2:#6a6243;
+  --gold:#d6ae5e; --gold-soft:#24251a; --on-gold:#1a1206; --ink:#f4efe6; --muted:#c6bcab; --faint:#8a8270;
+  --bad:#e47a62; --good:#7fcf98; --warn:#e0b25a; } }
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { min-height: 100vh; background: var(--bg); color: var(--ink); font: 400 14px/1.6 var(--mono); -webkit-font-smoothing: antialiased; }
+button, input, select { font: inherit; color: inherit; }
+a { color: var(--gold); }
+:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+::selection { background: var(--gold); color: var(--on-gold); }
+[hidden] { display: none !important; }
+
+/* the site rail (the dashboard sends it, with its own styles) beside the page, the key bar under both */
+.shell { display: grid; grid-template-columns: auto minmax(0, 1fr); min-height: 100vh; padding-bottom: 38px; }
+kbd { font: 700 11px var(--mono); color: var(--gold); }
+.keybar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 5; height: 38px; display: flex; align-items: center; gap: 22px; overflow-x: auto;
+  padding: 0 max(16px, env(safe-area-inset-right, 0px)) 0 max(16px, env(safe-area-inset-left, 0px)); white-space: nowrap;
+  background: var(--rail); border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; scrollbar-width: none; }
+.keybar a { color: var(--muted); text-decoration: none; }
+.keybar a:hover { color: var(--ink); }
+.keybar kbd { font-size: 13px; margin-right: 6px; }
+.keybar .end { margin-left: auto; }
+
+/* the page */
+main { min-width: 0; padding: 34px clamp(16px, 4vw, 48px) 56px; }
+.kicker { font: 700 13px var(--mono); letter-spacing: .55em; color: var(--gold); text-transform: uppercase; }
+h1 { font: 700 clamp(22px, 4vw, 30px)/1.25 var(--mono); margin: 10px 0 18px; }
+h2 { font: 700 15px/1.4 var(--mono); margin: 0 0 10px; }
+h3 { font: 400 11px var(--mono); letter-spacing: 3px; text-transform: uppercase; color: var(--faint); margin: 22px 0 8px; }
+p { color: var(--muted); margin: 0 0 12px; }
+.lede { margin: -6px 0 22px; max-width: 680px; }
+.card { position: relative; background: var(--panel); border: 1px solid var(--line); padding: 18px 22px; margin-bottom: 14px; }
+.card::before { content: ""; position: absolute; inset: 4px; border: 1px solid var(--line); pointer-events: none; }
+.card > * { position: relative; }
+.card > :last-child { margin-bottom: 0; }
+.msg { padding: 10px 14px; margin-bottom: 18px; border-left: 3px solid; max-width: 680px; }
+.msg.bad { background: color-mix(in oklch, var(--bad) 10%, transparent); border-color: var(--bad); color: var(--bad); }
+.msg.good { background: color-mix(in oklch, var(--good) 10%, transparent); border-color: var(--good); color: var(--ink); }
+.msg a { color: inherit; font-weight: 700; }
+
+.btn { display: inline-block; margin: 6px 8px 0 0; padding: 8px 16px; font: 700 12.5px var(--mono); letter-spacing: 1.5px; text-transform: uppercase;
+  color: var(--on-gold); background: var(--gold); border: 1px solid var(--gold); border-radius: 0; cursor: pointer; text-decoration: none; }
+.btn::before { content: "[ "; } .btn::after { content: " ]"; }
+.btn.quiet { background: transparent; color: var(--gold); border-color: var(--line-2); }
+.btn.danger { background: transparent; color: var(--bad); border-color: color-mix(in oklch, var(--bad) 50%, transparent); }
+.btn:disabled { opacity: .45; cursor: default; }
+input[type=text], input[type=url], input[type=number], textarea, select {
+  padding: 8px 10px; background: var(--field); border: 1px solid var(--line-2); border-radius: 0; min-width: 0; color: var(--ink); }
+textarea { width: 100%; resize: vertical; font: inherit; line-height: 1.5; }
+label.field { display: grid; gap: 4px; margin-bottom: 12px; color: var(--muted); font-size: 13px; }
+label.field input, label.field textarea, label.field select { width: 100%; font-size: 14px; }
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.empty { color: var(--faint); }
+
+.board { display: grid; grid-template-columns: minmax(220px, 280px) minmax(0, 1fr); gap: 24px; align-items: start; }
+.side { position: sticky; top: 16px; min-width: 0; }
+.board > section { min-width: 0; }
+.side h3:first-child { margin-top: 0; }
+.nav { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--line); }
+.nav li { display: flex; align-items: stretch; border-bottom: 1px dashed var(--line); }
+.nav .go { flex: 1; min-width: 0; display: flex; justify-content: space-between; gap: 8px; text-align: left; padding: 8px 10px; background: none; border: 0;
+  border-left: 2px solid transparent; cursor: pointer; color: var(--muted); }
+.nav .go:hover { background: var(--gold-soft); color: var(--ink); }
+.nav .go[aria-current="true"] { background: var(--gold-soft); border-left-color: var(--gold); color: var(--ink); font-weight: 700; }
+.nav .go small { color: var(--faint); font-weight: 400; }
+.nav .go .badge { color: var(--on-gold); background: var(--gold); padding: 0 6px; font-weight: 700; }
+.nav .star { width: 38px; flex: none; background: none; border: 0; border-left: 1px dashed var(--line); cursor: pointer; color: var(--faint); font-size: 16px; }
+.nav .star[aria-pressed="true"] { color: var(--gold); }
+.nav .star:hover { color: var(--gold); background: var(--gold-soft); }
+.newcat { display: flex; gap: 6px; margin-top: 10px; }
+.newcat input { flex: 1; }
+.newcat .btn { margin: 0; padding: 8px 10px; }
+
+.top { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+.top h2 { font-size: clamp(17px, 2.6vw, 21px); margin: 0; }
+.top .btn { margin: 0; }
+.top p { flex-basis: 100%; margin: 4px 0 0; font-size: 13px; }
+
+.post { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 16px; cursor: pointer; }
+.post:hover, .post.focus { border-color: var(--gold); }
+.post .thumb { grid-row: span 3; width: 96px; height: 72px; object-fit: cover; border: 1px solid var(--line); }
+.post h2 { margin: 0; font-size: 16px; }
+.post .meta { color: var(--faint); font-size: 12.5px; }
+.post .meta .tag { color: var(--gold); }
+.post .meta .new { color: var(--on-gold); background: var(--gold); padding: 0 6px; font-weight: 700; margin-left: 6px; }
+.post .note { margin: 4px 0 0; color: var(--muted); }
+.post.featured { border-color: var(--gold); background: color-mix(in oklch, var(--gold) 7%, var(--panel)); }
+.post.featured .kicker { font-size: 11px; letter-spacing: .4em; margin-bottom: 4px; }
+.post .full { grid-column: 1 / -1; cursor: auto; border-top: 1px dashed var(--line); margin-top: 10px; padding-top: 4px; }
+.post .full .hero { width: 100%; max-height: 260px; object-fit: cover; display: block; margin: 10px 0; border: 1px solid var(--line); }
+.facts { color: var(--faint); font-size: 13px; }
+.facts a { color: var(--gold); }
+.post ul { margin: 0; padding-left: 20px; }
+.post ul li::marker { color: var(--gold); }
+ol.steps { margin: 0; padding-left: 22px; }
+ol.steps li { margin-bottom: 8px; color: var(--ink); }
+ol.steps li::marker { color: var(--gold); font-weight: 700; }
+.notes { white-space: pre-wrap; }
+.actions { margin-top: 14px; }
+.more { text-align: center; }
+
+dialog { width: min(680px, calc(100vw - 32px)); max-height: calc(100vh - 32px); background: var(--panel); color: var(--ink); border: 1px solid var(--gold); padding: 22px 24px; }
+dialog::backdrop { background: rgb(0 0 0 / .55); }
+.from { display: flex; gap: 0; margin-bottom: 14px; border: 1px solid var(--line-2); width: fit-content; max-width: 100%; flex-wrap: wrap; }
+.from label { padding: 6px 12px; cursor: pointer; color: var(--muted); font-size: 13px; }
+.from input { position: absolute; opacity: 0; pointer-events: none; }
+.from label:has(input:checked) { background: var(--gold); color: var(--on-gold); font-weight: 700; }
+.from label:has(input:focus-visible) { outline: 2px solid var(--gold); }
+dialog .three { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+
+@media (max-width: 820px) {
+  .shell { grid-template-columns: 1fr; padding-bottom: 0; }
+  main { padding-top: 26px; }
+  .keybar { display: none; }
+  .board { grid-template-columns: 1fr; }
+  .side { position: static; }
+  /* on a phone the views and categories are rows of chips to swipe along, so the posts stay near the top */
+  .side h3 { margin: 12px 0 6px; }
+  .nav { display: flex; gap: 6px; overflow-x: auto; border: 0; padding-bottom: 4px; scrollbar-width: none; }
+  .nav li { flex: none; border: 1px solid var(--line); }
+  .nav .go { padding: 6px 10px; border-left: 0; white-space: nowrap; }
+  .nav .go[aria-current="true"] { box-shadow: inset 0 -2px 0 var(--gold); }
+  .nav .star { width: 32px; }
+  .newcat { margin-bottom: 8px; }
+  .post .thumb { width: 72px; height: 56px; }
+  dialog .three { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+<div class="shell">
+<!--site-rail-->
+<main>
+  <div class="kicker">Recipe board</div>
+  <h1>Shared recipes</h1>
+  <p class="lede">Recipes everyone shares, by category. Star the categories you like and anything new in them shows up in your feed. Save any of them to your Recipe box. Each day you get a recipe of the day from someone else's posts.</p>
+  <div id="error" class="msg bad" role="alert" hidden></div>
+  <div id="done" class="msg good" role="status" hidden></div>
+
+  <div class="board">
+    <aside class="side">
+      <h3>Read</h3>
+      <ul class="nav" id="views"></ul>
+      <h3>Categories <span class="empty" style="letter-spacing:0;text-transform:none">· ★ to follow</span></h3>
+      <ul class="nav cats" id="cats"></ul>
+      <form class="newcat" id="newcat">
+        <input type="text" id="catname" maxlength="40" placeholder="New category" aria-label="New category" required>
+        <button class="btn quiet">Add</button>
+      </form>
+    </aside>
+    <section>
+      <div class="top">
+        <h2 id="heading">Your feed</h2>
+        <div class="row">
+          <button class="btn quiet" type="button" id="follow" hidden></button>
+          <button class="btn" type="button" id="share">Share a recipe</button>
+        </div>
+        <p id="sub" class="empty"></p>
+      </div>
+      <div id="posts"><p class="empty">Loading…</p></div>
+    </section>
+  </div>
+</main>
+</div>
+
+<dialog id="editor">
+  <form method="dialog" id="edit-form">
+    <h2 id="edit-title">Share a recipe</h2>
+    <label class="field">Category<select name="category" required></select></label>
+    <div class="from" id="from" role="radiogroup" aria-label="Where the recipe comes from">
+      <label><input type="radio" name="from" value="box"> From my Recipe box</label>
+      <label><input type="radio" name="from" value="url"> From a link</label>
+      <label><input type="radio" name="from" value="typed"> Type it in</label>
+    </div>
+    <div data-from="box"><label class="field">Recipe<select name="recipe_id"></select></label></div>
+    <div data-from="url"><label class="field">Link to the recipe<input type="url" name="url" maxlength="2000" placeholder="https://…"></label></div>
+    <div data-from="typed">
+      <label class="field">Title<input type="text" name="title" maxlength="200"></label>
+      <div class="three">
+        <label class="field">Serves<input type="number" name="servings" min="1" max="1000" step="any"></label>
+        <label class="field">Makes<input type="text" name="yield" maxlength="100" placeholder="12 cookies"></label>
+        <label class="field">Time<input type="text" name="time" maxlength="50" placeholder="45 min"></label>
+      </div>
+      <label class="field">Ingredients, one per line<textarea name="ingredients" rows="6"></textarea></label>
+      <label class="field">Steps, one per line<textarea name="steps" rows="6"></textarea></label>
+      <label class="field">Link (optional)<input type="url" name="source" maxlength="2000"></label>
+    </div>
+    <label class="field">A note for everyone (optional)<textarea name="note" rows="2" maxlength="2000" placeholder="Why you love it, what you'd change"></textarea></label>
+    <div class="row"><button class="btn" value="save" id="post-btn">Post</button><button class="btn quiet" value="cancel" formnovalidate>Cancel</button></div>
+  </form>
+</dialog>
+
+<footer class="keybar" aria-label="Keyboard shortcuts"><span><kbd>n</kbd>share a recipe</span><span><kbd>j k</kbd>next, previous</span><span><kbd>enter</kbd>open</span><span><kbd>s</kbd>save to Recipe box</span><span><kbd>f</kbd>follow this category</span><span><kbd>g</kbd>then a key from the menu to jump</span><span><kbd>\</kbd>Sidebar</span><a class="end" href="/logout" data-key="o"><kbd>g o</kbd>Sign out</a></footer>
+<script src="/keys.js" defer></script>
+<script type="module" src="/board/app.js"></script>
+</body>
+</html>

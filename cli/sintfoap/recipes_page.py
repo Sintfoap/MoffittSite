@@ -42,6 +42,76 @@ def by_title(recipes: list[dict]) -> list[dict]:
     return sorted(recipes, key=lambda r: r["title"].casefold())
 
 
+# ── labels: made up per recipe ("Season: Fall"), matched whatever their case ──
+
+def label_text(label: dict) -> str:
+    return f"{label['key']}: {label['value']}" if label.get("value") else label["key"]
+
+
+def all_labels(recipes: list[dict]) -> list[tuple[dict, int]]:
+    """The labels your recipes use (from the site's list), once each, with how many have it: by key, then value."""
+    seen: dict[str, list] = {}
+    for r in recipes:
+        for lb in r.get("labels", []):
+            seen.setdefault(lb["id"], [lb, 0])[1] += 1
+    return [(lb, n) for lb, n in sorted(seen.values(), key=lambda x: (x[0]["key"].casefold(), x[0].get("value", "").casefold()))]
+
+
+def passes(r: dict, filters: list[dict]) -> bool:
+    """Any of the chosen values for a key, and every key chosen."""
+    have = {lb["id"] for lb in r.get("labels", [])}
+    keys: dict[str, set] = {}
+    for f in filters:
+        keys.setdefault(f["key"].casefold(), set()).add(f["id"])
+    return all(have & want for want in keys.values())
+
+
+def value_of(r: dict, key: str) -> str | None:
+    return next((lb.get("value", "") for lb in r.get("labels", []) if lb["key"].casefold() == key.casefold()), None)
+
+
+def arranged(recipes: list[dict], filters: list[dict], sort_key: str) -> list[dict]:
+    """The shelf: the recipes the filters let through, by title or by a label's value (those without it last)."""
+    shown = [r for r in by_title(recipes) if passes(r, filters)]
+    if sort_key:
+        shown.sort(key=lambda r: (value_of(r, sort_key) is None, (value_of(r, sort_key) or "").casefold()))
+    return shown
+
+
+class LabelFilter(ModalScreen[list | None]):
+    """Pick the labels to filter the shelf by. Dismisses with the chosen ones, or None."""
+    BINDINGS = [Binding("escape", "cancel", "Cancel"), Binding("enter", "done", "Filter", priority=True),
+                Binding("c", "clear", "Clear")]
+    DEFAULT_CSS = """
+    LabelFilter SelectionList { height: auto; max-height: 24; background: transparent; border: none; padding: 0; margin: 1 0; }
+    """
+
+    def __init__(self, labels: list[tuple[dict, int]], chosen: list[dict]):
+        super().__init__()
+        self.labels = labels
+        on = {f["id"] for f in chosen}
+        self.items = [Selection(Text.assemble((lb["key"], f"bold {GOLD}"), (f"  {lb.get('value', '')}", INK), (f"   {n}", FAINT)),
+                                i, lb["id"] in on) for i, (lb, n) in enumerate(labels)]
+
+    def compose(self) -> ComposeResult:
+        with VerticalScroll(classes="dialog"):
+            yield Label(Text("Filter by label", style=f"bold {INK}"))
+            yield Static(Text("space ticks one · enter filters · c clears · esc cancels", style=FAINT))
+            yield SelectionList(*self.items, id="labels")
+
+    def on_mount(self) -> None:
+        self.query_one(SelectionList).focus()
+
+    def action_done(self) -> None:
+        self.dismiss([self.labels[i][0] for i in self.query_one(SelectionList).selected])
+
+    def action_clear(self) -> None:
+        self.dismiss([])
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
 def gather(where: Path) -> tuple[list[str], dict[str, Callable[[], bytes]]]:
     """The recipe HTML at `where` (a file, the export's folder, or its .zip) and its pictures,
     by name, each read only when it's sent. Beside a lone .html, its images/ folder is looked in."""
@@ -77,14 +147,16 @@ class RecipeDialog(ModalScreen[dict | None]):
     RecipeDialog .grid > Vertical { height: auto; width: 1fr; margin-right: 1; }
     RecipeDialog #ingredients, RecipeDialog #steps { height: 8; }
     RecipeDialog #notes { height: 4; }
+    RecipeDialog #labels { height: auto; max-height: 8; background: transparent; border: none; padding: 0; }
     """
 
-    def __init__(self, recipe: dict | None, source: str = "", heading: str = "", hint: str = ""):
+    def __init__(self, recipe: dict | None, source: str = "", heading: str = "", hint: str = "", label_list: list | None = None):
         super().__init__()
         self.r = recipe or {}
         self.source = source
         self.heading = heading or ("Edit recipe" if recipe else "New recipe")
         self.hint = hint
+        self.label_list = label_list or []   # the site's labels (admins keep the list) to tick
 
     def compose(self) -> ComposeResult:
         r = self.r
@@ -109,6 +181,13 @@ class RecipeDialog(ModalScreen[dict | None]):
             yield TextArea("\n".join(r.get("ingredients", [])), id="ingredients", soft_wrap=True)
             yield Label("Steps, one per line", classes="lbl")
             yield TextArea("\n".join(r.get("steps", [])), id="steps", soft_wrap=True)
+            yield Label("Labels (space ticks; an admin keeps the list)", classes="lbl")
+            if self.label_list:
+                on = {lb["id"] for lb in r.get("labels", [])}
+                yield SelectionList(*[Selection(Text.assemble((lb["key"], f"bold {GOLD}"), ("  " + lb.get("value", ""), INK)), lb["id"], lb["id"] in on)
+                                      for lb in self.label_list], id="labels")
+            else:
+                yield Static(Text("No labels yet. An admin adds them on the admin page.", style=FAINT))
             yield Label("Notes", classes="lbl")
             yield TextArea(r.get("notes", ""), id="notes", soft_wrap=True)
             yield Label("Link", classes="lbl")
@@ -130,7 +209,8 @@ class RecipeDialog(ModalScreen[dict | None]):
         except ValueError:
             serves = None
         return {"title": v("title"), "servings": serves, "yield": v("yield"), "time": v("time"),
-                "ingredients": t("ingredients"), "steps": t("steps"), "notes": t("notes").strip(), "source": v("source")}
+                "ingredients": t("ingredients"), "steps": t("steps"), "notes": t("notes").strip(), "source": v("source"),
+                "labels": list(self.query_one("#labels", SelectionList).selected) if self.label_list else [lb["id"] for lb in self.r.get("labels", [])]}
 
     def action_save(self) -> None:
         f = self.fields()
@@ -157,7 +237,9 @@ class RecipesPage(Page):
     RecipesPage #shelf {{ width: 36; height: 1fr; border-right: solid {GOLD_DIM}; margin-right: 2; }}
     RecipesPage #recipe {{ width: 1fr; height: 1fr; }}
     RecipesPage #title {{ color: {INK}; text-style: bold; }}
-    RecipesPage #facts {{ color: {FAINT}; margin-bottom: 1; }}
+    RecipesPage #facts {{ color: {FAINT}; }}
+    RecipesPage #tags {{ margin-bottom: 1; }}
+    RecipesPage #filters {{ color: {FAINT}; height: auto; }}
     RecipesPage #serves {{ color: {INK}; margin-bottom: 1; }}
     RecipesPage .group {{ color: {FAINT}; }}
     RecipesPage SelectionList {{ height: auto; max-height: 20; background: {INK} 0%; border: none; padding: 0; margin-bottom: 1; }}
@@ -176,6 +258,9 @@ class RecipesPage(Page):
         Binding("plus,equals_sign", "servings(1)", "More"),
         Binding("minus", "servings(-1)", "Fewer"),
         Binding("s", "send", "Send to list"),
+        Binding("l", "labels", "Filter"),
+        Binding("o", "sort", "Sort"),
+        Binding("b", "board", "Share on board"),
         Binding("d", "delete", "Delete"),
         Binding("r", "refresh", "Refresh"),
         Binding("backslash", "fold", "Shelf"),
@@ -187,17 +272,21 @@ class RecipesPage(Page):
         self.open: str | None = None
         self.scale: dict[str, dict] = {}       # recipe id → {servings} or {factor}
         self.skip: dict[str, set[int]] = {}    # recipe id → ingredient indexes not to send
+        self.filters: list[dict] = []          # labels the shelf shows only recipes with
+        self.sort_key = ""                     # "" by title, else a label's key
 
     def compose(self) -> ComposeResult:
         yield from self.top()
         with Vertical(id="body"):
             yield Static("R E C I P E   B O X", classes="kicker")
             yield Input(placeholder="Paste a link to a recipe (any site, or Recipe Keeper) and press enter (a)", id="url")
+            yield Static(id="filters")
             with Horizontal(id="main"):
                 yield OptionList(id="shelf")
                 with VerticalScroll(id="recipe"):
                     yield Static(id="title")
                     yield Static(id="facts")
+                    yield Static(id="tags")
                     yield Static(id="serves")
                     yield Static("INGREDIENTS", classes="group", id="ing-head")
                     yield SelectionList(id="ingredients")
@@ -221,8 +310,9 @@ class RecipesPage(Page):
     async def action_refresh(self) -> None:
         self.data = await self.fetch(site.recipes)
         self.data["recipes"] = by_title(self.data["recipes"])
-        if not any(r["id"] == self.open for r in self.data["recipes"]):
-            self.open = self.data["recipes"][0]["id"] if self.data["recipes"] else None
+        shown = arranged(self.data["recipes"], self.filters, self.sort_key)
+        if not any(r["id"] == self.open for r in shown):
+            self.open = shown[0]["id"] if shown else None
         self.show_shelf()
         self.show_recipe()
 
@@ -233,14 +323,35 @@ class RecipesPage(Page):
         shelf = self.query_one("#shelf", OptionList)
         with self.prevent(OptionList.OptionHighlighted):
             shelf.clear_options()
-            recipes = self.data["recipes"]
-            if not recipes:
+            self.show_filters()
+            recipes = arranged(self.data["recipes"], self.filters, self.sort_key)
+            if not self.data["recipes"]:
                 shelf.add_option(Option(Text("No recipes yet. Paste a link above.", style=FAINT), disabled=True))
                 return
+            if not recipes:
+                shelf.add_option(Option(Text("Nothing has those labels. l changes the filter.", style=FAINT), disabled=True))
+                return
             for r in recipes:
-                sub = " · ".join(x for x in (r.get("time"), host(r.get("source", ""))) if x) or plural(len(r["ingredients"]), "ingredient")
-                shelf.add_option(Option(Text.assemble((r["title"], f"bold {INK}"), ("\n" + sub, FAINT)), id=r["id"]))
-            shelf.highlighted = next(i for i, r in enumerate(recipes) if r["id"] == self.open)
+                sorted_by = value_of(r, self.sort_key) if self.sort_key else None
+                sub = " · ".join(x for x in (sorted_by, r.get("time"), host(r.get("source", ""))) if x) or plural(len(r["ingredients"]), "ingredient")
+                t = Text.assemble((r["title"], f"bold {INK}"), ("\n" + sub, FAINT))
+                if r.get("labels"):
+                    t.append("\n" + " · ".join(label_text(lb) for lb in r["labels"]), style=GOLD_DIM)
+                shelf.add_option(Option(t, id=r["id"]))
+            shelf.highlighted = next((i for i, r in enumerate(recipes) if r["id"] == self.open), 0)
+
+    def show_filters(self) -> None:
+        bits = Text()
+        if self.filters:
+            bits.append("FILTER  ", style=FAINT)
+            bits.append("  ".join(label_text(f) for f in self.filters), style=f"bold {GOLD}")
+            bits.append("   l changes", style=FAINT)
+        if self.sort_key:
+            key = next((lb["key"] for lb, _ in all_labels(self.data["recipes"]) if lb["key"].casefold() == self.sort_key), self.sort_key)
+            bits.append(("   " if bits.plain else "") + "SORT  ", style=FAINT)
+            bits.append(key, style=f"bold {GOLD}")
+        self.query_one("#filters", Static).update(bits)
+        self.query_one("#filters").display = bool(bits.plain)
 
     def amounts(self, r: dict) -> tuple[float, float | None]:
         s = self.scale.get(r["id"], {})
@@ -249,7 +360,7 @@ class RecipesPage(Page):
 
     def show_recipe(self) -> None:
         r = self.current()
-        parts = ["#ing-head", "#ingredients", "#send", "#no-drift", "#steps-head", "#steps", "#notes-head", "#notes", "#serves", "#facts"]
+        parts = ["#ing-head", "#ingredients", "#send", "#no-drift", "#steps-head", "#steps", "#notes-head", "#notes", "#serves", "#facts", "#tags"]
         for p in parts:
             self.query_one(p).display = bool(r)
         if not r:
@@ -260,6 +371,13 @@ class RecipesPage(Page):
         if r.get("image"):
             bits.append("has a picture (w shows it)")
         self.query_one("#facts", Static).update(" · ".join(bits))
+        tags = Text()
+        for i, lb in enumerate(r.get("labels", [])):
+            tags.append(("" if i == 0 else "   ") + lb["key"], style=f"bold {GOLD}")
+            if lb.get("value"):
+                tags.append(" " + lb["value"], style=INK)
+        self.query_one("#tags", Static).update(tags)
+        self.query_one("#tags").display = bool(tags.plain)
         f, servings = self.amounts(r)
         line = Text("−  ", style=GOLD)
         if servings is not None:
@@ -352,7 +470,9 @@ class RecipesPage(Page):
 
     def check_action(self, action: str, parameters: tuple) -> bool | None:
         # Typing in the link box or the editor shouldn't scale or delete anything.
-        if action in ("servings", "add", "new", "import_file", "photo", "edit", "send", "delete", "refresh") and isinstance(self.focused, (Input, TextArea)):
+        if action == "board" and not (self.data or {}).get("board"):
+            return None
+        if action in ("servings", "add", "new", "import_file", "photo", "edit", "send", "delete", "refresh", "board", "labels", "sort") and isinstance(self.focused, (Input, TextArea)):
             return False
         return True
 
@@ -387,7 +507,7 @@ class RecipesPage(Page):
             if "by hand" in str(e):
                 # No recipe on the page: type it in, with the link filled in.
                 self.app.notify("Couldn't find a recipe on that page, so type it in here.", timeout=4)
-                self.app.push_screen(RecipeDialog(None, url), self.after_dialog(None))
+                self.app.push_screen(RecipeDialog(None, url, label_list=self.data.get("label_list")), self.after_dialog(None))
             else:
                 self.app.notify(str(e).removeprefix("the site said: ").capitalize(), severity="error", timeout=5)
             return
@@ -405,12 +525,12 @@ class RecipesPage(Page):
 
     def action_new(self) -> None:
         url = self.query_one("#url", Input).value.strip()
-        self.app.push_screen(RecipeDialog(None, url), self.after_dialog(None))
+        self.app.push_screen(RecipeDialog(None, url, label_list=self.data.get("label_list")), self.after_dialog(None))
 
     def action_edit(self) -> None:
         r = self.current()
         if r:
-            self.app.push_screen(RecipeDialog(r), self.after_dialog(r))
+            self.app.push_screen(RecipeDialog(r, label_list=self.data.get("label_list")), self.after_dialog(r))
 
     def after_dialog(self, was: dict | None):
         async def done(fields: dict | None) -> None:
@@ -429,6 +549,41 @@ class RecipesPage(Page):
             self.query_one("#url", Input).value = ""
         self.app.notify(f"Saved {r['title']}.", timeout=2)
         await self.saved(r)
+
+    def action_labels(self) -> None:
+        """l: filter the shelf by labels."""
+        labels = all_labels((self.data or {}).get("recipes", []))
+        if not labels:
+            self.app.notify("None of your recipes have labels yet. Press e to tick some.", timeout=4)
+            return
+
+        def chosen(picked: list | None) -> None:
+            if picked is not None:
+                self.filters = picked
+                self.reshelve()
+        self.app.push_screen(LabelFilter(labels, self.filters), chosen)
+
+    def action_sort(self) -> None:
+        """o: sort by title, then by each label's key in turn."""
+        keys = sorted({lb["key"].casefold() for lb, _ in all_labels((self.data or {}).get("recipes", []))})
+        order = [""] + keys
+        self.sort_key = order[(order.index(self.sort_key) + 1) % len(order)] if self.sort_key in order else ""
+        self.reshelve()
+        self.app.notify(f"Sorted by {self.sort_key or 'title'}.", timeout=2)
+
+    def reshelve(self) -> None:
+        shown = arranged(self.data["recipes"], self.filters, self.sort_key)
+        if not any(r["id"] == self.open for r in shown):
+            self.open = shown[0]["id"] if shown else None
+        self.show_shelf()
+        self.show_recipe()
+
+    def action_board(self) -> None:
+        """b: share the open recipe on the Recipe board (for anyone with it)."""
+        r = self.current()
+        if r and (self.data or {}).get("board"):
+            from .board_page import BoardPage
+            self.app.push_screen(BoardPage(share=r["id"]))
 
     # ── importing a file ──────────────────────────────────────────────────
 
@@ -559,7 +714,8 @@ class RecipesPage(Page):
             self.app.notify(msg[:1].upper() + msg[1:], severity="error", timeout=6)
             return
         self.app.push_screen(RecipeDialog(out["recipe"], heading="Check the recipe",
-                                          hint="Read from your photo. Check it against the picture, fix anything Claude misread, then save."),
+                                          hint="Read from your photo. Check it against the picture, fix anything Claude misread, then save.",
+                                          label_list=self.data.get("label_list")),
                              self.after_dialog(None))
 
     def action_delete(self) -> None:
@@ -577,9 +733,8 @@ class RecipesPage(Page):
     async def delete(self, r: dict) -> None:
         await self.fetch(site.delete_recipe, r["id"])
         self.data["recipes"] = [x for x in self.data["recipes"] if x["id"] != r["id"]]
-        self.open = self.data["recipes"][0]["id"] if self.data["recipes"] else None
-        self.show_shelf()
-        self.show_recipe()
+        self.open = None
+        self.reshelve()
 
     # ── sending to Drift ──────────────────────────────────────────────────
 

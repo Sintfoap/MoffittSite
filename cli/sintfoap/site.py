@@ -546,6 +546,25 @@ def admin_access() -> dict:
     return _get("/admin/api/access")
 
 
+def recipe_labels() -> dict:
+    """{labels: [{id, key, value, recipes}]}: the one list of labels recipes pick from (admins)."""
+    return _get("/admin/api/labels")
+
+
+def add_recipe_label(key: str, value: str = "") -> dict:
+    return api("POST", "/admin/api/labels", {"key": key, "value": value})
+
+
+def rename_recipe_label(label_id: str, key: str, value: str = "") -> dict:
+    """Renames it on every recipe that has it."""
+    return api("POST", f"/admin/api/labels/{_q(label_id)}", {"key": key, "value": value})
+
+
+def delete_recipe_label(label_id: str) -> dict:
+    """Takes it off the list and every recipe."""
+    return api("POST", f"/admin/api/labels/{_q(label_id)}/delete")
+
+
 def set_access(user_id: str, app: str, on: bool) -> dict:
     """Turns one app on or off for an account; the same as admin_access() after."""
     return api("POST", "/admin/api/access", {"user_id": user_id, "app": app, "on": bool(on)})
@@ -605,7 +624,7 @@ def send_test() -> dict:
 # /recipes/api/ (src/recipes.js)
 
 def recipes() -> dict:
-    """{recipes, lists, drift}: your recipes, the Drift lists you can send ingredients to, and whether you have Drift."""
+    """{recipes, label_list, lists, drift, board}: your recipes (labels as {id, key, value}), the site's labels to pick from, the Drift lists you can send ingredients to, and whether you have Drift."""
     return _get("/recipes/api/recipes")
 
 
@@ -869,6 +888,54 @@ def drift_places() -> list:
     return _get("/trips/api/drift-places")["items"]
 
 
+# ───────────────────────────── recipe board ─────────────────────────────────
+# /board/api/ (src/board.js)
+
+def board() -> dict:
+    """{categories, recipe_box, recipes, unread, featured}: every category (with whether you follow it), your Recipe box's
+    recipes to share, and today's (by this computer's date) recipe of the day: someone else's post, or None."""
+    import datetime
+    return _get("/board/api/board?day=" + datetime.date.today().isoformat())
+
+
+def board_posts(view: str = "feed", category: str = "", before: str = "") -> dict:
+    """{posts, more, unread}: a page of posts, newest first. view is feed, all, mine or saved; a category overrides it.
+    Reading the top of your feed marks it read."""
+    q = {"category": category} if category else {"view": view}
+    if before:
+        q["before"] = before
+    return _get("/board/api/posts?" + urllib.parse.urlencode(q))
+
+
+def add_board_category(name: str) -> dict:
+    return api("POST", "/board/api/categories", {"name": name})
+
+
+def delete_board_category(category_id: str) -> dict:
+    return api("DELETE", f"/board/api/categories/{_q(category_id)}")
+
+
+def follow_board_category(category_id: str, follow: bool) -> dict:
+    """The category back, with `following`."""
+    return api("PUT", f"/board/api/categories/{_q(category_id)}/follow", {"follow": follow})
+
+
+def add_board_post(fields: dict) -> dict:
+    """{category, note?} and the recipe: {recipe_id} from your Recipe box, {url} to read one from a page, or {title, recipe: {...}}."""
+    return api("POST", "/board/api/posts", fields)
+
+
+def update_board_post(post_id: str, changes: dict) -> dict:
+    return api("PATCH", f"/board/api/posts/{_q(post_id)}", changes)
+
+
+def delete_board_post(post_id: str) -> dict:
+    return api("DELETE", f"/board/api/posts/{_q(post_id)}")
+
+
+def save_board_post(post_id: str) -> dict:
+    """The post's recipe, copied into your Recipe box: {recipe, already}."""
+    return api("POST", f"/board/api/posts/{_q(post_id)}/save")
 # ────────────────────────────── food club ───────────────────────────────────
 # /food/api/ (src/food.js)
 

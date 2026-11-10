@@ -413,6 +413,49 @@ const SCHEMA = [
      created TEXT NOT NULL,
      PRIMARY KEY (trip, id)
    )`,
+  // Recipe box's labels (src/recipes.js): one list, kept by admins, that recipes pick from.
+  `CREATE TABLE IF NOT EXISTS recipe_labels (
+     id      TEXT PRIMARY KEY,                     -- "l_" + random hex
+     key     TEXT NOT NULL COLLATE NOCASE,         -- Season
+     value   TEXT NOT NULL DEFAULT '' COLLATE NOCASE,  -- Fall
+     created TEXT NOT NULL,
+     UNIQUE (key, value)
+   )`,
+  // Recipe board (src/board.js): categories, recipes posted under them, who
+  // follows which, when each person last read their feed, and who saved what.
+  `CREATE TABLE IF NOT EXISTS board_categories (
+     id         TEXT PRIMARY KEY,                  -- "c_" + random hex
+     name       TEXT NOT NULL UNIQUE COLLATE NOCASE,
+     created_by TEXT,                              -- user id, or NULL for the ones the board starts with
+     created    TEXT NOT NULL
+   )`,
+  `CREATE TABLE IF NOT EXISTS board_posts (
+     id       TEXT PRIMARY KEY,                    -- "b_" + random hex
+     author   TEXT NOT NULL,
+     category TEXT NOT NULL,
+     data     TEXT NOT NULL,                       -- JSON {title, note, recipe}
+     created  TEXT NOT NULL,
+     updated  TEXT NOT NULL
+   )`,
+  `CREATE INDEX IF NOT EXISTS board_posts_category ON board_posts (category, created)`,
+  `CREATE INDEX IF NOT EXISTS board_posts_created ON board_posts (created)`,
+  `CREATE TABLE IF NOT EXISTS board_follows (
+     user_id  TEXT NOT NULL,
+     category TEXT NOT NULL,
+     added    TEXT NOT NULL,
+     PRIMARY KEY (user_id, category)
+   )`,
+  `CREATE TABLE IF NOT EXISTS board_seen (
+     user_id TEXT PRIMARY KEY,
+     seen    TEXT NOT NULL                         -- the feed was last read up to here
+   )`,
+  `CREATE TABLE IF NOT EXISTS board_saves (
+     post      TEXT NOT NULL,
+     user_id   TEXT NOT NULL,
+     recipe_id TEXT NOT NULL,                      -- the copy in their Recipe box
+     created   TEXT NOT NULL,
+     PRIMARY KEY (post, user_id)
+   )`,
   // Food club (src/food.js): a pick a month, who made it and loved it, and photos of their attempts.
   `CREATE TABLE IF NOT EXISTS food_picks (
      id      TEXT PRIMARY KEY,                     -- "f_" + random hex
