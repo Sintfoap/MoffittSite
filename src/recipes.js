@@ -6,6 +6,7 @@
 // microdata. Scaling is public/recipes/scale.js, shared with the page.
 //
 // /recipes/api/recipes             GET → {recipes, lists, drift}; POST {url} or {title, ...} → a new recipe
+// /recipes/api/recipes/import      POST {pages: [html, ...]} → {added, skipped}: many at once, from an export file
 // /recipes/api/recipes/<id>        PATCH → change the fields sent; DELETE → remove it
 // /recipes/api/recipes/<id>/shop   POST {servings | factor, lines?, list?} → its ingredients onto a Drift list
 
@@ -18,9 +19,9 @@ import { scaleLine, servingsOf, factorFor, format } from "../public/recipes/scal
 const fail = msg => { throw new BadRequest(msg); };
 export class NotARecipe extends Error {}
 
-const LIMITS = { recipes: 500, title: 200, url: 2000, yield: 100, time: 50, lines: 100, ingredient: 300, step: 3000, notes: 5000, page: 3 * 1024 * 1024 };
+const LIMITS = { recipes: 1000, importPages: 10, importBody: 4 * 1024 * 1024, title: 200, url: 2000, yield: 100, time: 50, lines: 100, ingredient: 300, step: 3000, notes: 5000, page: 3 * 1024 * 1024 };
 const ID = /^r_[0-9a-f]{10}$/;
-const ROUTE = /^\/recipes\/api\/recipes(?:\/(r_[0-9a-f]{10})(?:\/(shop))?)?\/?$/;
+const ROUTE = /^\/recipes\/api\/recipes(?:\/(import)|\/(r_[0-9a-f]{10})(?:\/(shop))?)?\/?$/;
 const nowStamp = () => new Date().toISOString().slice(0, 19);
 const isObj = v => v && typeof v === "object" && !Array.isArray(v);
 
@@ -244,7 +245,9 @@ function closing(html, tag, from) {
   return html.length;
 }
 
-function fromMicrodata(html, url) {
+// `loose` keeps a recipe that's only a title (an export has those: meal ideas
+// with nothing filled in yet); a web page without ingredients isn't a recipe.
+function fromMicrodata(html, url, { loose = false } = {}) {
   const VOID = /^(meta|img|br|hr|input|link)$/i;
   const inner = (tag, at) => VOID.test(tag) ? "" : html.slice(at, closing(html, tag, at));
   // The inside of each element with that itemprop, up to its own closing tag.
@@ -255,17 +258,16 @@ function fromMicrodata(html, url) {
   const value = name => metas(name)[0] || text(els(name)[0] ?? "");
 
   const ingredients = lines("recipeIngredient", "recipeIngredients", "ingredients", "ingredient");
-  if (!ingredients.length) return null;
+  if (!ingredients.length && !(loose && value("name"))) return null;
   const y = value("recipeYield");
   const [total, cook, prep] = ["totalTime", "cookTime", "prepTime"].map(value);
   const time = totalTime(total, cook, prep) || [total, cook, prep].find(t => t && !/^P/i.test(t)) || "";
   const pic = html.match(new RegExp(`<img\\b[^>]*${itemprop("(?:photo0|photo|image)")}[^>]*>`, "i"))?.[0].match(/src\s*=\s*["']([^"']+)["']/i)?.[1];
   let img = "";
   try { img = pic ? image(new URL(decode(pic), url || undefined).toString()) : ""; } catch {}
-  const from = value("recipeSource");
-  const notes = [lines("recipeNotes", "description").join("\n"), from && `Source: ${from}`].filter(Boolean).join("\n\n");
   return {
-    title: value("name"), yield: y, servings: servingsOf(y), ingredients, time, image: img, notes,
+    title: value("name"), yield: y, servings: servingsOf(y), ingredients, time, image: img,
+    notes: lines("recipeNotes", "description").join("\n"), from: value("recipeSource"),
     // Recipe Keeper numbers its directions ("1. Mix"); the page numbers them already.
     steps: lines("recipeInstructions", "recipeDirections").map(l => l.replace(/^\d+[.)]\s+/, "")).filter(Boolean),
   };
@@ -281,6 +283,12 @@ const meta = (html, prop) => {
 export function parseRecipe(html, url = "") {
   const r = fromJsonLd(html) || fromMicrodata(html, url);
   if (!r) return null;
+  if (r.from) r.notes = [r.notes, `Source: ${r.from}`].filter(Boolean).join("\n\n");
+  return tidy(r, html, url);
+}
+
+// Cut to fit, with the page's own title and picture when the recipe has none.
+function tidy(r, html, url) {
   const title = r.title || meta(html, "og:title") || text(html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] ?? "") || "Untitled recipe";
   const cut = (s, n) => s.length > n ? s.slice(0, n - 1).trimEnd() + "…" : s;
   return {
@@ -349,6 +357,95 @@ export async function importFrom(rawUrl) {
   fail("that page redirects too many times");
 }
 
+// ── importing many at once ─────────────────────────────────────────────────
+
+// Recipe Keeper's export (Settings → Export → HTML, a recipes.html beside an
+// images folder) is one page with every recipe in a <div class="recipe-details">,
+// marked up like its shared pages, plus courses, categories, collections, a
+// rating and nutrition. The page and the terminal cut the file into one piece
+// per recipe (public/recipes/split.js, cli/sintfoap/recipe_rules.py) and send
+// them a few at a time, so no one request has much to read. Any other saved
+// recipe page is sent whole and read like a link would be.
+
+// The values of everything with that itemprop: a <meta>'s content, or an element's text.
+function props(html, name) {
+  return [...html.matchAll(new RegExp(`<(meta|span|div|a)\\b[^>]*${itemprop(name)}[^>]*>(?=([^<]*))`, "gi"))]
+    .map(m => text(m[1].toLowerCase() === "meta" ? m[0].match(/content\s*=\s*["']([^"']*)["']/i)?.[1] ?? "" : m[2] ?? "")).filter(Boolean);
+}
+
+const NUTRITION = [["Calories", "Calories", ""], ["TotalFat", "Fat", "g"], ["SaturatedFat", "Saturated fat", "g"], ["Cholesterol", "Cholesterol", "mg"],
+  ["Sodium", "Sodium", "mg"], ["TotalCarbohydrate", "Carbs", "g"], ["DietaryFiber", "Fiber", "g"], ["Sugars", "Sugars", "g"], ["Protein", "Protein", "g"]];
+
+// What Recipe Keeper knows about a recipe that the box has no place for, as lines for its notes.
+function keeperExtras(html) {
+  const list = (label, name) => { const v = [...new Set(props(html, name))]; return v.length ? `${label}: ${v.join(", ")}` : ""; };
+  const stars = Number(props(html, "recipeRating")[0]);
+  const nut = NUTRITION.map(([k, label, unit]) => { const v = props(html, "recipeNut" + k)[0]; return v ? `${label} ${v}${unit}` : ""; }).filter(Boolean);
+  const size = props(html, "recipeNutServingSize")[0];
+  return [
+    list("Courses", "recipeCourse"), list("Categories", "recipeCategory"), list("Collections", "recipeCollection"),
+    stars > 0 && stars <= 5 ? `Rating: ${"★".repeat(stars)}${"☆".repeat(5 - stars)}` : "",
+    /^true$/i.test(props(html, "recipeIsFavourite")[0] ?? "") ? "Favourite" : "",
+    nut.length ? `Nutrition${size ? ` (per ${size})` : " per serving"}: ${nut.join(" · ")}` : "",
+  ].filter(Boolean);
+}
+
+// One piece of an export (or one saved page) as a recipe, or null.
+export function parseImported(html) {
+  const keeper = /itemprop\s*=\s*["']?recipeId\b/i.test(html);
+  const r = keeper ? fromMicrodata(html, "", { loose: true }) : fromJsonLd(html) || fromMicrodata(html, "");
+  if (!r) return null;
+  let source = "";
+  if (r.from) {
+    // A link goes in the recipe's link; anything else ("Grandma's cookbook") in its notes.
+    try { if (/^https?:\/\/\S+$/i.test(r.from) && r.from.length <= LIMITS.url) source = new URL(r.from).toString(); } catch {}
+    if (!source) r.notes = [r.notes, `Source: ${r.from}`].filter(Boolean).join("\n\n");
+  }
+  if (keeper) {
+    const extra = keeperExtras(html);
+    if (extra.length) r.notes = [r.notes, extra.join("\n")].filter(Boolean).join("\n\n");
+  }
+  return { ...tidy(r, html, ""), source };
+}
+
+// The same recipe twice: one title, the same ingredients.
+const sameness = r => [r.title, ...r.ingredients].join("\n").toLowerCase().replace(/\s+/g, " ").trim();
+
+// Saves what's in each page, skipping ones already in the box. {added, skipped: [{title, why}]}.
+export async function importPages(env, user, body) {
+  if (!isObj(body) || !Array.isArray(body.pages) || !body.pages.length) fail("send {pages: [html, ...]}");
+  if (body.pages.length > LIMITS.importPages) fail(`send at most ${LIMITS.importPages} pages at a time`);
+  const d = await db(env);
+  // Only what sameness needs, so a box of hundreds is cheap to check each time.
+  const { results } = await d.prepare("SELECT json_extract(data, '$.title') AS title, json_extract(data, '$.ingredients') AS ingredients FROM recipes WHERE owner = ?").bind(user.id).all();
+  const have = new Set(results.map(row => sameness({ title: row.title ?? "", ingredients: JSON.parse(row.ingredients || "[]") })));
+  let room = LIMITS.recipes - results.length;
+  const added = [], skipped = [], inserts = [];
+  for (const page of body.pages) {
+    const r = typeof page === "string" ? parseImported(page) : null;
+    if (!r) { skipped.push({ title: "", why: "had no recipe" }); continue; }
+    const key = sameness(r);
+    if (have.has(key)) { skipped.push({ title: r.title, why: "already in your box" }); continue; }
+    if (room <= 0) { skipped.push({ title: r.title, why: `didn't fit (the box holds ${LIMITS.recipes})` }); continue; }
+    let data;
+    try { data = clean(r); } catch (e) { if (!(e instanceof BadRequest)) throw e; skipped.push({ title: r.title, why: e.message }); continue; }
+    const recipe = { ...RECIPE, ...data, servings: data.servings ?? servingsOf(data.yield), created: nowStamp() };
+    const id = newId(), updated = new Date().toISOString();
+    inserts.push(d.prepare("INSERT INTO recipes (owner, id, data, updated) VALUES (?, ?, ?, ?)").bind(user.id, id, JSON.stringify(recipe), updated));
+    added.push({ ...recipe, id, updated });
+    have.add(key);
+    room--;
+  }
+  if (inserts.length) await d.batch(inserts);
+  return { added, skipped };
+}
+
+async function readImport(request) {
+  const raw = await request.text();
+  if (raw.length > LIMITS.importBody) fail("too much at once; send fewer pages");
+  try { return JSON.parse(raw); } catch { fail("invalid JSON"); }
+}
+
 // ── the page and its API ───────────────────────────────────────────────────
 
 // Pictures come from the recipe sites themselves, so img-src allows https.
@@ -376,8 +473,9 @@ export async function recipes(request, env, user, pathname) {
     if (method !== "GET" && !sameOrigin(request)) return json({ error: "cross-origin request refused" }, 403);
     const m = pathname.match(ROUTE);
     if (!m) return json({ error: "not found" }, 404);
-    const [, id, sub] = m;
+    const [, bulk, id, sub] = m;
     const notAllowed = () => json({ error: "method not allowed" }, 405);
+    if (bulk) return method === "POST" ? json(await importPages(env, user, await readImport(request))) : notAllowed();
     if (!id) {
       if (method === "GET") {
         const drift = user.areas.has("todo");

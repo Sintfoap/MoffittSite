@@ -141,12 +141,13 @@ The same settings as `/notifications/`: what Chat and Drift push to you (direct 
 
 ## Recipe box
 
-The same recipes as `/recipes/`: the list on the left, the open one on the right. Paste a link to a recipe page in the box at the top (`a` goes there) and the site reads the recipe off it, from the schema.org data most recipe sites publish, or from a recipe shared out of Recipe Keeper (recipekeeperonline.com). If a page has no recipe on it, the editor opens with the link filled in so you can type it.
+The same recipes as `/recipes/`: the list on the left, the open one on the right. Paste a link to a recipe page in the box at the top (`a` goes there) and the site reads the recipe off it, from the schema.org data most recipe sites publish, or from a recipe shared out of Recipe Keeper (recipekeeperonline.com). If a page has no recipe on it, the editor opens with the link filled in so you can type it. `i` imports a whole file of recipes: give it the path to Recipe Keeper's HTML export (the `recipes.html` in its export folder) or a recipe page you saved, and every recipe in it is added, skipping ones already in your box. Courses, categories, collections, ratings and nutrition go in each recipe's notes; pictures stay behind, since the export keeps them as files beside it.
 
 | Key | |
 |---|---|
 | `a` | save a recipe from a link |
 | `n` | type one in by hand |
+| `i` | import a file of recipes (Recipe Keeper's HTML export, or a saved page) |
 | `+` `-` | more or fewer servings (or ×½ steps for a recipe that doesn't say how many it serves); quantities change to match |
 | `space` | on the ingredients: tick which to send |
 | `s` | send the ticked ingredients, scaled, to a Drift list: your Shopping list (made the first time), or any list you can add to |
