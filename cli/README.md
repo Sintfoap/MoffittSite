@@ -160,6 +160,7 @@ The same recipes as `/recipes/`: the list on the left, the open one on the right
 | `l` | filter the shelf by labels: tick any (two values of one key show either; different keys show only recipes with both); `c` clears |
 | `o` | sort the shelf by title, then by each label in turn (recipes without that label go last) |
 | `e` | edit it (`ctrl+s` saves); labels are ticked from the list admins keep, so everyone uses the same ones |
+| `c` | give it a picture from a file (JPEG, PNG, WebP or GIF up to 600 KB), or leave the path empty to take its picture off; on the website the editor has a Picture field that shrinks bigger ones |
 | `d` | delete it |
 
 ## Meal plan

@@ -355,10 +355,32 @@ function openEditor(r, draft = null, shots = [], how = "claude") {
   f.steps.value = (r?.steps || []).join("\n");
   f.notes.value = r?.notes || "";
   renderPicker(r);
+  showPicture(r?.image || "");
   f.source.value = r?.source || (r || draft ? "" : $("#url").value.trim());
   $("#editor").showModal();
   f.title.focus();
 }
+
+// The editor's picture: what the recipe has, or the one picked to replace it.
+// Nothing changes until Save; then a picked one is shrunk and kept here.
+let picChange = null;     // null (as it is), a File (this instead), or "remove"
+function showPicture(src, change = null) {
+  picChange = change;
+  const img = $("#pic-preview");
+  if (img.src.startsWith("blob:")) URL.revokeObjectURL(img.src);
+  img.hidden = !src;
+  if (src) img.src = src; else img.removeAttribute("src");
+  $("#pic-none").hidden = !!src;
+  $("#pic-remove").hidden = !src;
+  $("#pic-choose").textContent = src ? "Change it" : "Choose a picture";
+}
+$("#pic-choose").addEventListener("click", () => $("#pic-file").click());
+$("#pic-file").addEventListener("change", e => {
+  const file = e.target.files[0];
+  if (file) showPicture(URL.createObjectURL(file), file);
+  e.target.value = "";
+});
+$("#pic-remove").addEventListener("click", () => showPicture("", "remove"));
 
 // The editor's labels: the site's list, a row of ticks per name.
 function renderPicker(r) {
@@ -382,10 +404,16 @@ $("#editor").addEventListener("close", () => {
     ingredients: f.ingredients.value, steps: f.steps.value, notes: f.notes.value, source: f.source.value,
     labels: [...document.querySelectorAll("#label-picker input:checked")].map(i => i.value),
   };
-  const was = editing;
+  const was = editing, change = picChange;
   editing = null;
   run(async () => {
-    const saved = was.id ? await api("PATCH", "recipes/" + was.id, body) : await api("POST", "recipes", body);
+    let saved = was.id ? await api("PATCH", "recipes/" + was.id, body) : await api("POST", "recipes", body);
+    if (change === "remove" && saved.image) saved = await api("DELETE", `recipes/${saved.id}/photo`);
+    else if (change instanceof File) {
+      const small = await shrink(change);
+      if (!small) throw new Error("the recipe is saved, but that picture couldn't be read or made small enough");
+      saved = await api("POST", `recipes/${saved.id}/photo`, { data: await base64(small) });
+    }
     data.recipes = [...data.recipes.filter(x => x.id !== saved.id), saved].sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: "base" }));
     if (was.servings !== saved.servings) scale.delete(saved.id);
     if (!was.id) $("#url").value = "";

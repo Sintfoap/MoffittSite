@@ -648,6 +648,11 @@ def import_recipes(pages: list[str]) -> dict:
 RECIPE_PHOTO_BYTES = 600 * 1024    # the biggest recipe picture the site keeps (src/recipes.js)
 
 
+def remove_recipe_photo(recipe_id: str) -> dict:
+    """Takes the recipe's picture off (one kept on the site, or a link); the recipe back."""
+    return api("DELETE", f"/recipes/api/recipes/{_q(recipe_id)}/photo")
+
+
 def set_recipe_photo(recipe_id: str, raw: bytes) -> dict:
     """Keeps this picture (JPEG, PNG, WebP or GIF bytes) as the recipe's own; the recipe back."""
     import base64

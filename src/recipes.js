@@ -7,7 +7,7 @@
 //
 // /recipes/api/recipes             GET → {recipes, label_list, lists, drift, board (has Recipe board), photo}; POST {url} or {title, ...} → a new recipe
 // /recipes/api/recipes/import      POST {pages: [html, ...]} → {added, skipped}: many at once, from an export file
-// /recipes/api/recipes/<id>/photo  POST {data (base64)} → the recipe, with that as its picture (kept here)
+// /recipes/api/recipes/<id>/photo  POST {data (base64)} → the recipe, with that as its picture (kept here); DELETE → without a picture
 // /recipes/api/photos/<photo>      GET → a picture kept here
 // /recipes/api/recipes/<id>        PATCH → change the fields sent; DELETE → remove it
 //   A recipe's labels come from the site's list (see labelList): sent as ids, read back as [{id, key, value}].
@@ -576,8 +576,8 @@ export async function importPages(env, user, body) {
 
 // ── pictures kept here ─────────────────────────────────────────────────────
 
-// An export's photos are files beside it, not links, so they're kept in D1 as
-// Food club's are (src/food.js), one per recipe: a new one replaces the old.
+// An export's photos, and pictures added by hand, are kept in D1 as Food
+// club's are (src/food.js), one per recipe: a new one replaces the old.
 export async function setPhoto(env, user, id, body) {
   if (!isObj(body)) fail("body must be a JSON object");
   const d = await db(env);
@@ -593,6 +593,17 @@ export async function setPhoto(env, user, id, body) {
     d.prepare("DELETE FROM recipe_photos WHERE owner = ? AND recipe = ?").bind(user.id, id),
     d.prepare("INSERT INTO recipe_photos (id, owner, recipe, type, data, created) VALUES (?, ?, ?, ?, ?, ?)").bind(photo, user.id, id, type, btoa(bin), now),
     d.prepare("UPDATE recipes SET data = json_set(data, '$.image', ?), updated = ? WHERE owner = ? AND id = ?").bind(`/recipes/api/photos/${photo}`, now, user.id, id),
+  ]);
+  return get(d, user.id, id);
+}
+
+// Takes the recipe's picture off: one kept here, or a link to a site's.
+export async function removePhoto(env, user, id) {
+  const d = await db(env);
+  if (!await get(d, user.id, id)) return null;
+  await d.batch([
+    d.prepare("DELETE FROM recipe_photos WHERE owner = ? AND recipe = ?").bind(user.id, id),
+    d.prepare("UPDATE recipes SET data = json_set(data, '$.image', ''), updated = ? WHERE owner = ? AND id = ?").bind(new Date().toISOString(), user.id, id),
   ]);
   return get(d, user.id, id);
 }
@@ -623,11 +634,11 @@ async function readImport(request) {
 
 // ── the page and its API ───────────────────────────────────────────────────
 
-// Pictures come from the recipe sites themselves, so img-src allows https.
+// Pictures come from the recipe sites themselves, so img-src allows https; blob: is a picked picture's preview.
 const PAGE_CSP = [
   // worker-src: text recognition (vendor/tesseract) reads photos in a worker, on the device.
   "default-src 'none'", "script-src 'self'", "connect-src 'self'", "manifest-src 'self'", "worker-src 'self'",
-  "style-src 'unsafe-inline' https://fonts.googleapis.com", "font-src https://fonts.gstatic.com", "img-src 'self' data: https:",
+  "style-src 'unsafe-inline' https://fonts.googleapis.com", "font-src https://fonts.gstatic.com", "img-src 'self' data: blob: https:",
   "form-action 'self'", "frame-ancestors 'none'", "base-uri 'none'",
 ].join("; ");
 
@@ -673,7 +684,7 @@ export async function recipes(request, env, user, pathname) {
     }
     if (!ID.test(id)) return json({ error: "not found" }, 404);
     let out;
-    if (sub === "photo") out = method === "POST" ? await setPhoto(env, user, id, await readImport(request)) : undefined;
+    if (sub === "photo") out = method === "POST" ? await setPhoto(env, user, id, await readImport(request)) : method === "DELETE" ? await removePhoto(env, user, id) : undefined;
     else if (sub) out = method === "POST" ? await shop(env, user, id, await readJson(request)) : undefined;
     else if (method === "PATCH") out = await update(env, user, id, await readJson(request));
     else if (method === "DELETE") out = await remove(env, user, id);

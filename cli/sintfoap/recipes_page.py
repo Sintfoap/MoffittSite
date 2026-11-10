@@ -287,6 +287,7 @@ class RecipesPage(Page):
         Binding("t", "paste", "Paste text"),
         Binding("k", "key", "Claude key", show=False),
         Binding("e", "edit", "Edit"),
+        Binding("c", "picture", "Picture"),
         Binding("plus,equals_sign", "servings(1)", "More"),
         Binding("minus", "servings(-1)", "Fewer"),
         Binding("s", "send", "Send to list"),
@@ -401,7 +402,7 @@ class RecipesPage(Page):
         self.query_one("#title", Static).update(r["title"])
         bits = [b for b in (r.get("time"), r.get("yield") if r.get("yield") and not r["yield"].replace(".", "").isdigit() else "", host(r.get("source", ""))) if b]
         if r.get("image"):
-            bits.append("has a picture (w shows it)")
+            bits.append("has a picture (c changes it)")
         self.query_one("#facts", Static).update(" · ".join(bits))
         tags = Text()
         for i, lb in enumerate(r.get("labels", [])):
@@ -504,7 +505,7 @@ class RecipesPage(Page):
         # Typing in the link box or the editor shouldn't scale or delete anything.
         if action == "board" and not (self.data or {}).get("board"):
             return None
-        if action in ("servings", "add", "new", "import_file", "photo", "paste", "key", "edit", "send", "delete", "refresh", "board", "labels", "sort") and isinstance(self.focused, (Input, TextArea)):
+        if action in ("servings", "add", "new", "import_file", "photo", "paste", "key", "edit", "picture", "send", "delete", "refresh", "board", "labels", "sort") and isinstance(self.focused, (Input, TextArea)):
             return False
         return True
 
@@ -563,6 +564,47 @@ class RecipesPage(Page):
         r = self.current()
         if r:
             self.app.push_screen(RecipeDialog(r, label_list=self.data.get("label_list")), self.after_dialog(r))
+
+    # ── a recipe's picture ────────────────────────────────────────────────
+
+    def action_picture(self) -> None:
+        r = self.current()
+        if not r:
+            return
+        has = bool(r.get("image"))
+
+        async def answer(path: str | None) -> None:
+            if path is None:
+                return
+            if path.strip():
+                await self.set_picture(r, path.strip())
+            elif has:
+                await self.remove_picture(r)
+        self.app.push_screen(Ask(f"Picture for {r['title']}",
+                                 f"A path to a JPEG, PNG, WebP or GIF of at most {site.RECIPE_PHOTO_BYTES // 1024} KB "
+                                 "(the website shrinks bigger ones for you)."
+                                 + (" Leave it empty to take the picture it has off." if has else ""),
+                                 placeholder="~/Pictures/dinner.jpg", ok="Save"), answer)
+
+    @attempt
+    async def set_picture(self, r: dict, path: str) -> None:
+        file = Path(path.strip("'\"")).expanduser()
+        try:
+            raw = await asyncio.to_thread(file.read_bytes)
+        except OSError as e:
+            self.app.notify(f"Couldn't read {file}: {e.strerror or e}.", severity="error", timeout=5)
+            return
+        if len(raw) > site.RECIPE_PHOTO_BYTES:
+            self.app.notify(f"That picture is {len(raw) // 1024} KB; the most the site keeps is {site.RECIPE_PHOTO_BYTES // 1024} KB. "
+                            "Make it smaller first, or add it from the website, which shrinks it for you.", severity="error", timeout=8)
+            return
+        await self.saved(await self.fetch(site.set_recipe_photo, r["id"], raw))
+        self.app.notify(f"{r['title']} has a new picture.", timeout=3)
+
+    @attempt
+    async def remove_picture(self, r: dict) -> None:
+        await self.saved(await self.fetch(site.remove_recipe_photo, r["id"]))
+        self.app.notify(f"Took the picture off {r['title']}.", timeout=3)
 
     def after_dialog(self, was: dict | None):
         async def done(fields: dict | None) -> None:

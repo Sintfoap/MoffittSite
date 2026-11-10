@@ -592,6 +592,23 @@ def test_recipe_box_imports_a_recipe_keeper_export(real_site, tmp_path):
         assert len(mine) == 2
         assert mine[0]["image"].startswith("/recipes/api/photos/p_")
         assert page.current()["image"] == mine[0]["image"]
+        # c sets a picture by hand from a file, and an empty path takes it off.
+        brats = next(x for x in page.data["recipes"] if x["title"] == "Brats")
+        page.open = brats["id"]
+        page.show_recipe()
+        page.query_one("#shelf").focus()
+        await pilot.press("c")
+        await settle(pilot)
+        assert type(app.screen).__name__ == "Ask"
+        app.screen.query_one("#answer").value = str(tmp_path / "images" / "a1_0.jpg")
+        await pilot.press("enter")
+        await settle(pilot, 0.6)
+        assert page.current()["image"].startswith("/recipes/api/photos/p_")
+        await pilot.press("c")
+        await settle(pilot)
+        await pilot.press("enter")
+        await settle(pilot, 0.6)
+        assert page.current()["image"] == ""
         # A zip of the export works too (and changes nothing more).
         with zipfile.ZipFile(tmp_path / "export.zip", "w") as z:
             z.write(export, "export/recipes.html")

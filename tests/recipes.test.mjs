@@ -138,7 +138,7 @@ test("Recipe box is off until an admin turns it on", async () => {
   grantApps(env, "josh", "recipes");
   const page = await josh.get("/recipes/");
   assert.equal(page.status, 200);
-  assert.match(page.headers.get("Content-Security-Policy"), /img-src 'self' data: https:/);
+  assert.match(page.headers.get("Content-Security-Policy"), /img-src 'self' data: blob: https:/);
   assert.equal((await josh.get("/recipes")).status, 308);
 });
 
@@ -446,4 +446,21 @@ test("a zip is read in the browser: stored and deflated files", async () => {
   assert.equal(await (await files[0].blob()).text(), EXPORT);
   assert.equal(Buffer.from(await (await files[1].blob()).arrayBuffer()).toString("base64"), JPEG);
   await assert.rejects(unzip(new Blob(["not a zip"])), /isn't a zip/);
+});
+
+test("a picture by hand: set on any recipe, taken off again, whether kept here or a link", async () => {
+  const env = makeEnv(), ryan = await cook(env);
+  const toast = (await api(ryan, "POST", "recipes", { title: "Toast", image: "https://food.test/toast.jpg" })).json;
+  assert.equal((await api(ryan, "DELETE", `recipes/${toast.id}/photo`)).json.image, "");
+  const set = (await api(ryan, "POST", `recipes/${toast.id}/photo`, { data: JPEG })).json;
+  assert.match(set.image, /^\/recipes\/api\/photos\/p_/);
+  const off = await api(ryan, "DELETE", `recipes/${toast.id}/photo`);
+  assert.equal(off.status, 200);
+  assert.equal(off.json.image, "");
+  assert.equal(off.json.title, "Toast");
+  assert.equal((await ryan.get(set.image)).status, 404);
+  assert.equal(sqlOne(env, "SELECT COUNT(*) AS n FROM recipe_photos").n, 0);
+  const sam = await cook(env, "sam");
+  assert.equal((await api(sam, "DELETE", `recipes/${toast.id}/photo`)).status, 404);
+  assert.equal((await api(ryan, "GET", `recipes/${toast.id}/photo`)).status, 405);
 });
