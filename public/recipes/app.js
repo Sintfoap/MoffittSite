@@ -3,6 +3,7 @@
 // list. The Worker side is src/recipes.js; scaling is ./scale.js.
 
 import { scaleLine, factorFor, format } from "./scale.js";
+import { splitPages, batches } from "./split.js";
 
 const $ = s => document.querySelector(s);
 const el = (tag, props = {}, ...kids) => {
@@ -389,6 +390,44 @@ $("#add").addEventListener("submit", async e => {
   if (err?.manual) openEditor(null);
 });
 $("#by-hand").addEventListener("click", () => openEditor(null));
+
+// ── importing a file of recipes ────────────────────────────────────────────
+
+// "3 already in your box, 1 had no recipe"
+function skippedSummary(skipped) {
+  const why = new Map();
+  for (const s of skipped) why.set(s.why, (why.get(s.why) || 0) + 1);
+  return [...why].map(([w, n]) => `${n} ${w}`).join(", ");
+}
+
+async function importFile(file) {
+  const btn = $("#import");
+  btn.disabled = true;
+  const err = await run(async () => {
+    const pages = splitPages(await file.text());
+    if (!pages.length) throw new Error("that file is empty");
+    const added = [], skipped = [];
+    let done = 0;
+    for (const group of batches(pages)) {
+      say("done", `Importing ${file.name}: ${done} of ${pages.length}…`);
+      const out = await api("POST", "recipes/import", { pages: group });
+      added.push(...out.added);
+      skipped.push(...out.skipped);
+      done += group.length;
+      data.recipes = [...data.recipes, ...out.added].sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: "base" }));
+      renderList();
+    }
+    if (!added.length && pages.length === 1 && skipped[0]?.why === "had no recipe") throw new Error("couldn't find a recipe in that file");
+    const extra = skipped.length ? ` Skipped ${skipped.length}: ${skippedSummary(skipped)}.` : "";
+    say("done", `Imported ${added.length} recipe${added.length === 1 ? "" : "s"} from ${file.name}.${extra}`);
+    if (added.length) pick(added[0].id);
+  });
+  btn.disabled = false;
+  $("#import-file").value = "";
+  return err;
+}
+$("#import").addEventListener("click", () => $("#import-file").click());
+$("#import-file").addEventListener("change", e => e.target.files[0] && importFile(e.target.files[0]));
 $("#find").addEventListener("input", () => { page = 0; follow = false; renderList(); });
 
 document.addEventListener("keydown", e => {
@@ -410,6 +449,7 @@ document.addEventListener("keydown", e => {
     "+": () => r && step(r, 1), "=": () => r && step(r, 1),
     "-": () => r && step(r, -1),
     e: () => r && openEditor(r),
+    i: () => $("#import-file").click(),
     s: () => r && $("#send") && !$("#send").disabled && $("#send").click(),
   };
   if (keys[e.key]) { e.preventDefault(); keys[e.key](); }

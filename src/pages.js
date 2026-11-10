@@ -35,6 +35,7 @@ const ICON = {
   sweep: `<path d="M4 20 14 10M12 8l4 4M14 6l4 4-3 3-4-4z"/><path d="M5 5v3M3.5 6.5h3M19 15v3M17.5 16.5h3"/>`,
   trips: `<path d="M4 8h16v11H4z"/><path d="M9 8V5h6v3M4 13h16"/>`,
   board: `<rect x="3" y="4" width="18" height="16" rx="1"/><path d="M7 8h4v4H7zM13 8h4M13 11h4M7 15h10"/>`,
+  food: `<path d="M3 12h18a9 9 0 0 1-18 0z"/><path d="M9 8c0-1.5 1-2 1-3.5M14 8c0-1.5 1-2 1-3.5"/>`,
   bell: `<path d="M6 16V11a6 6 0 0 1 12 0v5l2 2H4z"/><path d="M10 20.5a2 2 0 0 0 4 0"/>`,
   out: `<path d="M15 4h4v16h-4M10 8l-4 4 4 4M6 12h10"/>`,
   fold: `<rect x="3" y="4" width="18" height="16" rx="1"/><path d="M9 4v16M16 9l-3 3 3 3"/>`,

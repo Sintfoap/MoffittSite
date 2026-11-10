@@ -18,7 +18,8 @@
 // it's shown.
 // The weather (Open-Meteo) is the same everywhere: 16 days from today, with
 // rain tomorrow and the day after the clear one; ryan is near London.
-// ryan and sam have Trip planner, and Recipe board, where sam shared Shortbread under Baking.
+// ryan and sam have Trip planner, Recipe board, where sam shared Shortbread under Baking,
+// and Food club, where sam picked last month (Pavlova).
 import http from "node:http";
 import worker from "../../src/worker.js";
 import { Browser, makeEnv, sqlOne, run, grantApps } from "../../tests/helpers.mjs";
@@ -80,11 +81,16 @@ await ryan.signup("ryan", undefined, "Ryan M");
 await sam.signup("sam", undefined, "Sam");
 for (const who of ["ryan", "sam"]) grantApps(env, who, "plugins", "chat");
 grantApps(env, "ryan", "chat-bridges", "recipes", "meals", "sweep");
-for (const who of ["ryan", "sam"]) grantApps(env, who, "trips", "board");
+for (const who of ["ryan", "sam"]) grantApps(env, who, "trips", "board", "food");
 {
   const cats = (await sam.req("GET", "/board/api/board")).json.categories;
   await sam.req("POST", "/board/api/posts", { json: { category: cats.find(c => c.name === "Baking").id, title: "Shortbread", note: "Three ingredients!",
     recipe: { ingredients: ["2 cups flour", "1 cup butter", "1/2 cup sugar"], steps: ["Rub together", "Bake at 160C for 40 min"], servings: 12 } } });
+}
+{
+  const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - 1);
+  await sam.req("POST", "/food/api/picks", { json: { month: d.toLocaleDateString("sv").slice(0, 7), title: "Pavlova", kind: "dessert",
+    blurb: "Crisp outside, marshmallow inside.", recipe: { ingredients: ["4 egg whites", "1 cup sugar"], steps: ["Whisk", "Bake low and slow"] } } });
 }
 {
   const plans = (await ryan.req("POST", "/chat/api/rooms", { json: { name: "Plans" } })).json.id;

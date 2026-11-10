@@ -8,8 +8,8 @@
 // src/store.js) and /chat (src/chat.js) each need their own app turned on for
 // the account on the admin page, and so do /notifications (src/notify.js),
 // /recipes, the Recipe box (src/recipes.js), /meals, the Meal plan (src/meals.js), /sweep, which suggests Drift
-// items from chat rooms (src/sweep.js), /trips, Trip planner (src/trips.js), and /board,
-// the Recipe board (src/board.js).
+// items from chat rooms (src/sweep.js), /trips, Trip planner (src/trips.js), /board,
+// the Recipe board (src/board.js), and /food, Food club (src/food.js).
 // /mcp is the MCP server AI agents use Drift through, with an API key (src/mcp.js).
 // /login/cli is signing in from a terminal (src/cli.js). /app and
 // /.well-known/assetlinks.json are the Android app's download page, release
@@ -35,6 +35,7 @@ import { sweepApp } from "./sweep.js";
 import { meals } from "./meals.js";
 import { trips } from "./trips.js";
 import { board } from "./board.js";
+import { food } from "./food.js";
 import { notifications, driftReminders, pushGateway, bridgeUpkeep } from "./notify.js";
 import { state, version, createItem, updateItem, createCollection, updateCollection, setBases, shareCollection, unshareCollection, readJson, BadRequest, ID } from "./drift.js";
 import { planDay } from "./routing.js";
@@ -104,6 +105,13 @@ export default {
     }
     if (pathname.startsWith("/board/")) {
       return protect(request, env, areaOf("board"), user => board(request, env, user, pathname));
+    }
+    if (pathname === "/food") {
+      url.pathname = "/food/";
+      return Response.redirect(url.toString(), 308);
+    }
+    if (pathname.startsWith("/food/")) {
+      return protect(request, env, areaOf("food"), user => food(request, env, user, pathname));
     }
     if (pathname === "/sweep") {
       url.pathname = "/sweep/";

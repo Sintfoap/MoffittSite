@@ -638,6 +638,11 @@ def add_recipe(fields: dict) -> dict:
     return api("POST", "/recipes/api/recipes", fields)
 
 
+def import_recipes(pages: list[str]) -> dict:
+    """Saves the recipes in these pieces of an export file (at most 10): {added, skipped: [{title, why}]}."""
+    return api("POST", "/recipes/api/recipes/import", {"pages": pages})
+
+
 def update_recipe(recipe_id: str, changes: dict) -> dict:
     return api("PATCH", f"/recipes/api/recipes/{_q(recipe_id)}", changes)
 
@@ -852,3 +857,58 @@ def delete_board_post(post_id: str) -> dict:
 def save_board_post(post_id: str) -> dict:
     """The post's recipe, copied into your Recipe box: {recipe, already}."""
     return api("POST", f"/board/api/posts/{_q(post_id)}/save")
+# ────────────────────────────── food club ───────────────────────────────────
+# /food/api/ (src/food.js)
+
+PHOTO_BYTES = 1200 * 1024     # the biggest photo the site keeps (src/food.js)
+
+
+def food_club() -> dict:
+    """{picks, you, kinds, recipe_box, recipes}: every month's pick (newest first), and your Recipe box's recipes to pick from."""
+    return _get("/food/api/club")
+
+
+def food_pick(pick_id: str) -> dict:
+    """The whole pick: {month, title, kind, blurb, recipe, by, can_edit, made_by, favorite_of, mine, photos}."""
+    return _get(f"/food/api/picks/{_q(pick_id)}")
+
+
+def add_food_pick(fields: dict) -> dict:
+    """{month (YYYY-MM), title, kind, blurb} and a recipe: {recipe: {...}}, {url} to read one from a page, or {recipe_id} from your Recipe box."""
+    return api("POST", "/food/api/picks", fields)
+
+
+def update_food_pick(pick_id: str, changes: dict) -> dict:
+    return api("PATCH", f"/food/api/picks/{_q(pick_id)}", changes)
+
+
+def delete_food_pick(pick_id: str) -> dict:
+    return api("DELETE", f"/food/api/picks/{_q(pick_id)}")
+
+
+def mark_food(pick_id: str, **marks: bool) -> dict:
+    """made=… and/or favorite=… for you; the pick back."""
+    return api("PUT", f"/food/api/picks/{_q(pick_id)}/mine", marks)
+
+
+def add_food_photo(pick_id: str, path: str, caption: str = "") -> dict:
+    """Sends a picture file of your attempt (JPEG, PNG, WebP or GIF, at most PHOTO_BYTES); the pick back."""
+    import base64
+    p = Path(path).expanduser()
+    try:
+        raw = p.read_bytes()
+    except OSError as e:
+        raise SiteError(f"couldn't read {p}: {e.strerror or e}") from None
+    if len(raw) > PHOTO_BYTES:
+        raise SiteError(f"that photo is {len(raw) // 1024} KB; the most the site keeps is {PHOTO_BYTES // 1024} KB, "
+                        "so make it smaller first (or add it from the website, which shrinks it for you)")
+    return api("POST", f"/food/api/picks/{_q(pick_id)}/photos", {"data": base64.b64encode(raw).decode(), "caption": caption})
+
+
+def remove_food_photo(pick_id: str, photo_id: str) -> dict:
+    return api("DELETE", f"/food/api/picks/{_q(pick_id)}/photos/{_q(photo_id)}")
+
+
+def save_food_recipe(pick_id: str) -> dict:
+    """The pick's recipe, copied into your Recipe box: {recipe}."""
+    return api("POST", f"/food/api/picks/{_q(pick_id)}/save")

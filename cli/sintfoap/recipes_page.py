@@ -3,10 +3,12 @@
 Your recipes down the left, the open one on the right, scaled to the servings
 you pick (+ and -). Space ticks which ingredients to send, and s sends them to
 a Drift list. A link pasted in the box at the top is read by the site, as on
-the website; n types one in by hand."""
+the website; n types one in by hand, and i imports a file of them (Recipe
+Keeper's HTML export, or a saved recipe page)."""
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from urllib.parse import urlparse
 
 from rich.text import Text
@@ -20,7 +22,7 @@ from textual.widgets.selection_list import Selection
 
 from . import site
 from . import recipe_rules as R
-from .look import FAINT, GOLD, GOLD_DIM, INK, MUTED, Confirm, Page, attempt, plural
+from .look import FAINT, GOLD, GOLD_DIM, INK, MUTED, Ask, Confirm, Page, attempt, plural
 
 SHOPPING = "Shopping list"
 
@@ -215,6 +217,7 @@ class RecipesPage(Page):
     BINDINGS = [
         Binding("a", "add", "From a link"),
         Binding("n", "new", "By hand"),
+        Binding("i", "import_file", "Import file"),
         Binding("e", "edit", "Edit"),
         Binding("plus,equals_sign", "servings(1)", "More"),
         Binding("minus", "servings(-1)", "Fewer"),
@@ -431,7 +434,7 @@ class RecipesPage(Page):
         # Typing in the link box or the editor shouldn't scale or delete anything.
         if action == "board" and not (self.data or {}).get("board"):
             return None
-        if action in ("servings", "add", "new", "edit", "send", "delete", "refresh", "board", "labels", "sort") and isinstance(self.focused, (Input, TextArea)):
+        if action in ("servings", "add", "new", "import_file", "edit", "send", "delete", "refresh", "board", "labels", "sort") and isinstance(self.focused, (Input, TextArea)):
             return False
         return True
 
@@ -543,6 +546,53 @@ class RecipesPage(Page):
         if r and (self.data or {}).get("board"):
             from .board_page import BoardPage
             self.app.push_screen(BoardPage(share=r["id"]))
+
+    # ── importing a file ──────────────────────────────────────────────────
+
+    def action_import_file(self) -> None:
+        async def answer(path: str | None) -> None:
+            if path and path.strip():
+                await self.import_file(path.strip())
+        self.app.push_screen(Ask("Import recipes from a file",
+                                 "An HTML file: Recipe Keeper's export (its recipes.html), or a recipe page you saved. "
+                                 "Recipes already in your box are skipped.",
+                                 placeholder="~/Downloads/recipes.html", ok="Import"), answer)
+
+    @attempt
+    async def import_file(self, path: str) -> None:
+        file = Path(path.strip("'\"")).expanduser()
+        try:
+            html = await asyncio.to_thread(file.read_text, encoding="utf-8", errors="replace")
+        except OSError as e:
+            self.app.notify(f"Couldn't read {file}: {e.strerror or e}.", severity="error", timeout=5)
+            return
+        pages = R.split_pages(html)
+        if not pages:
+            self.app.notify("That file is empty.", severity="error", timeout=3)
+            return
+        added: list[dict] = []
+        skipped: list[dict] = []
+        done = 0
+        for group in R.batches(pages):
+            self.app.notify(f"Importing {file.name}: {done} of {len(pages)}…", timeout=2)
+            out = await self.fetch(site.import_recipes, group)
+            added += out["added"]
+            skipped += out["skipped"]
+            done += len(group)
+            if out["added"]:
+                # Shown as they come, so a failure part way keeps what got in.
+                self.data["recipes"] = by_title(self.data["recipes"] + out["added"])
+                self.open = self.open or out["added"][0]["id"]
+                self.show_shelf()
+        if not added and len(pages) == 1 and skipped and skipped[0]["why"] == "had no recipe":
+            self.app.notify("Couldn't find a recipe in that file.", severity="error", timeout=4)
+            return
+        if added:
+            self.open = added[0]["id"]
+            self.show_shelf()
+            self.show_recipe()
+        extra = f" Skipped {len(skipped)}: {R.skipped_summary(skipped)}." if skipped else ""
+        self.app.notify(f"Imported {plural(len(added), 'recipe')} from {file.name}.{extra}", timeout=8)
 
     def action_delete(self) -> None:
         r = self.current()

@@ -577,6 +577,8 @@ async function admin(request, env, me, pathname, method) {
           d.prepare("DELETE FROM board_saves WHERE user_id = ? OR post IN (SELECT id FROM board_posts WHERE author = ?)").bind(target.id, target.id),
           ...["board_follows", "board_seen"].map(t => d.prepare(`DELETE FROM ${t} WHERE user_id = ?`).bind(target.id)),
           d.prepare("DELETE FROM board_posts WHERE author = ?").bind(target.id),
+          // Their marks and photos come off Food club; months they picked stay in its history.
+          ...["food_marks", "food_photos"].map(t => d.prepare(`DELETE FROM ${t} WHERE user_id = ?`).bind(target.id)),
           ...["sweep_rooms", "sweep_suggestions", "sweep_runs", "sweep_keys"].map(t => d.prepare(`DELETE FROM ${t} WHERE user_id = ?`).bind(target.id)),
           d.prepare("DELETE FROM users WHERE id = ?").bind(target.id),
         ]);

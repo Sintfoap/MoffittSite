@@ -40,6 +40,7 @@ export const APPS = [
   { id: "sweep", area: "sweep", name: "Sweep", href: "/sweep/", icon: "sweep", key: "w", blurb: "Suggests Drift events, tasks and list items from your chat rooms." },
   { id: "trips", area: "trips", name: "Trip planner", href: "/trips/", icon: "trips", key: "t", blurb: "Plan a trip together: the days, the places, and a packing list for Drift." },
   { id: "board", area: "board", name: "Recipe board", href: "/board/", icon: "board", key: "b", blurb: "Share recipes under categories, follow the ones you like, and save what turns up in your feed." },
+  { id: "food", area: "food", name: "Food club", href: "/food/", icon: "food", key: "f", blurb: "A food a month, picked by one of us and made by everyone: recipes, favorites and photos." },
   { id: "notifications", area: "notifications", name: "Notifications", href: "/notifications/", icon: "bell", key: "n", blurb: "Alerts on your phone or computer for Chat and Drift.", group: "account" },
 ];
 // The apps that are places of their own: the menu, the dashboard's cards.

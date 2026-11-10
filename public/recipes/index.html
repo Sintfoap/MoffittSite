@@ -153,7 +153,7 @@ dialog .two { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
 <main>
   <div class="kicker">Recipe box</div>
   <h1>Recipes</h1>
-  <p class="lede">Paste a link to a recipe (any recipe site, or one shared from Recipe Keeper) to keep it here. Scale it to the servings you need and send what to buy to a Drift list. Give recipes labels like <b>Season: Fall</b> (from the list an admin keeps) to filter and sort them.</p>
+  <p class="lede">Paste a link to a recipe (any recipe site, or one shared from Recipe Keeper) to keep it here, or import a whole file of them, like Recipe Keeper's HTML export. Scale it to the servings you need and send what to buy to a Drift list. Give recipes labels like <b>Season: Fall</b> (from the list an admin keeps) to filter and sort them.</p>
   <div id="error" class="msg bad" role="alert" hidden></div>
   <div id="done" class="msg good" role="status" hidden></div>
 
@@ -161,6 +161,8 @@ dialog .two { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
     <input type="url" id="url" placeholder="https://… a recipe page" aria-label="Recipe link" required>
     <button class="btn" id="save">Save</button>
     <button class="btn quiet" type="button" id="by-hand">Add by hand</button>
+    <button class="btn quiet" type="button" id="import" title="Import (i)">Import file</button>
+    <input type="file" id="import-file" accept=".html,.htm,text/html" hidden>
   </form>
 
   <div class="box">
@@ -197,7 +199,7 @@ dialog .two { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
   </form>
 </dialog>
 
-<footer class="keybar" aria-label="Keyboard shortcuts"><span><kbd>n</kbd>new from a link</span><span><kbd>/</kbd>find</span><span><kbd>l</kbd>filter by label</span><span><kbd>j k</kbd>next, previous</span><span><kbd>[ ]</kbd>page</span><span><kbd>+ -</kbd>servings</span><span><kbd>s</kbd>send to list</span><span><kbd>e</kbd>edit</span><span><kbd>g</kbd>then a key from the menu to jump</span><span><kbd>\</kbd>Sidebar</span><a class="end" href="/logout" data-key="o"><kbd>g o</kbd>Sign out</a></footer>
+<footer class="keybar" aria-label="Keyboard shortcuts"><span><kbd>n</kbd>new from a link</span><span><kbd>/</kbd>find</span><span><kbd>l</kbd>filter by label</span><span><kbd>j k</kbd>next, previous</span><span><kbd>[ ]</kbd>page</span><span><kbd>+ -</kbd>servings</span><span><kbd>s</kbd>send to list</span><span><kbd>e</kbd>edit</span><span><kbd>i</kbd>import a file</span><span><kbd>g</kbd>then a key from the menu to jump</span><span><kbd>\</kbd>Sidebar</span><a class="end" href="/logout" data-key="o"><kbd>g o</kbd>Sign out</a></footer>
 <script src="/keys.js" defer></script>
 <script type="module" src="/recipes/app.js"></script>
 </body>

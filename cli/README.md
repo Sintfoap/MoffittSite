@@ -20,6 +20,7 @@ sintfoap                    # signs you in the first time, then opens your dashb
 | `sintfoap sweep` | Sweep: Drift suggestions from your chat rooms, to accept or turn down |
 | `sintfoap trips` | Trip planner: a trip's days, places and packing list, with whoever's going |
 | `sintfoap board` | Recipe board: recipes shared by category, and a feed of the categories you follow |
+| `sintfoap food` | Food club: the month's food, its recipe, favorites and everyone's photos |
 | `sintfoap admin` | which apps each account can use (admins) |
 | `sintfoap app` | the Android app: a QR code to scan with your phone, and the download link |
 | `sintfoap books [--plain]` | the book club pick: read about the books and vote; no sign-in needed |
@@ -47,7 +48,7 @@ nix develop                                  # a shell with Python, Textual and 
 
 ## The dashboard
 
-The same panels as `/dashboard`, in the site's colours: Today (overdue Drift items in red, then what's due today), your account with its checks (two-factor, recovery codes, email), and a card per app your account can use. It refreshes every 30 seconds. Drift, the plugin store, chat, Recipe box, Recipe board, Meal plan, Sweep, Trip planner, notifications, account settings and Admin open here in the terminal; anything else opens in your browser.
+The same panels as `/dashboard`, in the site's colours: Today (overdue Drift items in red, then what's due today), your account with its checks (two-factor, recovery codes, email), and a card per app your account can use. It refreshes every 30 seconds. Drift, the plugin store, chat, Recipe box, Recipe board, Meal plan, Sweep, Trip planner, Food club, notifications, account settings and Admin open here in the terminal; anything else opens in your browser.
 
 | Key | |
 |---|---|
@@ -59,7 +60,7 @@ The same panels as `/dashboard`, in the site's colours: Today (overdue Drift ite
 | `o` | sign out this terminal |
 | `q` | quit |
 
-On every page `esc` goes back, `w` opens the same page in your browser and `q` quits. `g` then a letter jumps around, as on the website: `g h` home, `g d` Drift, `g p` plugin store, `g c` chat, `g r` Recipe box, `g b` Recipe board, `g m` Meal plan, `g w` Sweep, `g t` Trip planner, `g s` settings, `g n` notifications, `g a` admin, `g o` sign out.
+On every page `esc` goes back, `w` opens the same page in your browser and `q` quits. `g` then a letter jumps around, as on the website: `g h` home, `g d` Drift, `g p` plugin store, `g c` chat, `g r` Recipe box, `g b` Recipe board, `g m` Meal plan, `g w` Sweep, `g t` Trip planner, `g f` Food club, `g s` settings, `g n` notifications, `g a` admin, `g o` sign out.
 
 ## Book club pick
 
@@ -141,12 +142,13 @@ The same settings as `/notifications/`: what Chat and Drift push to you (direct 
 
 ## Recipe box
 
-The same recipes as `/recipes/`: the list on the left, the open one on the right. Paste a link to a recipe page in the box at the top (`a` goes there) and the site reads the recipe off it, from the schema.org data most recipe sites publish, or from a recipe shared out of Recipe Keeper (recipekeeperonline.com). If a page has no recipe on it, the editor opens with the link filled in so you can type it.
+The same recipes as `/recipes/`: the list on the left, the open one on the right. Paste a link to a recipe page in the box at the top (`a` goes there) and the site reads the recipe off it, from the schema.org data most recipe sites publish, or from a recipe shared out of Recipe Keeper (recipekeeperonline.com). If a page has no recipe on it, the editor opens with the link filled in so you can type it. `i` imports a whole file of recipes: give it the path to Recipe Keeper's HTML export (the `recipes.html` in its export folder) or a recipe page you saved, and every recipe in it is added, skipping ones already in your box. Courses, categories, collections, ratings and nutrition go in each recipe's notes; pictures stay behind, since the export keeps them as files beside it.
 
 | Key | |
 |---|---|
 | `a` | save a recipe from a link |
 | `n` | type one in by hand |
+| `i` | import a file of recipes (Recipe Keeper's HTML export, or a saved page) |
 | `+` `-` | more or fewer servings (or ×½ steps for a recipe that doesn't say how many it serves); quantities change to match |
 | `space` | on the ingredients: tick which to send |
 | `s` | send the ticked ingredients, scaled, to a Drift list: your Shopping list (made the first time), or any list you can add to |
@@ -216,6 +218,22 @@ The same board as `/board/`: your feed (new recipes in the categories you follow
 | `e` `d` | edit or delete your own post |
 | `r` | refresh |
 
+## Food club
+
+The same club as `/food/`: every month's pick on the left (coming up, this month, before), the open one on the right with why it was picked, who made it and who loved it, everyone's photos and the recipe.
+
+| Key | |
+|---|---|
+| `n` | pick a month: the month, the food, why, and its recipe (from a link, your Recipe box, or typed in; `ctrl+s` saves) |
+| `m` | you made it (or didn't) |
+| `f` | one of your favorites (a favorite counts as made) |
+| `p` | add a photo of yours from a file (JPEG, PNG, WebP or GIF up to 1.2 MB; the website shrinks bigger ones) |
+| `o` | open the highlighted photo in your browser (`x` takes your own off) |
+| `s` | save the recipe to your Recipe box |
+| `v` | show all, just your favorites, or just what you've made |
+| `e` `d` | edit or delete the pick; only whoever picked it (or an admin) |
+| `r` | refresh |
+
 ## Account settings
 
 Your profile, two-factor, recovery codes, email and sessions, like `/account`. Here you can change your display name, sign out every other device, or sign out this terminal. Anything that needs your password (two-factor, recovery codes, email, the password itself) opens the website instead, so the terminal never asks for it.
@@ -237,6 +255,7 @@ sintfoap/meals_page.py     Meal plan
 sintfoap/sweep_page.py     Sweep
 sintfoap/trips_page.py     Trip planner
 sintfoap/board_page.py     Recipe board
+sintfoap/food_page.py      Food club
 sintfoap/recipe_rules.py   scaling ingredient lines, as on the web page (tests/scale_cases.json keeps them the same)
 sintfoap/__main__.py       the command
 tests/                     python -m pytest tests
