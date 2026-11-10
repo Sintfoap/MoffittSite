@@ -15,7 +15,8 @@
 // ryan has Meal plan too (his Recipe box starts empty).
 // ryan has Sweep, and he and sam are in a room "Plans" where sam asked about
 // dinner. The stand-in for Claude suggests that dinner from the first message
-// it's shown, and reads every photo of a recipe as Nana's Shortbread.
+// it's shown, and reads every photo of a recipe as Nana's Shortbread (but turns
+// down a key with "revoked" in it, as Anthropic does once a key is revoked).
 // The weather (Open-Meteo) is the same everywhere: 16 days from today, with
 // rain tomorrow and the day after the clear one; ryan is near London.
 // ryan and sam have Trip planner, Recipe board, where sam shared Shortbread (Course: Dessert),
@@ -58,6 +59,8 @@ if (notify) {
     const u = new URL(input.url || input);
     if (u.host !== "api.anthropic.com") return before(input, init);
     if (u.pathname === "/v1/models") return new Response("{}");  // checking a key: any will do
+    // A key with "revoked" in it was turned off at Anthropic after it was added.
+    if (/revoked/.test(new Headers(init.headers).get("x-api-key"))) return new Response('{"type":"error"}', { status: 401 });
     const said = JSON.parse(init.body).messages[0].content;
     if (Array.isArray(said)) return new Response(JSON.stringify({ stop_reason: "end_turn", content: [{ type: "text", text: JSON.stringify({
       found: true, title: "Nana's Shortbread", servings: 0, yield: "Makes 24", time: "45 min",

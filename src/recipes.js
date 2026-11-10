@@ -550,8 +550,9 @@ async function readImport(request) {
 
 // Pictures come from the recipe sites themselves, so img-src allows https.
 const PAGE_CSP = [
-  // worker-src: text recognition (vendor/tesseract) reads photos in a worker, on the device.
-  "default-src 'none'", "script-src 'self'", "connect-src 'self'", "manifest-src 'self'", "worker-src 'self'",
+  // worker-src: text recognition (vendor/tesseract) reads photos in a worker, on the device;
+  // wasm-unsafe-eval lets it run where the worker is held to this page's policy (Safari).
+  "default-src 'none'", "script-src 'self' 'wasm-unsafe-eval'", "connect-src 'self'", "manifest-src 'self'", "worker-src 'self'",
   "style-src 'unsafe-inline' https://fonts.googleapis.com", "font-src https://fonts.gstatic.com", "img-src 'self' data: https:",
   "form-action 'self'", "frame-ancestors 'none'", "base-uri 'none'",
 ].join("; ");
