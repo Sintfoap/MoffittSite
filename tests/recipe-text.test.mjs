@@ -112,5 +112,6 @@ test("the page may run text recognition in a worker, from the site only", async 
   grantApps(env, "ryan", "recipes");
   const csp = (await ryan.get("/recipes/")).headers.get("Content-Security-Policy");
   assert.match(csp, /worker-src 'self'/);
-  assert.match(csp, /script-src 'self';/);
+  // wasm-unsafe-eval: browsers that hold the worker to the page's own policy (Safari) still let it run.
+  assert.match(csp, /script-src 'self' 'wasm-unsafe-eval';/);
 });

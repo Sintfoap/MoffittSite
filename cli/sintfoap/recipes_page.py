@@ -11,6 +11,7 @@ it's saved."""
 from __future__ import annotations
 
 import asyncio
+import re
 import zipfile
 from pathlib import Path
 from typing import Callable
@@ -164,7 +165,7 @@ class RecipeDialog(ModalScreen[dict | None]):
         with VerticalScroll(classes="dialog"):
             yield Label(Text(self.heading, style=f"bold {INK}"))
             if self.hint:
-                yield Static(Text(self.hint, style=MUTED))
+                yield Static(Text(self.hint, style=MUTED), id="hint")
             yield Label("Title", classes="lbl")
             yield Input(r.get("title", ""), id="title", max_length=200)
             with Horizontal(classes="grid"):
@@ -735,10 +736,27 @@ class RecipesPage(Page):
     async def from_photo(self, paths: list[str]) -> None:
         claude = ((self.data or {}).get("photo") or {}).get("ready")
         self.app.notify(f"Reading {'the photo' if len(paths) == 1 else f'{len(paths)} photos'}…", timeout=8)
-        how = "Claude" if claude else "text recognition"
-        await self.review(site.read_recipe_photo if claude else site.read_photo_here, paths,
-                          hint=f"Read from your photo by {how}. Check it against the picture, fix any misread words, "
-                               "and move lines between the boxes if one landed in the wrong place.")
+        hint = ("Check it against the picture, fix any misread words, "
+                "and move lines between the boxes if one landed in the wrong place.")
+        if claude:
+            def with_claude():
+                try:
+                    return {**site.read_recipe_photo(paths), "by_claude": True}
+                except site.SignedOut:
+                    raise
+                except site.SiteError as e:
+                    # A revoked or spent key, Claude busy, no connection: read it here instead.
+                    msg = str(e).removeprefix("the site said: ")
+                    if "couldn't find a recipe" in msg:
+                        raise
+                    if "didn't accept your API key" in msg:
+                        self.data["photo"] = {**self.data.get("photo", {}), "ready": False}
+                    out = site.read_photo_here(paths)
+                    out["fell_back"] = re.split(r"\.\s", msg)[0].rstrip(".")
+                    return out
+            await self.review(with_claude, hint=hint)
+        else:
+            await self.review(site.read_photo_here, paths, hint="Read from your photo by text recognition. " + hint)
 
     def action_paste(self) -> None:
         self.app.push_screen(PasteDialog(), self.after_paste)
@@ -763,6 +781,10 @@ class RecipesPage(Page):
             self.app.notify(msg[:1].upper() + msg[1:], severity="error", timeout=8)
             return False
         r = out["recipe"]
+        if "fell_back" in out:
+            hint = f"Claude couldn't read it ({out['fell_back']}), so it was read here by text recognition. " + hint
+        elif out.get("by_claude"):
+            hint = "Read from your photo by Claude. " + hint
         if r.get("check"):
             hint += " Look twice at the amounts in " + ", ".join(f"“{x}”" for x in r["check"]) + ": fractions like ½ and ¾ are easy to misread."
         fields = {k: v for k, v in r.items() if k != "check"}

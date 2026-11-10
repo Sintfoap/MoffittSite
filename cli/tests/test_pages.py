@@ -598,6 +598,25 @@ def test_recipe_box_reads_a_photo_here_without_a_key(real_site, tmp_path, monkey
     run_app("recipes", recipes)
 
 
+def test_recipe_box_reads_a_photo_here_when_the_saved_key_was_revoked(real_site, tmp_path, monkeypatch):
+    page_jpg = tmp_path / "banana-bread.jpg"
+    page_jpg.write_bytes(JPEG)
+    monkeypatch.setattr(site, "ocr_page", lambda path: OCR_PAGE)
+    site.recipe_key("sk-ant-api03-revoked" + "k" * 40)
+
+    async def recipes(app, pilot):
+        page = app.screen
+        assert page.data["photo"]["ready"]
+        await page.from_photo([str(page_jpg)])
+        await settle(pilot, 0.8)
+        dialog = app.screen
+        assert type(dialog).__name__ == "RecipeDialog"
+        assert dialog.query_one("#title").value == "Classic Banana Bread"
+        assert "Claude couldn't read it (Anthropic didn't accept your API key)" in str(dialog.query_one("#hint").render())
+        assert not page.data["photo"]["ready"]
+    run_app("recipes", recipes)
+
+
 def test_recipe_box_reads_pasted_text_and_photos_with_claude_once_a_key_is_added(real_site, tmp_path):
     card = tmp_path / "card.jpg"
     card.write_bytes(JPEG)
