@@ -19,7 +19,7 @@ sintfoap                    # signs you in the first time, then opens your dashb
 | `sintfoap meals` | Meal plan: the week's dinners around your Drift calendar, and their shopping |
 | `sintfoap sweep` | Sweep: Drift suggestions from your chat rooms, to accept or turn down |
 | `sintfoap trips` | Trip planner: a trip's days, places and packing list, with whoever's going |
-| `sintfoap board` | Recipe board: recipes shared by their labels, and a feed of the label keys you follow |
+| `sintfoap board` | Recipe board: recipes shared by their labels, and a feed of the label keys (or single values) you follow |
 | `sintfoap labels` | Recipe labels: the one list of labels recipes pick from |
 | `sintfoap food` | Food club: the month's food, its recipe, favorites and everyone's photos |
 | `sintfoap admin` | which apps each account can use (admins) |
@@ -212,11 +212,11 @@ The same trips as `/trips/`: your trips on the left, the open one on the right i
 
 ## Recipe board
 
-The same board as `/board/`: your feed (new recipes in the categories you follow), everything, what you've shared and what you've saved down the left, then every category, starred if you follow it. The categories are the label keys from Recipe labels (Season, Cuisine...): a recipe shows under every key its labels use, and the open key lists its values to narrow it to one. Your feed and Everything start with the recipe of the day: one of someone else's posts, a new one each day. The open view's recipes are on the right, newest first, with the highlighted one's recipe under them. In Recipe box, `b` shares the open recipe here.
+The same board as `/board/`: your feed (new recipes in the categories you follow), everything, what you've shared and what you've saved down the left, then every category, starred if you follow it. You can also follow just one value of a category (like Season: Fall), so only those recipes reach your feed. The categories are the label keys from Recipe labels (Season, Cuisine...): a recipe shows under every key its labels use, and the open key lists its values to narrow it to one. Your feed and Everything start with the recipe of the day: one of someone else's posts, a new one each day. The open view's recipes are on the right, newest first, with the highlighted one's recipe under them. In Recipe box, `b` shares the open recipe here.
 
 | Key | |
 |---|---|
-| `f` | follow the highlighted category (or the open one), or stop |
+| `f` | follow the highlighted category or value (or the open one), or stop |
 | `s` | save the highlighted recipe to your Recipe box |
 | `n` | share a recipe: from your Recipe box (its labels come ticked), a link, or typed in, ticking its labels (`ctrl+s` posts) |
 | `x` | remove the highlighted category, which removes its key from Recipe labels (if you have that app) |

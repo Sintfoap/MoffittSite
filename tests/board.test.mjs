@@ -103,6 +103,45 @@ test("the feed: new posts in the keys you follow, marked read when you look", as
   assert.deepEqual((await api(sam, "GET", "posts?view=feed")).json.posts, []);
 });
 
+test("following one value of a key: just its posts reach your feed", async () => {
+  const env = await board(), ryan = await member(env, "ryan"), sam = await member(env, "sam"), kim = await member(env, "kim", "labels");
+  await api(ryan, "POST", "posts", { labels: [L.baking, L.fall], title: "Apple cake", recipe: RECIPE });
+  await api(ryan, "POST", "posts", { labels: [L.dinner], title: "Stew", recipe: RECIPE });
+  await api(ryan, "POST", "posts", { labels: [L.irish], title: "Soda bread", recipe: RECIPE });
+
+  // Course: Baking, not all of Course.
+  const v = (await api(sam, "PUT", `labels/${L.baking}/follow`, { follow: true })).json;
+  assert.deepEqual([v.id, v.value, v.following, v.followers], [L.baking, "Baking", true, 1]);
+  assert.equal((await api(sam, "PUT", `labels/${L.baking}/follow`, { follow: true })).json.followers, 1, "once");
+  assert.equal((await api(sam, "PUT", `labels/${L.baking}/follow`, {})).status, 400);
+  assert.equal((await api(sam, "PUT", "labels/l_00000000ff/follow", { follow: true })).status, 404);
+  assert.equal((await api(sam, "PUT", "labels/Baking/follow", { follow: true })).status, 404);
+  assert.equal((await api(sam, "GET", `labels/${L.baking}/follow`)).status, 405);
+  let b = (await api(sam, "GET", "board")).json;
+  const course = b.categories.find(c => c.name === "Course");
+  assert.equal(course.following, false);
+  assert.deepEqual(course.values.filter(x => x.following).map(x => x.value), ["Baking"]);
+  assert.equal(b.unread, 1);
+  assert.deepEqual((await api(sam, "GET", "posts?view=feed")).json.posts.map(p => p.title), ["Apple cake"]);
+
+  // Following a value and the whole key of another: both, once each.
+  await api(sam, "PUT", "categories/Cuisine/follow", { follow: true });
+  await api(sam, "PUT", `labels/${L.fall}/follow`, { follow: true });
+  assert.deepEqual((await api(sam, "GET", "posts?view=feed")).json.posts.map(p => p.title), ["Soda bread", "Apple cake"]);
+
+  // Unfollowing the value takes it back out; the key's follow is its own.
+  await api(sam, "PUT", `labels/${L.baking}/follow`, { follow: false });
+  await api(sam, "PUT", `labels/${L.fall}/follow`, { follow: false });
+  assert.deepEqual((await api(sam, "GET", "posts?view=feed")).json.posts.map(p => p.title), ["Soda bread"]);
+
+  // A value taken off Recipe labels (or its whole key) takes its follows with it.
+  await api(sam, "PUT", `labels/${L.dinner}/follow`, { follow: true });
+  await api(sam, "PUT", `labels/${L.fall}/follow`, { follow: true });
+  assert.equal((await kim.req("DELETE", `/labels/api/labels/${L.dinner}`)).status, 200);
+  assert.equal((await api(kim, "DELETE", "categories/Season")).json.removed, 1);
+  assert.deepEqual(sql(env, "SELECT category FROM board_follows").map(r => r.category), ["Cuisine"]);
+});
+
 test("the feed pages back through older posts", async () => {
   const env = await board(), ryan = await member(env, "ryan");
   await api(ryan, "PUT", "categories/Course/follow", { follow: true });
