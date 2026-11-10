@@ -134,6 +134,9 @@ ol.steps li::marker { color: var(--gold); font-weight: 700; }
 
 dialog { width: min(680px, calc(100vw - 32px)); max-height: calc(100vh - 32px); background: var(--panel); color: var(--ink); border: 1px solid var(--gold); padding: 22px 24px; }
 dialog::backdrop { background: rgb(0 0 0 / .55); }
+.pic { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.pic img { width: 120px; height: 90px; object-fit: cover; border: 1px solid var(--line); background: var(--field); }
+.pic .row button.btn { margin-top: 0; }
 .shots { display: flex; gap: 8px; overflow-x: auto; margin-bottom: 14px; }
 .shots img { height: 180px; max-width: 100%; object-fit: contain; border: 1px solid var(--line); background: var(--field); cursor: zoom-in; }
 .shots img.big { height: auto; max-height: 70vh; cursor: zoom-out; }
@@ -205,6 +208,17 @@ dialog .two { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
     <div class="field">Labels<div id="label-picker"></div></div>
     <label class="field">Notes<textarea name="notes" rows="3"></textarea></label>
     <label class="field">Link<input type="url" name="source" maxlength="2000"></label>
+    <div class="field">Picture
+      <div class="pic">
+        <img id="pic-preview" alt="" hidden>
+        <span id="pic-none" class="empty">No picture</span>
+        <div class="row">
+          <button class="btn quiet" type="button" id="pic-choose">Choose a picture</button>
+          <button class="btn danger" type="button" id="pic-remove" hidden>Take it off</button>
+        </div>
+        <input type="file" id="pic-file" accept="image/*" hidden>
+      </div>
+    </div>
     <div class="row"><button class="btn" value="save">Save</button><button class="btn quiet" value="cancel" formnovalidate>Cancel</button></div>
   </form>
 </dialog>
