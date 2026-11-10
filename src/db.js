@@ -413,6 +413,32 @@ const SCHEMA = [
      created TEXT NOT NULL,
      PRIMARY KEY (trip, id)
    )`,
+  // Food club (src/food.js): a pick a month, who made it and loved it, and photos of their attempts.
+  `CREATE TABLE IF NOT EXISTS food_picks (
+     id      TEXT PRIMARY KEY,                     -- "f_" + random hex
+     month   TEXT NOT NULL UNIQUE,                 -- YYYY-MM
+     chooser TEXT NOT NULL,                        -- user id of whoever picked it
+     data    TEXT NOT NULL,                        -- JSON {title, kind, blurb, recipe, created}
+     updated TEXT NOT NULL
+   )`,
+  `CREATE TABLE IF NOT EXISTS food_marks (
+     pick     TEXT NOT NULL,
+     user_id  TEXT NOT NULL,
+     made     INTEGER NOT NULL DEFAULT 0,
+     favorite INTEGER NOT NULL DEFAULT 0,
+     updated  TEXT NOT NULL,
+     PRIMARY KEY (pick, user_id)
+   )`,
+  `CREATE TABLE IF NOT EXISTS food_photos (
+     id      TEXT PRIMARY KEY,                     -- "p_" + random hex
+     pick    TEXT NOT NULL,
+     user_id TEXT NOT NULL,
+     type    TEXT NOT NULL,                        -- image/jpeg, image/png, image/webp or image/gif
+     data    TEXT NOT NULL,                        -- the picture, base64
+     caption TEXT NOT NULL DEFAULT '',
+     created TEXT NOT NULL
+   )`,
+  `CREATE INDEX IF NOT EXISTS food_photos_pick ON food_photos (pick, created)`,
 ];
 
 // Indexes on columns that ADDED_COLUMNS may have only just added.

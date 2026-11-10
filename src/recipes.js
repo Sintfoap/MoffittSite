@@ -16,7 +16,7 @@ import { readJson, BadRequest, writableCollections, addToList } from "./drift.js
 import { scaleLine, servingsOf, factorFor, format } from "../public/recipes/scale.js";
 
 const fail = msg => { throw new BadRequest(msg); };
-class NotARecipe extends Error {}
+export class NotARecipe extends Error {}
 
 const LIMITS = { recipes: 500, title: 200, url: 2000, yield: 100, time: 50, lines: 100, ingredient: 300, step: 3000, notes: 5000, page: 3 * 1024 * 1024 };
 const ID = /^r_[0-9a-f]{10}$/;
@@ -24,7 +24,7 @@ const ROUTE = /^\/recipes\/api\/recipes(?:\/(r_[0-9a-f]{10})(?:\/(shop))?)?\/?$/
 const nowStamp = () => new Date().toISOString().slice(0, 19);
 const isObj = v => v && typeof v === "object" && !Array.isArray(v);
 
-const RECIPE = { title: "", source: "", image: "", yield: "", servings: null, time: "", ingredients: [], steps: [], notes: "", created: "" };
+export const RECIPE = { title: "", source: "", image: "", yield: "", servings: null, time: "", ingredients: [], steps: [], notes: "", created: "" };
 
 function newId() {
   const b = crypto.getRandomValues(new Uint8Array(5));
@@ -56,7 +56,8 @@ function link(f, v, { https = false } = {}) {
   return u.toString();
 }
 
-function clean(changes) {
+// Also Food club's (src/food.js): a pick's recipe is cleaned the same way.
+export function clean(changes) {
   if (!isObj(changes)) fail("body must be a JSON object");
   const out = {};
   for (const [f, v] of Object.entries(changes)) {
@@ -92,7 +93,7 @@ export async function list(env, user) {
   return results.map(toRecipe).sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: "base" }));
 }
 
-async function get(d, owner, id) {
+export async function get(d, owner, id) {
   const row = await d.prepare("SELECT id, data, updated FROM recipes WHERE owner = ? AND id = ?").bind(owner, id).first();
   return row ? toRecipe(row) : null;
 }

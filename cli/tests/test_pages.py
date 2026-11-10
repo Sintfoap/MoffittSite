@@ -297,7 +297,7 @@ def test_admins_switch_apps_on_and_off_in_the_terminal(admin_site):
         page = app.screen
         assert type(page).__name__ == "AdminPage"
         apps = [a["id"] for a in page.data["apps"]]
-        assert apps == ["drift", "admin", "plugins", "chat", "chat-bridges", "recipes", "meals", "sweep", "trips", "notifications"]
+        assert apps == ["drift", "admin", "plugins", "chat", "chat-bridges", "recipes", "meals", "sweep", "trips", "food", "notifications"]
         # A switch for every app on every account; your own admin one can't be turned off.
         assert len(page.boxes) == len(apps) * len(page.data["users"])
         me = next(i for i, u in enumerate(page.data["users"]) if u["you"])
@@ -1085,4 +1085,100 @@ def test_g_t_opens_the_terminal_trip_planner(real_site):
         app.go("t")
         await settle(pilot, 0.5)
         assert type(app.screen).__name__ == "TripsPage"
+    run_app("dashboard", go)
+
+
+# ── food club ──────────────────────────────────────────────────────────────
+
+def test_food_club_picks_a_month_marks_it_made_and_keeps_photos(real_site, tmp_path):
+    from datetime import date
+    from sintfoap.food_page import this_month
+    photo = tmp_path / "attempt.jpg"
+    photo.write_bytes(bytes([0xFF, 0xD8, 0xFF, 0xE0, 0, 16]) + b"JFIF" + bytes(20))
+
+    async def food(app, pilot):
+        page = app.screen
+        assert type(page).__name__ == "FoodPage"
+        # sam picked last month; nobody's picked this one, so the page opens sam's.
+        assert [p["title"] for p in page.club["picks"]] == ["Pavlova"]
+        assert page.pick["title"] == "Pavlova" and page.pick["by"] == "Sam" and not page.pick["can_edit"]
+        assert str(page.query_one("#headline").render()).startswith("Nobody's picked")
+
+        # n: ryan picks this month, typing the recipe in.
+        await pilot.press("n")
+        dialog = app.screen
+        assert type(dialog).__name__ == "PickDialog"
+        assert dialog.query_one("#month").value == this_month()
+        dialog.query_one("#title").value = "Shakshuka"
+        dialog.query_one("#blurb").text = "Eggs in spicy tomato."
+        dialog.query_one("#mode").value = "type"
+        await settle(pilot, 0.2)
+        assert dialog.query_one("#typed").display and not dialog.query_one("#from-url").display
+        dialog.query_one("#ingredients").text = "6 eggs\n1 can tomatoes"
+        dialog.query_one("#steps").text = "Simmer\nCrack in the eggs"
+        await pilot.press("ctrl+s")
+        await settle(pilot, 0.6)
+        p = page.pick
+        assert (p["title"], p["month"], p["yours"], p["recipe"]["ingredients"]) == ("Shakshuka", this_month(), True, ["6 eggs", "1 can tomatoes"])
+        assert str(page.query_one("#headline").render()).endswith(": Shakshuka")
+
+        # m, f: made it, and loved it.
+        await pilot.press("m")
+        await settle(pilot, 0.5)
+        assert page.pick["made_by"] == ["Ryan M"]
+        await pilot.press("f")
+        await settle(pilot, 0.5)
+        assert page.pick["mine"] == {"made": True, "favorite": True}
+
+        # p: a photo from a file.
+        await pilot.press("p")
+        await settle(pilot, 0.3)
+        app.screen.query_one("#path").value = str(photo)
+        app.screen.query_one("#caption").value = "Too much chili"
+        await pilot.click("#ok")
+        await settle(pilot, 0.6)
+        assert [(x["by"], x["caption"]) for x in page.pick["photos"]] == [("Ryan M", "Too much chili")]
+        assert page.query_one("#photos").option_count == 1
+
+        # v: just favorites leaves out sam's Pavlova.
+        await pilot.press("v")
+        await settle(pilot)
+        box = page.query_one("#months")
+        ids = [box.get_option_at_index(i).id for i in range(box.option_count)]
+        assert page.pick["id"] in ids and page.club["picks"][1]["id"] not in ids
+
+        # s: into ryan's Recipe box.
+        await pilot.press("s")
+        await settle(pilot, 0.5)
+        assert [r["title"] for r in site.recipes()["recipes"]] == ["Shakshuka"]
+
+        # d deletes it, after asking.
+        await pilot.press("d")
+        await settle(pilot)
+        await pilot.press("y")
+        await settle(pilot, 0.6)
+        assert [p["title"] for p in site.food_club()["picks"]] == ["Pavlova"]
+    run_app("food", food)
+
+
+def test_food_club_months_are_grouped_and_the_next_free_one_is_offered():
+    from datetime import date
+    from sintfoap.food_page import grouped, next_free
+    today = date(2026, 11, 10)
+    mk = lambda m, fav=False: {"month": m, "mine": {"made": fav, "favorite": fav}}  # noqa: E731
+    picks = [mk("2027-01"), mk("2026-12"), mk("2026-11", True), mk("2026-10")]
+    assert [(h, [p["month"] for p in ps]) for h, ps in grouped(picks, today=today)] == [
+        ("COMING UP", ["2026-12", "2027-01"]), ("THIS MONTH", ["2026-11"]), ("BEFORE", ["2026-10"])]
+    assert [h for h, _ in grouped(picks, "favorites", today)] == ["THIS MONTH"]
+    assert next_free(picks, today) == "2027-02"
+    assert next_free([], today) == "2026-11"
+
+
+def test_g_f_opens_the_terminal_food_club(real_site):
+    async def go(app, pilot):
+        await settle(pilot, 0.5)
+        assert any(n["key"] == "f" for n in app.data["nav"])
+        app.go("f")
+        await settle(pilot, 0.5)
+        assert type(app.screen).__name__ == "FoodPage"
     run_app("dashboard", go)

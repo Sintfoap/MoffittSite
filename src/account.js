@@ -571,6 +571,8 @@ async function admin(request, env, me, pathname, method) {
           ...["trip_entries", "trip_members"].map(t => d.prepare(`DELETE FROM ${t} WHERE trip IN (SELECT id FROM trips WHERE owner = ?)`).bind(target.id)),
           d.prepare("DELETE FROM trips WHERE owner = ?").bind(target.id),
           d.prepare("DELETE FROM trip_members WHERE user_id = ?").bind(target.id),
+          // Their marks and photos come off Food club; months they picked stay in its history.
+          ...["food_marks", "food_photos"].map(t => d.prepare(`DELETE FROM ${t} WHERE user_id = ?`).bind(target.id)),
           ...["sweep_rooms", "sweep_suggestions", "sweep_runs", "sweep_keys"].map(t => d.prepare(`DELETE FROM ${t} WHERE user_id = ?`).bind(target.id)),
           d.prepare("DELETE FROM users WHERE id = ?").bind(target.id),
         ]);
