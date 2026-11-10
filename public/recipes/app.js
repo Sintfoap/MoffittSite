@@ -3,7 +3,8 @@
 // list. The Worker side is src/recipes.js; scaling is ./scale.js.
 
 import { scaleLine, factorFor, format } from "./scale.js";
-import { splitPages, batches } from "./split.js";
+import { splitPages, batches, photoOf, fileKey } from "./split.js";
+import { unzip } from "./unzip.js";
 
 const $ = s => document.querySelector(s);
 const el = (tag, props = {}, ...kids) => {
@@ -320,10 +321,21 @@ async function sendToList(r, list) {
 
 // ── adding and editing ─────────────────────────────────────────────────────
 
-function openEditor(r) {
+// `draft` is a recipe read from a photo, to check before it's saved: the
+// editor opens as a new recipe with its fields filled and the pictures above.
+function openEditor(r, draft = null, shots = []) {
   editing = r || {};
   const f = $("#edit-form");
-  $("#edit-title").textContent = r ? "Edit recipe" : "New recipe";
+  $("#edit-title").textContent = r ? "Edit recipe" : draft ? "Check the recipe" : "New recipe";
+  $("#edit-hint").hidden = !draft;
+  const pics = $("#edit-photos");
+  pics.hidden = !shots.length;
+  pics.replaceChildren(...shots.map(src => {
+    const img = el("img", { src, alt: "Your photo", title: "Click to enlarge" });
+    img.addEventListener("click", () => img.classList.toggle("big"));
+    return img;
+  }));
+  r = r || draft;
   f.title.value = r?.title || "";
   f.servings.value = r?.servings ?? "";
   f.yield.value = r?.yield || "";
@@ -332,7 +344,7 @@ function openEditor(r) {
   f.steps.value = (r?.steps || []).join("\n");
   f.notes.value = r?.notes || "";
   renderPicker(r);
-  f.source.value = r?.source || (r ? "" : $("#url").value.trim());
+  f.source.value = r?.source || (r || draft ? "" : $("#url").value.trim());
   $("#editor").showModal();
   f.title.focus();
 }
@@ -400,39 +412,191 @@ function skippedSummary(skipped) {
   return [...why].map(([w, n]) => `${n} ${w}`).join(", ");
 }
 
-async function importFile(file) {
-  const btn = $("#import");
-  btn.disabled = true;
+const IMAGE = /\.(jpe?g|png|webp|gif)$/i;
+const MAX_SIDE = 1200, MAX_BYTES = 560 * 1024;   // under the site's 600 KB (PHOTO_BYTES in src/recipes.js)
+
+// What was picked (an export's HTML, its images, its folder, or its .zip) as
+// the HTML files and a map of picture name → a way to read it.
+async function gather(files) {
+  const html = [], images = new Map();
+  for (const f of files) {
+    const name = f.webkitRelativePath || f.name;
+    if (/\.zip$/i.test(name)) {
+      for (const z of await unzip(f)) {
+        if (/\.html?$/i.test(z.name) && !/(^|\/)__MACOSX\//.test(z.name)) html.push({ name: z.name.split("/").pop(), text: async () => (await z.blob()).text() });
+        else if (IMAGE.test(z.name)) images.set(fileKey(z.name), z.blob);
+      }
+    } else if (/\.html?$/i.test(name)) html.push({ name: f.name, text: () => f.text() });
+    else if (IMAGE.test(name)) images.set(fileKey(name), () => Promise.resolve(f));
+  }
+  return { html, images };
+}
+
+// A picture made small enough to keep: at most MAX_SIDE across, as a JPEG. Small ones go as they are.
+async function shrink(blob) {
+  const head = new Uint8Array(await blob.slice(0, 4).arrayBuffer());
+  const known = head[0] === 0xff && head[1] === 0xd8 || head[0] === 0x89 && head[1] === 0x50 || head[0] === 0x47 && head[1] === 0x49 || head[0] === 0x52 && head[1] === 0x49;
+  if (known && blob.size <= MAX_BYTES / 2) return blob;
+  const bmp = await createImageBitmap(blob, { imageOrientation: "from-image" }).catch(() => null);
+  if (!bmp) return null;
+  const k = Math.min(1, MAX_SIDE / Math.max(bmp.width, bmp.height));
+  const canvas = Object.assign(document.createElement("canvas"), { width: Math.round(bmp.width * k), height: Math.round(bmp.height * k) });
+  canvas.getContext("2d").drawImage(bmp, 0, 0, canvas.width, canvas.height);
+  for (const q of [0.85, 0.75, 0.6, 0.45]) {
+    const out = await new Promise(res => canvas.toBlob(res, "image/jpeg", q));
+    if (out && out.size <= MAX_BYTES) return out;
+  }
+  return null;
+}
+const base64 = async blob => {
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  let s = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(s);
+};
+
+const putIn = list => {
+  const ids = new Set(list.map(r => r.id));
+  data.recipes = [...data.recipes.filter(r => !ids.has(r.id)), ...list].sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: "base" }));
+};
+
+// Imports every recipe in what was picked, then gives each recipe that has no
+// picture yet (new, or already in the box) the export's photo for it, when
+// that photo was picked too. So importing the same export again, with its
+// pictures, fills in the ones that are missing.
+async function importFiles(files) {
+  for (const b of ["#import", "#import-dir"]) $(b).disabled = true;
   const err = await run(async () => {
-    const pages = splitPages(await file.text());
-    if (!pages.length) throw new Error("that file is empty");
-    const added = [], skipped = [];
-    let done = 0;
-    for (const group of batches(pages)) {
-      say("done", `Importing ${file.name}: ${done} of ${pages.length}…`);
-      const out = await api("POST", "recipes/import", { pages: group });
-      added.push(...out.added);
-      skipped.push(...out.skipped);
-      done += group.length;
-      data.recipes = [...data.recipes, ...out.added].sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: "base" }));
-      renderList();
+    const { html, images } = await gather(files);
+    if (!html.length) throw new Error("pick a recipe file (.html), or the export's folder or .zip");
+    const added = [], skipped = [], wants = [];   // wants: {id, photo} for recipes without a picture
+    let total = 0, done = 0, pointed = 0;
+    const named = html.length === 1 ? html[0].name : `${html.length} files`;
+    for (const h of html) {
+      const pages = splitPages(await h.text());
+      total += pages.length;
+      for (const group of batches(pages)) {
+        say("done", `Importing ${named}: ${done} of ${total}…`);
+        const out = await api("POST", "recipes/import", { pages: group });
+        added.push(...out.added);
+        skipped.push(...out.skipped);
+        group.forEach((page, i) => {
+          const photo = photoOf(page), r = out.pages?.[i];
+          if (photo) pointed++;
+          if (photo && r && !r.image && images.has(fileKey(photo))) wants.push({ id: r.id, photo });
+        });
+        done += group.length;
+        putIn(out.added);
+        renderList();
+      }
     }
-    if (!added.length && pages.length === 1 && skipped[0]?.why === "had no recipe") throw new Error("couldn't find a recipe in that file");
-    const extra = skipped.length ? ` Skipped ${skipped.length}: ${skippedSummary(skipped)}.` : "";
-    say("done", `Imported ${added.length} recipe${added.length === 1 ? "" : "s"} from ${file.name}.${extra}`);
+    if (!added.length && !wants.length && total === 1 && skipped[0]?.why === "had no recipe") throw new Error("couldn't find a recipe in that file");
+    let pictures = 0, unreadable = 0;
+    const queue = [...wants];
+    const worker = async () => {
+      for (let w; (w = queue.shift());) {
+        const small = await shrink(await images.get(fileKey(w.photo))());
+        if (!small) { unreadable++; continue; }
+        putIn([await api("POST", `recipes/${w.id}/photo`, { data: await base64(small) })]);
+        pictures++;
+        say("done", `Adding pictures: ${pictures + unreadable} of ${wants.length}…`);
+      }
+    };
+    await Promise.all([worker(), worker(), worker()]);
+    const pics = `${pictures} picture${pictures === 1 ? "" : "s"}`;
+    // Only filling in pictures: say that, not that every recipe was skipped.
+    const fillOnly = !added.length && pictures;
+    let text = fillOnly ? `Added ${pics} from ${named} to recipes already in your box.`
+      : `Imported ${added.length} recipe${added.length === 1 ? "" : "s"} from ${named}${pictures ? ` and added ${pics}` : ""}.`;
+    const rest = fillOnly ? skipped.filter(s => s.why !== "already in your box") : skipped;
+    if (rest.length) text += ` Skipped ${rest.length}: ${skippedSummary(rest)}.`;
+    if (unreadable) text += ` ${unreadable} picture${unreadable === 1 ? "" : "s"} couldn't be read.`;
+    if (pointed && !images.size) text += " To bring their pictures too, import the export's whole folder (or its .zip).";
+    say("done", text);
+    renderList();
     if (added.length) pick(added[0].id);
+    else if (wants.length) pick(wants[0].id);
   });
-  btn.disabled = false;
+  for (const b of ["#import", "#import-dir"]) $(b).disabled = false;
   $("#import-file").value = "";
+  $("#import-folder").value = "";
   return err;
 }
 $("#import").addEventListener("click", () => $("#import-file").click());
-$("#import-file").addEventListener("change", e => e.target.files[0] && importFile(e.target.files[0]));
+$("#import-dir").addEventListener("click", () => $("#import-folder").click());
+for (const input of ["#import-file", "#import-folder"]) $(input).addEventListener("change", e => e.target.files.length && importFiles([...e.target.files]));
+
+// ── reading a recipe from a photo ──────────────────────────────────────────
+
+// Anthropic shrinks anything longer than this across, so there's no use sending more.
+const PHOTO_SIDE = 1568, PHOTO_BYTES = 3_500_000;
+
+// A phone's photo as a JPEG at most PHOTO_SIDE across, the right way up.
+async function shrinkPhoto(file) {
+  const bmp = await createImageBitmap(file, { imageOrientation: "from-image" }).catch(() => null);
+  if (!bmp) throw new Error(`${file.name} isn't a picture this browser can read`);
+  const k = Math.min(1, PHOTO_SIDE / Math.max(bmp.width, bmp.height));
+  const canvas = Object.assign(document.createElement("canvas"), { width: Math.round(bmp.width * k), height: Math.round(bmp.height * k) });
+  const ctx = canvas.getContext("2d");
+  ctx.fillStyle = "#fff";  // a PNG screenshot's see-through parts, white rather than black
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(bmp, 0, 0, canvas.width, canvas.height);
+  for (const q of [0.88, 0.78, 0.65]) {
+    const blob = await new Promise(res => canvas.toBlob(res, "image/jpeg", q));
+    if (blob && blob.size <= PHOTO_BYTES) return blob;
+  }
+  throw new Error(`${file.name} is too big even after shrinking it`);
+}
+
+let keyThen = null;  // what to do once a key is saved
+function askForKey(then) {
+  if (!data.photo?.sealing) { say("error", "This site can't keep API keys yet, so photos can't be read. Ask its admin to set CHAT_BRIDGE_KEY."); return; }
+  keyThen = then;
+  $("#key-form").reset();
+  $("#keyer").showModal();
+}
+$("#keyer").addEventListener("close", () => {
+  const then = keyThen;
+  keyThen = null;
+  if ($("#keyer").returnValue !== "save") return;
+  run(async () => {
+    data.photo = (await api("PUT", "key", { key: $("#key-form").key.value.trim() })).photo;
+    say("done", "Key saved.");
+    then?.();
+  });
+});
+
+function pickPhoto() {
+  if (!data) return;
+  if (!data.photo?.ready) return askForKey(() => $("#photo-file").click());
+  $("#photo-file").click();
+}
+
+async function fromPhotos(files) {
+  const btn = $("#photo");
+  btn.disabled = true;
+  btn.textContent = "Reading…";
+  const err = await run(async () => {
+    if (files.length > 4) throw new Error("pick at most 4 pictures of one recipe");
+    say("done", `Reading ${files.length === 1 ? "the photo" : `${files.length} photos`}… this takes a few seconds.`);
+    const images = await Promise.all(files.map(async f => ({ data: await base64(await shrinkPhoto(f)) })));
+    const { recipe } = await api("POST", "photo", { images });
+    say("done", "");
+    openEditor(null, recipe, images.map(i => "data:image/jpeg;base64," + i.data));
+  });
+  btn.disabled = false;
+  btn.textContent = "From a photo";
+  $("#photo-file").value = "";
+  // A key Anthropic turned down: the next try asks for another.
+  if (err && /didn't accept your API key/i.test(err.message)) data.photo = { ...data.photo, ready: false };
+}
+$("#photo").addEventListener("click", pickPhoto);
+$("#photo-file").addEventListener("change", e => e.target.files.length && fromPhotos([...e.target.files]));
 $("#find").addEventListener("input", () => { page = 0; follow = false; renderList(); });
 
 document.addEventListener("keydown", e => {
   const t = e.target;
-  if (e.metaKey || e.ctrlKey || e.altKey || t.isContentEditable || t.matches?.("input, textarea, select") || $("#editor").open) {
+  if (e.metaKey || e.ctrlKey || e.altKey || t.isContentEditable || t.matches?.("input, textarea, select") || $("#editor").open || $("#keyer").open) {
     if (e.key === "Escape" && t === $("#find")) { t.value = ""; renderList(); t.blur(); }
     return;
   }
@@ -450,6 +614,7 @@ document.addEventListener("keydown", e => {
     "-": () => r && step(r, -1),
     e: () => r && openEditor(r),
     i: () => $("#import-file").click(),
+    p: () => pickPhoto(),
     s: () => r && $("#send") && !$("#send").disabled && $("#send").click(),
   };
   if (keys[e.key]) { e.preventDefault(); keys[e.key](); }

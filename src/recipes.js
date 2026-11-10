@@ -5,25 +5,35 @@
 // almost every recipe site publishes for search engines), falling back to
 // microdata. Scaling is public/recipes/scale.js, shared with the page.
 //
-// /recipes/api/recipes             GET → {recipes, lists, drift, board (has Recipe board)}; POST {url} or {title, ...} → a new recipe
+// /recipes/api/recipes             GET → {recipes, label_list, lists, drift, board (has Recipe board), photo}; POST {url} or {title, ...} → a new recipe
 // /recipes/api/recipes/import      POST {pages: [html, ...]} → {added, skipped}: many at once, from an export file
+// /recipes/api/recipes/<id>/photo  POST {data (base64)} → the recipe, with that as its picture (kept here)
+// /recipes/api/photos/<photo>      GET → a picture kept here
 // /recipes/api/recipes/<id>        PATCH → change the fields sent; DELETE → remove it
 //   A recipe's labels come from the site's list (see labelList): sent as ids, read back as [{id, key, value}].
 //   GET also sends label_list, the whole list to pick from.
 // /recipes/api/recipes/<id>/shop   POST {servings | factor, lines?, list?} → its ingredients onto a Drift list
+// /recipes/api/photo, /recipes/api/key   a recipe read from a photo, and the API key it's read with (src/recipe_photo.js)
 
 import { db } from "./db.js";
 import { sameOrigin } from "./account.js";
 import { withRail } from "./pages.js";
 import { readJson, BadRequest, writableCollections, addToList } from "./drift.js";
+import { imageType } from "./food.js";
 import { scaleLine, servingsOf, factorFor, format } from "../public/recipes/scale.js";
+import { photoState, readPhoto, readPhotoBody, saveKey, forgetKey } from "./recipe_photo.js";
+import { SweepError } from "./sweep.js";
 
 const fail = msg => { throw new BadRequest(msg); };
 export class NotARecipe extends Error {}
 
 const LIMITS = { labels: 20, labelList: 300, labelKey: 30, labelValue: 60, recipes: 1000, importPages: 10, importBody: 4 * 1024 * 1024, title: 200, url: 2000, yield: 100, time: 50, lines: 100, ingredient: 300, step: 3000, notes: 5000, page: 3 * 1024 * 1024 };
 const ID = /^r_[0-9a-f]{10}$/;
-const ROUTE = /^\/recipes\/api\/recipes(?:\/(import)|\/(r_[0-9a-f]{10})(?:\/(shop))?)?\/?$/;
+const ROUTE = /^\/recipes\/api\/recipes(?:\/(import)|\/(r_[0-9a-f]{10})(?:\/(shop|photo))?)?\/?$/;
+const PHOTO = /^\/recipes\/api\/photos\/(p_[0-9a-f]{10})$/;
+// A picture kept here (an imported recipe's own photo) instead of a link to a site's.
+const OWN_PHOTO = /^\/recipes\/api\/photos\/p_[0-9a-f]{10}$/;
+export const PHOTO_BYTES = 600 * 1024;
 const nowStamp = () => new Date().toISOString().slice(0, 19);
 const isObj = v => v && typeof v === "object" && !Array.isArray(v);
 
@@ -176,7 +186,7 @@ export function clean(changes) {
     switch (f) {
       case "title": out.title = str(f, v, LIMITS.title); if (!out.title) fail("a recipe needs a title"); break;
       case "source": out.source = link(f, v); break;
-      case "image": out.image = link(f, v, { https: true }); break;
+      case "image": out.image = OWN_PHOTO.test(String(v ?? "").trim()) ? String(v).trim() : link(f, v, { https: true }); break;
       case "yield": out.yield = str(f, v, LIMITS.yield); break;
       case "servings": {
         if (v === null || v === "") { out.servings = null; break; }
@@ -241,7 +251,9 @@ export async function update(env, user, id, changes) {
 export async function remove(env, user, id) {
   const d = await db(env);
   const res = await d.prepare("DELETE FROM recipes WHERE owner = ? AND id = ?").bind(user.id, id).run();
-  return res.meta.changes ? { removed: true } : null;
+  if (!res.meta.changes) return null;
+  await d.prepare("DELETE FROM recipe_photos WHERE owner = ? AND recipe = ?").bind(user.id, id).run();
+  return { removed: true };
 }
 
 // Its ingredients, scaled, onto a Drift list. `lines` picks which (by index);
@@ -529,21 +541,25 @@ export function parseImported(html) {
 // The same recipe twice: one title, the same ingredients.
 const sameness = r => [r.title, ...r.ingredients].join("\n").toLowerCase().replace(/\s+/g, " ").trim();
 
-// Saves what's in each page, skipping ones already in the box. {added, skipped: [{title, why}]}.
+// Saves what's in each page, skipping ones already in the box. {added, skipped: [{title, why}], pages}:
+// pages says, for each page in order, which recipe it is in the box ({id, image: whether it has a
+// picture}, whether just added or already there) or null, so the export's photos can follow.
 export async function importPages(env, user, body) {
   if (!isObj(body) || !Array.isArray(body.pages) || !body.pages.length) fail("send {pages: [html, ...]}");
   if (body.pages.length > LIMITS.importPages) fail(`send at most ${LIMITS.importPages} pages at a time`);
   const d = await db(env);
   // Only what sameness needs, so a box of hundreds is cheap to check each time.
-  const { results } = await d.prepare("SELECT json_extract(data, '$.title') AS title, json_extract(data, '$.ingredients') AS ingredients FROM recipes WHERE owner = ?").bind(user.id).all();
-  const have = new Set(results.map(row => sameness({ title: row.title ?? "", ingredients: JSON.parse(row.ingredients || "[]") })));
+  const { results } = await d.prepare(`SELECT id, json_extract(data, '$.title') AS title, json_extract(data, '$.ingredients') AS ingredients,
+    json_extract(data, '$.image') AS image FROM recipes WHERE owner = ?`).bind(user.id).all();
+  const have = new Map(results.map(row => [sameness({ title: row.title ?? "", ingredients: JSON.parse(row.ingredients || "[]") }), { id: row.id, image: !!row.image }]));
   let room = LIMITS.recipes - results.length;
-  const added = [], skipped = [], inserts = [];
+  const added = [], skipped = [], inserts = [], pages = [];
   for (const page of body.pages) {
+    pages.push(null);
     const r = typeof page === "string" ? parseImported(page) : null;
     if (!r) { skipped.push({ title: "", why: "had no recipe" }); continue; }
     const key = sameness(r);
-    if (have.has(key)) { skipped.push({ title: r.title, why: "already in your box" }); continue; }
+    if (have.has(key)) { pages[pages.length - 1] = have.get(key); skipped.push({ title: r.title, why: "already in your box" }); continue; }
     if (room <= 0) { skipped.push({ title: r.title, why: `didn't fit (the box holds ${LIMITS.recipes})` }); continue; }
     let data;
     try { data = clean(r); } catch (e) { if (!(e instanceof BadRequest)) throw e; skipped.push({ title: r.title, why: e.message }); continue; }
@@ -551,11 +567,52 @@ export async function importPages(env, user, body) {
     const id = newId(), updated = new Date().toISOString();
     inserts.push(d.prepare("INSERT INTO recipes (owner, id, data, updated) VALUES (?, ?, ?, ?)").bind(user.id, id, JSON.stringify(recipe), updated));
     added.push({ ...recipe, id, updated });
-    have.add(key);
+    have.set(key, pages[pages.length - 1] = { id, image: !!recipe.image });
     room--;
   }
   if (inserts.length) await d.batch(inserts);
-  return { added, skipped };
+  return { added, skipped, pages };
+}
+
+// ── pictures kept here ─────────────────────────────────────────────────────
+
+// An export's photos are files beside it, not links, so they're kept in D1 as
+// Food club's are (src/food.js), one per recipe: a new one replaces the old.
+export async function setPhoto(env, user, id, body) {
+  if (!isObj(body)) fail("body must be a JSON object");
+  const d = await db(env);
+  if (!await get(d, user.id, id)) return null;
+  const bytes = decodePhoto(body.data);
+  if (bytes.length > PHOTO_BYTES) fail(`that picture is too big (at most ${Math.round(PHOTO_BYTES / 1024)} KB); make it smaller first`);
+  const type = imageType(bytes);
+  if (!type) fail("that isn't a JPEG, PNG, WebP or GIF picture");
+  let bin = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  const photo = "p_" + newId().slice(2), now = new Date().toISOString();
+  await d.batch([
+    d.prepare("DELETE FROM recipe_photos WHERE owner = ? AND recipe = ?").bind(user.id, id),
+    d.prepare("INSERT INTO recipe_photos (id, owner, recipe, type, data, created) VALUES (?, ?, ?, ?, ?, ?)").bind(photo, user.id, id, type, btoa(bin), now),
+    d.prepare("UPDATE recipes SET data = json_set(data, '$.image', ?), updated = ? WHERE owner = ? AND id = ?").bind(`/recipes/api/photos/${photo}`, now, user.id, id),
+  ]);
+  return get(d, user.id, id);
+}
+
+function decodePhoto(data) {
+  const s = String(data ?? "").replace(/^data:[^,]*,/, "").replace(/\s+/g, "");
+  if (!s || !/^[A-Za-z0-9+/]+=*$/.test(s)) fail("send the picture as base64");
+  try { return Uint8Array.from(atob(s), c => c.charCodeAt(0)); } catch { fail("send the picture as base64"); }
+}
+
+// Anyone with Recipe box who has the link can see one (a recipe shared on to them carries it);
+// the ids are random.
+async function photoFile(env, photo) {
+  const d = await db(env);
+  const p = await d.prepare("SELECT type, data FROM recipe_photos WHERE id = ?").bind(photo).first();
+  if (!p) return new Response("not found", { status: 404 });
+  return new Response(Uint8Array.from(atob(p.data), c => c.charCodeAt(0)), { headers: {
+    "Content-Type": p.type, "X-Content-Type-Options": "nosniff", "Content-Security-Policy": "default-src 'none'",
+    "Content-Disposition": "inline", "Cache-Control": "private, max-age=31536000, immutable",
+  } });
 }
 
 async function readImport(request) {
@@ -589,15 +646,22 @@ export async function recipes(request, env, user, pathname) {
   const method = request.method;
   try {
     if (method !== "GET" && !sameOrigin(request)) return json({ error: "cross-origin request refused" }, 403);
+    const notAllowed = () => json({ error: "method not allowed" }, 405);
+    if (/^\/recipes\/api\/photo\/?$/.test(pathname)) return method === "POST" ? json(await readPhoto(env, user, await readPhotoBody(request))) : notAllowed();
+    if (/^\/recipes\/api\/key\/?$/.test(pathname)) {
+      if (method === "PUT") return json(await saveKey(env, user, await readJson(request)));
+      return method === "DELETE" ? json(await forgetKey(env, user)) : notAllowed();
+    }
+    const ph = pathname.match(PHOTO);
+    if (ph) return method === "GET" ? await photoFile(env, ph[1]) : notAllowed();
     const m = pathname.match(ROUTE);
     if (!m) return json({ error: "not found" }, 404);
     const [, bulk, id, sub] = m;
-    const notAllowed = () => json({ error: "method not allowed" }, 405);
     if (bulk) return method === "POST" ? json(await importPages(env, user, await readImport(request))) : notAllowed();
     if (!id) {
       if (method === "GET") {
         const drift = user.areas.has("todo");
-        return json({ recipes: await list(env, user), label_list: await labelList(await db(env)), drift, board: user.areas.has("board"), lists: drift ? await writableCollections(env, user) : [] });
+        return json({ recipes: await list(env, user), label_list: await labelList(await db(env)), drift, board: user.areas.has("board"), lists: drift ? await writableCollections(env, user) : [], photo: await photoState(env, user) });
       }
       if (method !== "POST") return notAllowed();
       const body = await readJson(request);
@@ -607,7 +671,8 @@ export async function recipes(request, env, user, pathname) {
     }
     if (!ID.test(id)) return json({ error: "not found" }, 404);
     let out;
-    if (sub) out = method === "POST" ? await shop(env, user, id, await readJson(request)) : undefined;
+    if (sub === "photo") out = method === "POST" ? await setPhoto(env, user, id, await readImport(request)) : undefined;
+    else if (sub) out = method === "POST" ? await shop(env, user, id, await readJson(request)) : undefined;
     else if (method === "PATCH") out = await update(env, user, id, await readJson(request));
     else if (method === "DELETE") out = await remove(env, user, id);
     if (out === undefined) return notAllowed();
@@ -615,6 +680,7 @@ export async function recipes(request, env, user, pathname) {
   } catch (e) {
     if (e instanceof BadRequest) return json({ error: e.message }, 400);
     if (e instanceof NotARecipe) return json({ error: e.message, manual: true }, 422);
+    if (e instanceof SweepError) return json({ error: e.message }, 503);
     console.error("recipes error:", e);
     return json({ error: "server error" }, 500);
   }

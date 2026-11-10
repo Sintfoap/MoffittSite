@@ -1,0 +1,139 @@
+// Tests for Recipe box's photo import: a picture of a recipe read by Claude (a
+// stand-in here) into a draft to check, and the API key it's read with.
+// Run with:  node --no-warnings --test tests/*.test.mjs
+import { test, beforeEach, afterEach } from "node:test";
+import assert from "node:assert/strict";
+import { Browser, makeEnv, grantApps, sqlOne } from "./helpers.mjs";
+import { draftFrom } from "../src/recipe_photo.js";
+
+let calls = [], reply = () => ({}), status = 200, stop = "end_turn";
+const real = globalThis.fetch;
+beforeEach(() => {
+  calls = []; status = 200; stop = "end_turn";
+  reply = () => ({ found: true, title: "Nana's Shortbread", servings: 0, yield: "Makes 24", time: "",
+    ingredients: ["2 cups flour", "1 cup butter", " ", "1/2 cup sugar"], steps: ["1. Cream the butter and sugar.", "Step 2: Add flour.", "Bake at 325°F for 20 min."],
+    notes: "From Nana, 1974." });
+  globalThis.fetch = async (input, init) => {
+    const url = new URL(input.url || input);
+    if (url.host !== "api.anthropic.com") return real(input, init);
+    if (url.pathname === "/v1/models") return new Response("{}", { status: init.headers["x-api-key"] === BAD ? 401 : 200 });
+    const body = JSON.parse(init.body);
+    calls.push({ headers: init.headers, body });
+    if (status !== 200) return new Response(JSON.stringify({ type: "error", error: { message: "nope" } }), { status });
+    return new Response(JSON.stringify({ stop_reason: stop, content: [{ type: "thinking", thinking: "" }, { type: "text", text: JSON.stringify(reply(body)) }] }),
+      { headers: { "Content-Type": "application/json" } });
+  };
+});
+afterEach(() => { globalThis.fetch = real; });
+
+const SEAL = { CHAT_BRIDGE_KEY: "test-bridge-key-0123456789" };
+const KEY = "sk-ant-api03-" + "k".repeat(40), BAD = "sk-ant-api03-" + "x".repeat(40);
+// The smallest pictures that are what they say: a JPEG's and a PNG's first bytes.
+const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 16, 74, 70, 73, 70, 0, 1]).toString("base64");
+const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13]).toString("base64");
+const api = (b, method, path, json) => b.req(method, "/recipes/api/" + path, json === undefined ? {} : { json });
+
+async function setup(extra = SEAL) {
+  const env = makeEnv(extra), ryan = new Browser(env);
+  await ryan.signup("ryan");
+  grantApps(env, "ryan", "recipes");
+  return { env, ryan };
+}
+
+test("without a key, the box says so; a key is checked, kept sealed and shared with Sweep", async () => {
+  const { env, ryan } = await setup();
+  assert.deepEqual((await api(ryan, "GET", "recipes")).json.photo, { ready: false, sealing: true, key: null });
+  const none = await api(ryan, "POST", "photo", { images: [{ data: JPEG }] });
+  assert.equal(none.status, 400);
+  assert.match(none.json.error, /API key/);
+  assert.equal(calls.length, 0);
+
+  assert.equal((await api(ryan, "PUT", "key", { key: "nope" })).status, 400);
+  assert.match((await api(ryan, "PUT", "key", { key: BAD })).json.error, /didn't accept/);
+  const saved = await api(ryan, "PUT", "key", { key: KEY });
+  assert.equal(saved.status, 200);
+  assert.equal(saved.json.photo.ready, true);
+  assert.equal(saved.json.photo.key.hint, "kkkk");
+  const row = sqlOne(env, "SELECT secret FROM sweep_keys");
+  assert.ok(!row.secret.includes(KEY), "the key is sealed");
+  assert.equal((await api(ryan, "GET", "recipes")).json.photo.ready, true);
+  assert.equal((await api(ryan, "DELETE", "key")).json.photo.ready, false);
+});
+
+test("a site without CHAT_BRIDGE_KEY can't keep a key, and says so", async () => {
+  const { ryan } = await setup({});
+  assert.equal((await api(ryan, "GET", "recipes")).json.photo.sealing, false);
+  const r = await api(ryan, "PUT", "key", { key: KEY });
+  assert.equal(r.status, 503);
+  assert.match(r.json.error, /CHAT_BRIDGE_KEY/);
+});
+
+test("a photo is read into a draft to check: nothing is saved until the recipe is", async () => {
+  const { env, ryan } = await setup({ ...SEAL, RECIPES_MODEL: "claude-test" });
+  await api(ryan, "PUT", "key", { key: KEY });
+  const r = await api(ryan, "POST", "photo", { images: [{ data: JPEG }, { data: "data:image/png;base64," + PNG }] });
+  assert.equal(r.status, 200, r.text);
+  assert.deepEqual(r.json.recipe, {
+    title: "Nana's Shortbread", yield: "Makes 24", time: "", servings: 24, source: "",
+    ingredients: ["2 cups flour", "1 cup butter", "1/2 cup sugar"],
+    steps: ["Cream the butter and sugar.", "Add flour.", "Bake at 325°F for 20 min."], notes: "From Nana, 1974.",
+  });
+  assert.equal(sqlOne(env, "SELECT COUNT(*) AS n FROM recipes").n, 0);
+
+  const [call] = calls;
+  assert.equal(call.headers["x-api-key"], KEY);
+  assert.equal(call.body.model, "claude-test");
+  assert.equal(call.body.output_config.format.type, "json_schema");
+  const [a, b, words] = call.body.messages[0].content;
+  assert.deepEqual(a.source, { type: "base64", media_type: "image/jpeg", data: JPEG });
+  assert.equal(b.source.media_type, "image/png", "the type comes from the bytes, and a data: prefix is dropped");
+  assert.equal(b.source.data, PNG);
+  assert.match(words.text, /2 pictures/);
+
+  // Saving the checked draft is an ordinary new recipe.
+  const saved = await api(ryan, "POST", "recipes", { ...r.json.recipe, title: "Nana's Shortbread (1974)" });
+  assert.equal(saved.status, 201);
+  assert.equal(sqlOne(env, "SELECT COUNT(*) AS n FROM recipes").n, 1);
+});
+
+test("what isn't a recipe, or a picture, is turned away with a reason", async () => {
+  const { ryan } = await setup();
+  await api(ryan, "PUT", "key", { key: KEY });
+  const pic = [{ data: JPEG }];
+  reply = () => ({ found: false, title: "", servings: 0, yield: "", time: "", ingredients: [], steps: [], notes: "A cat on a sofa." });
+  const cat = await api(ryan, "POST", "photo", { images: pic });
+  assert.equal(cat.status, 400);
+  assert.match(cat.json.error, /couldn.t find a recipe.*cat on a sofa/i);
+
+  assert.match((await api(ryan, "POST", "photo", { images: [{ data: Buffer.from("just some text").toString("base64") }] })).json.error, /isn't a JPEG/);
+  assert.match((await api(ryan, "POST", "photo", { images: [{ data: "not base64!" }] })).json.error, /base64/);
+  assert.equal((await api(ryan, "POST", "photo", { images: Array(5).fill(pic[0]) })).status, 400);
+  assert.equal((await api(ryan, "POST", "photo", {})).status, 400);
+  assert.equal((await ryan.get("/recipes/api/photo")).status, 405);
+  assert.equal((await ryan.req("POST", "/recipes/api/photo", { json: { images: pic }, origin: "https://evil.test" })).status, 403);
+
+  stop = "refusal";
+  assert.match((await api(ryan, "POST", "photo", { images: pic })).json.error, /declined to read that photo/);
+  stop = "end_turn"; status = 529;
+  const busy = await api(ryan, "POST", "photo", { images: pic });
+  assert.equal(busy.status, 503);
+  assert.match(busy.json.error, /busy/);
+  status = 401;
+  assert.match((await api(ryan, "POST", "photo", { images: pic })).json.error, /didn't accept your API key. Try again/);
+});
+
+test("photo import is part of Recipe box: off for accounts without it", async () => {
+  const env = makeEnv(SEAL), josh = new Browser(env);
+  await josh.signup("josh");
+  assert.equal((await api(josh, "POST", "photo", { images: [{ data: JPEG }] })).status, 403);
+  assert.equal((await api(josh, "PUT", "key", { key: KEY })).status, 403);
+});
+
+test("a draft keeps what's readable and drops what isn't", () => {
+  assert.equal(draftFrom({ found: false }), null);
+  assert.equal(draftFrom({ found: true, title: "Empty", ingredients: [], steps: [] }), null);
+  const d = draftFrom({ found: true, title: "", servings: 4, yield: "", time: "45 min", ingredients: Array(150).fill("salt"), steps: [], notes: "" });
+  assert.equal(d.title, "Untitled recipe");
+  assert.equal(d.servings, 4);
+  assert.equal(d.ingredients.length, 100);
+});

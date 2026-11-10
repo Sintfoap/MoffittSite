@@ -5,6 +5,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -513,7 +514,7 @@ def test_recipe_box_labels_filter_and_sort_the_shelf(real_site):
 
 
 KEEPER_EXPORT = """<!DOCTYPE html><html><body>
-<div class="recipe-details"><meta content="a1" itemprop="recipeId"><h2 itemprop="name">Alfredo Sauce</h2>
+<div class="recipe-details"><meta content="a1" itemprop="recipeId"><img src="images/a1_0.jpg" class="recipe-photo"/><h2 itemprop="name">Alfredo Sauce</h2>
   <span itemprop="recipeSource"><a href="https://food.test/alfredo">https://food.test/alfredo</a></span>
   <div class="recipe-ingredients" itemprop="recipeIngredients"><p>&#189; cup butter</p><p>1 cup cream</p></div>
   <div itemprop="recipeDirections"><p>Melt it.</p></div><hr /></div>
@@ -525,6 +526,7 @@ KEEPER_EXPORT = """<!DOCTYPE html><html><body>
 def test_recipe_box_imports_a_recipe_keeper_export(real_site, tmp_path):
     export = tmp_path / "recipes.html"
     export.write_text(KEEPER_EXPORT)
+    jpeg = bytes([0xFF, 0xD8, 0xFF, 0xE0, 0, 16, 0x4A, 0x46, 0x49, 0x46, 0, 1, 0xFF, 0xD9])
 
     async def recipes(app, pilot):
         page = app.screen
@@ -538,10 +540,66 @@ def test_recipe_box_imports_a_recipe_keeper_export(real_site, tmp_path):
         assert page.current()["title"] == "Alfredo Sauce"
         assert page.current()["source"] == "https://food.test/alfredo"
         assert site.recipes()["recipes"][1]["notes"] == "Courses: Main Dish"
-        # The same file again adds nothing.
+        # Its picture wasn't beside it, so it has none yet.
+        assert page.current()["image"] == ""
+        # The same file again, now with its images folder: nothing new, but the picture is filled in.
+        (tmp_path / "images").mkdir()
+        (tmp_path / "images" / "a1_0.jpg").write_bytes(jpeg)
         await page.import_file(str(export))
         await settle(pilot, 0.6)
-        assert len(site.recipes()["recipes"]) == 2
+        mine = site.recipes()["recipes"]
+        assert len(mine) == 2
+        assert mine[0]["image"].startswith("/recipes/api/photos/p_")
+        assert page.current()["image"] == mine[0]["image"]
+        # A zip of the export works too (and changes nothing more).
+        with zipfile.ZipFile(tmp_path / "export.zip", "w") as z:
+            z.write(export, "export/recipes.html")
+            z.write(tmp_path / "images" / "a1_0.jpg", "export/images/a1_0.jpg")
+        await page.import_file(str(tmp_path / "export.zip"))
+        await settle(pilot, 0.6)
+        assert site.recipes()["recipes"][0]["image"] == mine[0]["image"]
+    run_app("recipes", recipes)
+
+
+# The smallest file that's a JPEG as far as anyone checks: its first bytes.
+JPEG = bytes([0xff, 0xd8, 0xff, 0xe0, 0, 16, 74, 70, 73, 70, 0, 1])
+
+
+def test_recipe_box_reads_a_recipe_from_a_photo_to_check_first(real_site, tmp_path):
+    card = tmp_path / "card.jpg"
+    card.write_bytes(JPEG)
+    (tmp_path / "notes.txt").write_text("not a picture")
+
+    async def recipes(app, pilot):
+        page = app.screen
+        assert page.data["photo"] == {"ready": False, "sealing": True, "key": None}
+        # p without a key asks for one first, then for the picture.
+        await pilot.press("p")
+        await settle(pilot)
+        assert type(app.screen).__name__ == "Ask" and app.screen.query_one("#answer").password
+        app.screen.query_one("#answer").value = "sk-ant-api03-" + "k" * 40
+        await pilot.press("enter")
+        await settle(pilot, 0.6)
+        assert page.data["photo"]["ready"]
+        assert type(app.screen).__name__ == "Ask"
+        app.screen.query_one("#answer").value = f"{tmp_path / 'notes.txt'}"
+        await pilot.press("enter")
+        await settle(pilot, 0.4)
+        assert type(app.screen).__name__ == "RecipesPage", "a file that isn't a picture goes no further"
+        # A picture: what Claude read opens in the editor, saved only when it's saved.
+        await page.from_photo([str(card)])
+        await settle(pilot, 0.6)
+        dialog = app.screen
+        assert type(dialog).__name__ == "RecipeDialog"
+        assert dialog.query_one("#title").value == "Nana's Shortbread"
+        assert dialog.query_one("#servings").value == "24"
+        assert dialog.query_one("#ingredients").text.splitlines()[0] == "2 cups flour"
+        assert site.recipes()["recipes"] == []
+        dialog.query_one("#title").value = "Nana's Shortbread (1974)"
+        await pilot.press("ctrl+s")
+        await settle(pilot, 0.6)
+        assert [x["title"] for x in site.recipes()["recipes"]] == ["Nana's Shortbread (1974)"]
+        assert page.current()["steps"][-1] == "Bake at 325°F for 20 min."
     run_app("recipes", recipes)
 
 

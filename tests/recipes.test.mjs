@@ -6,7 +6,9 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { Browser, makeEnv, grantApps, sqlOne, run } from "./helpers.mjs";
 import { parseRecipe, parseImported } from "../src/recipes.js";
-import { splitPages, batches } from "../public/recipes/split.js";
+import { splitPages, batches, photoOf, fileKey } from "../public/recipes/split.js";
+import { unzip } from "../public/recipes/unzip.js";
+import { deflateRawSync } from "node:zlib";
 import { scaleLine, servingsOf, factorFor } from "../public/recipes/scale.js";
 
 const CASES = JSON.parse(readFileSync(new URL("../cli/tests/scale_cases.json", import.meta.url)));
@@ -371,4 +373,77 @@ test("importing a file: saved a few at a time, the same recipe twice skipped, th
   // Someone else's box is their own.
   const sam = await cook(env, "sam");
   assert.equal((await api(sam, "POST", "recipes/import", { pages: splitPages(EXPORT) })).json.added.length, 2);
+});
+
+// A tiny JPEG: just enough for the site to know it's one.
+const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 16, 0x4a, 0x46, 0x49, 0x46, 0, 1, 0xff, 0xd9]).toString("base64");
+
+test("an export's photos: found in each piece, matched by name, kept here, and filled in on a second import", async () => {
+  const pages = splitPages(EXPORT);
+  assert.equal(photoOf(pages[0]), "images/a1_0.jpg");
+  assert.equal(photoOf('<img src="https://x.test/a.jpg" class="recipe-photo">'), "");
+  assert.equal(photoOf("<p>no picture</p>"), "");
+  assert.equal(fileKey("export/images/A1_0.JPG"), "a1_0.jpg");
+  assert.equal(fileKey("images\\b%202.jpg"), "b 2.jpg");
+
+  const env = makeEnv(), ryan = await cook(env);
+  const first = (await api(ryan, "POST", "recipes/import", { pages: [...pages, "<p>nothing</p>"] })).json;
+  assert.deepEqual(first.pages.map(p => p && { image: p.image }), [{ image: false }, { image: false }, null]);
+  const [a, b] = first.pages;
+  assert.equal(a.id, first.added[0].id);
+
+  // Its picture, kept here.
+  const set = await api(ryan, "POST", `recipes/${a.id}/photo`, { data: JPEG });
+  assert.equal(set.status, 200, set.text);
+  assert.match(set.json.image, /^\/recipes\/api\/photos\/p_[0-9a-f]{10}$/);
+  const pic = await ryan.get(set.json.image);
+  assert.equal(pic.status, 200);
+  assert.equal(pic.headers.get("Content-Type"), "image/jpeg");
+  assert.equal(pic.headers.get("Content-Security-Policy"), "default-src 'none'");
+  assert.equal((await api(ryan, "POST", `recipes/${a.id}/photo`, { data: btoa("not a picture") })).status, 400);
+  assert.equal((await api(ryan, "POST", `recipes/${a.id}/photo`, { data: "%%%" })).status, 400);
+  // A new one replaces it; the old one is gone.
+  const again = (await api(ryan, "POST", `recipes/${a.id}/photo`, { data: JPEG })).json;
+  assert.notEqual(again.image, set.json.image);
+  assert.equal((await ryan.get(set.json.image)).status, 404);
+  assert.equal(sqlOne(env, "SELECT COUNT(*) AS n FROM recipe_photos").n, 1);
+  // Editing the recipe keeps its picture; one can't be pointed at by hand except as a link.
+  assert.equal((await api(ryan, "PATCH", `recipes/${a.id}`, { notes: "x", image: again.image })).json.image, again.image);
+  assert.equal((await api(ryan, "PATCH", `recipes/${a.id}`, { image: "/recipes/api/photos/../../admin" })).status, 400);
+
+  // Importing again says which are already there, and whether they have a picture.
+  const second = (await api(ryan, "POST", "recipes/import", { pages })).json;
+  assert.deepEqual(second.added, []);
+  assert.deepEqual(second.pages, [{ id: a.id, image: true }, { id: b.id, image: false }]);
+
+  // Someone else can't set one on ryan's recipe; deleting the recipe takes its picture.
+  const sam = await cook(env, "sam");
+  assert.equal((await api(sam, "POST", `recipes/${a.id}/photo`, { data: JPEG })).status, 404);
+  assert.equal((await sam.get(again.image)).status, 200);
+  await api(ryan, "DELETE", `recipes/${a.id}`);
+  assert.equal((await ryan.get(again.image)).status, 404);
+  assert.equal(sqlOne(env, "SELECT COUNT(*) AS n FROM recipe_photos").n, 0);
+});
+
+test("a zip is read in the browser: stored and deflated files", async () => {
+  // A zip by hand: one stored file, one deflated, and a folder entry.
+  const entries = [["export/", Buffer.alloc(0), 0], ["export/recipes.html", Buffer.from(EXPORT), 8], ["export/images/a1_0.jpg", Buffer.from(JPEG, "base64"), 0]];
+  const locals = [], centrals = [];
+  let offset = 0;
+  for (const [name, body, method] of entries) {
+    const data = method ? deflateRawSync(body) : body, n = Buffer.from(name);
+    const local = Buffer.alloc(30); local.writeUInt32LE(0x04034b50, 0); local.writeUInt16LE(method, 8);
+    local.writeUInt32LE(data.length, 18); local.writeUInt32LE(body.length, 22); local.writeUInt16LE(n.length, 26);
+    const central = Buffer.alloc(46); central.writeUInt32LE(0x02014b50, 0); central.writeUInt16LE(method, 10);
+    central.writeUInt32LE(data.length, 20); central.writeUInt32LE(body.length, 24); central.writeUInt16LE(n.length, 28); central.writeUInt32LE(offset, 42);
+    locals.push(local, n, data); centrals.push(central, n);
+    offset += 30 + n.length + data.length;
+  }
+  const dir = Buffer.concat(centrals), eocd = Buffer.alloc(22);
+  eocd.writeUInt32LE(0x06054b50, 0); eocd.writeUInt16LE(entries.length, 10); eocd.writeUInt32LE(dir.length, 12); eocd.writeUInt32LE(offset, 16);
+  const files = await unzip(new Blob([...locals, dir, eocd]));
+  assert.deepEqual(files.map(f => f.name), ["export/recipes.html", "export/images/a1_0.jpg"]);
+  assert.equal(await (await files[0].blob()).text(), EXPORT);
+  assert.equal(Buffer.from(await (await files[1].blob()).arrayBuffer()).toString("base64"), JPEG);
+  await assert.rejects(unzip(new Blob(["not a zip"])), /isn't a zip/);
 });
