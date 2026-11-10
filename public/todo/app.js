@@ -416,15 +416,43 @@ $("#colForm").addEventListener("click", async e => {
     setView("today");
     return toast(`You left “${col.name}”`);
   }
-  if (!e.target.closest("[data-delcol]")) return;
-  if (!confirm(`Delete “${col.name}” and the items in it?${col.shares?.length ? " The people you shared it with lose it too." : ""}`)) return;
+  if (e.target.closest("[data-delcol]")) return deletePane(col);
+  if (e.target.closest("[data-back]")) return openCollection(col);
+  if (!e.target.closest("[data-delnow]")) return;
+  const moveTo = $("#colForm [name=fate]:checked")?.value === "move" ? $("#colForm [name=moveTo]").value : "";
   $("#colDlg").close();
-  try { await req("DELETE", "collections/" + col.id); }
+  let out;
+  try { out = await req("DELETE", "collections/" + col.id + (moveTo ? "?move_to=" + encodeURIComponent(moveTo) : "")); }
   catch (err) { return toast(err.message); }
   state.collections = state.collections.filter(c => c.id !== col.id);
-  setView("today");
-  toast(`Deleted “${col.name}”`, async () => { await req("PATCH", "collections/" + col.id, { deleted: false }); await refresh(); setView("c:" + col.id); });
+  if (moveTo) { await refresh(); setView("c:" + moveTo); } else setView("today");
+  const where = moveTo && colById(moveTo)?.name;
+  toast(where ? `Deleted “${col.name}” and moved ${plural(out.moved, "item")} to “${where}”` : `Deleted “${col.name}”`,
+    async () => { await req("PATCH", "collections/" + col.id, { deleted: false }); await refresh(); setView("c:" + col.id); });
 });
+const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+// Deleting a collection asks what happens to what's in it: by default its
+// items move to another of your collections; or they go with it. Undo brings
+// either back.
+function deletePane(col) {
+  const n = state.items.filter(it => it.collection === col.id).length;
+  const others = state.collections.filter(c => c.role === "owner" && c.id !== col.id);
+  const shared = col.shares?.length ? `<p class="hint">The people you shared it with lose it too.</p>` : "";
+  $("#colForm").innerHTML = `
+    <h2>Delete “${esc(col.name)}”?</h2>
+    ${n ? `<p>It has ${plural(n, "item")}. What should happen to ${n === 1 ? "it" : "them"}?</p>
+      <div style="display:grid;gap:8px">
+        <label class="plug"><input type="radio" name="fate" value="move" checked><b>Move to another collection</b>
+          <span><select name="moveTo" aria-label="Collection to move them to">${others.map(c => `<option value="${esc(c.id)}">${esc(c.name)}</option>`).join("")}</select></span></label>
+        <label class="plug"><input type="radio" name="fate" value="delete"><b>Delete ${n === 1 ? "it" : "them"} too</b>
+          <span>Gone along with the collection.</span></label>
+      </div>` : `<p>It's empty.</p>`}
+    ${shared}<p class="hint">You can undo it straight after.</p>
+    <div class="acts"><button type="button" class="btn" data-back>Back</button>
+      <button type="button" class="danger" data-delnow>Delete collection</button></div>`;
+  $("#colForm [name=moveTo]")?.addEventListener("change", () => { $("#colForm [name=fate][value=move]").checked = true; });
+  $("#colForm [data-back]").focus();
+}
 
 /* ── toast ─────────────────────────────────────── */
 let toastT;

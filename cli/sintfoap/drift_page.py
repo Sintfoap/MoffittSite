@@ -284,6 +284,50 @@ class ItemDialog(ModalScreen[dict | None]):
         self.dismiss(out)
 
 
+class DeleteCollection(ModalScreen[str | None]):
+    """Asks what happens to a collection's items when it's deleted, as the web
+    page does: by default they move to another of your collections, or they go
+    with it. Dismisses with the collection to move them to, "" to delete them
+    too, or None to keep the collection."""
+    BINDINGS = [Binding("escape", "no", "Cancel")]
+    DEFAULT_CSS = "DeleteCollection #fate { width: 1fr; }"
+
+    def __init__(self, page: "DriftPage", col: dict):
+        super().__init__()
+        self.col = col
+        self.n = sum(1 for it in page.state["items"] if it["collection"] == col["id"])
+        self.others = [c for c in page.state["collections"] if c["role"] == "owner" and c["id"] != col["id"]]
+
+    def compose(self) -> ComposeResult:
+        with Vertical(classes="dialog"):
+            yield Label(Text(f"Delete “{self.col['name']}”?", style=f"bold {INK}"))
+            n = self.n
+            if n:
+                them = "it" if n == 1 else "them"
+                yield Static(Text(f"It has {n} item{'' if n == 1 else 's'}. What should happen to {them}?", style=MUTED))
+                opts = [(f"Move {them} to “{c['name']}”", c["id"]) for c in self.others] + [(f"Delete {them} too", "")]
+                yield Select(opts, value=opts[0][1], allow_blank=False, id="fate")
+            else:
+                yield Static(Text("It's empty.", style=MUTED))
+            note = " The people you shared it with lose it too." if self.col.get("shares") else ""
+            yield Static(Text("You can undo it straight after with u." + note, style=FAINT))
+            with Horizontal(classes="buttons"):
+                yield Button("Delete collection", id="yes", classes="danger")
+                yield Button("Cancel", id="no", classes="quiet")
+
+    def on_mount(self) -> None:
+        self.query_one("#fate" if self.n else "#no").focus()
+
+    def on_button_pressed(self, e: Button.Pressed) -> None:
+        if e.button.id == "yes":
+            self.dismiss(self.query_one("#fate", Select).value if self.n else "")
+        else:
+            self.dismiss(None)
+
+    def action_no(self) -> None:
+        self.dismiss(None)
+
+
 class CollectionDialog(ModalScreen[str | None]):
     """A collection's name, plugins and sharing (or a new collection). Talks to the site itself.
     Dismisses with "deleted", "left", the new collection's id, or None."""
@@ -372,9 +416,7 @@ class CollectionDialog(ModalScreen[str | None]):
         elif bid.startswith("unshare-"):
             await self.unshare(bid[8:])
         elif bid == "delete":
-            note = " The people you shared it with lose it too." if self.col.get("shares") else ""
-            self.app.push_screen(Confirm(f"Delete “{self.col['name']}” and the items in it?", "You can undo it straight after with u." + note,
-                                         yes="Delete", danger=True), self.delete)
+            self.app.push_screen(DeleteCollection(self.page, self.col), self.delete)
         elif bid == "leave":
             self.app.push_screen(Confirm(f"Leave “{self.col['name']}”?", f"{self.col['owner_name']} can share it with you again.",
                                          yes="Leave", danger=True), self.leave)
@@ -413,10 +455,11 @@ class CollectionDialog(ModalScreen[str | None]):
         await self.recompose()
 
     @attempt
-    async def delete(self, yes: bool | None) -> None:
-        if yes:
-            await fetch(self.app, site.delete_collection, self.col["id"])
-            self.dismiss("deleted")
+    async def delete(self, move_to: str | None) -> None:
+        if move_to is None:
+            return
+        out = await fetch(self.app, site.delete_collection, self.col["id"], move_to)
+        self.dismiss(f"moved:{move_to}:{out.get('moved', 0)}" if move_to else "deleted")
 
     @attempt
     async def leave(self, yes: bool | None) -> None:
@@ -1462,7 +1505,15 @@ class DriftPage(Page):
     async def collection_closed(self, out: str | None) -> None:
         if not out:
             return
-        if out in ("deleted", "left"):
+        if out.startswith("moved:"):
+            _, to, n = out.split(":")
+            _, col, _ = self.current()
+            if col:
+                self.undo = ("collection", col["id"])
+                where = (self.col(to) or {}).get("name", "another collection")
+                self.app.notify(f"Deleted “{col['name']}” and moved {n} item{'' if n == '1' else 's'} to “{where}”. Press u to undo.", timeout=5)
+            self.view = "c:" + to
+        elif out in ("deleted", "left"):
             _, col, _ = self.current()
             if out == "deleted" and col:
                 self.undo = ("collection", col["id"])

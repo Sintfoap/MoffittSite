@@ -91,7 +91,7 @@ access, or is deleted.
                                   remove: true removes any link between them. Routes visit linked places one after the other.
 - drift_create_collection         {name, plugins?, view?}
 - drift_update_collection         {id, name?, plugins?, view?, order?, deleted?}  Owner only.
-- drift_delete_collection         {id}  Owner only.
+- drift_delete_collection         {id, move_items_to?}  Owner only. Its items go with it, or move into move_items_to.
 - drift_share_collection          {id, username, role?: "edit" | "view"}  Owner only; sending again changes the role.
 - drift_unshare_collection        {id, username}  The owner removes anyone; a guest can remove themselves.
 - drift_set_bases                 {id, bases}  Replace a collection's bases (anyone who can edit it).

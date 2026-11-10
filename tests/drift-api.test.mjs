@@ -131,6 +131,35 @@ test("deletes are undoable, and a deleted collection hides its items", async () 
   assert.equal(s.items.length, 1);
 });
 
+test("deleting a collection can move its items into another, and undoing moves them back", async () => {
+  const env = makeEnv();
+  const b = await signedIn(env, "ryan"), josh = await signedIn(env, "josh");
+  const first = await inbox(b);
+  const { json: col } = await api(b, "POST", "collections", { name: "Groceries", plugins: ["checklist"] });
+  const { json: milk } = await api(b, "POST", "items", { title: "Milk", collection: col.id });
+  const { json: eggs } = await api(b, "POST", "items", { title: "Eggs", collection: col.id });
+
+  assert.equal((await api(b, "DELETE", `collections/${col.id}?move_to=${col.id}`)).status, 400, "not into itself");
+  assert.equal((await api(josh, "DELETE", `collections/${col.id}?move_to=${(await inbox(josh)).id}`)).status, 404, "only the owner");
+  assert.equal((await api(b, "DELETE", `collections/${col.id}?move_to=${(await inbox(josh)).id}`)).status, 400, "only into your own");
+
+  const del = await api(b, "DELETE", `collections/${col.id}?move_to=${first.id}`);
+  assert.equal(del.status, 200);
+  assert.equal(del.json.moved, 2);
+  let s = (await api(b, "GET", "state")).json;
+  assert.deepEqual(s.collections.map(c => c.id), [first.id]);
+  assert.deepEqual(s.items.map(it => [it.title, it.collection]).sort(), [["Eggs", first.id], ["Milk", first.id]]);
+  assert.ok(s.items.every(it => !("moved_from" in it)), "the mark stays out of the API");
+
+  // One stays where it was moved to on purpose; the other goes back on undo.
+  const { json: next } = await api(b, "POST", "collections", { name: "Pantry" });
+  await api(b, "PATCH", `items/${eggs.id}`, { collection: next.id });
+  await api(b, "PATCH", `collections/${col.id}`, { deleted: false });
+  s = (await api(b, "GET", "state")).json;
+  assert.equal(s.items.find(it => it.id === milk.id).collection, col.id);
+  assert.equal(s.items.find(it => it.id === eggs.id).collection, next.id);
+});
+
 test("the version fingerprint changes with every edit, and only the owner's", async () => {
   const env = makeEnv();
   const b = await signedIn(env, "ryan"), other = await signedIn(env, "josh");

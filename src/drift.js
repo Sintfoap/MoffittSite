@@ -159,7 +159,8 @@ async function locate(env, loc, before) {
 
 const ITEM = { collection: "", title: "", notes: "", tags: [], created: "", deleted: false, meta: {} };
 const COLLECTION = { name: "", plugins: [], view: "", order: 0, created: "", deleted: false };
-const toItem = row => ({ ...ITEM, ...JSON.parse(row.data), id: row.id, updated: row.updated });
+// moved_from marks items moved out of a deleted collection, so restoring it brings them back.
+const toItem = row => { const { moved_from, ...data } = JSON.parse(row.data); return { ...ITEM, ...data, id: row.id, updated: row.updated }; };
 const toCollection = row => ({ ...COLLECTION, ...JSON.parse(row.data), id: row.id, updated: row.updated });
 
 async function rows(d, table, owner) {
@@ -298,7 +299,8 @@ export async function updateItem(env, user, id, changes) {
   }
   if (meta?.location) meta.location = await locate(env, meta.location, (await getRow(d, "drift_items", acc.owner, id, toItem))?.meta?.location);
   let expr = "json_patch(data, ?)";
-  const args = [JSON.stringify({ ...core, meta: {} })];          // {meta:{}} makes sure meta exists
+  // {meta:{}} makes sure meta exists; moving it yourself means restoring a deleted collection leaves it be.
+  const args = [JSON.stringify({ ...core, meta: {}, ...(core.collection ? { moved_from: null } : {}) })];
   for (const [pid, v] of Object.entries(meta || {})) {           // pid is a known plugin id, safe in a path
     if (v === null) expr = `json_remove(${expr}, '$.meta.${pid}')`;
     else { expr = `json_set(${expr}, '$.meta.${pid}', json(?))`; args.push(JSON.stringify(v)); }
@@ -361,19 +363,36 @@ export async function createCollection(env, owner, fields) {
   return { ...c, id, updated };
 }
 
-export async function updateCollection(env, owner, id, changes) {
+// Deleting a collection hides its items with it, and restoring it brings
+// them back. With `moveTo` (another of the owner's collections) its items move
+// there first instead, marked so that restoring the collection moves them back.
+export async function updateCollection(env, owner, id, changes, { moveTo } = {}) {
   const d = await db(env);
   const patch = cleanCollection(changes, await storeIdsFor(env, pluginIds(changes)));
   if (patch.bases) patch.bases = await locateBases(env, patch.bases, (await getRow(d, "drift_collections", owner, id, toCollection))?.bases);
+  if (moveTo && !patch.deleted) fail("items are only moved when deleting a collection");
   if (patch.deleted) {
     const { n } = await d.prepare("SELECT COUNT(*) AS n FROM drift_collections WHERE owner = ? AND id != ? AND json_extract(data, '$.deleted') IS NOT 1")
       .bind(owner, id).first();
     if (!n) fail("you need at least one collection");
   }
-  const res = await d.prepare("UPDATE drift_collections SET data = json_patch(data, ?), updated = ?, rev = rev + 1 WHERE owner = ? AND id = ?")
-    .bind(JSON.stringify(patch), updatedNow(), owner, id).run();
-  if (!res.meta.changes) return null;
-  return getRow(d, "drift_collections", owner, id, toCollection);
+  const was = await getRow(d, "drift_collections", owner, id, toCollection);
+  if (!was) return null;
+  if (moveTo) {
+    if (!ID.test(String(moveTo)) || moveTo === id) fail("move_to must be another collection's id");
+    const to = await getRow(d, "drift_collections", owner, moveTo, toCollection);
+    if (!to || to.deleted) fail("the collection to move the items to isn't one of yours");
+  }
+  const stamp = updatedNow();
+  const steps = [d.prepare("UPDATE drift_collections SET data = json_patch(data, ?), updated = ?, rev = rev + 1 WHERE owner = ? AND id = ?")
+    .bind(JSON.stringify(patch), stamp, owner, id)];
+  if (moveTo && !was.deleted) steps.push(d.prepare(`UPDATE drift_items SET data = json_set(data, '$.collection', ?1, '$.moved_from', ?2),
+      updated = ?3, rev = rev + 1 WHERE owner = ?4 AND json_extract(data, '$.collection') = ?2`).bind(moveTo, id, stamp, owner));
+  if (patch.deleted === false) steps.push(d.prepare(`UPDATE drift_items SET data = json_remove(json_set(data, '$.collection', ?1), '$.moved_from'),
+      updated = ?2, rev = rev + 1 WHERE owner = ?3 AND json_extract(data, '$.moved_from') = ?1`).bind(id, stamp, owner));
+  const res = await d.batch(steps);
+  const c = await getRow(d, "drift_collections", owner, id, toCollection);
+  return moveTo ? { ...c, moved: res[1]?.meta.changes || 0 } : c;
 }
 
 // Changes a collection's bases. Unlike its other settings, anyone who can
