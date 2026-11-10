@@ -7,7 +7,8 @@ the website; n types one in by hand, i imports a file of them (Recipe
 Keeper's export, with its pictures, or a saved recipe page), p reads one from
 a photo (a cookbook page, a screenshot: by tesseract on this computer, or by
 Claude with your key, k) and t from pasted text, for you to check before
-it's saved."""
+it's saved. l filters the shelf by labels and f by ingredients ("eggs,
+spinach, -nuts"), with the lines it found lit up."""
 from __future__ import annotations
 
 import asyncio
@@ -72,9 +73,9 @@ def value_of(r: dict, key: str) -> str | None:
     return next((lb.get("value", "") for lb in r.get("labels", []) if lb["key"].casefold() == key.casefold()), None)
 
 
-def arranged(recipes: list[dict], filters: list[dict], sort_key: str) -> list[dict]:
-    """The shelf: the recipes the filters let through, by title or by a label's value (those without it last)."""
-    shown = [r for r in by_title(recipes) if passes(r, filters)]
+def arranged(recipes: list[dict], filters: list[dict], sort_key: str, terms: list[dict] | None = None) -> list[dict]:
+    """The shelf: the recipes the filters (and ingredient terms) let through, by title or by a label's value (those without it last)."""
+    shown = [r for r in by_title(recipes) if passes(r, filters) and (not terms or R.ingredient_hits(r, terms) is not None)]
     if sort_key:
         shown.sort(key=lambda r: (value_of(r, sort_key) is None, (value_of(r, sort_key) or "").casefold()))
     return shown
@@ -298,6 +299,7 @@ class RecipesPage(Page):
         Binding("minus", "servings(-1)", "Fewer"),
         Binding("s", "send", "Send to list"),
         Binding("l", "labels", "Filter"),
+        Binding("f", "ingredients", "Ingredients"),
         Binding("o", "sort", "Sort"),
         Binding("b", "board", "Share on board"),
         Binding("d", "delete", "Delete"),
@@ -314,6 +316,7 @@ class RecipesPage(Page):
         self.pending_picture: bytes | None = None   # a photo draft's picture, kept once it's saved if ticked
         self.filters: list[dict] = []          # labels the shelf shows only recipes with
         self.sort_key = ""                     # "" by title, else a label's key
+        self.ingredients = ""                  # what f looks for: "eggs, spinach, -nuts"
 
     def compose(self) -> ComposeResult:
         yield from self.top()
@@ -350,11 +353,17 @@ class RecipesPage(Page):
     async def action_refresh(self) -> None:
         self.data = await self.fetch(site.recipes)
         self.data["recipes"] = by_title(self.data["recipes"])
-        shown = arranged(self.data["recipes"], self.filters, self.sort_key)
+        shown = self.shelved()
         if not any(r["id"] == self.open for r in shown):
             self.open = shown[0]["id"] if shown else None
         self.show_shelf()
         self.show_recipe()
+
+    def terms(self) -> list[dict]:
+        return R.ingredient_terms(self.ingredients)
+
+    def shelved(self) -> list[dict]:
+        return arranged(self.data["recipes"], self.filters, self.sort_key, self.terms())
 
     def current(self) -> dict | None:
         return next((r for r in (self.data or {}).get("recipes", []) if r["id"] == self.open), None)
@@ -364,17 +373,22 @@ class RecipesPage(Page):
         with self.prevent(OptionList.OptionHighlighted):
             shelf.clear_options()
             self.show_filters()
-            recipes = arranged(self.data["recipes"], self.filters, self.sort_key)
+            recipes = self.shelved()
             if not self.data["recipes"]:
                 shelf.add_option(Option(Text("No recipes yet. Paste a link above.", style=FAINT), disabled=True))
                 return
             if not recipes:
-                shelf.add_option(Option(Text("Nothing has those labels. l changes the filter.", style=FAINT), disabled=True))
+                why = "Nothing matches. " + " or ".join(k for k, on in (("l", self.filters), ("f", self.ingredients.strip())) if on) + " changes the filter."
+                shelf.add_option(Option(Text(why, style=FAINT), disabled=True))
                 return
+            terms = self.terms()
             for r in recipes:
                 sorted_by = value_of(r, self.sort_key) if self.sort_key else None
                 sub = " · ".join(x for x in (sorted_by, r.get("time"), host(r.get("source", ""))) if x) or plural(len(r["ingredients"]), "ingredient")
                 t = Text.assemble((r["title"], f"bold {INK}"), ("\n" + sub, FAINT))
+                found = " · ".join(r["ingredients"][i] for i in R.ingredient_hits(r, terms) or []) if terms else ""
+                if found:
+                    t.append("\n" + found, style=GOLD)
                 if r.get("labels"):
                     t.append("\n" + " · ".join(label_text(lb) for lb in r["labels"]), style=GOLD_DIM)
                 shelf.add_option(Option(t, id=r["id"]))
@@ -386,6 +400,11 @@ class RecipesPage(Page):
             bits.append("FILTER  ", style=FAINT)
             bits.append("  ".join(label_text(f) for f in self.filters), style=f"bold {GOLD}")
             bits.append("   l changes", style=FAINT)
+        terms = self.terms()
+        if terms:
+            bits.append(("   " if bits.plain else "") + "INGREDIENTS  ", style=FAINT)
+            bits.append(", ".join(("without " if t["without"] else "") + t["text"] for t in terms), style=f"bold {GOLD}")
+            bits.append("   f changes", style=FAINT)
         if self.sort_key:
             key = next((lb["key"] for lb, _ in all_labels(self.data["recipes"]) if lb["key"].casefold() == self.sort_key), self.sort_key)
             bits.append(("   " if bits.plain else "") + "SORT  ", style=FAINT)
@@ -431,12 +450,17 @@ class RecipesPage(Page):
 
         off = self.skip.get(r["id"], set())
         ing = self.query_one("#ingredients", SelectionList)
+        terms = self.terms()
+        found = set(R.ingredient_hits(r, terms) or []) if terms else set()
         at = ing.highlighted
         with self.prevent(SelectionList.SelectedChanged):
             ing.clear_options()
             for i, raw in enumerate(r["ingredients"]):
                 scaled = R.scale_line(raw, f)
-                ing.add_option(Selection(Text(scaled, style=f"bold {GOLD}" if scaled != raw else INK), i, i not in off))
+                line = Text(scaled, style=f"bold {GOLD}" if scaled != raw else INK)
+                if i in found:
+                    line.stylize("on #3a3420")
+                ing.add_option(Selection(line, i, i not in off))
         if at is not None and r["ingredients"]:
             ing.highlighted = min(at, len(r["ingredients"]) - 1)
         has = bool(r["ingredients"])
@@ -512,7 +536,7 @@ class RecipesPage(Page):
         # Typing in the link box or the editor shouldn't scale or delete anything.
         if action == "board" and not (self.data or {}).get("board"):
             return None
-        if action in ("servings", "add", "new", "import_file", "photo", "paste", "key", "edit", "picture", "send", "delete", "refresh", "board", "labels", "sort") and isinstance(self.focused, (Input, TextArea)):
+        if action in ("servings", "add", "new", "import_file", "photo", "paste", "key", "edit", "picture", "send", "delete", "refresh", "board", "labels", "ingredients", "sort") and isinstance(self.focused, (Input, TextArea)):
             return False
         return True
 
@@ -648,6 +672,16 @@ class RecipesPage(Page):
                 self.reshelve()
         self.app.push_screen(LabelFilter(labels, self.filters), chosen)
 
+    def action_ingredients(self) -> None:
+        """f: show only recipes with these ingredients (commas between; -nuts leaves out ones with nuts)."""
+        def chosen(text: str | None) -> None:
+            if text is not None:
+                self.ingredients = text.strip()
+                self.reshelve()
+        self.app.push_screen(Ask("Find by ingredient", "Separate several with commas; all of them must be in the recipe. "
+                                 "-nuts leaves out recipes with nuts. Leave it empty to show every recipe.",
+                                 self.ingredients, "eggs, spinach, -nuts", ok="Find"), chosen)
+
     def action_sort(self) -> None:
         """o: sort by title, then by each label's key in turn."""
         keys = sorted({lb["key"].casefold() for lb, _ in all_labels((self.data or {}).get("recipes", []))})
@@ -657,7 +691,7 @@ class RecipesPage(Page):
         self.app.notify(f"Sorted by {self.sort_key or 'title'}.", timeout=2)
 
     def reshelve(self) -> None:
-        shown = arranged(self.data["recipes"], self.filters, self.sort_key)
+        shown = self.shelved()
         if not any(r["id"] == self.open for r in shown):
             self.open = shown[0]["id"] if shown else None
         self.show_shelf()

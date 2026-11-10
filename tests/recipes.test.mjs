@@ -10,6 +10,7 @@ import { splitPages, batches, photoOf, fileKey } from "../public/recipes/split.j
 import { unzip } from "../public/recipes/unzip.js";
 import { deflateRawSync } from "node:zlib";
 import { scaleLine, servingsOf, factorFor } from "../public/recipes/scale.js";
+import { ingredientTerms, ingredientHits } from "../public/recipes/ingredients.js";
 
 const CASES = JSON.parse(readFileSync(new URL("../cli/tests/scale_cases.json", import.meta.url)));
 
@@ -32,6 +33,11 @@ test("a page's JSON-LD recipe is read: through @graph, sections, entities and du
   assert.deepEqual(r.ingredients, ["1 1/2 cups flour", "2 eggs", "1½ cups milk", "salt to taste"]);
   assert.deepEqual(r.steps, ["Mix it.", "Rest it.", "Cook on a hot pan."]);
   assert.equal(r.notes, "Fluffy.");
+});
+
+test("finding by ingredient: the cases the terminal checks too", () => {
+  const cases = JSON.parse(readFileSync(new URL("../cli/tests/ingredient_cases.json", import.meta.url)));
+  for (const [text, ingredients, want] of cases) assert.deepEqual(ingredientHits({ ingredients }, ingredientTerms(text)), want, `${text} in ${ingredients}`);
 });
 
 test("microdata works when there's no JSON-LD, and a page without a recipe gives null", () => {

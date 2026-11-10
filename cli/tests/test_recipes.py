@@ -95,3 +95,9 @@ def test_the_dishs_photo_is_found_on_the_page_as_on_the_website():
     assert R.find_picture(*_page(lines=22)) is None                  # only text
     assert R.find_picture(*_page(shadow=True, lines=22)) is None     # a shadow isn't a photo
     assert R.find_picture(*_page(photo={"x0": 90, "y0": 10, "x1": 106, "y1": 24})) is None  # a small spot
+
+
+def test_finding_by_ingredient_matches_the_website():
+    cases = json.loads(Path(__file__).with_name("ingredient_cases.json").read_text())
+    for text, lines, want in cases:
+        assert R.ingredient_hits({"ingredients": lines}, R.ingredient_terms(text)) == want, (text, lines)

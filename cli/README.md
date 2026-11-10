@@ -159,6 +159,7 @@ The same recipes as `/recipes/`: the list on the left, the open one on the right
 | `s` | send the ticked ingredients, scaled, to a Drift list: your Shopping list (made the first time), or any list you can add to |
 | `b` | share the recipe on the Recipe board (if you have it) |
 | `l` | filter the shelf by labels: tick any (two values of one key show either; different keys show only recipes with both); `c` clears |
+| `f` | find recipes by ingredient: `eggs, spinach` shows only recipes with both, `-nuts` leaves out any with nuts (walnuts too); singular and plural both match, and the lines it found are lit up. Works with `l`; empty clears |
 | `o` | sort the shelf by title, then by each label in turn (recipes without that label go last) |
 | `e` | edit it (`ctrl+s` saves); labels are ticked from the Recipe labels list, so everyone uses the same ones |
 | `c` | give it a picture from a file (JPEG, PNG, WebP or GIF up to 600 KB), or leave the path empty to take its picture off; on the website the editor has a Picture field that shrinks bigger ones |
@@ -275,7 +276,7 @@ sintfoap/trips_page.py     Trip planner
 sintfoap/board_page.py     Recipe board
 sintfoap/labels_page.py    Recipe labels
 sintfoap/food_page.py      Food club
-sintfoap/recipe_rules.py   scaling ingredient lines, as on the web page (tests/scale_cases.json keeps them the same)
+sintfoap/recipe_rules.py   scaling ingredient lines and finding recipes by ingredient, as on the web page (tests/scale_cases.json and tests/ingredient_cases.json keep them the same)
 sintfoap/__main__.py       the command
 tests/                     python -m pytest tests
 tests/devsite.mjs          the site's real Worker on localhost, for tests/test_pages.py (needs node 22)
