@@ -136,3 +136,77 @@ def file_key(path: str) -> str:
     """Matching a picture to a file by its name alone, whatever folder it's in (as file_key in split.js)."""
     from urllib.parse import unquote
     return unquote(re.split(r"[\\/]", path)[-1]).lower()
+
+
+# ── the dish's photo on a cookbook page ─────────────────────────────────────
+# As public/recipes/picture.js does on the website: the biggest patch that is
+# neither paper nor text, looked at in 4-pixel cells of a copy about 200 across.
+
+_CELL = 4
+
+
+def find_picture(width: int, height: int, pixels: bytes, text: list[dict] | None = None, channels: int = 3) -> dict | None:
+    """Where the dish's photo is, as {x0, y0, x1, y1} fractions of the width and height, or None.
+    pixels: the image's bytes, `channels` a pixel (3 for RGB, 4 for RGBA); text: the text lines' boxes, in its pixels."""
+    cols, rows = width // _CELL, height // _CELL
+    if cols < 8 or rows < 8:
+        return None
+    n = cols * rows
+    lum, dev, sat = [0.0] * n, [0.0] * n, [0.0] * n
+    m = _CELL * _CELL
+    for r in range(rows):
+        for c in range(cols):
+            s = s2 = st = 0.0
+            for y in range(r * _CELL, (r + 1) * _CELL):
+                base = (y * width + c * _CELL) * channels
+                for i in range(base, base + _CELL * channels, channels):
+                    R, G, B = pixels[i], pixels[i + 1], pixels[i + 2]
+                    lv = 0.299 * R + 0.587 * G + 0.114 * B
+                    hi = max(R, G, B)
+                    s += lv
+                    s2 += lv * lv
+                    st += (hi - min(R, G, B)) / hi if hi else 0
+            k = r * cols + c
+            lum[k] = s / m
+            dev[k] = math.sqrt(max(0.0, s2 / m - (s / m) ** 2))
+            sat[k] = st / m
+    paper = sorted(lum)[int(n * 0.6)]
+    words = [False] * n
+    for b in text or []:
+        c0, c1 = max(0, int(b["x0"] // _CELL) - 1), min(cols - 1, int(b["x1"] // _CELL) + 1)
+        r0, r1 = max(0, int(b["y0"] // _CELL) - 1), min(rows - 1, int(b["y1"] // _CELL) + 1)
+        for r in range(r0, r1 + 1):
+            for c in range(c0, c1 + 1):
+                words[r * cols + c] = True
+    pic = [not words[k] and (sat[k] > 0.3 or dev[k] > 25 or (abs(lum[k] - paper) > 35 and dev[k] > 6)) for k in range(n)]
+    filled = pic[:]
+    for r in range(1, rows - 1):
+        for c in range(1, cols - 1):
+            k = r * cols + c
+            if not filled[k] and not words[k] and ((pic[k - 1] and pic[k + 1]) or (pic[k - cols] and pic[k + cols])):
+                filled[k] = True
+    seen = [False] * n
+    best = None
+    for k0 in range(n):
+        if not filled[k0] or seen[k0]:
+            continue
+        stack, seen[k0] = [k0], True
+        count, c0, c1, r0, r1 = 0, cols, 0, rows, 0
+        while stack:
+            k = stack.pop()
+            r, c = divmod(k, cols)
+            count += 1
+            c0, c1, r0, r1 = min(c0, c), max(c1, c), min(r0, r), max(r1, r)
+            for j in (k - 1 if c > 0 else -1, k + 1 if c < cols - 1 else -1, k - cols if r > 0 else -1, k + cols if r < rows - 1 else -1):
+                if j >= 0 and filled[j] and not seen[j]:
+                    seen[j] = True
+                    stack.append(j)
+        if not best or count > best[0]:
+            best = (count, c0, c1, r0, r1)
+    if not best:
+        return None
+    count, c0, c1, r0, r1 = best
+    w, h = c1 - c0 + 1, r1 - r0 + 1
+    if count < n * 0.04 or w < cols * 0.15 or h < rows * 0.1 or count < w * h * 0.45:
+        return None
+    return {"x0": round(c0 / cols, 3), "y0": round(r0 / rows, 3), "x1": round((c1 + 1) / cols, 3), "y1": round((r1 + 1) / rows, 3)}

@@ -686,6 +686,36 @@ def test_recipe_box_reads_a_photo_here_without_a_key(real_site, tmp_path, monkey
     run_app("recipes", recipes)
 
 
+def test_recipe_box_keeps_the_dishs_photo_from_the_page_as_the_recipes_picture(real_site, tmp_path, monkeypatch):
+    Image = pytest.importorskip("PIL.Image")
+    import io
+    # A cream page, the text where tesseract read it, and a photo of the loaf below it.
+    im = Image.new("RGB", (1800, 1500), (245, 240, 228))
+    loaf = Image.effect_noise((1400, 300), 90).convert("RGB")
+    im.paste(Image.blend(loaf, Image.new("RGB", loaf.size, (150, 90, 40)), 0.6), (200, 1150))
+    page_jpg = tmp_path / "banana-bread.jpg"
+    im.save(page_jpg, "JPEG", quality=90)
+    monkeypatch.setattr(site, "ocr_page", lambda path: OCR_PAGE)
+    sent, keep = [], site.set_recipe_photo
+    monkeypatch.setattr(site, "set_recipe_photo", lambda rid, raw: sent.append(raw) or keep(rid, raw))
+
+    async def recipes(app, pilot):
+        page = app.screen
+        await page.from_photo([str(page_jpg)])
+        await settle(pilot, 1.5)
+        dialog = app.screen
+        assert type(dialog).__name__ == "RecipeDialog"
+        use = dialog.query_one("#use-picture")
+        assert use.value and "the dish's photo from the page" in str(use.label)
+        await pilot.press("ctrl+s")
+        await settle(pilot, 0.8)
+        [r] = site.recipes()["recipes"]
+        assert r["title"] == "Classic Banana Bread" and r["image"].startswith("/recipes/api/photos/p_")
+        kept = Image.open(io.BytesIO(sent[0]))
+        assert abs(kept.width / kept.height - 1400 / 300) < 0.5, kept.size   # the loaf, not the page
+    run_app("recipes", recipes)
+
+
 def test_recipe_box_reads_a_photo_here_when_the_saved_key_was_revoked(real_site, tmp_path, monkeypatch):
     page_jpg = tmp_path / "banana-bread.jpg"
     page_jpg.write_bytes(JPEG)

@@ -83,6 +83,22 @@ test("a two-column page read across is put back in columns, the biggest type is 
   assert.ok(r.check.length >= 2 && r.check.every(l => r.ingredients.includes(l)));
 });
 
+// The same page with a photo of the loaf above it, which Tesseract reads a column at a time.
+const COLUMNS = JSON.parse(readFileSync(new URL("./recipe-ocr-columns.json", import.meta.url)));
+
+test("a page read a column at a time is put in order too: a line split in two is one, a tip under a column comes last", () => {
+  const { text, title } = arrange(COLUMNS);
+  assert.ok(text.indexOf("Pinch of salt") < text.indexOf("Preheat the oven"), "the left column comes first");
+  assert.match(text, /Prep 15 min - Bake 1 hr/, "the line across the page, read as two, is one again");
+  assert.ok(text.indexOf("Tip:") > text.indexOf("tester comes out clean"), "the tip under the ingredients comes after both columns");
+  const r = readRecipe(text, { title });
+  assert.equal(r.title, "Classic Banana Bread");
+  assert.equal(r.time, "1 hr 15 min");
+  assert.deepEqual(r.ingredients.length, 7);
+  assert.equal(r.steps.length, 4);
+  assert.match(r.notes, /Tip: Add a handful of walnuts/);
+});
+
 test("/recipes/api/text: pasted text or recognized pages, nothing saved, no key needed", async () => {
   const env = makeEnv(), ryan = new Browser(env), josh = new Browser(env);
   await ryan.signup("ryan");

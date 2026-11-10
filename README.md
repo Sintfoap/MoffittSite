@@ -20,7 +20,7 @@ public/          the website, served as static files
   chat/            chat rooms (signed-in Drift users); gifs.js is the GIF picker, emoji-picker.js the full reaction picker (emoji.js), e2ee.js encryption, carry.js its keys' copy for your other browsers
   m/               the phone app: its own screens for Home, Drift and Chat, on the same APIs as the pages above
   notifications/   turning push notifications on, and what they're for
-  recipes/         Recipe box (signed-in users with it turned on); scale.js scales ingredient lines, read.js cuts recipe text into a recipe and columns.js puts a two-column page back in order (all shared with the Worker); vendor/tesseract is text recognition, run in the browser (Apache-2.0)
+  recipes/         Recipe box (signed-in users with it turned on); scale.js scales ingredient lines, read.js cuts recipe text into a recipe and columns.js puts a two-column page back in order (all shared with the Worker), picture.js finds the dish's photo on a page to keep as the recipe's picture; vendor/tesseract is text recognition, run in the browser (Apache-2.0)
   meals/           Meal plan: the week's dinners from Recipe box, around the Drift calendar
   sweep/           Sweep: Drift suggestions read out of your chat rooms, to accept or turn down
   board/           Recipe board: recipes shared under their labels' keys, a feed of the keys you follow, and saving any into Recipe box
