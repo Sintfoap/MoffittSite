@@ -439,6 +439,16 @@ const SCHEMA = [
      created TEXT NOT NULL
    )`,
   `CREATE INDEX IF NOT EXISTS food_photos_pick ON food_photos (pick, created)`,
+  // Recipe box (src/recipes.js): pictures kept here, one per recipe (an export's photos).
+  `CREATE TABLE IF NOT EXISTS recipe_photos (
+     id      TEXT PRIMARY KEY,                     -- "p_" + random hex
+     owner   TEXT NOT NULL,
+     recipe  TEXT NOT NULL,
+     type    TEXT NOT NULL,                        -- image/jpeg, image/png, image/webp or image/gif
+     data    TEXT NOT NULL,                        -- the picture, base64
+     created TEXT NOT NULL
+   )`,
+  `CREATE INDEX IF NOT EXISTS recipe_photos_recipe ON recipe_photos (owner, recipe)`,
 ];
 
 // Indexes on columns that ADDED_COLUMNS may have only just added.

@@ -624,6 +624,15 @@ def import_recipes(pages: list[str]) -> dict:
     return api("POST", "/recipes/api/recipes/import", {"pages": pages})
 
 
+RECIPE_PHOTO_BYTES = 600 * 1024    # the biggest recipe picture the site keeps (src/recipes.js)
+
+
+def set_recipe_photo(recipe_id: str, raw: bytes) -> dict:
+    """Keeps this picture (JPEG, PNG, WebP or GIF bytes) as the recipe's own; the recipe back."""
+    import base64
+    return api("POST", f"/recipes/api/recipes/{_q(recipe_id)}/photo", {"data": base64.b64encode(raw).decode()})
+
+
 def update_recipe(recipe_id: str, changes: dict) -> dict:
     return api("PATCH", f"/recipes/api/recipes/{_q(recipe_id)}", changes)
 
