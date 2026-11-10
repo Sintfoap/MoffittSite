@@ -15,7 +15,7 @@
 // ryan has Meal plan too (his Recipe box starts empty).
 // ryan has Sweep, and he and sam are in a room "Plans" where sam asked about
 // dinner. The stand-in for Claude suggests that dinner from the first message
-// it's shown.
+// it's shown, and reads every photo of a recipe as Nana's Shortbread.
 // The weather (Open-Meteo) is the same everywhere: 16 days from today, with
 // rain tomorrow and the day after the clear one; ryan is near London.
 // ryan and sam have Trip planner, and Food club, where sam picked last month (Pavlova).
@@ -57,7 +57,12 @@ if (notify) {
     const u = new URL(input.url || input);
     if (u.host !== "api.anthropic.com") return before(input, init);
     if (u.pathname === "/v1/models") return new Response("{}");  // checking a key: any will do
-    const first = JSON.parse(init.body).messages[0].content.match(/^\[(\d+)\]/m);
+    const said = JSON.parse(init.body).messages[0].content;
+    if (Array.isArray(said)) return new Response(JSON.stringify({ stop_reason: "end_turn", content: [{ type: "text", text: JSON.stringify({
+      found: true, title: "Nana's Shortbread", servings: 0, yield: "Makes 24", time: "45 min",
+      ingredients: ["2 cups flour", "1 cup butter", "1/2 cup sugar"], steps: ["Cream the butter and sugar.", "Add the flour.", "Bake at 325°F for 20 min."],
+      notes: "From Nana." }) }] }));
+    const first = said.match(/^\[(\d+)\]/m);
     const suggestions = first ? [{ kind: "event", title: "Dinner at Lucia's", start: "2030-01-04T19:00", end: "", collection: "",
       quote: "dinner at Lucia's", message: Number(first[1]), confidence: 0.9, why: "A plan with a time." }] : [];
     return new Response(JSON.stringify({ stop_reason: "end_turn", content: [{ type: "text", text: JSON.stringify({ suggestions }) }] }));

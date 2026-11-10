@@ -192,12 +192,12 @@ def logout() -> str | None:
     return info["site"]
 
 
-def api(method: str, path: str, body: Any = None) -> Any:
+def api(method: str, path: str, body: Any = None, timeout: float = 15) -> Any:
     """A signed-in request to the site's JSON API. Raises SignedOut or SiteError."""
     info = load_login()
     if not info:
         raise SignedOut()
-    status, data = call(info["site"], method, path, body, token=info["token"])
+    status, data = call(info["site"], method, path, body, token=info["token"], timeout=timeout)
     if not 200 <= status < 300 or data is None:
         raise _error(status, data)
     return data
@@ -643,6 +643,76 @@ def shop(recipe_id: str, lines: list[int], servings: float | None = None, factor
     if list_id:
         body["list"] = list_id
     return api("POST", f"/recipes/api/recipes/{_q(recipe_id)}/shop", body)
+
+
+PHOTO_SIDE = 1568            # Anthropic shrinks anything longer across than this anyway
+RECIPE_PHOTO_BYTES = 3_750_000   # the biggest picture the site sends on (src/recipe_photo.js)
+RECIPE_PHOTOS = 4
+
+
+def _picture_kind(raw: bytes) -> str | None:
+    if raw[:3] == b"\xff\xd8\xff":
+        return "jpeg"
+    if raw[:8] == b"\x89PNG\r\n\x1a\n":
+        return "png"
+    if raw[:3] == b"GIF":
+        return "gif"
+    if raw[:4] == b"RIFF" and raw[8:12] == b"WEBP":
+        return "webp"
+    return None
+
+
+def recipe_picture(path: str) -> bytes:
+    """A picture file, ready to send: made smaller first when Pillow is installed (and it's big),
+    otherwise as it is. Raises SiteError for what the site can't take."""
+    p = Path(path.strip().strip("'\"")).expanduser()
+    try:
+        raw = p.read_bytes()
+    except OSError as e:
+        raise SiteError(f"couldn't read {p}: {e.strerror or e}") from None
+    try:
+        from PIL import Image, ImageOps  # optional: pip install pillow
+    except ImportError:
+        Image = None
+    if Image is not None:
+        import io
+        try:
+            with Image.open(io.BytesIO(raw)) as im:
+                if max(im.size) > PHOTO_SIDE or len(raw) > RECIPE_PHOTO_BYTES or _picture_kind(raw) is None:
+                    im = ImageOps.exif_transpose(im)
+                    im.thumbnail((PHOTO_SIDE, PHOTO_SIDE))
+                    if im.mode != "RGB":
+                        bg = Image.new("RGB", im.size, "white")
+                        bg.paste(im, mask=im.convert("RGBA").getchannel("A"))
+                        im = bg
+                    out = io.BytesIO()
+                    im.save(out, "JPEG", quality=88)
+                    raw = out.getvalue()
+        except Exception:  # noqa: BLE001  not a picture Pillow knows; checked below
+            pass
+    if _picture_kind(raw) is None:
+        raise SiteError(f"{p.name} isn't a JPEG, PNG, WebP or GIF picture"
+                        + ("" if Image else " (install Pillow to send others, like HEIC: pip install pillow)"))
+    if len(raw) > RECIPE_PHOTO_BYTES:
+        raise SiteError(f"{p.name} is {len(raw) // 1_000_000} MB; the most the site sends on is "
+                        f"{RECIPE_PHOTO_BYTES / 1e6:.2g} MB, so make it smaller first (pip install pillow does it for you)")
+    return raw
+
+
+def read_recipe_photo(paths: list[str]) -> dict:
+    """Pictures of one recipe (up to 4 files), read by Claude: {recipe}, a draft to check. Nothing is saved."""
+    import base64
+    if not paths:
+        raise SiteError("say which picture")
+    if len(paths) > RECIPE_PHOTOS:
+        raise SiteError(f"pick at most {RECIPE_PHOTOS} pictures of one recipe")
+    images = [{"data": base64.b64encode(recipe_picture(p)).decode()} for p in paths]
+    return api("POST", "/recipes/api/photo", {"images": images}, timeout=180)
+
+
+def recipe_key(key: str) -> dict:
+    """Saves your Anthropic API key for reading photos (the same one Sweep uses): {photo}."""
+    return api("PUT", "/recipes/api/key", {"key": key}, timeout=30)
 
 
 # ────────────────────────────── meal plan ───────────────────────────────────

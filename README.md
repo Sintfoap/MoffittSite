@@ -49,6 +49,7 @@ src/             the Worker: runs only for the paths in run_worker_first
   push.js          sending Web Push: encryption (RFC 8291) and VAPID signing, with WebCrypto
   notify.js        notifications: settings, browsers, Chat's pushes and Drift's reminders
   recipes.js       Recipe box: recipes read from a link's schema.org data (Recipe Keeper's shared recipes too) or imported in bulk from a file (Recipe Keeper's HTML export), and their ingredients sent to a Drift list
+  recipe_photo.js  Recipe box: a recipe read from a photo (a card, a cookbook page, a screenshot) by Claude, with Sweep's API key, to check before saving
   meals.js         Meal plan: a week of dinners picked from Recipe box, quick ones on busy Drift nights, and the week's shopping sent to a Drift list
   sweep.js         Sweep: reads chosen chat rooms with Claude and suggests Drift events, tasks and list items
   trips.js         Trip planner: shared trips, their itinerary, pinned places, and packing lists sent to Drift

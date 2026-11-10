@@ -5,16 +5,19 @@
 // almost every recipe site publishes for search engines), falling back to
 // microdata. Scaling is public/recipes/scale.js, shared with the page.
 //
-// /recipes/api/recipes             GET → {recipes, lists, drift}; POST {url} or {title, ...} → a new recipe
+// /recipes/api/recipes             GET → {recipes, lists, drift, photo}; POST {url} or {title, ...} → a new recipe
 // /recipes/api/recipes/import      POST {pages: [html, ...]} → {added, skipped}: many at once, from an export file
 // /recipes/api/recipes/<id>        PATCH → change the fields sent; DELETE → remove it
 // /recipes/api/recipes/<id>/shop   POST {servings | factor, lines?, list?} → its ingredients onto a Drift list
+// /recipes/api/photo, /recipes/api/key   a recipe read from a photo, and the API key it's read with (src/recipe_photo.js)
 
 import { db } from "./db.js";
 import { sameOrigin } from "./account.js";
 import { withRail } from "./pages.js";
 import { readJson, BadRequest, writableCollections, addToList } from "./drift.js";
 import { scaleLine, servingsOf, factorFor, format } from "../public/recipes/scale.js";
+import { photoState, readPhoto, readPhotoBody, saveKey, forgetKey } from "./recipe_photo.js";
+import { SweepError } from "./sweep.js";
 
 const fail = msg => { throw new BadRequest(msg); };
 export class NotARecipe extends Error {}
@@ -471,15 +474,20 @@ export async function recipes(request, env, user, pathname) {
   const method = request.method;
   try {
     if (method !== "GET" && !sameOrigin(request)) return json({ error: "cross-origin request refused" }, 403);
+    const notAllowed = () => json({ error: "method not allowed" }, 405);
+    if (/^\/recipes\/api\/photo\/?$/.test(pathname)) return method === "POST" ? json(await readPhoto(env, user, await readPhotoBody(request))) : notAllowed();
+    if (/^\/recipes\/api\/key\/?$/.test(pathname)) {
+      if (method === "PUT") return json(await saveKey(env, user, await readJson(request)));
+      return method === "DELETE" ? json(await forgetKey(env, user)) : notAllowed();
+    }
     const m = pathname.match(ROUTE);
     if (!m) return json({ error: "not found" }, 404);
     const [, bulk, id, sub] = m;
-    const notAllowed = () => json({ error: "method not allowed" }, 405);
     if (bulk) return method === "POST" ? json(await importPages(env, user, await readImport(request))) : notAllowed();
     if (!id) {
       if (method === "GET") {
         const drift = user.areas.has("todo");
-        return json({ recipes: await list(env, user), drift, lists: drift ? await writableCollections(env, user) : [] });
+        return json({ recipes: await list(env, user), drift, lists: drift ? await writableCollections(env, user) : [], photo: await photoState(env, user) });
       }
       if (method !== "POST") return notAllowed();
       const body = await readJson(request);
@@ -497,6 +505,7 @@ export async function recipes(request, env, user, pathname) {
   } catch (e) {
     if (e instanceof BadRequest) return json({ error: e.message }, 400);
     if (e instanceof NotARecipe) return json({ error: e.message, manual: true }, 422);
+    if (e instanceof SweepError) return json({ error: e.message }, 503);
     console.error("recipes error:", e);
     return json({ error: "server error" }, 500);
   }

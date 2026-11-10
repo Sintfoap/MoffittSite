@@ -203,10 +203,21 @@ async function sendToList(r, list) {
 
 // ── adding and editing ─────────────────────────────────────────────────────
 
-function openEditor(r) {
+// `draft` is a recipe read from a photo, to check before it's saved: the
+// editor opens as a new recipe with its fields filled and the pictures above.
+function openEditor(r, draft = null, shots = []) {
   editing = r || {};
   const f = $("#edit-form");
-  $("#edit-title").textContent = r ? "Edit recipe" : "New recipe";
+  $("#edit-title").textContent = r ? "Edit recipe" : draft ? "Check the recipe" : "New recipe";
+  $("#edit-hint").hidden = !draft;
+  const pics = $("#edit-photos");
+  pics.hidden = !shots.length;
+  pics.replaceChildren(...shots.map(src => {
+    const img = el("img", { src, alt: "Your photo", title: "Click to enlarge" });
+    img.addEventListener("click", () => img.classList.toggle("big"));
+    return img;
+  }));
+  r = r || draft;
   f.title.value = r?.title || "";
   f.servings.value = r?.servings ?? "";
   f.yield.value = r?.yield || "";
@@ -214,7 +225,7 @@ function openEditor(r) {
   f.ingredients.value = (r?.ingredients || []).join("\n");
   f.steps.value = (r?.steps || []).join("\n");
   f.notes.value = r?.notes || "";
-  f.source.value = r?.source || (r ? "" : $("#url").value.trim());
+  f.source.value = r?.source || (r || draft ? "" : $("#url").value.trim());
   $("#editor").showModal();
   f.title.focus();
 }
@@ -293,12 +304,85 @@ async function importFile(file) {
   return err;
 }
 $("#import").addEventListener("click", () => $("#import-file").click());
+
+// ── reading a recipe from a photo ──────────────────────────────────────────
+
+// Anthropic shrinks anything longer than this across, so there's no use sending more.
+const PHOTO_SIDE = 1568, PHOTO_BYTES = 3_500_000;
+
+// A phone's photo as a JPEG at most PHOTO_SIDE across, the right way up.
+async function shrink(file) {
+  const bmp = await createImageBitmap(file, { imageOrientation: "from-image" }).catch(() => null);
+  if (!bmp) throw new Error(`${file.name} isn't a picture this browser can read`);
+  const k = Math.min(1, PHOTO_SIDE / Math.max(bmp.width, bmp.height));
+  const canvas = Object.assign(document.createElement("canvas"), { width: Math.round(bmp.width * k), height: Math.round(bmp.height * k) });
+  const ctx = canvas.getContext("2d");
+  ctx.fillStyle = "#fff";  // a PNG screenshot's see-through parts, white rather than black
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(bmp, 0, 0, canvas.width, canvas.height);
+  for (const q of [0.88, 0.78, 0.65]) {
+    const blob = await new Promise(res => canvas.toBlob(res, "image/jpeg", q));
+    if (blob && blob.size <= PHOTO_BYTES) return blob;
+  }
+  throw new Error(`${file.name} is too big even after shrinking it`);
+}
+const base64 = async blob => {
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  let s = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(s);
+};
+
+let keyThen = null;  // what to do once a key is saved
+function askForKey(then) {
+  if (!data.photo?.sealing) { say("error", "This site can't keep API keys yet, so photos can't be read. Ask its admin to set CHAT_BRIDGE_KEY."); return; }
+  keyThen = then;
+  $("#key-form").reset();
+  $("#keyer").showModal();
+}
+$("#keyer").addEventListener("close", () => {
+  const then = keyThen;
+  keyThen = null;
+  if ($("#keyer").returnValue !== "save") return;
+  run(async () => {
+    data.photo = (await api("PUT", "key", { key: $("#key-form").key.value.trim() })).photo;
+    say("done", "Key saved.");
+    then?.();
+  });
+});
+
+function pickPhoto() {
+  if (!data) return;
+  if (!data.photo?.ready) return askForKey(() => $("#photo-file").click());
+  $("#photo-file").click();
+}
+
+async function fromPhotos(files) {
+  const btn = $("#photo");
+  btn.disabled = true;
+  btn.textContent = "Reading…";
+  const err = await run(async () => {
+    if (files.length > 4) throw new Error("pick at most 4 pictures of one recipe");
+    say("done", `Reading ${files.length === 1 ? "the photo" : `${files.length} photos`}… this takes a few seconds.`);
+    const images = await Promise.all(files.map(async f => ({ data: await base64(await shrink(f)) })));
+    const { recipe } = await api("POST", "photo", { images });
+    say("done", "");
+    openEditor(null, recipe, images.map(i => "data:image/jpeg;base64," + i.data));
+  });
+  btn.disabled = false;
+  btn.textContent = "From a photo";
+  $("#photo-file").value = "";
+  // A key Anthropic turned down: the next try asks for another.
+  if (err && /didn't accept your API key/i.test(err.message)) data.photo = { ...data.photo, ready: false };
+}
+$("#photo").addEventListener("click", pickPhoto);
+$("#photo-file").addEventListener("change", e => e.target.files.length && fromPhotos([...e.target.files]));
 $("#import-file").addEventListener("change", e => e.target.files[0] && importFile(e.target.files[0]));
 $("#find").addEventListener("input", renderList);
 
 document.addEventListener("keydown", e => {
   const t = e.target;
-  if (e.metaKey || e.ctrlKey || e.altKey || t.isContentEditable || t.matches?.("input, textarea, select") || $("#editor").open) {
+  if (e.metaKey || e.ctrlKey || e.altKey || t.isContentEditable || t.matches?.("input, textarea, select") || $("#editor").open || $("#keyer").open) {
     if (e.key === "Escape" && t === $("#find")) { t.value = ""; renderList(); t.blur(); }
     return;
   }
@@ -313,6 +397,7 @@ document.addEventListener("keydown", e => {
     "-": () => r && step(r, -1),
     e: () => r && openEditor(r),
     i: () => $("#import-file").click(),
+    p: () => pickPhoto(),
     s: () => r && $("#send") && !$("#send").disabled && $("#send").click(),
   };
   if (keys[e.key]) { e.preventDefault(); keys[e.key](); }
