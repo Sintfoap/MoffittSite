@@ -156,7 +156,7 @@ dialog .two { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
 <main>
   <div class="kicker">Recipe box</div>
   <h1>Recipes</h1>
-  <p class="lede">Paste a link to a recipe (any recipe site, or one shared from Recipe Keeper) to keep it here, snap a photo of a recipe card or cookbook page, or import a whole file of them, like Recipe Keeper's export (its folder or .zip brings the pictures too, and importing it again fills in any that are missing). Scale it to the servings you need and send what to buy to a Drift list. Give recipes labels like <b>Season: Fall</b> (from the list an admin keeps) to filter and sort them.</p>
+  <p class="lede">Paste a link to a recipe (any recipe site, or one shared from Recipe Keeper) to keep it here, snap a photo of a cookbook page (read right on your device) or paste a recipe's text, or import a whole file of them, like Recipe Keeper's export (its folder or .zip brings the pictures too, and importing it again fills in any that are missing). Scale it to the servings you need and send what to buy to a Drift list. Give recipes labels like <b>Season: Fall</b> (from the list an admin keeps) to filter and sort them.</p>
   <div id="error" class="msg bad" role="alert" hidden></div>
   <div id="done" class="msg good" role="status" hidden></div>
 
@@ -167,6 +167,7 @@ dialog .two { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
     <button class="btn quiet" type="button" id="import" title="Import (i)">Import file</button>
     <button class="btn quiet" type="button" id="import-dir">Import folder</button>
     <button class="btn quiet" type="button" id="photo" title="From a photo (p)">From a photo</button>
+    <button class="btn quiet" type="button" id="paste" title="Paste text (t)">Paste text</button>
     <input type="file" id="import-file" accept=".html,.htm,text/html,.zip,application/zip,image/*" multiple hidden>
     <input type="file" id="import-folder" webkitdirectory hidden>
     <input type="file" id="photo-file" accept="image/*" multiple hidden>
@@ -191,7 +192,7 @@ dialog .two { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
 <dialog id="editor">
   <form method="dialog" id="edit-form">
     <h2 id="edit-title">Edit recipe</h2>
-    <p id="edit-hint" hidden>Read from your photo. Check it against the picture, fix anything Claude misread, then save.</p>
+    <div id="edit-hint" hidden><p id="edit-hint-text"></p><button class="btn quiet" type="button" id="with-claude" hidden title="Better with handwriting; needs your Anthropic API key">Read it with Claude instead</button></div>
     <div id="edit-photos" class="shots" hidden></div>
     <label class="field">Title<input type="text" name="title" required maxlength="200"></label>
     <div class="two">
@@ -208,16 +209,25 @@ dialog .two { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
   </form>
 </dialog>
 
+<dialog id="paster">
+  <form method="dialog" id="paste-form">
+    <h2>Paste a recipe's text</h2>
+    <p>Copy the text out of a photo (Live Text on an iPhone, Google Lens on Android) or a page, and paste it here. It's split into the title, ingredients and steps for you to check before saving.</p>
+    <label class="field">The recipe<textarea name="text" rows="14" required placeholder="Banana bread&#10;Makes one loaf&#10;3 ripe bananas&#10;1/3 cup melted butter&#10;…&#10;Preheat the oven to 350°F…"></textarea></label>
+    <div class="row"><button class="btn" value="read">Read it</button><button class="btn quiet" value="cancel" formnovalidate>Cancel</button></div>
+  </form>
+</dialog>
+
 <dialog id="keyer">
   <form method="dialog" id="key-form">
-    <h2>Read recipes from photos</h2>
-    <p>Photos are read by Claude with your own Anthropic API key, so nobody else is billed for yours. Make one at <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener noreferrer">console.anthropic.com</a>. It's kept sealed on the site and never shown again; Sweep uses the same one.</p>
+    <h2>Read photos with Claude</h2>
+    <p>Without a key, photos are read by text recognition on your device, which is good with printed pages. Claude reads them better, handwriting too, with your own Anthropic API key, so nobody else is billed for yours. Make one at <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener noreferrer">console.anthropic.com</a>. It's kept sealed on the site and never shown again; Sweep uses the same one.</p>
     <label class="field">API key<input type="password" name="key" autocomplete="off" placeholder="sk-ant-…" required></label>
     <div class="row"><button class="btn" value="save">Save key</button><button class="btn quiet" value="cancel" formnovalidate>Cancel</button></div>
   </form>
 </dialog>
 
-<footer class="keybar" aria-label="Keyboard shortcuts"><span><kbd>n</kbd>new from a link</span><span><kbd>/</kbd>find</span><span><kbd>l</kbd>filter by label</span><span><kbd>j k</kbd>next, previous</span><span><kbd>[ ]</kbd>page</span><span><kbd>+ -</kbd>servings</span><span><kbd>s</kbd>send to list</span><span><kbd>e</kbd>edit</span><span><kbd>p</kbd>from a photo</span><span><kbd>i</kbd>import a file</span><span><kbd>g</kbd>then a key from the menu to jump</span><span><kbd>\</kbd>Sidebar</span><a class="end" href="/logout" data-key="o"><kbd>g o</kbd>Sign out</a></footer>
+<footer class="keybar" aria-label="Keyboard shortcuts"><span><kbd>n</kbd>new from a link</span><span><kbd>/</kbd>find</span><span><kbd>l</kbd>filter by label</span><span><kbd>j k</kbd>next, previous</span><span><kbd>[ ]</kbd>page</span><span><kbd>+ -</kbd>servings</span><span><kbd>s</kbd>send to list</span><span><kbd>e</kbd>edit</span><span><kbd>p</kbd>from a photo</span><span><kbd>t</kbd>paste text</span><span><kbd>i</kbd>import a file</span><span><kbd>g</kbd>then a key from the menu to jump</span><span><kbd>\</kbd>Sidebar</span><a class="end" href="/logout" data-key="o"><kbd>g o</kbd>Sign out</a></footer>
 <script src="/keys.js" defer></script>
 <script type="module" src="/recipes/app.js"></script>
 </body>
