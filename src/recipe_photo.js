@@ -63,11 +63,13 @@ Write down what the photo says rather than improving it: keep their amounts, uni
 
 servings is the number of servings as a number, or 0 if the recipe doesn't say. yield is what it says it makes, as written ("Serves 4", "2 dozen cookies"), or "". time is the total time as written ("1 hr 15 min"), adding prep and cook when only those are given, or "". notes holds anything else worth keeping: tips, variations, oven temperatures said apart from the steps, who the recipe is from. Leave out anything you can't read rather than guessing.
 
+picture is where a photo of the dish is in the first picture, if there is one (not a drawing, logo or the page around it): [left, top, right, bottom] as fractions of that picture's width and height, from 0 to 1. Leave it [] when there's no photo of the dish.
+
 If there's no recipe in the pictures, set found to false, leave the rest empty, and say what you see instead in notes in a few words.`;
 
 const SCHEMA = {
   type: "object", additionalProperties: false,
-  required: ["found", "title", "servings", "yield", "time", "ingredients", "steps", "notes"],
+  required: ["found", "title", "servings", "yield", "time", "ingredients", "steps", "notes", "picture"],
   properties: {
     found: { type: "boolean" },
     title: { type: "string" },
@@ -77,8 +79,16 @@ const SCHEMA = {
     ingredients: { type: "array", items: { type: "string" } },
     steps: { type: "array", items: { type: "string" } },
     notes: { type: "string" },
+    picture: { type: "array", items: { type: "number" } },
   },
 };
+
+// Claude's [left, top, right, bottom] for the dish's photo, as {x0, y0, x1, y1}, or null when it's not a sensible box.
+export function pictureFrom(v) {
+  if (!Array.isArray(v) || v.length !== 4 || !v.every(n => typeof n === "number" && n >= 0 && n <= 1)) return null;
+  const [x0, y0, x1, y1] = v;
+  return x1 - x0 >= 0.1 && y1 - y0 >= 0.1 ? { x0, y0, x1, y1 } : null;
+}
 
 const tidy = (v, n) => String(v ?? "").replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, "").trim().slice(0, n);
 const tidyLines = (v, n) => (Array.isArray(v) ? v : []).map(x => tidy(x, n).replace(/\s+/g, " ")).filter(Boolean).slice(0, LIMITS.lines);
@@ -94,6 +104,7 @@ export function draftFrom(found) {
     steps: tidyLines(found.steps, LIMITS.step).map(l => l.replace(/^(?:step\s*)?\d+[.):]\s+/i, "")),
     notes: tidy(found.notes, LIMITS.notes),
     source: "",
+    picture: pictureFrom(found.picture),
   };
   const n = Number(found.servings);
   r.servings = n > 0 && n <= 1000 ? Math.round(n * 100) / 100 : servingsOf(r.yield);

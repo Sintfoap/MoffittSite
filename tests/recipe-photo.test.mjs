@@ -4,7 +4,7 @@
 import { test, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { Browser, makeEnv, grantApps, sqlOne } from "./helpers.mjs";
-import { draftFrom } from "../src/recipe_photo.js";
+import { draftFrom, pictureFrom } from "../src/recipe_photo.js";
 
 let calls = [], reply = () => ({}), status = 200, stop = "end_turn";
 const real = globalThis.fetch;
@@ -12,7 +12,7 @@ beforeEach(() => {
   calls = []; status = 200; stop = "end_turn";
   reply = () => ({ found: true, title: "Nana's Shortbread", servings: 0, yield: "Makes 24", time: "",
     ingredients: ["2 cups flour", "1 cup butter", " ", "1/2 cup sugar"], steps: ["1. Cream the butter and sugar.", "Step 2: Add flour.", "Bake at 325°F for 20 min."],
-    notes: "From Nana, 1974." });
+    notes: "From Nana, 1974.", picture: [0.1, 0.05, 0.9, 0.4] });
   globalThis.fetch = async (input, init) => {
     const url = new URL(input.url || input);
     if (url.host !== "api.anthropic.com") return real(input, init);
@@ -77,6 +77,7 @@ test("a photo is read into a draft to check: nothing is saved until the recipe i
     title: "Nana's Shortbread", yield: "Makes 24", time: "", servings: 24, source: "",
     ingredients: ["2 cups flour", "1 cup butter", "1/2 cup sugar"],
     steps: ["Cream the butter and sugar.", "Add flour.", "Bake at 325°F for 20 min."], notes: "From Nana, 1974.",
+    picture: { x0: 0.1, y0: 0.05, x1: 0.9, y1: 0.4 },
   });
   assert.equal(sqlOne(env, "SELECT COUNT(*) AS n FROM recipes").n, 0);
 
@@ -91,7 +92,9 @@ test("a photo is read into a draft to check: nothing is saved until the recipe i
   assert.match(words.text, /2 pictures/);
 
   // Saving the checked draft is an ordinary new recipe.
-  const saved = await api(ryan, "POST", "recipes", { ...r.json.recipe, title: "Nana's Shortbread (1974)" });
+  // (Where the dish's photo is says what to crop for its picture; it isn't a field of the recipe.)
+  const { picture, ...draft } = r.json.recipe;
+  const saved = await api(ryan, "POST", "recipes", { ...draft, title: "Nana's Shortbread (1974)" });
   assert.equal(saved.status, 201);
   assert.equal(sqlOne(env, "SELECT COUNT(*) AS n FROM recipes").n, 1);
 });
@@ -136,4 +139,10 @@ test("a draft keeps what's readable and drops what isn't", () => {
   assert.equal(d.title, "Untitled recipe");
   assert.equal(d.servings, 4);
   assert.equal(d.ingredients.length, 100);
+  assert.equal(d.picture, null);
+});
+
+test("the dish's photo is kept only as a sensible box", () => {
+  assert.deepEqual(pictureFrom([0, 0, 1, 0.5]), { x0: 0, y0: 0, x1: 1, y1: 0.5 });
+  for (const bad of [[], [0, 0, 1], [0, 0, 2, 1], [0.5, 0.5, 0.52, 0.9], ["0", 0, 1, 1], null]) assert.equal(pictureFrom(bad), null, JSON.stringify(bad));
 });

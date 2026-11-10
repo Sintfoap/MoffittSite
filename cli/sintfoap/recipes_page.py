@@ -22,7 +22,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
-from textual.widgets import Button, Footer, Input, Label, OptionList, Select, SelectionList, Static, TextArea
+from textual.widgets import Button, Checkbox, Footer, Input, Label, OptionList, Select, SelectionList, Static, TextArea
 from textual.widgets.option_list import Option
 from textual.widgets.selection_list import Selection
 
@@ -152,8 +152,10 @@ class RecipeDialog(ModalScreen[dict | None]):
     RecipeDialog #labels { height: auto; max-height: 8; background: transparent; border: none; padding: 0; }
     """
 
-    def __init__(self, recipe: dict | None, source: str = "", heading: str = "", hint: str = "", label_list: list | None = None):
+    def __init__(self, recipe: dict | None, source: str = "", heading: str = "", hint: str = "", label_list: list | None = None,
+                 picture: str | None = None):
         super().__init__()
+        self.picture = picture   # for a recipe read from a photo: what its picture would be ("the dish's photo from the page")
         self.r = recipe or {}
         self.source = source
         self.heading = heading or ("Edit recipe" if recipe else "New recipe")
@@ -166,6 +168,8 @@ class RecipeDialog(ModalScreen[dict | None]):
             yield Label(Text(self.heading, style=f"bold {INK}"))
             if self.hint:
                 yield Static(Text(self.hint, style=MUTED), id="hint")
+            if self.picture:
+                yield Checkbox(f"Use {self.picture} as the recipe's picture", True, id="use-picture")
             yield Label("Title", classes="lbl")
             yield Input(r.get("title", ""), id="title", max_length=200)
             with Horizontal(classes="grid"):
@@ -212,7 +216,8 @@ class RecipeDialog(ModalScreen[dict | None]):
             serves = None
         return {"title": v("title"), "servings": serves, "yield": v("yield"), "time": v("time"),
                 "ingredients": t("ingredients"), "steps": t("steps"), "notes": t("notes").strip(), "source": v("source"),
-                "labels": list(self.query_one("#labels", SelectionList).selected) if self.label_list else [lb["id"] for lb in self.r.get("labels", [])]}
+                "labels": list(self.query_one("#labels", SelectionList).selected) if self.label_list else [lb["id"] for lb in self.r.get("labels", [])],
+                **({"_picture": self.query_one("#use-picture", Checkbox).value} if self.picture else {})}
 
     def action_save(self) -> None:
         f = self.fields()
@@ -305,6 +310,7 @@ class RecipesPage(Page):
         self.open: str | None = None
         self.scale: dict[str, dict] = {}       # recipe id → {servings} or {factor}
         self.skip: dict[str, set[int]] = {}    # recipe id → ingredient indexes not to send
+        self.pending_picture: bytes | None = None   # a photo draft's picture, kept once it's saved if ticked
         self.filters: list[dict] = []          # labels the shelf shows only recipes with
         self.sort_key = ""                     # "" by title, else a label's key
 
@@ -573,6 +579,8 @@ class RecipesPage(Page):
 
     @attempt
     async def save(self, was: dict | None, fields: dict) -> None:
+        picture = self.pending_picture if fields.pop("_picture", False) and not was else None
+        self.pending_picture = None
         if was:
             r = await self.fetch(site.update_recipe, was["id"], fields)
             if r.get("servings") != was.get("servings"):
@@ -580,6 +588,8 @@ class RecipesPage(Page):
         else:
             r = await self.fetch(site.add_recipe, fields)
             self.query_one("#url", Input).value = ""
+            if picture:
+                r = await self.fetch(site.set_recipe_photo, r["id"], picture)
         self.app.notify(f"Saved {r['title']}.", timeout=2)
         await self.saved(r)
 
@@ -736,12 +746,12 @@ class RecipesPage(Page):
     async def from_photo(self, paths: list[str]) -> None:
         claude = ((self.data or {}).get("photo") or {}).get("ready")
         self.app.notify(f"Reading {'the photo' if len(paths) == 1 else f'{len(paths)} photos'}…", timeout=8)
-        hint = ("Check it against the picture, fix any misread words, "
-                "and move lines between the boxes if one landed in the wrong place.")
-        if claude:
-            def with_claude():
+
+        def read() -> dict:
+            out = None
+            if claude:
                 try:
-                    return {**site.read_recipe_photo(paths), "by_claude": True}
+                    out = {**site.read_recipe_photo(paths), "by_claude": True}
                 except site.SignedOut:
                     raise
                 except site.SiteError as e:
@@ -751,12 +761,18 @@ class RecipesPage(Page):
                         raise
                     if "didn't accept your API key" in msg:
                         self.data["photo"] = {**self.data.get("photo", {}), "ready": False}
-                    out = site.read_photo_here(paths)
-                    out["fell_back"] = re.split(r"\.\s", msg)[0].rstrip(".")
-                    return out
-            await self.review(with_claude, hint=hint)
-        else:
-            await self.review(site.read_photo_here, paths, hint="Read from your photo by text recognition. " + hint)
+                    why = re.split(r"\.\s", msg)[0].rstrip(".")
+            if out is None:
+                out = site.read_photo_here(paths)
+                if claude:
+                    out["fell_back"] = why
+            # The recipe's picture: the dish's photo cut from the page, or the whole photo.
+            box = out["recipe"].pop("picture", None)
+            out["dish"] = site.dish_picture(paths[0], box, None if out.get("by_claude") else out.get("text", []))
+            return out
+
+        await self.review(read, hint="Check it against the picture, fix any misread words, "
+                                     "and move lines between the boxes if one landed in the wrong place.")
 
     def action_paste(self) -> None:
         self.app.push_screen(PasteDialog(), self.after_paste)
@@ -785,10 +801,17 @@ class RecipesPage(Page):
             hint = f"Claude couldn't read it ({out['fell_back']}), so it was read here by text recognition. " + hint
         elif out.get("by_claude"):
             hint = "Read from your photo by Claude. " + hint
+        elif "dish" in out:
+            hint = "Read from your photo by text recognition. " + hint
+        picture, whole = None, False
+        if out.get("dish") and out["dish"][0]:
+            picture, whole = out["dish"][0], not out["dish"][1]
+        self.pending_picture = picture
         if r.get("check"):
             hint += " Look twice at the amounts in " + ", ".join(f"“{x}”" for x in r["check"]) + ": fractions like ½ and ¾ are easy to misread."
-        fields = {k: v for k, v in r.items() if k != "check"}
-        self.app.push_screen(RecipeDialog(fields, heading="Check the recipe", hint=hint, label_list=self.data.get("label_list")),
+        fields = {k: v for k, v in r.items() if k not in ("check", "picture")}
+        offer = None if not picture else "the whole photo" if whole else "the dish's photo from the page"
+        self.app.push_screen(RecipeDialog(fields, heading="Check the recipe", hint=hint, label_list=self.data.get("label_list"), picture=offer),
                              self.after_dialog(None))
         return True
 

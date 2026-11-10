@@ -7,6 +7,7 @@ import { splitPages, batches, photoOf, fileKey } from "./split.js";
 import { unzip } from "./unzip.js";
 import { readRecipe } from "./read.js";
 import { arrange } from "./columns.js";
+import { findPicture } from "./picture.js";
 
 const $ = s => document.querySelector(s);
 const el = (tag, props = {}, ...kids) => {
@@ -331,7 +332,10 @@ const HINTS = {
   ocr: "Read from your photo by text recognition on this device. Check it against the picture: fix any misread words, and move lines between the boxes if one landed in the wrong place.",
   text: "Read from the text you pasted. Check that each line landed in the right box, then save.",
 };
-function openEditor(r, draft = null, shots = [], how = "claude", why = "") {
+// `picture`, for a draft from a photo: {blob, whole}, the dish's photo cut from
+// it (or, whole, the photo itself), which becomes the recipe's picture when it's saved, if ticked.
+let draftPicture = null;
+function openEditor(r, draft = null, shots = [], how = "claude", why = "", picture = null) {
   editing = r || {};
   const f = $("#edit-form");
   $("#edit-title").textContent = r ? "Edit recipe" : draft ? "Check the recipe" : "New recipe";
@@ -347,6 +351,14 @@ function openEditor(r, draft = null, shots = [], how = "claude", why = "") {
     img.addEventListener("click", () => img.classList.toggle("big"));
     return img;
   }));
+  draftPicture = picture?.blob || null;
+  const use = $("#edit-picture");
+  use.hidden = !draftPicture;
+  if (draftPicture) {
+    $("#use-picture-what").textContent = picture.whole ? "the whole photo" : "this";
+    base64(draftPicture).then(b => { use.querySelector("img").src = "data:image/jpeg;base64," + b; });  // img-src takes data:, not blob:
+    $("#use-picture").checked = true;
+  }
   r = r || draft;
   f.title.value = r?.title || "";
   f.servings.value = r?.servings ?? "";
@@ -383,10 +395,12 @@ $("#editor").addEventListener("close", () => {
     ingredients: f.ingredients.value, steps: f.steps.value, notes: f.notes.value, source: f.source.value,
     labels: [...document.querySelectorAll("#label-picker input:checked")].map(i => i.value),
   };
-  const was = editing;
+  const was = editing, picture = !was.id && $("#use-picture").checked ? draftPicture : null;
   editing = null;
+  draftPicture = null;
   run(async () => {
-    const saved = was.id ? await api("PATCH", "recipes/" + was.id, body) : await api("POST", "recipes", body);
+    let saved = was.id ? await api("PATCH", "recipes/" + was.id, body) : await api("POST", "recipes", body);
+    if (picture) saved = await api("POST", `recipes/${saved.id}/photo`, { data: await base64(picture) });
     data.recipes = [...data.recipes.filter(x => x.id !== saved.id), saved].sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: "base" }));
     if (was.servings !== saved.servings) scale.delete(saved.id);
     if (!was.id) $("#url").value = "";
@@ -626,19 +640,51 @@ async function recognize(files) {
     // Find the page's own layout (columns, blocks), not one block of lines across it.
     await worker.setParameters({ tessedit_pageseg_mode: T.PSM.AUTO, preserve_interword_spaces: "0" });
     const texts = [];
-    let title = "";
+    let title = "", picture = null;
     for (const f of files) {
       page++;
-      const { data: d } = await worker.recognize(await forReading(f), {}, { text: true, blocks: true });
+      const canvas = await forReading(f);
+      const { data: d } = await worker.recognize(canvas, {}, { text: true, blocks: true });
       const lines = (d.blocks || []).flatMap(b => (b.paragraphs || []).flatMap(p => p.lines || []));
       const got = lines.length ? arrange(lines) : { text: d.text, title: "" };
       texts.push(got.text);
-      if (page === 1) title = got.title;
+      if (page === 1) { title = got.title; picture = pictureIn(canvas, lines); }
     }
-    return { text: texts.join("\n\n"), title };
+    return { text: texts.join("\n\n"), title, picture };
   } finally {
     worker.terminate();
   }
+}
+
+// Where the dish's photo is on the page: looked for in a copy about 200 across,
+// with the text lines that were read kept out.
+function pictureIn(canvas, lines) {
+  const k = Math.min(1, 200 / canvas.width);
+  const small = Object.assign(document.createElement("canvas"), { width: Math.round(canvas.width * k), height: Math.round(canvas.height * k) });
+  const ctx = small.getContext("2d", { willReadFrequently: true });
+  ctx.drawImage(canvas, 0, 0, small.width, small.height);
+  const text = lines.filter(l => l.text.trim()).map(({ bbox: b }) => ({ x0: b.x0 * k, y0: b.y0 * k, x1: b.x1 * k, y1: b.y1 * k }));
+  return findPicture(ctx.getImageData(0, 0, small.width, small.height), text);
+}
+
+// The recipe's picture from its photo: the box (fractions across and down) cut
+// out, or the whole photo; at most MAX_SIDE across, small enough to keep.
+async function cutPicture(file, box) {
+  const bmp = await createImageBitmap(file, { imageOrientation: "from-image" }).catch(() => null);
+  if (!bmp) return null;
+  const b = box || { x0: 0, y0: 0, x1: 1, y1: 1 };
+  const sx = b.x0 * bmp.width, sy = b.y0 * bmp.height, sw = (b.x1 - b.x0) * bmp.width, sh = (b.y1 - b.y0) * bmp.height;
+  const k = Math.min(1, MAX_SIDE / Math.max(sw, sh));
+  const canvas = Object.assign(document.createElement("canvas"), { width: Math.max(1, Math.round(sw * k)), height: Math.max(1, Math.round(sh * k)) });
+  const ctx = canvas.getContext("2d");
+  ctx.fillStyle = "#fff";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(bmp, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
+  for (const q of [0.85, 0.75, 0.6, 0.45]) {
+    const out = await new Promise(res => canvas.toBlob(res, "image/jpeg", q));
+    if (out && out.size <= MAX_BYTES) return out;
+  }
+  return null;
 }
 
 let lastPhotos = [];  // what the open draft was read from, to read again with Claude
@@ -650,7 +696,7 @@ async function fromPhotos(files, { claude = !!data.photo?.ready } = {}) {
     if (files.length > 4) throw new Error("pick at most 4 pictures of one recipe");
     lastPhotos = files;
     const shots = await Promise.all(files.map(async f => "data:image/jpeg;base64," + await base64(await shrinkPhoto(f))));
-    let recipe, how = "ocr", why = "";
+    let recipe, how = "ocr", why = "", box = null;
     if (claude) {
       say("done", `Reading ${files.length === 1 ? "the photo" : `${files.length} photos`} with Claude… this takes a few seconds.`);
       try {
@@ -664,12 +710,16 @@ async function fromPhotos(files, { claude = !!data.photo?.ready } = {}) {
       }
     }
     if (how === "ocr") {
-      const { text, title } = await recognize(files);
+      const { text, title, picture } = await recognize(files);
       recipe = readRecipe(text, { title });
+      box = picture;
       if (!recipe) throw new Error(`${why ? `Claude couldn't read it (${why}), and text recognition ` : ""}couldn't find a recipe in that photo. A sharper, straighter photo helps; or add it with Paste text`);
     }
+    if (how === "claude") box = recipe.picture;
+    delete recipe.picture;
     say("done", "");
-    openEditor(null, recipe, shots, how, why);
+    const blob = await cutPicture(files[0], box);
+    openEditor(null, recipe, shots, how, why, blob && { blob, whole: !box });
   });
   btn.disabled = false;
   btn.textContent = "From a photo";

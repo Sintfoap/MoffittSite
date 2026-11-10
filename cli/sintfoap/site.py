@@ -657,7 +657,7 @@ def shop(recipe_id: str, lines: list[int], servings: float | None = None, factor
 
 
 PHOTO_SIDE = 1568            # Anthropic shrinks anything longer across than this anyway
-RECIPE_PHOTO_BYTES = 3_750_000   # the biggest picture the site sends on (src/recipe_photo.js)
+READ_PHOTO_BYTES = 3_750_000     # the biggest picture the site sends on to be read (src/recipe_photo.js)
 RECIPE_PHOTOS = 4
 
 
@@ -689,7 +689,7 @@ def recipe_picture(path: str) -> bytes:
         import io
         try:
             with Image.open(io.BytesIO(raw)) as im:
-                if max(im.size) > PHOTO_SIDE or len(raw) > RECIPE_PHOTO_BYTES or _picture_kind(raw) is None:
+                if max(im.size) > PHOTO_SIDE or len(raw) > READ_PHOTO_BYTES or _picture_kind(raw) is None:
                     im = ImageOps.exif_transpose(im)
                     im.thumbnail((PHOTO_SIDE, PHOTO_SIDE))
                     if im.mode != "RGB":
@@ -704,9 +704,9 @@ def recipe_picture(path: str) -> bytes:
     if _picture_kind(raw) is None:
         raise SiteError(f"{p.name} isn't a JPEG, PNG, WebP or GIF picture"
                         + ("" if Image else " (install Pillow to send others, like HEIC: pip install pillow)"))
-    if len(raw) > RECIPE_PHOTO_BYTES:
+    if len(raw) > READ_PHOTO_BYTES:
         raise SiteError(f"{p.name} is {len(raw) // 1_000_000} MB; the most the site sends on is "
-                        f"{RECIPE_PHOTO_BYTES / 1e6:.2g} MB, so make it smaller first (pip install pillow does it for you)")
+                        f"{READ_PHOTO_BYTES / 1e6:.2g} MB, so make it smaller first (pip install pillow does it for you)")
     return raw
 
 
@@ -719,6 +719,52 @@ def read_recipe_photo(paths: list[str]) -> dict:
         raise SiteError(f"pick at most {RECIPE_PHOTOS} pictures of one recipe")
     images = [{"data": base64.b64encode(recipe_picture(p)).decode()} for p in paths]
     return api("POST", "/recipes/api/photo", {"images": images}, timeout=180)
+
+
+def dish_picture(path: str, box: dict | None = None, text: list[dict] | None = None) -> tuple[bytes | None, bool]:
+    """The recipe's picture from a photo of it: (JPEG bytes, whether it's the dish's own photo cut out).
+    `box` is where the dish is (fractions across and down), or it's looked for, keeping `text` (the
+    lines tesseract read, in the photo's pixels) out. No dish found: the whole photo. Cutting and
+    shrinking need Pillow; without it the whole photo goes as it is, when it's small enough to keep."""
+    p = Path(path.strip().strip("'\"")).expanduser()
+    try:
+        raw = p.read_bytes()
+    except OSError:
+        return None, False
+    try:
+        from PIL import Image, ImageOps  # optional: pip install pillow
+    except ImportError:
+        return (raw, False) if _picture_kind(raw) and len(raw) <= RECIPE_PHOTO_BYTES else (None, False)
+    import io
+    from . import recipe_rules
+    try:
+        with Image.open(io.BytesIO(raw)) as im:
+            turn = {2: Image.Transpose.FLIP_LEFT_RIGHT, 3: Image.Transpose.ROTATE_180, 4: Image.Transpose.FLIP_TOP_BOTTOM,
+                    5: Image.Transpose.TRANSPOSE, 6: Image.Transpose.ROTATE_270, 7: Image.Transpose.TRANSVERSE,
+                    8: Image.Transpose.ROTATE_90}.get(im.getexif().get(0x0112))
+            im = im.convert("RGB")
+            # Claude's box is on the photo the right way up; tesseract's lines are on it as stored.
+            if turn and box is not None:
+                im, turn = im.transpose(turn), None
+            if box is None and text is not None:
+                k = min(1.0, 200 / im.width)
+                small = im.resize((max(1, round(im.width * k)), max(1, round(im.height * k))))
+                scaled = [{key: b[key] * k for key in ("x0", "y0", "x1", "y1")} for b in text]
+                box = recipe_rules.find_picture(small.width, small.height, small.tobytes(), scaled)
+            if box:
+                im = im.crop((round(box["x0"] * im.width), round(box["y0"] * im.height),
+                              round(box["x1"] * im.width), round(box["y1"] * im.height)))
+            if turn:
+                im = im.transpose(turn)
+            im.thumbnail((1200, 1200))
+            for q in (85, 75, 60, 45):
+                out = io.BytesIO()
+                im.save(out, "JPEG", quality=q)
+                if out.tell() <= RECIPE_PHOTO_BYTES - 40 * 1024:
+                    return out.getvalue(), bool(box)
+    except Exception:  # noqa: BLE001  not a picture Pillow knows
+        pass
+    return None, False
 
 
 TESSERACT_HINT = ("Reading photos without a key needs Tesseract, free text recognition: "
@@ -789,7 +835,8 @@ def read_photo_here(paths: list[str]) -> dict:
     pages = [ocr_page(p) for p in paths]
     if not any(pages):
         raise SiteError("couldn't find any text in that picture")
-    return read_recipe_text(pages=pages)
+    # The first page's lines too, to keep out when looking for the dish's photo there.
+    return {**read_recipe_text(pages=pages), "text": [line["bbox"] for line in pages[0]]}
 
 
 def recipe_key(key: str) -> dict:
