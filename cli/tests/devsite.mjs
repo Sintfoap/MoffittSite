@@ -12,7 +12,8 @@
 // one browser to send to, and answers every push as delivered.
 // ryan has Recipe box; https://recipes.test/pancakes is a recipe page to save
 // (serves 4), and any other page there has no recipe on it.
-// ryan has Meal plan too (his Recipe box starts empty), and Pantry, with flour, soup and cumin in it.
+// ryan has Meal plan too (his Recipe box starts empty), and Pantry, with flour, soup and cumin in it;
+// any picture of a receipt reads as Walmart: flour, brown sugar, eggs and a bag.
 // ryan has Sweep, and he and sam are in a room "Plans" where sam asked about
 // dinner. The stand-in for Claude suggests that dinner from the first message
 // it's shown, and reads every photo of a recipe as Nana's Shortbread (but turns
@@ -43,6 +44,13 @@ if (notify) {
   globalThis.fetch = (input, init) => new URL(input.url || input).host === "fcm.googleapis.com"
     ? Promise.resolve(new Response(null, { status: 201 })) : matrix(input, init);
 }
+// Pantry's receipts (src/pantry_receipt.js), by Claude or Workers AI: any picture of one is this Walmart receipt.
+const RECEIPT = { found: true, store: "Walmart", date: "", notes: "", lines: [
+  { printed: "GV WW FLR 10LB", name: "Whole wheat flour", count: 1, size: "10 lb", food: true, price: 6.48 },
+  { printed: "GV BRWN SUGAR 2LB", name: "Brown sugar", count: 1, size: "2 lb", food: true, price: 2.24 },
+  { printed: "GV LG EGGS 12CT", name: "Eggs", count: 1, size: "12 ct", food: true, price: 3.12 },
+  { printed: "BAG FEE", name: "Bag", count: 1, size: "", food: false, price: 0.1 },
+] };
 {
   const before = globalThis.fetch;
   const PANCAKES = `<html><head><script type="application/ld+json">${JSON.stringify({ "@type": "Recipe", name: "Pancakes",
@@ -63,6 +71,7 @@ if (notify) {
     // A key with "revoked" in it was turned off at Anthropic after it was added.
     if (/revoked/.test(new Headers(init.headers).get("x-api-key"))) return new Response('{"type":"error"}', { status: 401 });
     const said = JSON.parse(init.body).messages[0].content;
+    if (/receipt/.test(JSON.parse(init.body).system || "")) return new Response(JSON.stringify({ stop_reason: "end_turn", content: [{ type: "text", text: JSON.stringify(RECEIPT) }] }));
     if (Array.isArray(said)) return new Response(JSON.stringify({ stop_reason: "end_turn", content: [{ type: "text", text: JSON.stringify({
       found: true, title: "Nana's Shortbread", servings: 0, yield: "Makes 24", time: "45 min",
       ingredients: ["2 cups flour", "1 cup butter", "1/2 cup sugar"], steps: ["Cream the butter and sugar.", "Add the flour.", "Bake at 325°F for 20 min."],
@@ -95,6 +104,7 @@ const WORDS = { "Tortilla española": "Spanish omelette", "La de mi abuela, la m
 // And Recipe box's photos without a Claude key (src/recipe_photo.js): any picture is this card.
 const AI = {
   async run(model, input) {
+    if (/receipt/.test(input.messages[0].content)) return { response: RECEIPT };
     if (Array.isArray(input.messages.at(-1).content)) return { response: {
       found: true, title: "Nana's Shortbread", servings: 0, yield: "makes 24", time: "45 min",
       ingredients: ["2 cups flour", "1 cup butter, softened", "½ cup sugar", "pinch of salt"],

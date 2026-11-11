@@ -8,7 +8,10 @@ gauged things (spices) go from Full to Empty.
 
 n adds food, u uses some, m adds a purchase (or refills a gauged thing), e
 edits, p corrects or takes off a purchase, x removes it, f shows all, use
-soon or running low, / finds."""
+soon or running low, / finds. c reads a grocery receipt from a photo (Claude
+with your key, k, or the site's AI): each line matched to what you have or
+offered as new, with an estimated expiry date, to check before it's added.
+Store abbreviations are remembered once added."""
 from __future__ import annotations
 
 import datetime as dt
@@ -23,6 +26,7 @@ from textual.widgets.option_list import Option
 
 from . import site
 from .look import BAD, FAINT, GOLD, INK, MUTED, Ask, Confirm, Page, attempt, plural
+from .receipt_dialog import ReceiptDialog
 
 WARN = "#e0b25a"
 FILTERS = (("all", "All"), ("soon", "Use soon"), ("low", "Running low"))
@@ -51,6 +55,11 @@ def when(i: dict) -> Text:
     if i["expired"]:
         return Text(f"expired {nice(i['expires'])}", style=f"bold {BAD}")
     return Text(f"{'use by' if i['soon'] else 'expires'} {nice(i['expires'])}", style=f"bold {WARN}" if i["soon"] else MUTED)
+
+
+def est(lot: dict) -> str:
+    """ (est.) after a date that was estimated from how long such things keep."""
+    return " (est.)" if lot.get("by") == "estimated" else ""
 
 
 def gauge(level: int) -> str:
@@ -297,7 +306,7 @@ class LotsDialog(ModalScreen[tuple[str, dict] | None]):
         with Vertical(classes="dialog"):
             yield Label(Text(f"Each purchase of {self.i['name']}", style=f"bold {INK}"))
             yield OptionList(*[Option(Text.assemble((lot["text"], f"bold {INK}"), (f"   bought {nice(lot['added'])}", MUTED),
-                                                    (f"   expires {nice(lot['expires'])}" if lot["expires"] else "   no expiry date", MUTED)))
+                                                    (f"   expires {nice(lot['expires'])}{est(lot)}" if lot["expires"] else "   no expiry date", MUTED)))
                                for lot in self.i["lots"]], id="lots")
             yield Static(Text("enter corrects one, x takes it off, esc closes", style=FAINT))
 
@@ -324,7 +333,8 @@ class PantryPage(Page):
     """
     BINDINGS = [Binding("n", "add", "Add food"), Binding("u", "use", "Use"), Binding("m", "more", "Bought more"),
                 Binding("e", "edit", "Edit"), Binding("p", "lots", "Purchases"), Binding("x", "remove", "Remove"),
-                Binding("f", "filter", "Show"), Binding("slash", "find", "Find"), Binding("r", "refresh", "Refresh")]
+                Binding("f", "filter", "Show"), Binding("slash", "find", "Find"), Binding("c", "receipt", "Receipt"),
+                Binding("k", "key", "Claude key", show=False), Binding("r", "refresh", "Refresh")]
 
     def __init__(self):
         super().__init__()
@@ -430,7 +440,7 @@ class PantryPage(Page):
                 t.append("None left. m adds what you buy next.", FAINT)
             for lot in i["lots"]:
                 t.append(f"{lot['text']}", INK)
-                t.append(f"  bought {nice(lot['added'])}" + (f", expires {nice(lot['expires'])}" if lot["expires"] else ""), MUTED)
+                t.append(f"  bought {nice(lot['added'])}" + (f", expires {nice(lot['expires'])}{est(lot)}" if lot["expires"] else ""), MUTED)
                 t.append("\n")
         t.append("\n\nu use · m " + ("refill" if i["kind"] == "gauged" else "bought more") + " · e edit" + ("" if i["kind"] == "gauged" else " · p purchases"), FAINT)
         d.update(t)
@@ -558,3 +568,66 @@ class PantryPage(Page):
                 self.find = text.strip()
                 self.show(self.data)
         self.app.push_screen(Ask("Find in your pantry", "Part of a name. Leave it empty to show everything.", value=self.find, ok="Find"), found)
+
+    # ── a receipt ──────────────────────────────────────────────────────────
+
+    def action_receipt(self) -> None:
+        photo = self.data.get("photo") or {}
+        if not photo.get("ready") and not photo.get("ai"):
+            self.app.notify("Reading receipts needs your Anthropic API key: press k to add it.", severity="error", timeout=6)
+            return
+
+        async def answer(paths: str | None) -> None:
+            if paths and paths.strip():
+                await self.read_receipt([x.strip() for x in paths.split(",") if x.strip()])
+        who = "Claude reads it, with your key. " if photo.get("ready") else "The site's AI reads it (Cloudflare's, no key needed). "
+        self.app.push_screen(Ask("Scan a receipt",
+                                 "A photo of a grocery receipt (a long one: up to 4 pictures, top to bottom, separated by commas). "
+                                 + who + "You check each line before anything is added.",
+                                 placeholder="~/Pictures/receipt.jpg", ok="Read it"), answer)
+
+    @attempt
+    async def read_receipt(self, paths: list[str]) -> None:
+        self.app.notify(f"Reading {'the receipt' if len(paths) == 1 else f'{len(paths)} pictures'}…", timeout=8)
+        out = await self.fetch(site.read_receipt, paths, dt.date.today().isoformat())
+        if out.get("why"):
+            self.app.notify(f"Claude couldn't read it ({out['why'].split('. ')[0].rstrip('.')}), so the site's AI did.", timeout=6)
+        self.check_receipt(out["store"], out["date"], out["by"], ReceiptDialog.rows_from(out["lines"]))
+
+    def check_receipt(self, store: str, date: str, by: str, rows: list[dict]) -> None:
+        async def checked(send: list[dict] | None) -> None:
+            if send is not None:
+                await self.add_receipt(store, date, by, rows, send)
+        self.app.push_screen(ReceiptDialog(store, date, by, rows, self.data["items"], self.data.get("usual_places", []) or self.data["places"]), checked)
+
+    @attempt
+    async def add_receipt(self, store: str, date: str, by: str, rows: list[dict], send: list[dict]) -> None:
+        out = await self.fetch(site.add_receipt, store, [ReceiptDialog.line(r) for r in send])
+        names = ", ".join(a["name"] for a in out["added"])
+        self.show(await self.fetch(site.pantry, dt.date.today().isoformat()))
+        if not out["failed"]:
+            self.app.notify(f"Added {len(out['added'])} from the receipt" + (f": {names}." if names else "."), timeout=6)
+            return
+        # The ones that couldn't go in stay to fix, each saying why.
+        why = {f["printed"]: f["error"] for f in out["failed"]}
+        left = [{**r, "error": why[r["printed"]]} for r in send if r["printed"] in why]
+        self.app.notify(f"Added {len(out['added'])}. {plural(len(left), 'line')} still need a fix.", severity="warning", timeout=6)
+        self.check_receipt(store, date, by, left)
+
+    def action_key(self) -> None:
+        if not (self.data.get("photo") or {}).get("sealing"):
+            self.app.notify("This site can't keep API keys yet. Ask its admin to set CHAT_BRIDGE_KEY.", severity="error", timeout=6)
+            return
+
+        async def answer(key: str | None) -> None:
+            if key and key.strip():
+                await self.save_key(key.strip())
+        self.app.push_screen(Ask("Read receipts with Claude",
+                                 "Claude reads receipts with your own Anthropic API key (console.anthropic.com/settings/keys), "
+                                 "so nobody else is billed for yours. It's kept sealed on the site; Recipe box and Sweep use the same one.",
+                                 placeholder="sk-ant-…", ok="Save key", password=True), answer)
+
+    @attempt
+    async def save_key(self, key: str) -> None:
+        self.data["photo"] = (await self.fetch(site.pantry_key, key))["photo"]
+        self.app.notify("Key saved: receipts are read by Claude now.", timeout=3)

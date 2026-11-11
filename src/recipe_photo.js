@@ -121,12 +121,12 @@ export function draftFrom(found) {
   return r;
 }
 
-// The pictures in a request, checked: [{type, data (base64)}].
-function picturesIn(body) {
+// The pictures in a request, checked: [{type, data (base64)}]. `what` is what they're of ("the recipe").
+function picturesIn(body, what = "the recipe", most = LIMITS.images) {
   if (!isObj(body)) fail("body must be a JSON object");
   const list = Array.isArray(body.images) ? body.images : body.image != null ? [{ data: body.image }] : [];
-  if (!list.length) fail("send {images: [{data}, ...]}: a picture of the recipe, as base64");
-  if (list.length > LIMITS.images) fail(`send at most ${LIMITS.images} pictures of one recipe`);
+  if (!list.length) fail(`send {images: [{data}, ...]}: a picture of ${what}, as base64`);
+  if (list.length > most) fail(`send at most ${most} pictures of ${what}`);
   return list.map(img => {
     const { s, bytes } = decode(isObj(img) ? img.data : img);
     if (bytes.length > LIMITS.imageBytes) fail(`that picture is too big (at most ${Math.round(LIMITS.imageBytes / 1e6 * 10) / 10} MB); make it smaller first`);
@@ -138,15 +138,15 @@ function picturesIn(body) {
 
 const ask = n => n > 1 ? `These ${n} pictures are one recipe. Write it out.` : "Write out the recipe in this picture.";
 
-async function withClaude(env, key, pics) {
+async function withClaude(env, key, pics, spec) {
   const content = pics.map(p => ({ type: "image", source: { type: "base64", media_type: p.type, data: p.data } }));
-  content.push({ type: "text", text: ask(pics.length) });
+  content.push({ type: "text", text: spec.ask(pics.length) });
   let reply;
   try {
     reply = await askClaude(key, {
       model: env.RECIPES_MODEL || env.SWEEP_MODEL || DEFAULT_MODEL, max_tokens: 16000,
-      output_config: { effort: "medium", format: { type: "json_schema", schema: SCHEMA } },
-      system: SYSTEM, messages: [{ role: "user", content }],
+      output_config: { effort: "medium", format: { type: "json_schema", schema: spec.schema } },
+      system: spec.system, messages: [{ role: "user", content }],
     }, "that photo");
   } catch (e) {
     // Sweep's page has the key form below its message; here, the next try asks for one.
@@ -163,13 +163,13 @@ const AI_SYSTEM = SYSTEM.replace(/\n\npicture is where[^\n]*/, "") + `
 Copy amounts exactly as printed, fractions too: ½ ⅓ ¼ ¾ ⅔ ⅛ as those characters, or 1/2 when it's written that way. Never make up an ingredient, amount or step that isn't in the picture. Answer only with the JSON object.`;
 const AI_SCHEMA = { ...SCHEMA, required: SCHEMA.required.filter(k => k !== "picture"), properties: Object.fromEntries(Object.entries(SCHEMA.properties).filter(([k]) => k !== "picture")) };
 
-async function withWorkersAI(env, pics) {
-  const content = [{ type: "text", text: ask(pics.length) }, ...pics.map(p => ({ type: "image_url", image_url: { url: `data:${p.type};base64,${p.data}` } }))];
+async function withWorkersAI(env, pics, spec) {
+  const content = [{ type: "text", text: spec.ask(pics.length) }, ...pics.map(p => ({ type: "image_url", image_url: { url: `data:${p.type};base64,${p.data}` } }))];
   let res;
   try {
     res = await env.AI.run(env.RECIPES_AI_MODEL || DEFAULT_AI_MODEL, {
-      messages: [{ role: "system", content: AI_SYSTEM }, { role: "user", content }],
-      response_format: { type: "json_schema", json_schema: AI_SCHEMA },
+      messages: [{ role: "system", content: spec.aiSystem }, { role: "user", content }],
+      response_format: { type: "json_schema", json_schema: spec.aiSchema },
       max_tokens: 4000, temperature: 0,
     });
   } catch (e) {
@@ -181,20 +181,30 @@ async function withWorkersAI(env, pics) {
   return found;
 }
 
-export async function readPhoto(env, user, body) {
-  const pics = picturesIn(body);
+const RECIPE = { what: "the recipe", ask, system: SYSTEM, schema: SCHEMA, aiSystem: AI_SYSTEM, aiSchema: AI_SCHEMA };
+
+// Pictures read by Claude with the person's own key, or by Workers AI without
+// one (or when Claude can't be reached): {found (the answer, as `spec.schema`), by, why?}.
+// spec is {what, ask(n), system, schema, aiSystem, aiSchema, images?}; Pantry reads receipts with it too.
+export async function readPictures(env, user, body, spec) {
+  const pics = picturesIn(body, spec.what, spec.images);
   const key = await keyOf(env, user);
-  if (!key && !env.AI) fail("add your Anthropic API key first: the photo is read with it");
+  if (!key && !env.AI) fail(`add your Anthropic API key first: ${spec.what} is read with it`);
   let found = null, by = "claude", why = "";
   if (key) {
-    try { found = await withClaude(env, key, pics); }
+    try { found = await withClaude(env, key, pics, spec); }
     catch (e) {
       // A bad key, Claude busy, no connection: Workers AI reads it instead, when the site has it.
       if (!env.AI || !(e instanceof SweepError)) throw e;
       why = e.message;
     }
   }
-  if (!found) { found = await withWorkersAI(env, pics); by = "ai"; }
+  if (!found) { found = await withWorkersAI(env, pics, spec); by = "ai"; }
+  return why ? { found, by, why } : { found, by };
+}
+
+export async function readPhoto(env, user, body) {
+  const { found, by, why } = await readPictures(env, user, body, RECIPE);
   const recipe = draftFrom(found);
   if (!recipe) fail(`couldn't find a recipe in that picture${found?.notes ? ` (${by === "claude" ? "Claude" : "it"} saw: ${tidy(found.notes, 200)})` : ""}`);
   if (by === "ai") recipe.picture = null;

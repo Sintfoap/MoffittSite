@@ -156,3 +156,33 @@ export function guess(name) {
   if (cup) out.perCup = cup[1];
   return out;
 }
+
+// ── how long things keep ────────────────────────────────────────────────────
+// Days a thing usually keeps once bought, for an expiry date when nothing
+// better is known (a receipt doesn't print them). Shown as an estimate, never
+// as the real date. Rough figures in the spirit of the USDA's FoodKeeper,
+// erring on the short side; the first match wins.
+const KEEPS = [
+  [/\b(cans?|canned|tins?|tinned|soup|broth|stock|tuna)\b/, 730],
+  [/\b(ground (beef|turkey|pork|chicken|meat)|mince)\b/, 2], [/\b(fish|salmon|shrimp|tilapia|cod)\b/, 2],
+  [/\b(chicken|turkey|pork|beef|steaks?|chops?|lamb)\b/, 3], [/\b(berries|strawberr|raspberr|blueberr|blackberr)\w*/, 5],
+  [/\b(lettuce|spinach|greens|salad|herbs?|cilantro|parsley|basil)\b/, 6], [/\bmilk\b/, 7], [/\b(bread|buns?|rolls?|bagels?|tortillas?)\b/, 7],
+  [/\b(bananas?|avocados?|tomato(es)?|peaches|pears?|grapes)\b/, 6], [/\b(bacon|ham|deli|sausages?|hot dogs?|lunch meat)\b/, 7],
+  [/\b(yogh?urt|sour cream|cottage cheese|cream cheese|cream)\b/, 14], [/\b(hummus|salsa|tofu)\b/, 7],
+  [/\b(peppers?|cucumbers?|zucchini|broccoli|cauliflower|mushrooms?|celery)\b/, 7], [/\b(cheese)\b/, 28], [/\beggs?\b/, 28],
+  [/\b(apples?|oranges?|lemons?|limes?|carrots?|cabbage)\b/, 21], [/\b(potato(es)?|onions?|garlic|squash|sweet potato(es)?)\b/, 30],
+  [/\bbutter\b/, 60], [/\b(juice)\b/, 10], [/\bfrozen\b/, 180], [/\bwhole wheat flour|whole grain flour\b/, 90], [/\b(flour|cornmeal)\b/, 180],
+  [/\b(nuts|almonds|walnuts|pecans|peanuts)\b/, 120], [/\b(cereal|crackers|chips|cookies)\b/, 90], [/\b(oil)\b/, 365],
+  [/\b(rice|beans|pasta|noodles|spaghetti|macaroni|oats|lentils|sugar|honey|salt)\b/, 730],
+];
+export function keepsFor(name, kind = "counted", place = "Cupboard") {
+  const n = ` ${String(name || "").toLowerCase()} `;
+  if (place === "Freezer" && !/\bfrozen\b/.test(n)) return 180;
+  const hit = KEEPS.find(([re]) => re.test(n));
+  if (hit) return hit[1];
+  return kind === "gauged" ? 730 : place === "Fridge" ? 7 : place === "Freezer" ? 180 : 365;
+}
+// That as a date, from `day` (YYYY-MM-DD).
+export function estimateExpiry(name, kind, place, day) {
+  return new Date(Date.parse(day + "T00:00:00Z") + keepsFor(name, kind, place) * 864e5).toISOString().slice(0, 10);
+}

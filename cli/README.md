@@ -180,6 +180,8 @@ The same food as `/pantry/`: everything down the left by where it's kept, with h
 | `p` | each purchase: `enter` corrects one, `x` takes it off |
 | `e` | edit it, or change its kind |
 | `x` | remove it |
+| `c` | read a grocery receipt from a photo file (several, separated by commas, for a long one): each line to check, `space` ticks, `enter` changes what it adds to, how much and its expiry, `ctrl+s` adds them. Dates marked (est.) are estimates |
+| `k` | add your Anthropic API key, for Claude to read receipts (without one, the site's AI does) |
 | `f` | all, use soon, or running low |
 | `/` | find by name |
 
@@ -292,6 +294,7 @@ sintfoap/notifications_page.py  what's pushed and where
 sintfoap/recipes_page.py   Recipe box
 sintfoap/meals_page.py     Meal plan
 sintfoap/pantry_page.py    Pantry
+sintfoap/receipt_dialog.py checking a receipt's lines before they go in the pantry
 sintfoap/sweep_page.py     Sweep
 sintfoap/trips_page.py     Trip planner
 sintfoap/board_page.py     Recipe board

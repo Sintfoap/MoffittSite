@@ -11,8 +11,8 @@
 // amount and expiry date, used oldest-expiry first. Units, plurals and the
 // first guess at an item's kind are public/pantry/units.js, shared with the page.
 //
-// This is the pantry itself. Filling it from receipts and barcodes, and taking
-// from it for recipes on a shopping list, come next (the Pantry plan doc).
+// Receipts fill it (src/pantry_receipt.js). Barcodes, the phone scanner, and
+// taking from it for recipes on a shopping list come next (the Pantry plan doc).
 //
 // /pantry/api/items                  GET ?day=YYYY-MM-DD → {items, places, counts, limits}
 //                                    POST {name, kind?, place?, amount?, expires?, low?, unit?, size?, level?, per_cup?, words?} → the new item
@@ -23,11 +23,16 @@
 // /pantry/api/items/<id>/lots/<lot>  PATCH {amount?, expires?} → the item; DELETE → the item without that lot
 // /pantry/api/items/<id>/use         POST {amount} (staple: "1 cup"; counted: how many) or {all: true}, and {tossed?: true};
 //                                      or {level} for a gauged item → the item, with that taken out
+// /pantry/api/key                    PUT {key} → {photo}; DELETE → {photo}: the Anthropic key receipts are read with (Sweep's and Recipe box's too)
+// /pantry/api/receipt                POST {images} → what a receipt adds, to check; /pantry/api/receipt/add POST {store, lines} adds it (src/pantry_receipt.js)
+//   Lots record where their expiry date came from: by is "typed", "estimated" (from how long such things keep) or "scanned".
 
 import { db } from "./db.js";
 import { sameOrigin } from "./account.js";
 import { withRail } from "./pages.js";
 import { readJson, BadRequest } from "./drift.js";
+import { readPhotoBody, photoState, saveKey, forgetKey } from "./recipe_photo.js";
+import { readReceipt, addReceipt } from "./pantry_receipt.js";
 import { UNITS, ML_PER_CUP, LEVELS, readAmount, inUnit, unitsOf, plural, singular, counted, guess } from "../public/pantry/units.js";
 
 const fail = msg => { throw new BadRequest(msg); };
@@ -36,7 +41,7 @@ export const KINDS = ["staple", "counted", "gauged"];
 export const PLACES = ["Fridge", "Freezer", "Cupboard", "Spice rack"];
 const SOON_DAYS = 5;
 const ID = /^i_[0-9a-f]{10}$/;
-const ROUTE = /^\/pantry\/api\/items(?:\/(i_[0-9a-f]{10})(?:\/(use|lots)(?:\/(t_[0-9a-f]{8}))?)?)?\/?$/;
+const ROUTE = /^\/pantry\/api\/(?:key|receipt(?:\/add)?|items(?:\/(i_[0-9a-f]{10})(?:\/(use|lots)(?:\/(t_[0-9a-f]{8}))?)?)?)\/?$/;
 const isObj = v => v && typeof v === "object" && !Array.isArray(v);
 const today = () => new Date().toISOString().slice(0, 10);
 const stamp = () => new Date().toISOString().slice(0, 19);
@@ -68,6 +73,13 @@ function cleanDate(v) {
   const s = String(v).trim();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(s) || Number.isNaN(Date.parse(s + "T00:00:00Z"))) fail("an expiry date is YYYY-MM-DD");
   return s;
+}
+// Where an expiry date came from: typed in, estimated from how long such things
+// keep (a receipt doesn't say), or scanned off the package.
+const BY = ["typed", "estimated", "scanned"];
+function cleanBy(v, expires) {
+  if (!expires) return "";
+  return BY.includes(v) ? v : "typed";
 }
 function cleanLevel(v) {
   const i = typeof v === "number" ? v : LEVELS.findIndex(l => l.toLowerCase() === String(v ?? "").trim().toLowerCase());
@@ -118,7 +130,8 @@ const addDays = (day, n) => new Date(Date.parse(day + "T00:00:00Z") + n * 864e5)
 export function view(item, day = today()) {
   const have = left(item);
   const lots = item.kind === "gauged" ? [] : order(item.lots || []).map(l => ({ ...l, text: shown(item, l.amount) }));
-  const expires = item.kind === "gauged" ? item.expires || "" : lots.find(l => l.expires && l.amount > 0)?.expires || "";
+  const first = item.kind === "gauged" ? null : lots.find(l => l.expires && l.amount > 0);
+  const expires = item.kind === "gauged" ? item.expires || "" : first?.expires || "";
   const out = item.kind === "gauged" ? item.level === 0 : have <= 0;
   const low = !out && (item.kind === "staple" ? item.low !== null && have <= item.low : item.kind === "gauged" ? item.level <= 1 : false);
   return {
@@ -128,7 +141,7 @@ export function view(item, day = today()) {
     low: item.kind === "staple" ? item.low : null, low_text: item.kind === "staple" && item.low !== null ? shown(item, item.low) : "",
     level: item.kind === "gauged" ? item.level : null,
     left: have, text: item.kind === "gauged" ? LEVELS[item.level] : shown(item, have),
-    lots, expires, expired: !!expires && expires < day, soon: !!expires && expires <= addDays(day, SOON_DAYS),
+    lots, expires, expires_by: first?.by || (expires ? "typed" : ""), expired: !!expires && expires < day, soon: !!expires && expires <= addDays(day, SOON_DAYS),
     is_low: low, is_out: out, updated: item.updated,
   };
 }
@@ -207,7 +220,8 @@ export async function addItem(env, user, body) {
   const amount = body.amount;
   if (item.kind !== "gauged" && amount !== undefined && amount !== null && String(amount).trim() !== "") {
     const n = amountOf(item, amount);
-    if (n > 0) item.lots.push({ id: "t_" + hex(4), amount: n, expires: cleanDate(body.expires), added: today() });
+    const expires = cleanDate(body.expires);
+    if (n > 0) item.lots.push({ id: "t_" + hex(4), amount: n, expires, by: cleanBy(body.expires_by, expires), added: today() });
   }
   await save(d, user.id, item);
   return view(item);
@@ -239,7 +253,8 @@ export async function editItem(env, user, id, body) {
     item.lots = [];
     if (kind !== "gauged") {
       const n = amountOf(item, body.amount);
-      if (n > 0) item.lots.push({ id: "t_" + hex(4), amount: n, expires: "expires" in body ? cleanDate(body.expires) : soonest, added: today() });
+      const expires = "expires" in body ? cleanDate(body.expires) : soonest;
+      if (n > 0) item.lots.push({ id: "t_" + hex(4), amount: n, expires, by: cleanBy(body.expires_by, expires), added: today() });
     }
   } else {
     if ("per_cup" in body && item.kind === "staple") item.perCup = cleanPerCup(body.per_cup);
@@ -261,8 +276,11 @@ export async function editItem(env, user, id, body) {
 }
 
 export async function deleteItem(env, user, id) {
-  const r = await (await db(env)).prepare("DELETE FROM pantry_items WHERE owner = ? AND id = ?").bind(user.id, id).run();
-  return r.meta.changes ? { removed: true } : null;
+  const d = await db(env);
+  const r = await d.prepare("DELETE FROM pantry_items WHERE owner = ? AND id = ?").bind(user.id, id).run();
+  if (!r.meta.changes) return null;
+  await d.prepare("DELETE FROM pantry_aliases WHERE owner = ? AND item = ?").bind(user.id, id).run();
+  return { removed: true };
 }
 
 // Another purchase of something already in the pantry.
@@ -275,7 +293,8 @@ export async function addLot(env, user, id, body) {
   if (item.lots.length >= LIMITS.lots) fail(`${item.name} can have at most ${LIMITS.lots} purchases kept apart`);
   const n = amountOf(item, body.amount);
   if (!(n > 0)) fail("say how much you bought");
-  item.lots.push({ id: "t_" + hex(4), amount: n, expires: cleanDate(body.expires), added: today() });
+  const expires = cleanDate(body.expires);
+  item.lots.push({ id: "t_" + hex(4), amount: n, expires, by: cleanBy(body.expires_by, expires), added: today() });
   await save(d, user.id, item);
   return view(item);
 }
@@ -289,7 +308,7 @@ export async function editLot(env, user, id, lotId, body, remove = false) {
   if (remove) item.lots = item.lots.filter(l => l !== lot);
   else {
     if ("amount" in body) lot.amount = amountOf(item, body.amount);
-    if ("expires" in body) lot.expires = cleanDate(body.expires);
+    if ("expires" in body) { lot.expires = cleanDate(body.expires); lot.by = cleanBy(body.expires_by, lot.expires); }
     if (!(lot.amount > 0)) item.lots = item.lots.filter(l => l !== lot);
   }
   await save(d, user.id, item);
@@ -349,6 +368,8 @@ const PAGE_CSP = [
   "form-action 'self'", "frame-ancestors 'none'", "base-uri 'none'",
 ].join("; ");
 
+// The viewer's own date, sent as ?day=, or today where the site is.
+const dayOf = request => { const day = new URL(request.url).searchParams.get("day"); return /^\d{4}-\d{2}-\d{2}$/.test(day || "") ? day : today(); };
 const json = (obj, status = 200) => new Response(JSON.stringify(obj), { status, headers: { "Content-Type": "application/json", "Cache-Control": "no-store" } });
 
 export async function pantry(request, env, user, pathname) {
@@ -370,11 +391,18 @@ export async function pantry(request, env, user, pathname) {
     const notAllowed = () => json({ error: "method not allowed" }, 405);
     const [, id, sub, lot] = m;
     let out;
+    if (pathname.replace(/\/$/, "") === "/pantry/api/key") {
+      if (method === "PUT") return json(await saveKey(env, user, await readJson(request)));
+      if (method === "DELETE") return json(await forgetKey(env, user));
+      return notAllowed();
+    }
+    if (pathname.startsWith("/pantry/api/receipt")) {
+      if (method !== "POST") return notAllowed();
+      if (pathname.replace(/\/$/, "").endsWith("/add")) return json(await addReceipt(env, user, await readJson(request)));
+      return json(await readReceipt(env, user, await readPhotoBody(request), dayOf(request)));
+    }
     if (!id) {
-      if (method === "GET") {
-        const day = new URL(request.url).searchParams.get("day");
-        return json(await listItems(env, user, /^\d{4}-\d{2}-\d{2}$/.test(day || "") ? day : today()));
-      }
+      if (method === "GET") return json({ ...await listItems(env, user, dayOf(request)), photo: await photoState(env, user) });
       if (method === "POST") return json(await addItem(env, user, await readJson(request)), 201);
       return notAllowed();
     }
