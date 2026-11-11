@@ -1,11 +1,10 @@
 // Pantry scanner: the phone app for filling Pantry (src/pantry.js) while you
-// unpack groceries. It snaps receipts (read by the site), scans barcodes and
-// reads expiry dates on the phone (ML Kit), and sends what you check to the
-// site. It pairs once by scanning a QR code on the Pantry page; see the
+// unpack groceries. It snaps receipts (read by the site) and scans barcodes
+// on the phone (ML Kit), and sends what you check to the site. It pairs once by scanning a QR code on the Pantry page; see the
 // README's "Pantry scanner" section.
 //
 //   gradle -p scanner assembleDebug                         a test build
-//   gradle -p scanner testDebugUnitTest                     its tests (the date reader)
+//   gradle -p scanner testDebugUnitTest                     its tests
 //   gradle -p scanner assembleRelease -PappVersion=3        version 3, signed with the key in
 //                                                           ANDROID_KEYSTORE / _PASSWORD / ANDROID_KEY_ALIAS
 //                                                           (what .github/workflows/scanner.yml does for a tag scanner-v3)
@@ -76,7 +75,6 @@ dependencies {
     implementation "androidx.camera:camera-lifecycle:$camerax"
     implementation "androidx.camera:camera-view:$camerax"
     implementation "com.google.mlkit:barcode-scanning:17.3.0"
-    implementation "com.google.mlkit:text-recognition:16.0.1"
     implementation "androidx.work:work-runtime-ktx:2.10.0"
     implementation "androidx.exifinterface:exifinterface:1.3.7"
     implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0"
