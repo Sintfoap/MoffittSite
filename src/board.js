@@ -17,7 +17,7 @@
 // admin) can change or delete it.
 //
 // /board/api/board?day=YYYY-MM-DD          GET → {categories, label_list, recipe_box, recipes, unread, featured, you, can_label}:
-//                                            featured is the recipe of the day, someone else's post (day is your local date)
+//                                            featured is the recipe of the day, the same post for everyone that day (day is your local date)
 // /board/api/categories/<key>              DELETE → the key and its labels gone (needs Recipe labels)
 // /board/api/categories/<key>/follow       PUT {follow} → the category
 // /board/api/posts?view=&category=&label=&before=
@@ -237,17 +237,24 @@ export async function listPosts(env, user, { view = "feed", category: cat = "", 
   return { posts, more: results.length > LIMITS.page, unread: isFeed && !before ? 0 : count };
 }
 
-// The recipe of the day: one of everyone else's posts, picked by the day and
-// who's asking, so it stays the same all day and differs from person to person.
+// The recipe of the day: one post off the shared board, picked by the day alone,
+// so everyone gets the same one (yours too, when it's your turn). It's drawn from
+// the posts shared before that day began, so a post shared or taken down later in
+// the day doesn't change it; a board that's newer than that draws from what it has.
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 export async function featured(env, user, day = "") {
   if (!DAY.test(day)) day = new Date().toISOString().slice(0, 10);
   const d = await db(env);
-  const { n } = await d.prepare("SELECT COUNT(*) AS n FROM board_posts WHERE author != ?").bind(user.id).first();
+  let pool = "WHERE p.created < ?", args = [`${day}T00:00:00.000Z`];
+  let { n } = await d.prepare(`SELECT COUNT(*) AS n FROM board_posts p ${pool}`).bind(...args).first();
+  if (!n) {
+    pool = "", args = [];
+    ({ n } = await d.prepare("SELECT COUNT(*) AS n FROM board_posts").first());
+  }
   if (!n) return null;
-  const hash = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`${user.id}|${day}`)));
+  const hash = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`recipe-of-the-day|${day}`)));
   const at = ((hash[0] << 24) | (hash[1] << 16) | (hash[2] << 8) | hash[3]) >>> 0;
-  const r = await d.prepare(`${POST_SELECT} WHERE p.author != ? ORDER BY p.id LIMIT 1 OFFSET ?`).bind(user.id, user.id, at % n).first();
+  const r = await d.prepare(`${POST_SELECT} ${pool} ORDER BY p.id LIMIT 1 OFFSET ?`).bind(user.id, ...args, at % n).first();
   return r ? { ...toPost(r, user, undefined, await labelList(d)), day } : null;
 }
 

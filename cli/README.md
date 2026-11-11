@@ -231,7 +231,7 @@ The same trips as `/trips/`: your trips on the left, the open one on the right i
 
 ## Recipe board
 
-The same board as `/board/`: your feed (new recipes in the categories you follow), everything, what you've shared and what you've saved down the left, then every category, starred if you follow it. You can also follow just one value of a category (like Season: Fall), so only those recipes reach your feed. The categories are the label keys from Recipe labels (Season, Cuisine...): a recipe shows under every key its labels use, and the open key lists its values to narrow it to one. Your feed and Everything start with the recipe of the day: one of someone else's posts, a new one each day. The open view's recipes are on the right, newest first, with the highlighted one's recipe under them. In Recipe box, `b` shares the open recipe here.
+The same board as `/board/`: your feed (new recipes in the categories you follow), everything, what you've shared and what you've saved down the left, then every category, starred if you follow it. You can also follow just one value of a category (like Season: Fall), so only those recipes reach your feed. The categories are the label keys from Recipe labels (Season, Cuisine...): a recipe shows under every key its labels use, and the open key lists its values to narrow it to one. Your feed and Everything start with the recipe of the day: one post off the board, the same for everyone, a new one each day. The open view's recipes are on the right, newest first, with the highlighted one's recipe under them. In Recipe box, `b` shares the open recipe here.
 
 | Key | |
 |---|---|

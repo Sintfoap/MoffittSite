@@ -383,7 +383,7 @@ class BoardPage(Page):
             if f:
                 t = Text.assemble(("★ RECIPE OF THE DAY  ", f"bold {GOLD}"), (f["title"], f"bold {INK}"), ("  ✓ saved" if f["saved"] else "", GOLD_DIM))
                 t.append("\n" + (label_line(f) + " · " if label_line(f) else ""), style=GOLD_DIM)
-                t.append(f"shared by {f['by']}", style=FAINT)
+                t.append("shared by " + ("you" if f.get("yours") else f["by"]), style=FAINT)
                 box.add_option(Option(t, id="featured"))
             if not self.posts:
                 none = "You don't follow any categories yet." if not self.at["category"] and self.at["view"] == "feed" \

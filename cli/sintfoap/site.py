@@ -1097,7 +1097,7 @@ def drift_places() -> list:
 def board() -> dict:
     """{categories, label_list, recipe_box, recipes, unread, featured, can_label}: every category (a label key, with its values and
     whether you follow it), the labels to tick, your Recipe box's
-    recipes to share, and today's (by this computer's date) recipe of the day: someone else's post, or None."""
+    recipes to share, and today's (by this computer's date) recipe of the day: the same board post for everyone that day, or None."""
     import datetime
     return _get("/board/api/board?day=" + datetime.date.today().isoformat())
 
