@@ -25,7 +25,7 @@ public/          the website, served as static files
   meals/           Meal plan: the week's dinners from Recipe box, around the Drift calendar
   pantry/          Pantry: your food by where it's kept; units.js reads amounts ("10 lb", "2 cups") and guesses a new item's kind from its name (shared with the Worker)
   sweep/           Sweep: Drift suggestions read out of your chat rooms, to accept or turn down
-  board/           Recipe board: recipes shared under their labels' keys, a feed of the keys (or single values, like Season: Fall) you follow, and saving any into Recipe box
+  board/           Recipe board: recipes shared under their labels' keys, a feed of the keys (or single values, like Season: Fall) you follow, saving any into Recipe box, and reviews from whoever made one (stars, how it turned out, what they changed)
   labels/          Recipe labels: the one list of labels (Season: Fall) recipes pick from, kept by whoever has the app
   trips/           Trip planner: a trip's days, places and packing list, planned with whoever's going
   food/            Food club: a food a month, picked by one member and made by all, with favorites and photos of everyone's attempts
@@ -62,7 +62,7 @@ src/             the Worker: runs only for the paths in run_worker_first
   meals.js         Meal plan: a week of dinners picked from Recipe box, quick ones on busy Drift nights, and the week's shopping sent to a Drift list
   sweep.js         Sweep: reads chosen chat rooms with Claude and suggests Drift events, tasks and list items
   translate.js     "Translate to English" for Drift items, recipes and board posts: shown beside the original, saved only when asked; read with Workers AI (the "ai" binding), or your own Claude key from Sweep without it
-  board.js         Recipe board: posts (from a link, Recipe box, or typed in) filed under their labels' keys, follows, the feed and its unread count, the recipe of the day, saves into Recipe box
+  board.js         Recipe board: posts (from a link, Recipe box, or typed in) filed under their labels' keys, follows, the feed and its unread count, the recipe of the day, saves into Recipe box, reviews (stars, how it turned out, what was changed)
   labels.js        Recipe labels: the label list (add many values at once, rename or remove a value or a whole key), its page and API
   trips.js         Trip planner: shared trips, their itinerary, pinned places, and packing lists sent to Drift
   food.js          Food club: the month's pick and its recipe (from a link or Recipe box), who made and loved it, and photos kept in D1

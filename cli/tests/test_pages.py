@@ -1700,6 +1700,50 @@ def test_recipe_board_follows_a_label_key_saves_a_post_and_shares_one(real_site)
     run_app("board", board)
 
 
+def test_recipe_board_reviews_a_post_with_stars_and_what_was_changed(real_site):
+    async def review(app, pilot):
+        page = app.screen
+        await page.go(view="all")
+        await settle(pilot, 0.6)
+        # sam's Shortbread, open: nobody's reviewed it yet.
+        assert page.current()["title"] == "Shortbread"
+        assert "Nobody's reviewed it yet" in str(page.query_one("#reviews").render())
+        page.query_one("#posts").focus()
+        # v: ryan made it; four stars, how it went, what he changed.
+        await pilot.press("v")
+        await settle(pilot, 0.4)
+        dialog = app.screen
+        assert type(dialog).__name__ == "ReviewDialog"
+        dialog.query_one("#rating").value = 4
+        dialog.query_one("#note").text = "Crumbly in the best way."
+        dialog.query_one("#changes").text = "Added lemon zest."
+        await pilot.press("ctrl+s")
+        await settle(pilot, 0.6)
+        assert page.current()["reviews"] == {"count": 1, "rated": 1, "stars": 4}
+        shown = str(page.query_one("#reviews").render())
+        assert "★★★★☆" in shown and "Crumbly in the best way." in shown and "Changed: Added lemon zest." in shown
+        assert "★ 4 · 1 review" in str(page.query_one("#posts").get_option_at_index(page.query_one("#posts").highlighted).prompt)
+        mine = site.board_reviews(page.current()["id"])["yours"]
+        assert (mine["rating"], mine["changes"]) == (4, "Added lemon zest.")
+        # v again changes it: the dialog starts with what he wrote.
+        await pilot.press("v")
+        await settle(pilot, 0.4)
+        dialog = app.screen
+        assert dialog.query_one("#rating").value == 4 and dialog.query_one("#note").text == "Crumbly in the best way."
+        dialog.query_one("#rating").value = 5
+        await pilot.press("ctrl+s")
+        await settle(pilot, 0.6)
+        assert page.current()["reviews"]["stars"] == 5
+        # And takes it down.
+        await pilot.press("v")
+        await settle(pilot, 0.4)
+        await pilot.click("#delete")
+        await settle(pilot, 0.6)
+        assert page.current()["reviews"]["count"] == 0
+        assert site.board_reviews(page.current()["id"])["yours"] is None
+    run_app("board", review)
+
+
 def test_g_b_opens_the_terminal_recipe_board(real_site):
     async def go(app, pilot):
         await settle(pilot, 0.5)
