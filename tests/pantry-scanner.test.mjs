@@ -198,4 +198,11 @@ test("a gauged thing comes in as full as you say", async () => {
   assert.deepEqual(out.failed, []);
   assert.deepEqual(out.added.map(a => a.text), ["½ left", "¼ left"]);
   assert.equal((await api(ryan, "POST", "add", { lines: [{ item: cumin.id }] })).json.added[0].text, "Full");
+  // A new one left at Full (the app sends no level, or null): full, not an error.
+  const fresh = (await api(ryan, "POST", "add", { lines: [
+    { key: "a", name: "Olive oil", kind: "gauged" },
+    { key: "b", name: "Maple syrup", kind: "gauged", level: null },
+  ] })).json;
+  assert.deepEqual(fresh.failed, []);
+  assert.deepEqual(fresh.added.map(a => a.text), ["Full", "Full"]);
 });
