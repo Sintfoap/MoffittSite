@@ -26,7 +26,6 @@ sintfoap                    # signs you in the first time, then opens your dashb
 | `sintfoap food` | Food club: the month's food, its recipe, favorites and everyone's photos |
 | `sintfoap admin` | which apps each account can use (admins) |
 | `sintfoap app` | the Android app: a QR code to scan with your phone, and the download link |
-| `sintfoap books [--plain]` | the book club pick: read about the books and vote; no sign-in needed |
 | `sintfoap login` | shows a code and opens the site; approve it there |
 | `sintfoap dashboard --plain` | the dashboard as text, for scripts and pipes |
 | `sintfoap whoami` | which account this terminal is signed in as |
@@ -64,19 +63,6 @@ The same panels as `/dashboard`, in the site's colours: Today (overdue Drift ite
 | `q` | quit |
 
 On every page `esc` goes back, `w` opens the same page in your browser and `q` quits. `g` then a letter jumps around, as on the website: `g h` home, `g d` Drift, `g p` plugin store, `g c` chat, `g r` Recipe box, `g b` Recipe board, `g l` Recipe labels, `g m` Meal plan, `g y` Pantry, `g w` Sweep, `g t` Trip planner, `g f` Food club, `g k` Feedback, `g s` settings, `g n` notifications, `g a` admin, `g o` sign out.
-
-## Book club pick
-
-The public `/books/` page, where the book club picks its next book: each book with its description, where to get it and its votes so far. It works without signing in. This terminal gets one vote, kept under its own id in `~/.config/sintfoap/books.json`; votes from here show the computer's name to admins. Signed in as an admin, a "Who voted" list follows the books.
-
-| Key | |
-|---|---|
-| `↑↓` `jk` | move between books |
-| `enter` / `v` | vote for it (on your vote: take it back) |
-| `u` | take your vote back |
-| `o` | where to get it: pick one to open in your browser |
-| `n` | the name your vote is under |
-| `x` | admins, on the Who voted list: remove that vote |
 
 ## Drift
 

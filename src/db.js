@@ -378,11 +378,12 @@ const SCHEMA = [
      updated TEXT NOT NULL,
      PRIMARY KEY (owner, code)
    )`,
-  // Votes on the public book suggestions page (src/books.js). One per browser,
-  // by the random id in its __Host-bv cookie; it can be changed or taken back.
+  // Votes from the old public book suggestions page, which has been removed.
+  // Nothing reads or writes this table any more; it's kept so the votes aren't
+  // lost. To drop it: DROP INDEX book_votes_ip; DROP TABLE book_votes;
   `CREATE TABLE IF NOT EXISTS book_votes (
      voter      TEXT PRIMARY KEY,                  -- 32 hex from the cookie
-     book       TEXT NOT NULL,                     -- an id from BOOKS in src/books.js
+     book       TEXT NOT NULL,                     -- the book's id
      name       TEXT NOT NULL DEFAULT '',          -- what they typed as their name, if anything
      user_id    TEXT,                              -- their account, if they were signed in
      ip         TEXT NOT NULL,
