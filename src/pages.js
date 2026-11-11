@@ -32,6 +32,7 @@ const ICON = {
   chat: `<path d="M4 5h16v11H9l-5 4z"/><path d="M8 9.5h8M8 12.5h5"/>`,
   recipes: `<path d="M6 3h11a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H6z"/><path d="M6 3v18M9.5 8h5M9.5 11.5h5"/>`,
   meals: `<path d="M7 3v7a2 2 0 0 0 4 0V3M9 10v11"/><path d="M16 21V3c-2 1-3 4-3 8h3"/>`,
+  pantry: `<path d="M8 3h8v3H8z"/><path d="M7 6h10a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1z"/><path d="M6 11h12M6 16h12"/>`,
   sweep: `<path d="M4 20 14 10M12 8l4 4M14 6l4 4-3 3-4-4z"/><path d="M5 5v3M3.5 6.5h3M19 15v3M17.5 16.5h3"/>`,
   trips: `<path d="M4 8h16v11H4z"/><path d="M9 8V5h6v3M4 13h16"/>`,
   labels: `<path d="M3 12V4h8l10 10-8 8z"/><circle cx="7.5" cy="8.5" r="1.5"/>`,

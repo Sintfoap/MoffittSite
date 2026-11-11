@@ -7,7 +7,7 @@
 // "todo" area before the page or API is served. /plugins (the plugin store,
 // src/store.js) and /chat (src/chat.js) each need their own app turned on for
 // the account on the admin page, and so do /notifications (src/notify.js),
-// /recipes, the Recipe box (src/recipes.js), /meals, the Meal plan (src/meals.js), /sweep, which suggests Drift
+// /recipes, the Recipe box (src/recipes.js), /meals, the Meal plan (src/meals.js), /pantry, Pantry (src/pantry.js), /sweep, which suggests Drift
 // items from chat rooms (src/sweep.js), /trips, Trip planner (src/trips.js), /board,
 // the Recipe board (src/board.js), /labels, Recipe labels (src/labels.js), and /food, Food club (src/food.js).
 // /mcp is the MCP server AI agents use Drift through, with an API key (src/mcp.js).
@@ -33,6 +33,7 @@ import { recipes } from "./recipes.js";
 import { books } from "./books.js";
 import { sweepApp } from "./sweep.js";
 import { meals } from "./meals.js";
+import { pantry } from "./pantry.js";
 import { trips } from "./trips.js";
 import { board } from "./board.js";
 import { labels } from "./labels.js";
@@ -93,6 +94,13 @@ export default {
     }
     if (pathname.startsWith("/meals/")) {
       return protect(request, env, areaOf("meals"), user => meals(request, env, user, pathname));
+    }
+    if (pathname === "/pantry") {
+      url.pathname = "/pantry/";
+      return Response.redirect(url.toString(), 308);
+    }
+    if (pathname.startsWith("/pantry/")) {
+      return protect(request, env, areaOf("pantry"), user => pantry(request, env, user, pathname));
     }
     if (pathname === "/trips") {
       url.pathname = "/trips/";

@@ -905,6 +905,47 @@ def recipe_key(key: str) -> dict:
     return api("PUT", "/recipes/api/key", {"key": key}, timeout=30)
 
 
+# ───────────────────────────────── pantry ───────────────────────────────────
+# /pantry/api/ (src/pantry.js): your food, as staples (measured), counted things and gauged ones (Full to Empty).
+
+def pantry(day: str = "") -> dict:
+    """{items: [{id, name, kind, place, text, low_text, level, lots, expires, soon, expired, is_low, is_out, ...}], places, counts, levels}.
+    day is your own date (YYYY-MM-DD), for what's expiring soon."""
+    return _get("/pantry/api/items" + (f"?day={_q(day)}" if day else ""))
+
+
+def add_pantry_item(item: dict) -> dict:
+    """{name, kind?, place?, amount?, expires?, low?, unit?, size?, level?, words?}: kind, place and unit are guessed from the name when left out."""
+    return api("POST", "/pantry/api/items", item)
+
+
+def edit_pantry_item(item_id: str, change: dict) -> dict:
+    """{name?, place?, words?, low?, per_cup?, unit?, size?, level?, expires?, kind? (with amount)}."""
+    return api("PATCH", f"/pantry/api/items/{_q(item_id)}", change)
+
+
+def delete_pantry_item(item_id: str) -> dict:
+    return api("DELETE", f"/pantry/api/items/{_q(item_id)}")
+
+
+def use_pantry_item(item_id: str, how: dict) -> dict:
+    """{amount} ("1 cup", or how many), {all: True}, {all: True, tossed: True}, or {level} for a gauged item."""
+    return api("POST", f"/pantry/api/items/{_q(item_id)}/use", how)
+
+
+def add_pantry_lot(item_id: str, amount: str, expires: str = "") -> dict:
+    """Another purchase: "5 lb" or how many, and its expiry date (YYYY-MM-DD) if it has one."""
+    return api("POST", f"/pantry/api/items/{_q(item_id)}/lots", {"amount": amount, "expires": expires})
+
+
+def edit_pantry_lot(item_id: str, lot_id: str, change: dict) -> dict:
+    return api("PATCH", f"/pantry/api/items/{_q(item_id)}/lots/{_q(lot_id)}", change)
+
+
+def delete_pantry_lot(item_id: str, lot_id: str) -> dict:
+    return api("DELETE", f"/pantry/api/items/{_q(item_id)}/lots/{_q(lot_id)}")
+
+
 # ────────────────────────────── meal plan ───────────────────────────────────
 # /meals/api/ (src/meals.js)
 

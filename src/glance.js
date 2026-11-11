@@ -10,6 +10,7 @@ import { unread as boardUnread } from "./board.js";
 import { listPicks } from "./food.js";
 import { listTrips } from "./trips.js";
 import { tonight } from "./meals.js";
+import { pantryLine } from "./pantry.js";
 
 const plural = (n, word, many = word + "s") => `${n} ${n === 1 ? word : many}`;
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -39,6 +40,7 @@ const LINES = {
     const t = await tonight(env, user, day);
     return t?.out ? "Eating out tonight" : t ? `Tonight: ${t.title}` : "Nothing planned for tonight";
   },
+  pantry: async (env, user, { day }) => pantryLine(env, user, day),
   board: async (env, user) => {
     const n = await boardUnread(await db(env), user);
     return n ? `${plural(n, "new recipe")} in your feed` : null;

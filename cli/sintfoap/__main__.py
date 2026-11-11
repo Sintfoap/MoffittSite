@@ -11,6 +11,7 @@ sintfoap — sintfoap.xyz from the terminal.
   sintfoap notifications      what's pushed to your browsers and phone
   sintfoap recipes            Recipe box: recipes, scaled, onto a Drift shopping list
   sintfoap meals              Meal plan: the week's dinners around your Drift calendar
+  sintfoap pantry             Pantry: your food, how much is left, and what to use soon
   sintfoap sweep              Sweep: Drift suggestions from your chat rooms
   sintfoap trips              Trip planner: the days, places and packing list, with whoever's going
   sintfoap board              Recipe board: recipes shared by their labels, and a feed of the keys you follow
@@ -96,6 +97,7 @@ def main(argv=None):
                        ("notifications", "what's pushed to your browsers and phone"),
                        ("recipes", "Recipe box: recipes, scaled, onto a Drift shopping list"),
                        ("meals", "Meal plan: the week's dinners around your Drift calendar"),
+                       ("pantry", "Pantry: your food, how much is left, and what to use soon"),
                        ("sweep", "Sweep: Drift suggestions from your chat rooms"),
                        ("trips", "Trip planner: the days, places and packing list, with whoever's going"),
                        ("board", "Recipe board: recipes shared by their labels, and a feed of the keys you follow"),

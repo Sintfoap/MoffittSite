@@ -23,6 +23,7 @@ public/          the website, served as static files
   notifications/   turning push notifications on, and what they're for
   recipes/         Recipe box (signed-in users with it turned on); scale.js scales ingredient lines, ingredients.js finds recipes by what's in them, read.js cuts recipe text into a recipe and columns.js puts a two-column page back in order (all shared with the Worker), picture.js finds the dish's photo on a page to keep as the recipe's picture, ocr.js cleans a photo to black and white for text recognition and puts its misread fractions (% for ½) right, suggest.js is Suggest labels' review dialog; vendor/tesseract is text recognition, run in the browser (Apache-2.0)
   meals/           Meal plan: the week's dinners from Recipe box, around the Drift calendar
+  pantry/          Pantry: your food by where it's kept; units.js reads amounts ("10 lb", "2 cups") and guesses a new item's kind from its name (shared with the Worker)
   sweep/           Sweep: Drift suggestions read out of your chat rooms, to accept or turn down
   board/           Recipe board: recipes shared under their labels' keys, a feed of the keys (or single values, like Season: Fall) you follow, and saving any into Recipe box
   labels/          Recipe labels: the one list of labels (Season: Fall) recipes pick from, kept by whoever has the app
@@ -55,6 +56,7 @@ src/             the Worker: runs only for the paths in run_worker_first
   recipes.js       Recipe box: recipes (with labels like Season: Fall, picked from the Recipe labels list) read from a link's schema.org data (Recipe Keeper's shared recipes too) or imported in bulk from a file (Recipe Keeper's export, its folder or .zip, with pictures kept in D1), and their ingredients sent to a Drift list
   autolabel.js     Recipe box's Suggest labels: labels from the list that a recipe's words point to (a label's value, or keywords set on it), no AI
   recipe_photo.js  Recipe box: a recipe read from a photo (by Claude, with Sweep's API key, or by Workers AI's vision model without one) or from text (pasted, or read off a photo on the device), to check before saving
+  pantry.js        Pantry: each person's food as staples (measured, with a low point), counted things (whole units) and gauged ones (Full to Empty), each purchase with its own expiry
   meals.js         Meal plan: a week of dinners picked from Recipe box, quick ones on busy Drift nights, and the week's shopping sent to a Drift list
   sweep.js         Sweep: reads chosen chat rooms with Claude and suggests Drift events, tasks and list items
   translate.js     "Translate to English" for Drift items, recipes and board posts: shown beside the original, saved only when asked; read with Workers AI (the "ai" binding), or your own Claude key from Sweep without it
@@ -425,6 +427,26 @@ Push stays off, and the page says so, until the site has a VAPID key pair.
 | `PUT /meals/api/week/<monday>/<day>` | `{recipe?, servings?, out?, locked?}` → the week |
 | `POST /meals/api/week/<monday>/fill` | `{redo?}`: recipes for the empty nights, or every unlocked one → the week |
 | `POST /meals/api/week/<monday>/shop` | `{lines?, list?}`: the week's shopping onto a Drift list → `{list, added, shopped}` |
+
+## Pantry
+
+`/pantry/` keeps the food you have, in real amounts. It's an app in `APPS` with its own toggle on `/admin`, off for everyone. Each person has their own pantry, like Recipe box. The plan for the rest (receipts and barcodes from a phone scanner app, and shopping lists that check the pantry first) is in the Pantry plan doc; this is the first step.
+
+- **Three kinds.** A **staple** (flour, sugar, oil) is measured: kept in grams or millilitres underneath and shown in the unit you typed, with a low point you set. A **counted** thing (cans, eggs) goes by whole units, so using part of one uses it all. A **gauged** thing (spices, vanilla) is a level from Full to Empty that you move yourself.
+- **Guessing.** A new item's kind, where it's kept, what one of it is (a can) and its grams per cup are guessed from its name (`guess` in `public/pantry/units.js`). Everything can be changed. Changing an item's kind asks how much you have now, in the new kind's terms.
+- **Cups and pounds.** A staple weighed in pounds can be used by the cup (and the other way round), through its grams per cup. Common staples know theirs; for anything else, set it once.
+- **Purchases.** Each time you buy something it's kept apart, with its own amount and expiry date, and the soonest to expire is used first. A purchase can be corrected or taken off.
+- **Use soon and running low** are worked out for your own date: something expiring within 5 days, a staple at or under its low point, or a gauged thing at Almost out.
+- **Terminal:** `sintfoap pantry` (`g y`).
+
+| Request | |
+|---|---|
+| `GET /pantry/api/items?day=<day>` | your food: `{items, places, counts: {all, soon, low}, levels}` |
+| `POST /pantry/api/items` | `{name, kind?, place?, amount?, expires?, low?, unit?, size?, level?, per_cup?, words?}` → the new item |
+| `PATCH /pantry/api/items/<id>` | `{name?, place?, words?, low?, per_cup?, shows?, unit?, size?, level?, expires?, kind? (with amount)}` → the item; `DELETE` removes it |
+| `POST /pantry/api/items/<id>/lots` | `{amount, expires?}`: another purchase → the item |
+| `PATCH /pantry/api/items/<id>/lots/<lot>` | `{amount?, expires?}` → the item; `DELETE` takes that purchase off |
+| `POST /pantry/api/items/<id>/use` | `{amount}`, `{all}` or `{all, tossed}`; `{level}` for a gauged thing → the item |
 
 ## Sweep
 

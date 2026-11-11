@@ -338,6 +338,15 @@ const SCHEMA = [
      updated TEXT NOT NULL,
      PRIMARY KEY (owner, week)
    )`,
+  // Pantry (src/pantry.js): each account's food, a row per item. data is JSON
+  // {name, kind, place, words, lots: [{id, amount, expires, added}], ...the kind's own fields}.
+  `CREATE TABLE IF NOT EXISTS pantry_items (
+     owner   TEXT NOT NULL,          -- user id
+     id      TEXT NOT NULL,          -- "i_" + random hex
+     data    TEXT NOT NULL,
+     updated TEXT NOT NULL,
+     PRIMARY KEY (owner, id)
+   )`,
   // Votes on the public book suggestions page (src/books.js). One per browser,
   // by the random id in its __Host-bv cookie; it can be changed or taken back.
   `CREATE TABLE IF NOT EXISTS book_votes (

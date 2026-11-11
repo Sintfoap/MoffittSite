@@ -17,6 +17,7 @@ sintfoap                    # signs you in the first time, then opens your dashb
 | `sintfoap notifications` | what's pushed to your browsers and phone, and where |
 | `sintfoap recipes` | Recipe box: your recipes, scaled, and sent to a Drift shopping list |
 | `sintfoap meals` | Meal plan: the week's dinners around your Drift calendar, and their shopping |
+| `sintfoap pantry` | Pantry: your food, how much is left, and what to use soon |
 | `sintfoap sweep` | Sweep: Drift suggestions from your chat rooms, to accept or turn down |
 | `sintfoap trips` | Trip planner: a trip's days, places and packing list, with whoever's going |
 | `sintfoap board` | Recipe board: recipes shared by their labels, and a feed of the label keys (or single values) you follow |
@@ -49,7 +50,7 @@ nix develop                                  # a shell with Python, Textual and 
 
 ## The dashboard
 
-The same panels as `/dashboard`, in the site's colours: Today (overdue Drift items in red, then what's due today), your account with its checks (two-factor, recovery codes, email), and a card per app your account can use. It refreshes every 30 seconds. Drift, the plugin store, chat, Recipe box, Recipe board, Recipe labels, Meal plan, Sweep, Trip planner, Food club, notifications, account settings and Admin open here in the terminal; anything else opens in your browser.
+The same panels as `/dashboard`, in the site's colours: Today (overdue Drift items in red, then what's due today), your account with its checks (two-factor, recovery codes, email), and a card per app your account can use. It refreshes every 30 seconds. Drift, the plugin store, chat, Recipe box, Recipe board, Recipe labels, Meal plan, Pantry, Sweep, Trip planner, Food club, notifications, account settings and Admin open here in the terminal; anything else opens in your browser.
 
 | Key | |
 |---|---|
@@ -61,7 +62,7 @@ The same panels as `/dashboard`, in the site's colours: Today (overdue Drift ite
 | `o` | sign out this terminal |
 | `q` | quit |
 
-On every page `esc` goes back, `w` opens the same page in your browser and `q` quits. `g` then a letter jumps around, as on the website: `g h` home, `g d` Drift, `g p` plugin store, `g c` chat, `g r` Recipe box, `g b` Recipe board, `g l` Recipe labels, `g m` Meal plan, `g w` Sweep, `g t` Trip planner, `g f` Food club, `g s` settings, `g n` notifications, `g a` admin, `g o` sign out.
+On every page `esc` goes back, `w` opens the same page in your browser and `q` quits. `g` then a letter jumps around, as on the website: `g h` home, `g d` Drift, `g p` plugin store, `g c` chat, `g r` Recipe box, `g b` Recipe board, `g l` Recipe labels, `g m` Meal plan, `g y` Pantry, `g w` Sweep, `g t` Trip planner, `g f` Food club, `g s` settings, `g n` notifications, `g a` admin, `g o` sign out.
 
 ## Book club pick
 
@@ -166,6 +167,21 @@ The same recipes as `/recipes/`: the list on the left, the open one on the right
 | `e` | edit it (`ctrl+s` saves); labels are ticked from the Recipe labels list, so everyone uses the same ones |
 | `c` | give it a picture from a file (JPEG, PNG, WebP or GIF up to 600 KB), or leave the path empty to take its picture off; on the website the editor has a Picture field that shrinks bigger ones |
 | `d` | delete it |
+
+## Pantry
+
+The same food as `/pantry/`: everything down the left by where it's kept, with how much is left and when it expires, and the highlighted one on the right with each purchase of it.
+
+| Key | |
+|---|---|
+| `n` | add food (its kind, place and unit are guessed from the name unless you pick them) |
+| `u` | use some: an amount, all of it, or tossed; for a gauged thing, how full it is now |
+| `m` | bought more (a gauged thing is refilled to Full) |
+| `p` | each purchase: `enter` corrects one, `x` takes it off |
+| `e` | edit it, or change its kind |
+| `x` | remove it |
+| `f` | all, use soon, or running low |
+| `/` | find by name |
 
 ## Meal plan
 
@@ -275,6 +291,7 @@ sintfoap/chat_page.py      chat
 sintfoap/notifications_page.py  what's pushed and where
 sintfoap/recipes_page.py   Recipe box
 sintfoap/meals_page.py     Meal plan
+sintfoap/pantry_page.py    Pantry
 sintfoap/sweep_page.py     Sweep
 sintfoap/trips_page.py     Trip planner
 sintfoap/board_page.py     Recipe board
