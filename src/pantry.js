@@ -2,12 +2,17 @@
 // shelf. One pantry per person, like Recipe box.
 //
 // Every item is one of three kinds, which decides how it's counted and used up:
-//   staple   flour, sugar, oil: an exact measure (grams or millilitres underneath,
-//            shown in the unit you typed), with a low point you set
-//   counted  cans, eggs, boxes: whole units. Using any of one uses all of it
-//            (an egg white is still an egg; half a can is still the can)
-//   gauged   spices, vanilla: a level from Full to Empty that you slide down yourself
-// A staple or counted item holds lots: one per purchase, each with its own
+//   measured  flour, sugar, oil: an exact measure (grams or millilitres underneath,
+//             shown in the unit you typed)
+//   counted   cans, eggs, boxes: whole units. Using any of one uses all of it
+//             (an egg white is still an egg; half a can is still the can)
+//   gauged    spices, vanilla: a level from Full to Empty that you slide down yourself
+// Any of them can also be a staple: something you keep stocked, with a low point
+// you set (an amount, a count, or a level like ½ left). A staple at or under its
+// low point is running low, and goes on the shopping list. Items saved before
+// staple was a tag were kind "staple", and read as measured staples; "staple" is
+// still taken as a kind, meaning the same.
+// A measured or counted item holds lots: one per purchase, each with its own
 // amount and expiry date, used oldest-expiry first. Units, plurals and the
 // first guess at an item's kind are public/pantry/units.js, shared with the page.
 //
@@ -16,13 +21,13 @@
 // recipes on a shopping list comes next (the Pantry plan doc).
 //
 // /pantry/api/items                  GET ?day=YYYY-MM-DD → {items, places, counts, limits}
-//                                    POST {name, kind?, place?, amount?, expires?, low?, unit?, size?, level?, per_cup?, words?} → the new item
+//                                    POST {name, kind?, staple?, place?, amount?, expires?, low?, unit?, size?, level?, per_cup?, words?} → the new item
 //                                      (kind, place, unit and grams per cup are guessed from the name when left out)
-// /pantry/api/items/<id>             PATCH {name?, place?, words?, low?, per_cup?, unit?, size?, shows?, level?, expires?, kind?, amount?} → the item
+// /pantry/api/items/<id>             PATCH {name?, place?, words?, staple?, low?, per_cup?, unit?, size?, shows?, level?, expires?, kind?, amount?} → the item
 //                                      (changing kind needs the amount you have now, in the new kind's terms); DELETE → gone
 // /pantry/api/items/<id>/lots        POST {amount, expires?} → the item, with another purchase of it
 // /pantry/api/items/<id>/lots/<lot>  PATCH {amount?, expires?} → the item; DELETE → the item without that lot
-// /pantry/api/items/<id>/use         POST {amount} (staple: "1 cup"; counted: how many) or {all: true}, and {tossed?: true};
+// /pantry/api/items/<id>/use         POST {amount} (measured: "1 cup"; counted: how many) or {all: true}, and {tossed?: true};
 //                                      or {level} for a gauged item → the item, with that taken out
 // /pantry/api/key                    PUT {key} → {photo}; DELETE → {photo}: the Anthropic key receipts are read with (Sweep's and Recipe box's too)
 // /pantry/api/receipt                POST {images} → what a receipt adds, to check; /pantry/api/receipt/add POST {store, lines} adds it (src/pantry_receipt.js)
@@ -44,7 +49,7 @@ import { UNITS, ML_PER_CUP, LEVELS, readAmount, inUnit, unitsOf, plural, singula
 
 const fail = msg => { throw new BadRequest(msg); };
 export const LIMITS = { items: 500, lots: 50, name: 80, place: 30, words: 200, unit: 20, size: 40, count: 10000, base: 1e8 };
-export const KINDS = ["staple", "counted", "gauged"];
+export const KINDS = ["measured", "counted", "gauged"];
 export const PLACES = ["Fridge", "Freezer", "Cupboard", "Spice rack"];
 const SOON_DAYS = 5;
 const ID = /^i_[0-9a-f]{10}$/;
@@ -70,7 +75,8 @@ function cleanName(v) {
   return s;
 }
 function cleanKind(v) {
-  if (!KINDS.includes(v)) fail("kind is staple, counted or gauged");
+  if (v === "staple") return "measured";
+  if (!KINDS.includes(v)) fail("kind is measured, counted or gauged");
   return v;
 }
 function cleanPlace(v) {
@@ -102,7 +108,7 @@ function cleanPerCup(v) {
   return round(n);
 }
 
-// A staple's amount, typed ("10 lb", "2 cups"), in the item's base unit.
+// A measured item's amount, typed ("10 lb", "2 cups"), in the item's base unit.
 // Weight and volume cross over by its grams per cup.
 function baseOf(item, raw, what = "the amount") {
   if (typeof raw === "number") raw = String(raw);
@@ -125,15 +131,18 @@ function countOf(item, raw, what = "how many") {
   if (a.n > LIMITS.count) fail(`${what} is more than this can keep track of`);
   return a.n;
 }
-const amountOf = (item, raw, what) => item.kind === "staple" ? baseOf(item, raw, what) : countOf(item, raw, what);
+const amountOf = (item, raw, what) => item.kind === "measured" ? baseOf(item, raw, what) : countOf(item, raw, what);
 
 // ── reading out ────────────────────────────────────────────────────────────
 
-const shown = (item, n) => item.kind === "staple" ? inUnit(n, item.shows) : counted(n, item.unit || "item");
+const shown = (item, n) => item.kind === "measured" ? inUnit(n, item.shows) : counted(n, item.unit || "item");
 const left = item => item.kind === "gauged" ? null : round((item.lots || []).reduce((s, l) => s + l.amount, 0));
 // Oldest expiry first; lots without a date after them, oldest bought first.
 const order = lots => [...lots].sort((a, b) => (a.expires || "9999") < (b.expires || "9999") ? -1 : (a.expires || "9999") > (b.expires || "9999") ? 1 : a.added < b.added ? -1 : 1);
 const addDays = (day, n) => new Date(Date.parse(day + "T00:00:00Z") + n * 864e5).toISOString().slice(0, 10);
+
+// A staple's low point, as it's shown: "2 lb", "3 cans", "¼ left".
+const lowText = item => !item.staple || item.low == null ? "" : item.kind === "gauged" ? LEVELS[item.low] : shown(item, item.low);
 
 // What the page and the terminal show for an item; `day` is the viewer's own date.
 export function view(item, day = today()) {
@@ -142,12 +151,12 @@ export function view(item, day = today()) {
   const first = item.kind === "gauged" ? null : lots.find(l => l.expires && l.amount > 0);
   const expires = item.kind === "gauged" ? item.expires || "" : first?.expires || "";
   const out = item.kind === "gauged" ? item.level === 0 : have <= 0;
-  const low = !out && (item.kind === "staple" ? item.low !== null && have <= item.low : item.kind === "gauged" ? item.level <= 1 : false);
+  const low = !out && !!item.staple && item.low != null && (item.kind === "gauged" ? item.level <= item.low : have <= item.low);
   return {
-    id: item.id, name: item.name, kind: item.kind, place: item.place, words: item.words || "",
-    measure: item.measure || null, shows: item.shows || null, per_cup: item.perCup ?? null, units: item.kind === "staple" ? unitsOf(item.measure) : [],
+    id: item.id, name: item.name, kind: item.kind, staple: !!item.staple, place: item.place, words: item.words || "",
+    measure: item.measure || null, shows: item.shows || null, per_cup: item.perCup ?? null, units: item.kind === "measured" ? unitsOf(item.measure) : [],
     unit: item.unit || "", size: item.size || "",
-    low: item.kind === "staple" ? item.low : null, low_text: item.kind === "staple" && item.low !== null ? shown(item, item.low) : "",
+    low: item.staple ? item.low ?? null : null, low_text: lowText(item),
     level: item.kind === "gauged" ? item.level : null,
     left: have, text: item.kind === "gauged" ? LEVELS[item.level] : shown(item, have),
     lots, expires, expires_by: first?.by || (expires ? "typed" : ""), expired: !!expires && expires < day, soon: !!expires && expires <= addDays(day, SOON_DAYS),
@@ -163,13 +172,19 @@ function placesOf(items) {
 
 // ── storage ────────────────────────────────────────────────────────────────
 
+// An item as saved; one saved when staple was a kind is a measured staple.
+function read(r) {
+  const item = { ...JSON.parse(r.data), id: r.id, updated: r.updated };
+  if (item.kind === "staple") { item.kind = "measured"; item.staple = true; }
+  return item;
+}
 async function load(d, owner) {
   const { results } = await d.prepare("SELECT id, data, updated FROM pantry_items WHERE owner = ?").bind(owner).all();
-  return results.map(r => ({ ...JSON.parse(r.data), id: r.id, updated: r.updated }));
+  return results.map(read);
 }
 async function loadOne(d, owner, id) {
   const r = await d.prepare("SELECT id, data, updated FROM pantry_items WHERE owner = ? AND id = ?").bind(owner, id).first();
-  return r ? { ...JSON.parse(r.data), id: r.id, updated: r.updated } : null;
+  return r ? read(r) : null;
 }
 async function save(d, owner, item) {
   const { id, updated, ...data } = item;
@@ -199,22 +214,35 @@ function setKind(item, kind, body, hint) {
     item.level = "level" in body ? cleanLevel(body.level) : 5;
     item.expires = cleanDate(body.expires);
     item.lots = [];
-    return;
-  }
-  if (kind === "counted") {
+  } else if (kind === "counted") {
     item.unit = singular(text("the unit", body.unit ?? hint.unit ?? "", LIMITS.unit).toLowerCase()) || "item";
     item.size = text("the size of one", body.size, LIMITS.size);
-    return;
+  } else {
+    // Measured by weight or volume: whichever the amount (or the low point) was typed in.
+    const said = [body.amount, body.low].map(v => readAmount(v ?? "")).find(a => a?.unit);
+    if (!said) fail(`say how much ${item.name} you have, with a unit, like 10 lb or 2 cups`);
+    item.measure = UNITS[said.unit].measure;
+    item.shows = said.unit;
+    item.perCup = "per_cup" in body ? cleanPerCup(body.per_cup) : hint.perCup ?? null;
   }
-  // A staple is measured by weight or volume: whichever the amount (or the low point) was typed in.
-  const said = [body.amount, body.low].map(v => readAmount(v ?? "")).find(a => a?.unit);
-  if (!said) fail(`say how much ${item.name} you have, with a unit, like 10 lb or 2 cups`);
-  item.measure = UNITS[said.unit].measure;
-  item.shows = said.unit;
-  item.perCup = "per_cup" in body ? cleanPerCup(body.per_cup) : hint.perCup ?? null;
-  if (body.low === undefined || body.low === null || String(body.low).trim() === "") fail(`say when ${item.name} is running low, like 2 lb (a staple goes on your shopping list once it's that low)`);
-  item.low = baseOf(item, body.low, "the low point");
+  setLow(item, body);
 }
+
+// A staple's low point, in the kind's own terms: an amount, a count, or a level.
+const blank = v => v === undefined || v === null || String(v).trim() === "";
+function setLow(item, body) {
+  item.low = null;
+  if (!item.staple) return;
+  if (blank(body.low)) {
+    fail(`say when ${item.name} is running low, like ${item.kind === "gauged" ? "¼ left" : item.kind === "counted" ? "2" : "2 lb"} (a staple goes on your shopping list once it's that low)`);
+  }
+  item.low = item.kind === "gauged" ? cleanLevel(typeof body.low === "string" && /^\d$/.test(body.low.trim()) ? Number(body.low) : body.low)
+    : item.kind === "counted" ? countOf(item, body.low, "the low point") : baseOf(item, body.low, "the low point");
+}
+// Whether it's a staple: said outright; or by sending "staple" as the kind (as it once was),
+// or a low point, which only a staple has.
+const stapleOf = (body, was = false) => "staple" in body ? body.staple === true || body.staple === "true"
+  : body.kind === "staple" || !blank(body.low) || was;
 
 export async function addItem(env, user, body) {
   if (!isObj(body)) fail("body must be a JSON object");
@@ -225,6 +253,7 @@ export async function addItem(env, user, body) {
   if (all.some(i => i.name.toLowerCase() === name.toLowerCase())) fail(`${name} is already in your pantry. Add more to it instead`);
   const hint = guess(name);
   const item = { id: "i_" + hex(5), name, place: cleanPlace(body.place ?? hint.place), words: text("other names", body.words, LIMITS.words), lots: [], created: stamp() };
+  item.staple = stapleOf(body);
   setKind(item, body.kind === undefined || body.kind === null || body.kind === "" ? hint.kind : cleanKind(body.kind), body, hint);
   const amount = body.amount;
   if (item.kind !== "gauged" && amount !== undefined && amount !== null && String(amount).trim() !== "") {
@@ -248,15 +277,18 @@ export async function editItem(env, user, id, body) {
   }
   if ("place" in body) item.place = cleanPlace(body.place);
   if ("words" in body) item.words = text("other names", body.words, LIMITS.words);
-  if ("kind" in body && body.kind !== item.kind) {
+  const staple = stapleOf(body, !!item.staple);
+  if ("kind" in body && cleanKind(body.kind) !== item.kind) {
     // A new kind counts differently, so it starts again from what you have now, keeping the soonest expiry.
     const kind = cleanKind(body.kind);
     const soonest = view(item).expires;
     const was = item.kind;
     const keep = { ...(item.perCup ? { per_cup: item.perCup } : {}), ...(item.unit ? { unit: item.unit } : {}), ...(item.size ? { size: item.size } : {}) };
     if (kind !== "gauged" && (body.amount === undefined || String(body.amount ?? "").trim() === "")) {
-      fail(kind === "staple" ? `say how much ${item.name} you have now, like 10 lb` : `say how many ${item.name} you have now, like 3`);
+      fail(kind === "measured" ? `say how much ${item.name} you have now, like 10 lb` : `say how many ${item.name} you have now, like 3`);
     }
+    // A low point is in the kind's terms, so a staple changing kind says its new one.
+    item.staple = staple;
     if (kind === "gauged" && !("level" in body)) body = { ...body, level: was === "gauged" ? item.level : left(item) > 0 ? 5 : 0 };
     setKind(item, kind, { ...keep, expires: soonest, ...body }, guess(item.name));
     item.lots = [];
@@ -266,12 +298,12 @@ export async function editItem(env, user, id, body) {
       if (n > 0) item.lots.push({ id: "t_" + hex(4), amount: n, expires, by: cleanBy(body.expires_by, expires), added: today() });
     }
   } else {
-    if ("per_cup" in body && item.kind === "staple") item.perCup = cleanPerCup(body.per_cup);
-    if ("low" in body && item.kind === "staple") {
-      if (body.low === null || String(body.low).trim() === "") fail("a staple needs a low point, like 2 lb");
-      item.low = baseOf(item, body.low, "the low point");
+    if ("per_cup" in body && item.kind === "measured") item.perCup = cleanPerCup(body.per_cup);
+    if (staple !== !!item.staple || "low" in body) {
+      item.staple = staple;
+      setLow(item, "low" in body ? body : { low: null });
     }
-    if ("shows" in body && item.kind === "staple") {
+    if ("shows" in body && item.kind === "measured") {
       if (!unitsOf(item.measure).includes(body.shows)) fail(`show it in one of ${unitsOf(item.measure).join(", ")}`);
       item.shows = body.shows;
     }

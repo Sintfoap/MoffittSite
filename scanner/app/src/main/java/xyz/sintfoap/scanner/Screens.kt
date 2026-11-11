@@ -205,7 +205,7 @@ fun LineCard(s: Scanner, l: Line) {
         if (item == null) {
             Field("Name", l.name, Modifier.fillMaxWidth(), "Oat milk", KeyboardOptions(capitalization = KeyboardCapitalization.Sentences)) { v -> s.change(l.key) { it.copy(name = v) } }
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                for ((k, label) in listOf("" to "Guess", "staple" to "Staple", "counted" to "Counted", "gauged" to "Gauged")) {
+                for ((k, label) in listOf("" to "Guess", "measured" to "Measured", "counted" to "Counted", "gauged" to "Gauged")) {
                     val on = l.kind == k
                     Text(label, color = if (on) Bg else Muted, fontFamily = Mono, fontSize = 12.sp,
                         modifier = Modifier.background(if (on) Gold else Bg).border(1.dp, if (on) Gold else Rule).clickable { s.change(l.key) { it.copy(kind = k) } }.padding(horizontal = 8.dp, vertical = 6.dp))
@@ -213,8 +213,25 @@ fun LineCard(s: Scanner, l: Line) {
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Field("Kept in", l.place, Modifier.weight(1f), "Cupboard") { v -> s.change(l.key) { it.copy(place = v) } }
-                if (l.kind == "staple") Field("Low at", l.low, Modifier.weight(1f), "2 lb") { v -> s.change(l.key) { it.copy(low = v) } }
                 if (l.kind == "counted") Field("One is a", l.unit, Modifier.weight(1f), "can") { v -> s.change(l.key) { it.copy(unit = v) } }
+            }
+            // A staple: kept stocked, and running low at an amount, a count, or a mark on the gauge.
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable { s.change(l.key) { it.copy(staple = !it.staple) } }) {
+                Checkbox(l.staple, { on -> s.change(l.key) { it.copy(staple = on) } }, colors = CheckboxDefaults.colors(checkedColor = Gold, checkmarkColor = Bg, uncheckedColor = Faint))
+                Text("Staple: keep it stocked", color = Muted, fontFamily = Mono, fontSize = 13.sp)
+            }
+            if (l.staple && l.kind == "gauged") {
+                Hint("Running low at", Muted)
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    for (n in 4 downTo 0) {
+                        val on = (l.lowLevel ?: 1) == n
+                        Text(LEVELS[n], color = if (on) Bg else Muted, fontFamily = Mono, fontSize = 12.sp,
+                            modifier = Modifier.background(if (on) Gold else Bg).border(1.dp, if (on) Gold else Rule)
+                                .clickable { s.change(l.key) { it.copy(lowLevel = n) } }.padding(horizontal = 8.dp, vertical = 6.dp))
+                    }
+                }
+            } else if (l.staple) {
+                Field("Running low at", l.low, Modifier.fillMaxWidth(), when (l.kind) { "counted" -> "2"; "measured" -> "2 lb"; else -> "2 lb, 2, or ¼ left" }) { v -> s.change(l.key) { it.copy(low = v) } }
             }
         }
         if (kind == "gauged") {
@@ -229,7 +246,7 @@ fun LineCard(s: Scanner, l: Line) {
             }
         } else {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                Field("How much", l.amount, Modifier.weight(1f), if (kind == "staple") "10 lb" else "2") { v -> s.change(l.key) { it.copy(amount = v, each = v) } }
+                Field("How much", l.amount, Modifier.weight(1f), if (kind == "measured" || kind == "staple") "10 lb" else "2") { v -> s.change(l.key) { it.copy(amount = v, each = v) } }
                 Column(Modifier.weight(1f)) {
                     val est = l.expiresBy == "estimated"
                     val pickDate = {

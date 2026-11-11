@@ -29,11 +29,13 @@ data class Line(
     val brand: String = "",
     val target: String = "",         // an item's id, or "" for new
     val how: String = "",            // how it was matched: remembered, name, barcode
-    val kind: String = "",           // for a new one: staple, counted, gauged ("" lets the site guess from the name)
+    val kind: String = "",           // for a new one: measured, counted, gauged ("" lets the site guess from the name)
+    val staple: Boolean = false,     // for a new one: kept stocked, with a point it's running low at
     val place: String = "",
     val unit: String = "",
     val size: String = "",
-    val low: String = "",
+    val low: String = "",            // a staple's low point: "2 lb", or how many
+    val lowLevel: Int? = null,       // a gauged staple's: the mark it's low at, 0 (empty) to 4 (¾ left); null is Almost out
     val amount: String = "",
     val each: String = "",           // how much one more of it adds (a barcode scanned again)
     val expires: String = "",        // YYYY-MM-DD
@@ -53,7 +55,9 @@ data class Line(
         if (level != null) o.put("level", level)
         if (barcode.isNotEmpty()) o.put("barcode", barcode).put("size", size).put("brand", brand)
         if (!isNew) return o.put("item", target).put("name", name)
-        return o.put("name", name).put("kind", kind).put("place", place).put("unit", unit).put("size", size).put("low", low)
+        o.put("name", name).put("kind", kind).put("place", place).put("unit", unit).put("size", size).put("staple", staple)
+        if (staple) o.put("low", if (kind == "gauged") (lowLevel ?: 1) else low)
+        return o
     }
 
     companion object {
@@ -65,7 +69,7 @@ data class Line(
             return Line(
                 store = store, printed = p.optString("printed"), barcode = barcode, name = p.optString("name"), brand = brand,
                 target = match?.optString("id") ?: "", how = match?.optString("how") ?: "",
-                kind = new.optString("kind"), place = new.optString("place"), unit = new.optString("unit"), size = new.optString("size", p.optString("size")),
+                kind = new.optString("kind").let { if (it == "staple") "measured" else it }, place = new.optString("place"), unit = new.optString("unit"), size = new.optString("size", p.optString("size")),
                 amount = amount, each = amount, expires = p.optString("expires"), expiresBy = p.optString("expires_by"),
                 on = !p.optBoolean("skip"), skip = p.optBoolean("skip"),
             )
@@ -75,7 +79,9 @@ data class Line(
         fun fromSent(o: JSONObject) = Line(
             key = o.optString("key"), store = o.optString("store"), printed = o.optString("printed"), barcode = o.optString("barcode"),
             name = o.optString("name"), brand = o.optString("brand"), target = o.optString("item"), kind = o.optString("kind"),
-            place = o.optString("place"), unit = o.optString("unit"), size = o.optString("size"), low = o.optString("low"),
+            place = o.optString("place"), unit = o.optString("unit"), size = o.optString("size"),
+            staple = o.optBoolean("staple"), low = if (o.optString("kind") == "gauged") "" else o.optString("low"),
+            lowLevel = if (o.optString("kind") == "gauged" && o.has("low")) o.optInt("low") else null,
             amount = o.optString("amount"), each = o.optString("amount"), expires = o.optString("expires"), expiresBy = o.optString("expires_by"),
             level = if (o.has("level")) o.optInt("level") else null, error = o.optString("error"),
         )

@@ -859,10 +859,10 @@ def recipe_key(key: str) -> dict:
 
 
 # ───────────────────────────────── pantry ───────────────────────────────────
-# /pantry/api/ (src/pantry.js): your food, as staples (measured), counted things and gauged ones (Full to Empty).
+# /pantry/api/ (src/pantry.js): your food, as measured things, counted things and gauged ones (Full to Empty), any of them a staple with a low point.
 
 def pantry(day: str = "") -> dict:
-    """{items: [{id, name, kind, place, text, low_text, level, lots, expires, soon, expired, is_low, is_out, ...}], places, counts, levels}.
+    """{items: [{id, name, kind, staple, place, text, low, low_text, level, lots, expires, soon, expired, is_low, is_out, ...}], places, counts, levels}.
     day is your own date (YYYY-MM-DD), for what's expiring soon."""
     return _get("/pantry/api/items" + (f"?day={_q(day)}" if day else ""))
 

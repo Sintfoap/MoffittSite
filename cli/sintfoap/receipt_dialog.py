@@ -9,13 +9,13 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
-from textual.widgets import Button, Input, Label, OptionList, Select, Static
+from textual.widgets import Button, Checkbox, Input, Label, OptionList, Select, Static
 from textual.widgets.option_list import Option
 
 from .look import BAD, FAINT, GOLD, INK, MUTED
 
 LEVELS = ["Empty", "Almost out", "¼ left", "½ left", "¾ left", "Full"]
-KINDS = (("Staple: measured, like flour", "staple"), ("Counted: whole units, like cans", "counted"), ("Gauged: full to empty, like spices", "gauged"))
+KINDS = (("Measured: by weight or volume, like flour", "measured"), ("Counted: whole units, like cans", "counted"), ("Gauged: full to empty, like spices", "gauged"))
 HOW = {"remembered": "remembered from this store", "name": "matched by name"}
 
 
@@ -45,7 +45,7 @@ class ReceiptDialog(ModalScreen[list[dict] | None]):
             rows.append({"printed": l["printed"], "said": l["name"], "on": not l["skip"], "skip": l["skip"],
                          "item": m["id"] if m else "", "match": m, "name": l["name"],
                          "kind": new.get("kind", "counted"), "place": new.get("place", ""), "unit": new.get("unit", ""),
-                         "size": new.get("size", ""), "low": "", "amount": l.get("amount", ""),
+                         "size": new.get("size", ""), "staple": False, "low": "", "amount": l.get("amount", ""),
                          "expires": l.get("expires", ""), "expires_by": l.get("expires_by", ""), "error": ""})
         return rows
 
@@ -57,7 +57,8 @@ class ReceiptDialog(ModalScreen[list[dict] | None]):
             lot["level"] = r["level"]
         if r["item"]:
             return {**lot, "item": r["item"]}
-        return {**lot, "name": r["name"], "kind": r["kind"], "place": r["place"], "unit": r["unit"], "size": r["size"], "low": r["low"]}
+        out = {**lot, "name": r["name"], "kind": r["kind"], "place": r["place"], "unit": r["unit"], "size": r["size"], "staple": bool(r.get("staple"))}
+        return {**out, "low": r["low"]} if out["staple"] else out
 
     def target(self, r: dict) -> dict | None:
         return next((i for i in self.items if i["id"] == r["item"]), None)
@@ -77,7 +78,7 @@ class ReceiptDialog(ModalScreen[list[dict] | None]):
         else:
             t.append("New: ", GOLD)
             t.append(r["name"] or "(no name)", f"bold {INK}")
-            t.append(f"  {r['kind']}, {r['place'] or 'Cupboard'}", FAINT)
+            t.append(f"  {r['kind']}{' staple' if r.get('staple') else ''}, {r['place'] or 'Cupboard'}", FAINT)
         t.append("\n    ")
         if (i or {}).get("kind", r["kind"]) == "gauged":
             t.append(f"{LEVELS[r['level'] if r.get('level') is not None else 5].lower()}", MUTED)
@@ -172,17 +173,17 @@ class LineDialog(ModalScreen[dict | None]):
                 with Horizontal(classes="grid"):
                     with Vertical():
                         yield Label("Kind", classes="lbl")
-                        yield Select(list(KINDS), value=r["kind"], allow_blank=False, id="kind")
+                        yield Select(list(KINDS), value="measured" if r["kind"] == "staple" else r["kind"], allow_blank=False, id="kind")
                     with Vertical():
                         yield Label("Where it's kept", classes="lbl")
                         yield Input(r["place"], id="place", placeholder=" / ".join(self.places[:4]) or "Cupboard", max_length=30)
-                with Horizontal(classes="grid"):
-                    with Vertical(id="staple"):
-                        yield Label("Running low at", classes="lbl")
-                        yield Input(r["low"], id="low", placeholder="2 lb", max_length=40)
-                    with Vertical(id="counted"):
-                        yield Label("One is a", classes="lbl")
-                        yield Input(r["unit"], id="unit", placeholder="can", max_length=20)
+                with Vertical(id="counted"):
+                    yield Label("One is a", classes="lbl")
+                    yield Input(r["unit"], id="unit", placeholder="can", max_length=20)
+                yield Checkbox("Staple: kept stocked, and running low at…", bool(r.get("staple")), id="staple")
+                yield Input("" if isinstance(r["low"], int) else str(r["low"]), id="low", placeholder="2 lb, or how many", max_length=40)
+                yield Select([(lv, n) for n, lv in reversed(list(enumerate(LEVELS))) if n < 5],
+                             value=r["low"] if isinstance(r["low"], int) else 1, allow_blank=False, id="low-level")
             with Vertical(id="gauged"):
                 yield Label("How full", classes="lbl")
                 yield Select([(lv, n) for n, lv in reversed(list(enumerate(LEVELS)))], value=r.get("level") if r.get("level") is not None else 5,
@@ -211,7 +212,9 @@ class LineDialog(ModalScreen[dict | None]):
         new = not self.query_one("#to", Select).value
         k = self.kind()
         self.query_one("#new").display = new
-        self.query_one("#staple").display = k == "staple"
+        staple = self.query_one("#staple", Checkbox).value
+        self.query_one("#low").display = staple and k != "gauged"
+        self.query_one("#low-level").display = staple and k == "gauged"
         self.query_one("#counted").display = k == "counted"
         self.query_one("#amounts").display = k != "gauged"
         self.query_one("#gauged").display = k == "gauged"
@@ -219,11 +222,16 @@ class LineDialog(ModalScreen[dict | None]):
     def on_select_changed(self, e: Select.Changed) -> None:
         self.show_parts()
 
+    def on_checkbox_changed(self, e: Checkbox.Changed) -> None:
+        self.show_parts()
+
     def action_save(self) -> None:
         v = lambda x: self.query_one(f"#{x}", Input).value.strip()  # noqa: E731
         expires = v("expires")
         self.dismiss({**self.r, "item": str(self.query_one("#to", Select).value or ""), "name": v("name"),
-                      "kind": str(self.query_one("#kind", Select).value), "place": v("place"), "low": v("low"), "unit": v("unit"),
+                      "kind": str(self.query_one("#kind", Select).value), "place": v("place"), "unit": v("unit"),
+                      "staple": self.query_one("#staple", Checkbox).value,
+                      "low": self.query_one("#low-level", Select).value if str(self.query_one("#kind", Select).value) == "gauged" else v("low"),
                       "amount": v("amount"), "expires": expires,
                       "level": self.query_one("#level", Select).value if self.kind() == "gauged" else None,
                       "expires_by": self.r["expires_by"] if expires == self.r["expires"] else "typed" if expires else ""})

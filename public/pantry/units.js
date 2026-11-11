@@ -139,7 +139,7 @@ const PER_CUP = [
   [/pasta|macaroni/, 105],
 ];
 const SPICES = /\b(salt|pepper|peppercorns?|cumin|paprika|cinnamon|nutmeg|oregano|basil|thyme|rosemary|sage|parsley|dill|bay leaf|bay leaves|cayenne|chili powder|chilli|curry|turmeric|ginger|garlic powder|onion powder|cloves|allspice|cardamom|coriander|fennel|mustard seed|seasoning|spice|vanilla|extract|bouillon|msg|sprinkles|food colou?ring|baking soda|baking powder|yeast|cream of tartar|soy sauce|vinegar|hot sauce|worcestershire|ketchup|mustard|mayo|mayonnaise|sriracha|honey|syrup)\b/;
-const STAPLES = /\b(flour|sugar|oil|rice|oats|oatmeal|cornmeal|cornstarch|quinoa|lentils|butter|milk|cocoa|shortening|polenta|semolina|breadcrumbs|coffee|tea)\b/;
+const MEASURED = /\b(flour|sugar|oil|rice|oats|oatmeal|cornmeal|cornstarch|quinoa|lentils|butter|milk|cocoa|shortening|polenta|semolina|breadcrumbs|coffee|tea)\b/;
 const FRIDGE = /\b(milk|butter|cheese|yogurt|yoghurt|eggs?|cream|tofu|lettuce|spinach|leftovers?|ham|bacon|chicken|beef|pork|fish|salmon|sausages?|steaks?|juice|mayo|mayonnaise|hummus|salsa)\b/;
 const FREEZER = /\b(frozen|ice cream|peas)\b/;
 
@@ -148,7 +148,7 @@ export function guess(name) {
   const n = ` ${String(name || "").toLowerCase()} `;
   // An explicit container wins (a can of soup is counted, whatever's in it).
   const container = n.match(/\b(can|tin|jar|box|bottle|carton|pack|packet|bag|loaf)s?\b/)?.[1];
-  const kind = container ? "counted" : STAPLES.test(n) ? "staple" : SPICES.test(n) ? "gauged" : "counted";
+  const kind = container ? "counted" : MEASURED.test(n) ? "measured" : SPICES.test(n) ? "gauged" : "counted";
   const place = FREEZER.test(n) ? "Freezer" : FRIDGE.test(n) ? "Fridge" : kind === "gauged" ? "Spice rack" : "Cupboard";
   const out = { kind, place };
   if (kind === "counted") out.unit = container || (/\beggs?\b/.test(n) ? "egg" : /\b(loaf|bread)\b/.test(n) ? "loaf" : /\bsoup|beans|tuna|broth\b/.test(n) ? "can" : "");

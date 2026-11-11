@@ -131,6 +131,10 @@ dialog .two { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .kinds label b { color: var(--ink); font-size: 13.5px; }
 .kinds input { position: absolute; opacity: 0; pointer-events: none; }
 .kinds label:has(input:checked) { border-color: var(--gold); background: var(--gold-soft); }
+.check { display: flex; gap: 8px; align-items: flex-start; margin: 0 0 12px; font-size: 13px; color: var(--muted); cursor: pointer; }
+.check b { color: var(--ink); }
+.check input { margin-top: 2px; accent-color: var(--gold); }
+.kind.staple { color: var(--gold); }
 .kinds label:has(input:focus-visible) { outline: 2px solid var(--gold); outline-offset: 2px; }
 .reads { font-size: 12px; color: var(--faint); min-height: 1.4em; margin: -8px 0 10px; }
 .reads.bad { color: var(--bad); }
@@ -203,7 +207,7 @@ details.about p { margin: 8px 0 0; }
   <h1>Pantry</h1>
   <p class="lede">What food you have, how much is left, and what to use soon.</p>
   <details class="about"><summary>How it works</summary>
-    <p>Everything is one of three kinds. <b>Staples</b> (flour, sugar, oil) are measured exactly, and each has a low point you set. <b>Counted</b> things (cans, eggs, boxes) go by whole units, so using half a can still uses the can. <b>Gauged</b> things (spices, vanilla) go from Full to Empty, and you move them down yourself.</p>
+    <p>Everything is one of three kinds. <b>Measured</b> things (flour, sugar, oil) are kept exactly, by weight or volume. <b>Counted</b> things (cans, eggs, boxes) go by whole units, so using half a can still uses the can. <b>Gauged</b> things (spices, vanilla) go from Full to Empty, and you move them down yourself. Any of them can be a <b>staple</b>, something you keep stocked: you say when it's running low (2 lb, 3 cans, ½ left), and then it shows under Running low.</p>
     <p>Each time you buy something it's kept as its own purchase, with its own expiry date, and the soonest to expire is used first. Scanning receipts and barcodes from your phone, and taking what recipes need, are coming next.</p>
   </details>
   <div id="error" class="msg bad" role="alert" hidden></div>
@@ -230,26 +234,24 @@ details.about p { margin: 8px 0 0; }
     <label class="field">Name<input type="text" name="name" maxlength="80" required placeholder="Whole wheat flour" autocomplete="off"></label>
     <fieldset class="kinds" id="kinds">
       <legend>Kind</legend>
-      <label><input type="radio" name="kind" value="staple"><b>Staple</b>Measured, like flour. Goes on your list when low.</label>
+      <label><input type="radio" name="kind" value="measured"><b>Measured</b>By weight or volume, like flour.</label>
       <label><input type="radio" name="kind" value="counted"><b>Counted</b>Whole units, like cans or eggs.</label>
       <label><input type="radio" name="kind" value="gauged"><b>Gauged</b>Full to empty, like spices.</label>
     </fieldset>
     <label class="field">Where it's kept<input type="text" name="place" maxlength="30" list="place-list" placeholder="Cupboard" autocomplete="off"></label>
     <datalist id="place-list"></datalist>
-    <div data-kind="staple counted" data-amount>
+    <div data-kind="measured counted" data-amount>
       <div class="two">
         <label class="field"><span id="amount-label">How much you have</span><input type="text" name="amount" maxlength="40" placeholder="10 lb" autocomplete="off"></label>
         <label class="field">Expires<input type="date" name="expires"></label>
       </div>
       <p class="reads" id="amount-reads"></p>
     </div>
-    <div data-kind="staple">
+    <div data-kind="measured">
       <div class="two">
-        <label class="field">Running low at<input type="text" name="low" maxlength="40" placeholder="2 lb" autocomplete="off"></label>
         <label class="field">Grams in a cup<input type="number" name="per_cup" min="1" max="2000" step="any" placeholder="120"></label>
+        <label class="field" data-edit>Show it in<select name="shows"></select></label>
       </div>
-      <p class="reads" id="low-reads"></p>
-      <label class="field" data-edit>Show it in<select name="shows"></select></label>
     </div>
     <div data-kind="counted">
       <div class="two">
@@ -263,6 +265,12 @@ details.about p { margin: 8px 0 0; }
         <label class="field">Expires<input type="date" name="expires_gauged"></label>
       </div>
     </div>
+    <label class="check"><input type="checkbox" name="staple"><span><b>Staple</b>: something you keep stocked. Say when it's running low, and it shows under Running low.</span></label>
+    <div id="low-box" hidden>
+      <label class="field" data-low="measured counted">Running low at<input type="text" name="low" maxlength="40" placeholder="2 lb" autocomplete="off"></label>
+      <label class="field" data-low="gauged">Running low at<select name="low_level"></select></label>
+      <p class="reads" id="low-reads"></p>
+    </div>
     <label class="field">Other names recipes use (optional)<input type="text" name="words" maxlength="200" placeholder="wholemeal flour, ww flour" autocomplete="off"></label>
     <div class="row"><button class="btn" value="save">Save</button><button class="btn quiet" value="cancel" formnovalidate>Cancel</button></div>
   </form>
@@ -272,14 +280,14 @@ details.about p { margin: 8px 0 0; }
   <form method="dialog" id="use-form">
     <h2 id="use-title">Use</h2>
     <p id="use-have"></p>
-    <div data-use="staple counted">
+    <div data-use="measured counted">
       <label class="field"><span id="use-label">How much you used</span><input type="text" name="amount" maxlength="40" autocomplete="off"></label>
       <p class="reads" id="use-reads"></p>
     </div>
     <div class="levels" data-use="gauged" id="levels"></div>
     <div class="row">
-      <button class="btn" value="use" data-use="staple counted">Use it</button>
-      <button class="btn quiet" value="all" data-use="staple counted">Used it all</button>
+      <button class="btn" value="use" data-use="measured counted">Use it</button>
+      <button class="btn quiet" value="all" data-use="measured counted">Used it all</button>
       <button class="btn danger" value="toss">Tossed it</button>
       <button class="btn quiet" value="cancel" formnovalidate>Cancel</button>
     </div>

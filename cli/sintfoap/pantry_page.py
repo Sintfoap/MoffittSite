@@ -2,9 +2,10 @@
 
 Your food down the left, by where it's kept (Fridge, Freezer, Cupboard,
 Spice rack), with how much is left and when it expires; the highlighted one
-on the right, with each purchase of it. Staples (flour, sugar) are measured
-and have a low point, counted things (cans, eggs) go by whole units, and
-gauged things (spices) go from Full to Empty.
+on the right, with each purchase of it. Measured things (flour, sugar) are
+kept by weight or volume, counted things (cans, eggs) go by whole units, and
+gauged things (spices) go from Full to Empty. Any of them can be a staple,
+with a point it's running low at (2 lb, 3 cans, ½ left).
 
 n adds food, u uses some, m adds a purchase (or refills a gauged thing), e
 edits, p corrects or takes off a purchase, x removes it, f shows all, use
@@ -22,7 +23,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
-from textual.widgets import Button, Footer, Input, Label, OptionList, Select, Static
+from textual.widgets import Button, Checkbox, Footer, Input, Label, OptionList, Select, Static
 from textual.widgets.option_list import Option
 
 from . import site
@@ -31,7 +32,7 @@ from .receipt_dialog import ReceiptDialog, ScannerDialog
 
 WARN = "#e0b25a"
 FILTERS = (("all", "All"), ("soon", "Use soon"), ("low", "Running low"))
-KINDS = (("Staple: measured, like flour", "staple"), ("Counted: whole units, like cans", "counted"), ("Gauged: full to empty, like spices", "gauged"))
+KINDS = (("Measured: by weight or volume, like flour", "measured"), ("Counted: whole units, like cans", "counted"), ("Gauged: full to empty, like spices", "gauged"))
 LEVELS = ["Empty", "Almost out", "¼ left", "½ left", "¾ left", "Full"]
 MONTHS = "Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec".split()
 
@@ -109,10 +110,7 @@ class ItemDialog(ModalScreen[dict | None]):
                 with Vertical():
                     yield Label("Expires", classes="lbl")
                     yield Input("", id="expires", placeholder="YYYY-MM-DD", max_length=10)
-            with Horizontal(classes="grid part", id="staple"):
-                with Vertical():
-                    yield Label("Running low at (staples)", classes="lbl")
-                    yield Input(i.get("low_text", ""), id="low", placeholder="2 lb", max_length=40)
+            with Horizontal(classes="grid part", id="measured"):
                 with Vertical():
                     yield Label("Grams in a cup", classes="lbl")
                     pc = i.get("per_cup")
@@ -132,6 +130,11 @@ class ItemDialog(ModalScreen[dict | None]):
                 with Vertical():
                     yield Label("Expires", classes="lbl")
                     yield Input(i.get("expires", "") if i.get("kind") == "gauged" else "", id="g-expires", placeholder="YYYY-MM-DD", max_length=10)
+            yield Checkbox("Staple: kept stocked, and running low at…", bool(i.get("staple")), id="staple")
+            with Vertical(classes="part", id="low-box"):
+                yield Input("" if i.get("kind") == "gauged" else i.get("low_text", ""), id="low", placeholder="2 lb, or how many", max_length=40)
+                low = i.get("low") if i.get("kind") == "gauged" and i.get("low") is not None else 1
+                yield Select([(lv, n) for n, lv in reversed(list(enumerate(LEVELS))) if n < 5], value=low, allow_blank=False, id="low-level")
             yield Label("Other names recipes use", classes="lbl")
             yield Input(i.get("words", ""), id="words", placeholder="wholemeal flour, ww flour", max_length=200)
             with Horizontal(classes="buttons"):
@@ -152,13 +155,20 @@ class ItemDialog(ModalScreen[dict | None]):
     def show_kind(self) -> None:
         k = self.kind()
         self.query_one("#amounts").display = k != "gauged" and (not self.i or self.changing())
-        self.query_one("#staple").display = k in ("staple", "")
+        self.query_one("#measured").display = k in ("measured", "")
+        staple = self.query_one("#staple", Checkbox).value
+        self.query_one("#low-box").display = staple
+        self.query_one("#low").display = staple and k != "gauged"
+        self.query_one("#low-level").display = staple and k == "gauged"
         self.query_one("#counted").display = k in ("counted", "")
         self.query_one("#gauged").display = k == "gauged"
 
     def on_select_changed(self, e: Select.Changed) -> None:
         if e.select.id == "kind":
             self.show_kind()
+
+    def on_checkbox_changed(self, e: Checkbox.Changed) -> None:
+        self.show_kind()
 
     def fields(self) -> dict:
         v = lambda x: self.query_one(f"#{x}", Input).value.strip()  # noqa: E731
@@ -172,10 +182,11 @@ class ItemDialog(ModalScreen[dict | None]):
             if v("amount"):
                 out["amount"] = v("amount")
             out["expires"] = v("expires")
-        if k in ("staple", "") and (v("low") or k == "staple"):
-            out["low"] = v("low")
-            if v("per_cup") or (self.i and k == "staple"):
-                out["per_cup"] = float(v("per_cup")) if v("per_cup") else None
+        out["staple"] = self.query_one("#staple", Checkbox).value
+        if out["staple"]:
+            out["low"] = self.query_one("#low-level", Select).value if k == "gauged" else v("low")
+        if k in ("measured", "") and (v("per_cup") or (self.i and k == "measured")):
+            out["per_cup"] = float(v("per_cup")) if v("per_cup") else None
         if k in ("counted", ""):
             if v("unit") or k == "counted":
                 out["unit"] = v("unit")
@@ -424,8 +435,8 @@ class PantryPage(Page):
         if not i:
             d.update(Text("Highlight something to see it here.", style=FAINT))
             return
-        t = Text.assemble((i["name"], f"bold {INK}"), (f"   {i['kind']}, {i['place']}\n\n", FAINT), have(i))
-        if i["kind"] == "staple" and i["low_text"]:
+        t = Text.assemble((i["name"], f"bold {INK}"), (f"   {i['kind']}{' staple' if i.get('staple') else ''}, {i['place']}\n\n", FAINT), have(i))
+        if i.get("staple") and i["low_text"]:
             t.append(f"\n{'Out' if i['is_out'] else 'Low' if i['is_low'] else 'Low at'} {'' if i['is_out'] else i['low_text']}".rstrip(), MUTED)
         if i["kind"] == "counted" and i["size"]:
             t.append(f"\n{i['size']} each", MUTED)

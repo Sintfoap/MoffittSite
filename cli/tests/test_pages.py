@@ -2254,6 +2254,16 @@ def test_pantry_in_the_terminal(real_site):
         # A gauged thing is set to how full it is; m refills it.
         lst.highlighted = next(n for n, i in enumerate(page.rows) if i and i["name"] == "Ground cumin")
         assert page.current()["is_low"] is False
+        # e makes it a staple, running low at a mark on the gauge.
+        await pilot.press("e")
+        await settle(pilot)
+        app.screen.query_one("#staple").value = True
+        await settle(pilot)
+        assert app.screen.query_one("#low-level").display and not app.screen.query_one("#low").display
+        app.screen.query_one("#low-level").value = 1
+        await pilot.press("ctrl+s")
+        await settle(pilot, 0.6)
+        assert page.current()["staple"] and page.current()["low_text"] == "Almost out" and page.current()["is_low"] is False
         await pilot.press("u")
         await settle(pilot)
         app.screen.query_one("#level").value = 1
@@ -2327,11 +2337,18 @@ def test_pantry_reads_a_receipt_in_the_terminal(real_site, tmp_path):
         rows = {r["printed"]: r for r in check.rows}
         assert rows["GV WW FLR 10LB"]["item"] == flour_before["id"] and rows["GV WW FLR 10LB"]["amount"] == "10 lb"
         assert rows["GV WW FLR 10LB"]["expires_by"] == "estimated"
-        assert rows["GV BRWN SUGAR 2LB"]["item"] == "" and rows["GV BRWN SUGAR 2LB"]["kind"] == "staple"
+        assert rows["GV BRWN SUGAR 2LB"]["item"] == "" and rows["GV BRWN SUGAR 2LB"]["kind"] == "measured"
         assert rows["BAG FEE"]["on"] is False, "not food starts unticked"
         if SHOTS:
             app.save_screenshot("pantry-receipt-check.svg", SHOTS)
-        # Brown sugar is a new staple with no low point: it comes back to fix, the rest go in.
+        # enter changes a line: brown sugar made a staple, but with no low point yet.
+        check.query_one("#rlines").highlighted = check.rows.index(rows["GV BRWN SUGAR 2LB"])
+        await pilot.press("enter")
+        await settle(pilot)
+        app.screen.query_one("#staple").value = True
+        await pilot.press("ctrl+s")
+        await settle(pilot)
+        # It comes back to fix, the rest go in.
         await pilot.press("ctrl+s")
         await settle(pilot, 1.0)
         again = app.screen
@@ -2339,7 +2356,7 @@ def test_pantry_reads_a_receipt_in_the_terminal(real_site, tmp_path):
         assert [r["printed"] for r in again.rows] == ["GV BRWN SUGAR 2LB"] and "running low" in again.rows[0]["error"]
         flour = next(i for i in site.pantry()["items"] if i["id"] == flour_before["id"])
         assert len(flour["lots"]) == len(flour_before["lots"]) + 1
-        # enter changes the line: its low point, then it's added.
+        # Its low point, then it's added.
         await pilot.press("enter")
         await settle(pilot)
         app.screen.query_one("#low").value = "1 lb"
@@ -2350,7 +2367,7 @@ def test_pantry_reads_a_receipt_in_the_terminal(real_site, tmp_path):
         await settle(pilot, 1.0)
         assert app.screen is page
         sugar = next(i for i in site.pantry()["items"] if i["name"] == "Brown sugar")
-        assert (sugar["kind"], sugar["text"], sugar["low_text"], sugar["expires_by"]) == ("staple", "2 lb", "1 lb", "estimated")
+        assert (sugar["kind"], sugar["staple"], sugar["text"], sugar["low_text"], sugar["expires_by"]) == ("measured", True, "2 lb", "1 lb", "estimated")
         # Next time, Walmart's lines are remembered.
         await pilot.press("c")
         await settle(pilot)

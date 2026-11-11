@@ -32,7 +32,7 @@ class LinesTest {
 
     @Test fun aReceiptLineFromTheSite() {
         val p = JSONObject("""{"printed":"GV WW FLR 10LB","name":"Whole wheat flour","skip":false,
-            "match":{"id":"i_0000000001","name":"Whole wheat flour","kind":"staple","how":"remembered","text":"2 lb"},
+            "match":{"id":"i_0000000001","name":"Whole wheat flour","kind":"measured","how":"remembered","text":"2 lb"},
             "amount":"10 lb","expires":"2027-02-09","expires_by":"estimated"}""")
         val l = Line.from(p, store = "Walmart")
         assertEquals("i_0000000001", l.target)
@@ -56,6 +56,20 @@ class LinesTest {
         assertEquals("Oat milk", sent.getString("name"))
         assertEquals("scanned", sent.getString("expires_by"))
         assertFalse(sent.has("item"))
+    }
+
+    @Test fun aStapleIsSentWithItsLowPoint() {
+        val plain = Line(name = "Oat milk", kind = "counted").toJson()
+        assertFalse(plain.getBoolean("staple"))
+        assertFalse(plain.has("low"))
+        assertEquals("2", Line(name = "Tomato soup", kind = "counted", staple = true, low = "2").toJson().getString("low"))
+        // A gauged one is low at a mark: Almost out unless another is picked.
+        assertEquals(1, Line(name = "Vanilla extract", kind = "gauged", staple = true).toJson().getInt("low"))
+        assertEquals(3, Line(name = "Vanilla extract", kind = "gauged", staple = true, lowLevel = 3).toJson().getInt("low"))
+        // Kept to fix, it comes back as it was.
+        val back = Line.fromSent(Line(name = "Cumin", kind = "gauged", staple = true, lowLevel = 2).toJson())
+        assertTrue(back.staple)
+        assertEquals(2, back.lowLevel)
     }
 
     @Test fun whichDatesAreWorthSnapping() {
