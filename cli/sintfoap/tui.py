@@ -48,8 +48,8 @@ def account_lines(data: dict) -> Text:
     return t
 
 
-def today_lines(today: dict) -> Text:
-    """The web dashboard's Today card: overdue Drift items in red, then what's due today."""
+def today_lines(today: dict, dinner: dict | None = None) -> Text:
+    """The web dashboard's Today card: overdue Drift items in red, then what's due today, then tonight's dinner."""
     t = Text()
     for kind, colour in (("late", BAD), ("due", INK)):
         for it in today.get(kind, []):
@@ -59,6 +59,13 @@ def today_lines(today: dict) -> Text:
             t.append(it["title"], style=colour)
             t.append(f"   +{it['collection']}" if it.get("collection") else "", style=GOLD_DIM)
             t.append(f"   {it['when']}" if it.get("when") else "", style=BAD if kind == "late" else MUTED)
+    if dinner and (dinner.get("title") or dinner.get("out")):
+        if t:
+            t.append("\n")
+        t.append("◆ ", style=GOLD)
+        t.append("Eating out tonight" if dinner.get("out") else dinner["title"], style=INK)
+        t.append(f"   {dinner['time']}" if dinner.get("time") else "", style=MUTED)
+        t.append("   dinner", style=GOLD_DIM)
     return t or Text("Nothing due today.", style=MUTED)
 
 
@@ -74,12 +81,9 @@ def page_for(url: str) -> str | None:
 
 
 def app_body(app: dict) -> Text:
-    """A dashboard card's words: what's new (`now`), then what the app is for."""
-    t = Text()
-    if app.get("now"):
-        t.append(app["now"] + "\n", style=f"bold {GOLD}")
-    t.append(app["blurb"], style=MUTED if not app.get("now") else FAINT)
-    return t
+    """A dashboard card's words: what's new in the app (`now`), or nothing; what
+    the app is for never changes, so the web dashboard leaves it off too."""
+    return Text(app["now"], style=f"bold {GOLD}") if app.get("now") else Text("")
 
 
 class Card(Static, can_focus=True):
@@ -91,12 +95,13 @@ class Card(Static, can_focus=True):
 
     def render(self) -> Text:
         t = Text(self._title, style=f"bold {INK}")
-        t.append("\n\n")
-        t.append(self._body if isinstance(self._body, Text) else Text(self._body, style=MUTED))
-        t.append("\n\n")
-        t.append(self._action.upper(), style=f"bold {GOLD}")
-        if self.page:
-            t.append("   W IN BROWSER", style=GOLD_DIM)
+        body = self._body if isinstance(self._body, Text) else Text(self._body, style=MUTED)
+        if body.plain:
+            t.append("\n\n" if self._action else "\n")
+            t.append(body)
+        if self._action:
+            t.append("\n\n")
+            t.append(self._action.upper(), style=f"bold {GOLD}")
         return t
 
     def open(self) -> None:
@@ -119,7 +124,7 @@ class DashboardPage(Page):
     DashboardPage #welcome {{ color: {INK}; text-style: bold; padding: 1 0 1 0; }}
     DashboardPage #notice {{ display: none; border: round {BAD}; color: {BAD}; padding: 0 1; margin-bottom: 1; }}
     DashboardPage #notice.on {{ display: block; }}
-    DashboardPage #apps, DashboardPage #kitchen {{ grid-size: 2; grid-gutter: 1 2; height: auto; margin-bottom: 1; }}
+    DashboardPage #apps, DashboardPage #kitchen {{ grid-size: 3; grid-gutter: 1 2; height: auto; margin-bottom: 1; }}
     Card {{ background: #121a12; border: round #4a4430; padding: 1 2; height: auto; }}
     Card:focus {{ border: round {GOLD}; }}
     Card:hover {{ border: round {GOLD_DIM}; }}
@@ -182,7 +187,7 @@ class DashboardPage(Page):
         today.display = bool(data.get("today"))
         self.query_one("#panels").set_class(not data.get("today"), "single")
         if data.get("today"):
-            today._body, today.url = today_lines(data["today"]), data["today"]["url"]
+            today._body, today.url = today_lines(data["today"], data.get("dinner")), data["today"]["url"]
             today.refresh(layout=True)
 
         notice = self.query_one("#notice", Static)
@@ -190,12 +195,13 @@ class DashboardPage(Page):
         if a.get("setup_needed"):
             notice.update(f"Finish setting up your account first: {a['setup_needed']}. Press s for account settings.")
 
-        # Each card says what's new in its app (`now`, from src/glance.js) above
-        # what the app is for; the food apps go under Kitchen, as in the menu.
+        # Each card says what's new in its app (`now`, from src/glance.js); the
+        # food apps go under Kitchen, as in the menu.
         grid, kitchen = self.query_one("#apps", Grid), self.query_one("#kitchen", Grid)
         await grid.remove_children()
         await kitchen.remove_children()
-        cards = [Card(app["name"], app_body(app), app["url"], page=page_for(app["url"]), id=f"app-{i}")
+        # An app card is its name and its live line; no "Open" (enter opens, w in the browser).
+        cards = [Card(app["name"], app_body(app), app["url"], action="", page=page_for(app["url"]), id=f"app-{i}")
                  for i, app in enumerate(data["apps"])]
         mine = [c for c, app in zip(cards, data["apps"]) if app.get("group") != "kitchen"]
         food = [c for c, app in zip(cards, data["apps"]) if app.get("group") == "kitchen"]

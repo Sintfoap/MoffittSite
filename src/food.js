@@ -140,7 +140,15 @@ export async function getPick(env, user, id) {
   const { results: photos } = await d.prepare(`SELECT f.id, f.user_id, f.caption, f.created, u.username, u.display_name FROM food_photos f
     LEFT JOIN users u ON u.id = f.user_id WHERE f.pick = ? ORDER BY f.created`).bind(id).all();
   const me = marks.find(m => m.user_id === user.id);
+  // Your Recipe box's copy, matched by name, so the page can link to it (and to Meal plan) instead of offering to save it again.
+  let inBox = null;
+  if (user.areas.has("recipes")) {
+    const t = String(data.title || "").trim().toLowerCase();
+    const { results: mine } = await d.prepare("SELECT id, data FROM recipes WHERE owner = ?").bind(user.id).all();
+    inBox = mine.find(x => String(JSON.parse(x.data).title || "").trim().toLowerCase() === t)?.id || null;
+  }
   return {
+    in_box: inBox,
     id, month: r.month, ...data, recipe: data.recipe ? { ...BLANK_RECIPE, ...data.recipe } : null,
     by: nameOf(r), yours: r.chooser === user.id, can_edit: r.chooser === user.id || isAdmin(user), updated: r.updated,
     made_by: marks.filter(m => m.made).map(nameOf), favorite_of: marks.filter(m => m.favorite).map(nameOf),
@@ -326,7 +334,7 @@ export async function food(request, env, user, pathname) {
         const { results } = await (await db(env)).prepare("SELECT id, json_extract(data, '$.title') AS title FROM recipes WHERE owner = ?").bind(user.id).all();
         recipes = results.sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: "base" }));
       }
-      return json({ picks: await listPicks(env, user), you: user.id, kinds: KINDS, recipe_box: box, recipes });
+      return json({ picks: await listPicks(env, user), you: user.id, kinds: KINDS, recipe_box: box, meals: user.areas.has("meals"), recipes });
     }
     const ph = pathname.match(PHOTO);
     if (ph) return method === "GET" ? photoFile(env, ph[1]) : notAllowed();

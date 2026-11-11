@@ -21,6 +21,7 @@
 // Anything that needs the password (two-factor, recovery codes, email, the
 // password itself) stays on /account, so the terminal never handles it.
 
+import { tonight } from "./meals.js";
 import { glance } from "./glance.js";
 import { db, now } from "./db.js";
 import { randomBytes, randomToken, sha256 } from "./crypto.js";
@@ -172,6 +173,8 @@ async function dashboard(request, env) {
     // null for accounts without Drift (or while setup is needed).
     date: clock.label,
     today,
+    // Tonight's dinner from Meal plan ({id, title, time} or {out: true}), shown in Today; null without Meal plan.
+    dinner: !setup && user.areas.has("meals") ? await tonight(env, user, clock.day).catch(() => null) : null,
   });
 }
 

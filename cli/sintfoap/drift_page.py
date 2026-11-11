@@ -7,6 +7,7 @@ as it is and their views are a press of w away.
 """
 from __future__ import annotations
 
+import asyncio
 import calendar
 import json
 import locale
@@ -736,6 +737,7 @@ class DriftPage(Page):
     @attempt
     async def action_refresh(self) -> None:
         self.state = await self.fetch(site.drift_state)
+        self.extras = await asyncio.to_thread(site.drift_today)
         self.loaded = True
         self.render_all()
 
@@ -856,6 +858,15 @@ class DriftPage(Page):
             on = sorted([it for it in ev if R.on_day(it["meta"]["event"], R.today())], key=R.by_start)
             left = sum(1 for it in on if R.is_open(it))
             sub = [date.today().strftime("%B ") + str(date.today().day), f"{left} of {len(on)} still open" if on else "Nothing scheduled"]
+            # Tonight's dinner (Meal plan) and Sweep's suggestions, above the day's items.
+            x = getattr(self, "extras", None) or {}
+            dinner = x.get("dinner") or {}
+            if dinner.get("title") or dinner.get("out"):
+                opts.append(Option(Text.assemble(("  DINNER  ", f"bold {GOLD}"), ("Eating out tonight" if dinner.get("out") else dinner["title"], INK),
+                                                 (f"   {dinner['time']}" if dinner.get("time") else "", MUTED)), disabled=True))
+            if x.get("sweep"):
+                n = x["sweep"]
+                opts.append(Option(Text.assemble(("  SWEEP   ", f"bold {GOLD}"), (f"{n} suggestion{'' if n == 1 else 's'} from your chats", INK), ("   g w", GOLD_DIM)), disabled=True))
             if late:
                 group("Overdue", late)
             if on:

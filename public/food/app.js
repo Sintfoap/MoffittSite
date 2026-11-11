@@ -181,7 +181,10 @@ function renderDetail() {
   }
 
   const actions = el("div", { className: "actions" });
-  if (r && club.recipe_box) {
+  if (p.in_box) {
+    actions.append(el("a", { className: "btn quiet", href: `/recipes/#${p.in_box}`, textContent: "In your Recipe box" }));
+    if (club.meals) actions.append(el("a", { className: "btn quiet", href: "/meals/", textContent: "Plan it in Meal plan" }));
+  } else if (r && club.recipe_box) {
     const save = el("button", { className: "btn quiet", type: "button", textContent: "Save to my Recipe box" });
     save.addEventListener("click", () => run(async () => {
       const out = await api("POST", `picks/${p.id}/save`);

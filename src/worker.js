@@ -32,19 +32,22 @@ import { chat } from "./chat.js";
 import { recipes } from "./recipes.js";
 import { books } from "./books.js";
 import { sweepApp } from "./sweep.js";
-import { meals } from "./meals.js";
+import { meals, tonight } from "./meals.js";
+import { uses } from "./kitchen.js";
 import { trips } from "./trips.js";
 import { board } from "./board.js";
 import { labels } from "./labels.js";
 import { food } from "./food.js";
 import { notifications, driftReminders, pushGateway, bridgeUpkeep } from "./notify.js";
+import { visitorNow } from "./drift.js";
+import { db } from "./db.js";
 import { state, version, createItem, updateItem, createCollection, updateCollection, setBases, shareCollection, unshareCollection, readJson, BadRequest, ID, getItem } from "./drift.js";
 import { planDay } from "./routing.js";
 import { translate, TranslateError } from "./translate.js";
 
 // /todo/api/state, /todo/api/version, /todo/api/items[/<id>[/translate]],
 // /todo/api/collections[/<id>[/shares[/<username>]]]
-const API = /^\/todo\/api\/(state|version|items|collections|installs|places|route|weather)(?:\/([^/]+)(?:\/(shares|translate)(?:\/([^/]+))?)?)?\/?$/;
+const API = /^\/todo\/api\/(state|version|today|items|collections|installs|places|route|weather)(?:\/([^/]+)(?:\/(shares|translate)(?:\/([^/]+))?)?)?\/?$/;
 const USERNAME = /^[a-z0-9_.-]{1,64}$/;
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -85,7 +88,14 @@ export default {
       return Response.redirect(url.toString(), 308);
     }
     if (pathname.startsWith("/recipes/")) {
-      return protect(request, env, areaOf("recipes"), user => recipes(request, env, user, pathname));
+      return protect(request, env, areaOf("recipes"), async user => {
+        // Where a recipe turns up in Meal plan, Food club and the Recipe board (src/kitchen.js).
+        const u = pathname.match(/^\/recipes\/api\/recipes\/(r_[0-9a-f]{10})\/uses\/?$/);
+        if (!u) return recipes(request, env, user, pathname);
+        if (request.method !== "GET") return json({ error: "method not allowed" }, 405);
+        const out = await uses(env, user, u[1], visitorNow(request).day);
+        return out ? json(out) : json({ error: "not found" }, 404);
+      });
     }
     if (pathname === "/meals") {
       url.pathname = "/meals/";
@@ -171,6 +181,17 @@ async function todo(request, env, user, pathname) {
 
     // GET → the user's collections, items and the plugins there are
     if (kind === "state") return method === "GET" && !id ? json(await state(env, user)) : json({ error: "not found" }, 404);
+    // GET → what the other apps add to Today: tonight's dinner from Meal plan
+    // ({id, title, time} or {out: true}), and how many Sweep suggestions are
+    // waiting. Each only for accounts with that app; ?day= is the visitor's date.
+    if (kind === "today") {
+      if (method !== "GET" || id) return json({ error: "not found" }, 404);
+      const day = new URL(request.url).searchParams.get("day");
+      const out = { dinner: null, sweep: 0 };
+      if (user.areas.has("meals")) out.dinner = await tonight(env, user, /^\d{4}-\d{2}-\d{2}$/.test(day || "") ? day : visitorNow(request).day).catch(() => null);
+      if (user.areas.has("sweep")) out.sweep = (await (await db(env)).prepare("SELECT COUNT(*) AS n FROM sweep_suggestions WHERE user_id = ? AND status = 'waiting'").bind(user.id).first().catch(() => ({ n: 0 })))?.n || 0;
+      return json(out);
+    }
     // GET → a fingerprint that changes whenever any of the user's data does
     if (kind === "version") return method === "GET" && !id ? json({ version: await version(env, user.id) }) : json({ error: "not found" }, 404);
 

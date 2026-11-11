@@ -2,6 +2,7 @@
 //   /login, /login/2fa, /login/forgot, /login/reset, /login/verify-email, /signup, /logout, /dashboard, /account/*, /admin/*
 // plus protect(), which guards every signed-in area of the site.
 
+import { tonight } from "./meals.js";
 import { glance } from "./glance.js";
 import { db, now } from "./db.js";
 import { randomToken, safeEqual } from "./crypto.js";
@@ -265,7 +266,10 @@ async function dashboard(request, env) {
     catch (e) { console.error("dashboard agenda failed:", e); }
   }
   const apps = PLACES.filter(a => user.areas.has(a.area));
+  // Tonight's dinner joins Today, for accounts with Meal plan.
+  const dinner = user.areas.has("meals") ? await tonight(env, user, day).catch(() => null) : null;
   return html(dashboardPage({
+    dinner,
     user, apps, glances: await glance(env, user, apps, { day, agenda: agendaData }), sessionCount, recoveryLeft: await recoveryCodesLeft(env, user.id),
     agenda: agendaData, installs: drift ? (await installed(env, user.id)).length : null, mail: mailReady(env),
     greeting: hour < 5 ? "Good evening" : hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening",

@@ -79,27 +79,39 @@ label.field input, label.field textarea { width: 100%; color: var(--ink); font-s
 .top .weekname { font-weight: 700; min-width: 18ch; text-align: center; }
 .top .spacer { flex: 1 1 auto; }
 
-.week { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; margin-bottom: 18px; }
-.night { margin: 0; padding: 16px 18px; display: grid; gap: 8px; align-content: start; }
-.night.today { border-color: var(--gold); }
-.night.out { opacity: .6; }
-.night header { display: flex; align-items: baseline; gap: 8px; }
-.night header b { font-size: 15px; }
-.night header span { color: var(--faint); font-size: 12px; }
-.tag { display: inline-block; font-size: 11px; letter-spacing: 1px; text-transform: uppercase; padding: 1px 6px; border: 1px solid var(--line-2); color: var(--muted); }
+.club { margin: 0 0 14px; padding: 8px 12px; border-left: 3px solid var(--gold); background: var(--gold-soft); font-size: 13.5px; }
+button.link { background: none; border: 0; padding: 0; color: var(--gold); text-decoration: underline; cursor: pointer; font: inherit; }
+.nights { list-style: none; margin: 0 0 18px; padding: 0; border-top: 1px solid var(--line); }
+.night { display: grid; grid-template-columns: 9ch minmax(0, 1.2fr) minmax(0, 1fr); gap: 4px 16px; align-items: baseline;
+  padding: 9px 12px; border-bottom: 1px solid var(--line); cursor: pointer; }
+.night:hover { background: color-mix(in oklch, var(--gold-soft) 50%, transparent); }
+.night.open { background: var(--panel); box-shadow: inset 3px 0 0 var(--gold); cursor: default; }
+.night.today .when b { color: var(--gold); }
+.night.out .dish, .night.past { opacity: .55; }
+.night.past .dish small { display: none; }
+.when { display: flex; gap: 6px; align-items: baseline; flex-wrap: wrap; }
+.when b { font-size: 14px; }
+.when span:not(.tag) { color: var(--faint); font-size: 12px; }
+.dish { min-width: 0; }
+.dish a { color: var(--ink); font-weight: 700; text-decoration: none; }
+.dish a:hover { color: var(--gold); text-decoration: underline; }
+.dish small { color: var(--faint); margin-left: 10px; font-size: 12px; }
+.dish .none { color: var(--faint); }
+.dish .tag { margin-left: 8px; }
+.on { font-size: 12.5px; color: var(--muted); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.on time { color: var(--faint); }
+.tag { display: inline-block; font-size: 10.5px; letter-spacing: 1px; text-transform: uppercase; padding: 0 5px; border: 1px solid var(--line-2); color: var(--muted); }
 .tag.busy { border-color: var(--warn); color: var(--warn); }
-.tag.quick { border-color: var(--good); color: var(--good); }
 .tag.slow { border-color: var(--bad); color: var(--bad); }
-.events { list-style: none; margin: 0; padding: 0; font-size: 12.5px; color: var(--muted); }
-.events li { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.events time { color: var(--faint); margin-right: 6px; }
-.night select { width: 100%; }
-.dish { font-weight: 700; color: var(--ink); }
-.dish small { display: block; font-weight: 400; color: var(--faint); }
-.night .row button { background: transparent; border: 1px solid var(--line-2); color: var(--gold); padding: 3px 9px; cursor: pointer; font-size: 12.5px; }
-.night .row button[aria-pressed="true"] { background: var(--gold-soft); border-color: var(--gold); color: var(--ink); }
-.night .row output { min-width: 9ch; text-align: center; font-size: 13px; }
-
+.controls { grid-column: 2 / -1; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; padding-top: 6px; }
+.controls select { min-width: min(100%, 280px); }
+.controls button { background: transparent; border: 1px solid var(--line-2); color: var(--gold); padding: 3px 9px; cursor: pointer; font-size: 12.5px; }
+.controls button[aria-pressed="true"] { background: var(--gold-soft); border-color: var(--gold); color: var(--ink); }
+.controls button:disabled { opacity: .45; cursor: default; }
+.serves { display: inline-flex; gap: 6px; align-items: center; }
+.serves output { min-width: 9ch; text-align: center; font-size: 13px; }
+.shopping .aisle { column-span: none; break-after: avoid; font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: var(--faint); margin: 10px 0 2px; }
+.shopping .aisle:first-child { margin-top: 0; }
 .shopping { list-style: none; margin: 0; padding: 0; columns: 2 280px; column-gap: 24px; }
 .shopping li { break-inside: avoid; }
 .shopping label { display: flex; gap: 10px; align-items: baseline; padding: 3px 0; cursor: pointer; }
@@ -113,7 +125,9 @@ label.field input, label.field textarea { width: 100%; color: var(--ink); font-s
   .shell { grid-template-columns: 1fr; padding-bottom: 0; }
   main { padding-top: 26px; }
   .keybar { display: none; }
-  .week { grid-template-columns: 1fr; }
+  .night { grid-template-columns: 7ch minmax(0, 1fr); }
+  .on { grid-column: 2; white-space: normal; }
+  .controls { grid-column: 1 / -1; }
   .top .weekname { min-width: 0; flex: 1 1 auto; }
 }
 details.about { margin: -8px 0 18px; font-size: 13px; color: var(--muted); max-width: 70ch; }
@@ -125,10 +139,8 @@ details.about p { margin: 8px 0 0; }
 <div class="shell">
 <!--site-rail-->
 <main>
-  <div class="kicker">Meal plan</div>
-  <h1>This week's dinners</h1>
-  <p class="lede">This week's dinners from your Recipe box, fitted around your Drift calendar.</p>
-  <details class="about"><summary>How it works</summary><p>A night with something on in the evening gets a quick recipe. Pick any night yourself, lock the ones you want to keep, then send the week's shopping to a Drift list.</p></details>
+  <div class="pagehead"><h1>This week's dinners</h1>
+  <details class="about"><summary>How it works</summary><p>This week's dinners from your Recipe box, fitted around your Drift calendar.</p><p>A night with something on in the evening gets a quick recipe. Pick any night yourself, lock the ones you want to keep, then send the week's shopping to a Drift list.</p></details></div>
   <div id="error" class="msg bad" role="alert" hidden></div>
   <div id="done" class="msg good" role="status" hidden></div>
 
@@ -142,7 +154,8 @@ details.about p { margin: 8px 0 0; }
     <button class="btn quiet" type="button" id="redo" title="Pick again for every night you haven't locked (r)">Shuffle</button>
   </div>
 
-  <section class="week" id="week"><p class="empty">Loading…</p></section>
+  <p class="club" id="club" hidden></p>
+  <ol class="nights" id="week"><li class="empty">Loading…</li></ol>
 
   <section class="card" id="shop-card">
     <h2>Shopping for the week</h2>

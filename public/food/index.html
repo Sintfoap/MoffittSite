@@ -60,10 +60,10 @@ p { color: var(--muted); margin: 0 0 12px; }
 .msg.bad { background: color-mix(in oklch, var(--bad) 10%, transparent); border-color: var(--bad); color: var(--bad); }
 .msg.good { background: color-mix(in oklch, var(--good) 10%, transparent); border-color: var(--good); color: var(--ink); }
 
-button.btn { display: inline-block; margin: 6px 8px 0 0; padding: 8px 16px; font: 700 12.5px var(--mono); letter-spacing: 1.5px; text-transform: uppercase;
+button.btn, a.btn { display: inline-block; text-decoration: none; margin: 6px 8px 0 0; padding: 8px 16px; font: 700 12.5px var(--mono); letter-spacing: 1.5px; text-transform: uppercase;
   color: var(--on-gold); background: var(--gold); border: 1px solid var(--gold); border-radius: 0; cursor: pointer; }
-button.btn::before { content: "[ "; } button.btn::after { content: " ]"; }
-button.btn.quiet { background: transparent; color: var(--gold); border-color: var(--line-2); }
+button.btn::before, a.btn::before { content: "[ "; } button.btn::after, a.btn::after { content: " ]"; }
+button.btn.quiet, a.btn.quiet { background: transparent; color: var(--gold); border-color: var(--line-2); }
 button.btn.on { background: var(--gold-soft); color: var(--ink); border-color: var(--gold); }
 button.btn.danger { background: transparent; color: var(--bad); border-color: color-mix(in oklch, var(--bad) 50%, transparent); }
 button.btn:disabled { opacity: .45; cursor: default; }
@@ -150,10 +150,8 @@ details.about p { margin: 8px 0 0; }
 <div class="shell">
 <!--site-rail-->
 <main>
-  <div class="kicker">Food club</div>
-  <h1 id="headline">Food club</h1>
-  <p class="lede">A food a month, picked by one of us and made by everyone.</p>
-  <details class="about"><summary>How it works</summary><p>Like the book club, but everyone cooks. Each month one of us picks a food (a meal, a dessert, anything) and shares the recipe, and we all make it. Mark it made, keep your favorites, and add photos of how yours turned out.</p></details>
+  <div class="pagehead"><h1 id="headline">Food club</h1>
+  <details class="about"><summary>How it works</summary><p>A food a month, picked by one of us and made by everyone.</p><p>Like the book club, but everyone cooks. Each month one of us picks a food (a meal, a dessert, anything) and shares the recipe, and we all make it. Mark it made, keep your favorites, and add photos of how yours turned out.</p></details></div>
   <div id="error" class="msg bad" role="alert" hidden></div>
   <div id="done" class="msg good" role="status" hidden></div>
 

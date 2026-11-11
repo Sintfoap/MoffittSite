@@ -39,8 +39,8 @@ let loading = null;
 function refresh() {
   return loading ||= (async () => {
     try {
-      const s = await req("GET", "state");
-      Object.assign(state, { user: s.user, collections: s.collections, items: s.items, version: s.version });
+      const [s, extras] = await Promise.all([req("GET", "state"), req("GET", "today?day=" + today()).catch(() => null)]);
+      Object.assign(state, { user: s.user, collections: s.collections, items: s.items, version: s.version, extras });
       const extra = await storePlugins.load(s.store || []);
       PLUGINS = [...BUILT_IN, ...extra]; BY_ID = Object.fromEntries(PLUGINS.map(p => [p.id, p]));
     } catch (e) { if (e.message !== "signed out") toast("Couldn’t reach the server"); }
@@ -165,6 +165,17 @@ function ctx() {
   return c;
 }
 
+/* ── what other apps add to Today ──────────────── */
+// Tonight's dinner from Meal plan, and Sweep's suggestions waiting, as short
+// lines above the day's items (GET /todo/api/today; nothing for apps you don't have).
+function todayExtras() {
+  const x = state.extras || {}, lines = [];
+  if (x.dinner?.out) lines.push(`<a class="extra" href="/meals/"><b>Dinner</b><span>Eating out tonight</span></a>`);
+  else if (x.dinner?.title) lines.push(`<a class="extra" href="/recipes/#${encodeURIComponent(x.dinner.id)}"><b>Dinner</b><span>${esc(x.dinner.title)}${x.dinner.time ? ` <small>${esc(x.dinner.time)}</small>` : ""}</span></a>`);
+  if (x.sweep) lines.push(`<a class="extra" href="/sweep/"><b>Sweep</b><span>${x.sweep} suggestion${x.sweep === 1 ? "" : "s"} from your chats to look at</span></a>`);
+  return lines.length ? `<div class="extras">${lines.join("")}</div>` : "";
+}
+
 /* ── render ────────────────────────────────────── */
 function render() {
   renderNav();
@@ -182,6 +193,7 @@ function render() {
     body = (late.length ? group("Overdue", late, "", { cls: "overdue" }) : "") +
       (on.length ? group("Today", on, "", { skip: ["event"], chips: it => it.meta.event.start.includes("T") ? [`<span class="chip">${esc(niceTime(it.meta.event.start.slice(11)))}</span>`] : [] }) : "");
     if (!body) body = empty("Nothing for today", "Items with today’s date, from any collection, show up here. Add one above.");
+    body = todayExtras() + body;
     document.title = "Today · Drift";
   } else if (cur.kind === "calendar") {
     $("#h1").textContent = "Calendar";
@@ -608,12 +620,7 @@ document.addEventListener("keydown", e => {
 });
 
 $("#keysBtn").onclick = () => $("#keys").showModal();
-// The moon is the rail's Dark mode button (/rail.js), so the look is the same on every page.
-$("#themeBtn").onclick = () => {
-  if (window.sintfoapTheme) { window.sintfoapTheme.toggle(); return; }
-  const dark = document.documentElement.dataset.theme ? document.documentElement.dataset.theme === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
-  document.documentElement.dataset.theme = dark ? "light" : "dark"; store.set("theme", document.documentElement.dataset.theme);
-};
+// Dark mode is the rail's button (/rail.js), the same on every page.
 if (!window.sintfoapTheme) { const th = store.get("theme", null); if (th) document.documentElement.dataset.theme = th; }
 
 /* ── boot ──────────────────────────────────────── */

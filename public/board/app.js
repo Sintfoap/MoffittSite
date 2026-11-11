@@ -192,7 +192,9 @@ function recipeBody(post) {
     ? el("span", {}, "Kept in step with ", el("a", { href: `/recipes/#${p.recipe_id}`, textContent: "your Recipe box" }), ": change it there or here.")
     : `Kept in step with ${p.by}'s Recipe box.`));
   const acts = el("div", { className: "actions" });
-  if (board.recipe_box) {
+  // Your own post from your Recipe box is already there: a link to it, not Save.
+  if (board.recipe_box && p.recipe_id) acts.append(el("a", { className: "btn quiet", href: `/recipes/#${p.recipe_id}`, textContent: "In your Recipe box" }));
+  else if (board.recipe_box) {
     const save = el("button", { type: "button", className: p.saved ? "btn quiet save" : "btn save", textContent: p.saved ? "Saved ✓ open it" : "Save to Recipe box" });
     save.addEventListener("click", () => saveIt(post));
     acts.append(save);
@@ -302,7 +304,7 @@ function renderPosts() {
     card.dataset.id = p.id;
     const main = el("div", {},
       el("h2", { textContent: p.title }),
-      el("div", { className: "meta" }, labelChips(p), `${p.recipe.labels.length ? " · " : ""}${p.by} · ${ago(p.created)}`,
+      el("div", { className: "meta" }, labelChips(p), `${p.recipe.labels.length ? " · " : ""}${p.recipe.time ? p.recipe.time + " · " : ""}${p.by} · ${ago(p.created)}`,
         p.saves ? ` · saved ${p.saves}×` : "", p.new ? el("span", { className: "new", textContent: "new" }) : null),
       p.note ? el("p", { className: "note", textContent: p.note }) : null);
     card.append(main);
@@ -335,6 +337,8 @@ async function load(older = false) {
   if (older && posts.length) q.set("before", posts.at(-1).created);
   const out = await api("GET", "posts?" + q);
   posts = older ? [...posts, ...out.posts] : out.posts;
+  // The recipe of the day sits above the feed, so it isn't shown again in it.
+  if (board.featured && !at.category && ["feed", "all"].includes(at.view)) posts = posts.filter(x => x.id !== board.featured.id);
   more = out.more;
   if (!older) { openId = null; focus = -1; }
   if (!at.category && at.view === "feed" && !older) board.unread = 0;

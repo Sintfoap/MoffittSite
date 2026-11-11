@@ -190,11 +190,12 @@ function renderList() {
   else if (!match.length) ul.append(el("li", { className: "empty", textContent: "Nothing matches." }));
   for (const r of match.slice(page * PAGE, page * PAGE + PAGE)) {
     const sorted = sortKey && valueOf(r, sortKey);
-    const tags = labelsOf(r).map(labelText).join(" · ");
+    // The list shows just the values (Dinner · Mexican); the key is in the tooltip and on the recipe.
+    const tags = labelsOf(r).map(l => l.value || l.key).join(" · ");
     const found = (hits.get(r.id) || []).map(i => r.ingredients[i]).join(" · ");
     const b = el("button", { type: "button" }, r.title, el("small", { textContent: [sorted, r.time, hostOf(r.source)].filter(Boolean).join(" · ") || `${r.ingredients.length} ingredients` }),
       found ? el("small", { className: "found", textContent: found }) : null,
-      tags ? el("span", { className: "tagline", textContent: tags }) : null);
+      tags ? el("span", { className: "tagline", textContent: tags, title: labelsOf(r).map(labelText).join(" · ") }) : null);
     b.setAttribute("aria-current", String(r.id === open));
     b.addEventListener("click", () => pick(r.id));
     ul.append(el("li", {}, b));
@@ -227,6 +228,33 @@ function listChoices() {
   return opts;
 }
 
+// ── where a recipe is used ─────────────────────────────────────────────────
+// "Planned Wed · Food club, Nov 2026 · On the board", from the other kitchen
+// apps (GET recipes/<id>/uses), fetched once per recipe while the page is open.
+const usesOf = new Map();
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+function usesLine(r) {
+  if (!usesOf.has(r.id)) {
+    usesOf.set(r.id, null);
+    api("GET", `recipes/${r.id}/uses`).then(u => { usesOf.set(r.id, u); if (current()?.id === r.id) renderDetail(); }).catch(() => {});
+    return null;
+  }
+  const u = usesOf.get(r.id);
+  if (!u) return null;
+  const bits = [];
+  if (u.planned.length) bits.push(el("a", { href: `/meals/${u.planned[0].week === thisMonday() ? "" : "#" + u.planned[0].week}`,
+    textContent: `Planned ${u.planned.map(p => p.week === thisMonday() ? p.name : `next ${p.name}`).join(", ")}` }));
+  for (const c of u.club.slice(0, 2)) bits.push(el("a", { href: `/food/#${c.id}`, textContent: `Food club, ${MONTHS[+c.month.slice(5, 7) - 1]} ${c.month.slice(0, 4)}` }));
+  if (u.board) bits.push(el("a", { href: `/board/#${u.board.post}`, textContent: u.board.yours ? "On the board" : "Saved from the board" }));
+  if (!bits.length) return null;
+  return el("div", { className: "uses" }, ...bits.flatMap((b, i) => i ? [" · ", b] : [b]));
+}
+function thisMonday() {
+  const n = new Date(), t = new Date(Date.UTC(n.getFullYear(), n.getMonth(), n.getDate()));
+  t.setUTCDate(t.getUTCDate() - ((t.getUTCDay() + 6) % 7));
+  return t.toISOString().slice(0, 10);
+}
+
 function renderDetail() {
   const box = $("#detail");
   const base = current(), tr = base && english.get(base.id);
@@ -253,6 +281,8 @@ function renderDetail() {
     facts.append(el("a", { href: r.source, textContent: hostOf(r.source) || "source", target: "_blank", rel: "noopener noreferrer" }));
   }
   card.append(facts);
+  const used = usesLine(base);
+  if (used) card.append(used);
   if (labelsOf(r).length) {
     card.append(el("div", { className: "chips" }, ...labelsOf(r).map(l => {
       const on = filters.some(f => f.id === l.id);
@@ -908,6 +938,12 @@ document.addEventListener("keydown", e => {
     E: () => { if (!r) return; const tr = english.get(r.id); if (tr) { tr.on = !tr.on; renderDetail(); } else translate(r); },
   };
   if (keys[e.key]) { e.preventDefault(); keys[e.key](); }
+});
+
+// A link to /recipes/#<id> from another app, or a hash changed on this page, opens that recipe.
+addEventListener("hashchange", () => {
+  const want = location.hash.slice(1);
+  if (data?.recipes.some(r => r.id === want) && want !== open) pick(want);
 });
 
 run(async () => {

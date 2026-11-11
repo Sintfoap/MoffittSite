@@ -305,6 +305,9 @@ class BoardPage(Page):
         before = self.posts[-1]["created"] if older and self.posts else ""
         out = await self.fetch(site.board_posts, self.at["view"], self.at["category"], before, self.at["label"])
         self.posts = self.posts + out["posts"] if older else out["posts"]
+        # The recipe of the day is at the top already; the feed doesn't show it twice.
+        if self.featured():
+            self.posts = [p for p in self.posts if p["id"] != self.featured()["id"]]
         self.more = out["more"]
         if not self.at["category"] and self.at["view"] == "feed" and not older:
             self.board["unread"] = 0
@@ -392,9 +395,9 @@ class BoardPage(Page):
                 return
             for p in self.posts:
                 t = Text.assemble((p["title"], f"bold {INK}"), ("  new" if p.get("new") else "", f"bold {GOLD}"),
-                                  ("  ✓ saved" if p["saved"] else "", GOLD_DIM))
+                                  ("  ✓ in your box" if p.get("recipe_id") else "  ✓ saved" if p["saved"] else "", GOLD_DIM))
                 t.append("\n" + (label_line(p) + " · " if label_line(p) else ""), style=GOLD_DIM)
-                t.append(f"{p['by']} · {ago(p['created'])}" + (f" · saved {p['saves']}×" if p["saves"] else ""), style=FAINT)
+                t.append((p["recipe"].get("time") + " · " if p.get("recipe", {}).get("time") else "") + f"{p['by']} · {ago(p['created'])}" + (f" · saved {p['saves']}×" if p["saves"] else ""), style=FAINT)
                 box.add_option(Option(t, id=p["id"]))
             if self.more:
                 box.add_option(Option(Text("Older…  m", style=GOLD_DIM), id="more"))
@@ -549,6 +552,9 @@ class BoardPage(Page):
             return
         if not self.board.get("recipe_box"):
             self.app.notify("Ask the site's admin for Recipe box to save recipes from here.", timeout=4)
+            return
+        if p.get("recipe_id"):
+            self.app.notify(f"{p['title']} is yours, from your Recipe box: it's there already.", timeout=3)
             return
         out = await self.fetch(site.save_board_post, p["id"])
         for x in [p, (self.board or {}).get("featured"), *self.posts]:

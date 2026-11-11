@@ -140,6 +140,8 @@ button.link { display: block; margin: 0 0 10px; padding: 0; border: 0; backgroun
 .recipe h2 { font-size: clamp(18px, 3vw, 24px); margin-bottom: 6px; }
 .facts { color: var(--faint); font-size: 13px; margin-bottom: 14px; }
 .facts a { color: var(--gold); }
+.uses { font-size: 12.5px; color: var(--faint); margin: -8px 0 14px; }
+.uses a { color: var(--gold); }
 .serves { display: flex; align-items: center; gap: 10px; margin: 6px 0 4px; }
 .serves button { width: 32px; height: 32px; background: transparent; border: 1px solid var(--line-2); color: var(--gold); font-weight: 700; cursor: pointer; }
 .serves output { min-width: 7ch; text-align: center; font-weight: 700; white-space: nowrap; }
@@ -204,11 +206,9 @@ details.about p { margin: 8px 0 0; }
 <div class="shell">
 <!--site-rail-->
 <main>
-  <div class="kicker">Recipe box</div>
-  <h1>Recipes</h1>
+  <div class="pagehead"><h1>Recipes</h1>
+  <details class="about"><summary>How it works</summary><p>Keep recipes from any link, photo or file, scale them, and send what to buy to Drift.</p><p>Paste a link to a recipe (any recipe site, or one shared from Recipe Keeper), snap a photo of a cookbook page or recipe card (read by the site's AI, no key needed, or by Claude with your key), paste a recipe's text, or import a whole file of them from <b>More ways to add</b>. Recipe Keeper's export works as its folder or .zip, pictures and all, and importing it again fills in any that are missing. Give recipes labels like <b>Season: Fall</b> (from the one list kept in Recipe labels) to filter and sort them, or let Suggest labels find them from each recipe's words, for you to check first.</p></details></div>
   <!--kitchen-tabs-->
-  <p class="lede">Keep recipes from any link, photo or file, scale them, and send what to buy to Drift.</p>
-  <details class="about"><summary>How it works</summary><p>Paste a link to a recipe (any recipe site, or one shared from Recipe Keeper), snap a photo of a cookbook page or recipe card (read by the site's AI, no key needed, or by Claude with your key), paste a recipe's text, or import a whole file of them from <b>More ways to add</b>. Recipe Keeper's export works as its folder or .zip, pictures and all, and importing it again fills in any that are missing. Give recipes labels like <b>Season: Fall</b> (from the one list kept in Recipe labels) to filter and sort them, or let Suggest labels find them from each recipe's words, for you to check first.</p></details>
   <div id="error" class="msg bad" role="alert" hidden></div>
   <div id="done" class="msg good" role="status" hidden></div>
 

@@ -50,6 +50,13 @@ const icon = name => `<svg viewBox="0 0 24 24" width="18" height="18" fill="none
 // Pages give the rail an `auto` column, so its own width sets the column's:
 // 232px, or 60px of icons once it's folded (html.rail-min, from /rail.js).
 const RAIL_CSS = `
+  /* every app's header: its title, with "How it works" beside it (opening below) */
+  .pagehead { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 18px; margin: 0 0 18px; }
+  .pagehead h1 { margin: 0 !important; }
+  .pagehead details.about { margin: 0 !important; font-size: 13px; color: var(--muted, inherit); max-width: none; }
+  .pagehead details.about[open] { flex-basis: 100%; }
+  .pagehead details.about summary { cursor: pointer; color: var(--gold, var(--accent)); width: max-content; }
+  .pagehead details.about p { margin: 8px 0 0; max-width: 70ch; }
   .rail { width: 232px; position: sticky; top: 0; height: calc(100vh - 38px); overflow-y: auto; display: flex; flex-direction: column; gap: 1px;
           padding: 20px 12px 16px; background: var(--rail); border-right: 1px solid var(--line); font-family: var(--mono); font-size: 14px; }
   .rail .brand { display: flex; align-items: center; gap: 10px; padding: 0 10px 20px; color: var(--gold); text-decoration: none; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; }
@@ -221,20 +228,24 @@ ${SHELL_CSS}
   .checks li::before { content: "✓"; color: var(--good); font-weight: 700; flex: none; }
   .checks li.warn::before { content: "!"; color: var(--warn); }
   .checks li a { margin-left: auto; font-size: 12.5px; white-space: nowrap; }
-  .apps { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 16px; margin-top: 8px; }
-  a.app { position: relative; display: flex; flex-direction: column; gap: 6px; text-decoration: none; color: var(--ink); background: var(--panel); border: 1px solid var(--line); padding: 18px 20px; }
+  .apps { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 12px; margin-top: 8px; }
+  a.app { position: relative; display: flex; flex-direction: column; gap: 4px; text-decoration: none; color: var(--ink); background: var(--panel); border: 1px solid var(--line); padding: 14px 18px; }
   a.app::before { content: ""; position: absolute; inset: 4px; border: 1px solid var(--line); pointer-events: none; }
   a.app:hover, a.app:focus-visible { outline: none; border-color: var(--gold); }
   a.app:hover::before, a.app:focus-visible::before { border-color: var(--gold); }
   a.app .name { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 15px; }
   a.app .name svg { color: var(--gold); width: 16px; height: 16px; }
-  a.app p { margin: 0; font-size: 13.5px; }
   a.app .now { font-size: 13.5px; font-weight: 700; color: var(--gold); }
-  a.app .now + p { color: var(--muted); font-size: 12.5px; }
-  a.app .open { margin-top: 8px; font-size: 12px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; color: var(--gold); }
-  .phone-app { display: none; margin-top: 16px; }
-  .phone-app .row-links { display: flex; gap: 18px; flex-wrap: wrap; }
+  .phone-app { display: none; margin: 4px 0 0; }
   @media (max-width: 820px) { .phone-app { display: block; } }
+  @media (display-mode: standalone) { .phone-app { display: none !important; } }
+  .app-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+  a.app-chip { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border: 1px solid var(--line); background: var(--panel); color: var(--muted); text-decoration: none; font-size: 13px; }
+  a.app-chip svg { width: 14px; height: 14px; color: var(--gold); }
+  a.app-chip:hover, a.app-chip:focus-visible { border-color: var(--gold); color: var(--ink); outline: none; }
+  .agenda .dinner .when { color: var(--gold); text-transform: uppercase; letter-spacing: 1px; font-size: 11px; }
+  .agenda .dinner a { color: var(--ink); text-decoration: none; }
+  .agenda .dinner a:hover { color: var(--gold); text-decoration: underline; }
   .section-title { font-size: 11px; letter-spacing: 3px; text-transform: uppercase; color: var(--faint); margin: 26px 0 0; }
 
   /* settings: sections with their own sub-nav */
@@ -456,15 +467,24 @@ const plural = (n, one, many = one + "s") => `${n} ${n === 1 ? one : many}`;
 
 // Home for a signed-in account: what's due in Drift, how the account is set
 // up, and every app it can open. `agenda` is null for accounts without Drift.
-export function dashboardPage({ user, apps, glances = {}, sessionCount, recoveryLeft, agenda, installs, mail, greeting, dateLabel }) {
+export function dashboardPage({ user, apps, glances = {}, sessionCount, recoveryLeft, agenda, installs, mail, greeting, dateLabel, dinner = null }) {
   const first = String(user.display_name).split(/\s+/)[0];
-  const card = a => `<a class="app" href="${esc(a.href)}"><span class="name">${icon(a.icon)}${esc(a.name)}</span>${glances[a.id] ? `<span class="now">${esc(glances[a.id])}</span>` : ""}<p>${esc(a.blurb)}</p><span class="open">Open →</span></a>`;
+  // An app with something live to say is a card with that line; the rest are a
+  // row of small links underneath, since their descriptions never change.
+  const card = a => `<a class="app" href="${esc(a.href)}" title="${esc(a.blurb)}"><span class="name">${icon(a.icon)}${esc(a.name)}</span><span class="now">${esc(glances[a.id])}</span></a>`;
+  const chip = a => `<a class="app-chip" href="${esc(a.href)}" title="${esc(a.blurb)}">${icon(a.icon)}${esc(a.name)}</a>`;
+  const block = list => {
+    const live = list.filter(a => glances[a.id]), quiet = list.filter(a => !glances[a.id]);
+    return `${live.length ? `<div class="apps">${live.map(card).join("")}</div>` : ""}${quiet.length ? `<div class="app-chips">${quiet.map(chip).join("")}</div>` : ""}`;
+  };
   const kitchen = apps.filter(a => a.group === "kitchen"), rest = apps.filter(a => a.group !== "kitchen");
   const appCards = apps.length
-    ? `${rest.length ? `<div class="apps">${rest.map(card).join("")}</div>` : ""}${kitchen.length ? `<div class="section-title">Kitchen</div><div class="apps">${kitchen.map(card).join("")}</div>` : ""}`
+    ? `${rest.length ? block(rest) : ""}${kitchen.length ? `<div class="section-title">Kitchen</div>${block(kitchen)}` : ""}`
     : `<section class="card"><p>Your account doesn't have any apps yet. Ask the site's admin for access.</p></section>`;
 
   let summary = "", today = "";
+  const dinnerLine = dinner?.out ? `<li class="dinner"><span class="box" aria-hidden="true"></span><span class="t"><a href="/meals/">Eating out tonight</a></span><span class="when">dinner</span></li>`
+    : dinner?.title ? `<li class="dinner"><span class="box" aria-hidden="true"></span><span class="t"><a href="/recipes/#${esc(dinner.id)}">${esc(dinner.title)}</a>${dinner.time ? ` <span class="more">${esc(dinner.time)}</span>` : ""}</span><span class="when">dinner</span></li>` : "";
   if (agenda) {
     const { late, due } = agenda, open = late.length + due.length;
     summary = open
@@ -473,8 +493,10 @@ export function dashboardPage({ user, apps, glances = {}, sessionCount, recovery
     const li = (it, cls) => `<li class="${cls}"><span class="box" aria-hidden="true"></span><span class="t">${esc(it.title)}${it.collection ? ` <span class="more">${esc(it.collection)}</span>` : ""}</span><span class="when">${esc(it.when)}</span></li>`;
     const shown = [...late.map(it => li(it, "late")), ...due.map(it => li(it, ""))];
     today = `<section class="card"><div class="card-head"><h2>Today</h2><a href="/todo/">Open Drift →</a></div>
-      ${shown.length ? `<ul class="agenda">${shown.slice(0, 8).join("")}</ul>${shown.length > 8 ? `<p class="hint">and ${shown.length - 8} more in Drift.</p>` : ""}`
+      ${shown.length || dinnerLine ? `<ul class="agenda">${shown.slice(0, 8).join("")}${dinnerLine}</ul>${shown.length > 8 ? `<p class="hint">and ${shown.length - 8} more in Drift.</p>` : ""}`
         : `<p>Items with today's date, from any collection, show up here.</p>`}</section>`;
+  } else if (dinnerLine) {
+    today = `<section class="card"><div class="card-head"><h2>Tonight</h2><a href="/meals/">Meal plan →</a></div><ul class="agenda">${dinnerLine}</ul></section>`;
   }
   const checks = [
     user.totp_secret ? `<li>Two-factor is on</li>` : `<li class="warn">Two-factor is off <a href="/account#security">Set up</a></li>`,
@@ -494,9 +516,7 @@ export function dashboardPage({ user, apps, glances = {}, sessionCount, recovery
     <div class="kicker">${esc(dateLabel)}</div><h1>${esc(greeting)}, ${esc(first)}</h1>
     ${summary ? `<p class="lede">${summary}</p>` : ""}
     <div class="home">${today || `<div>${appCards}</div>`}${account}</div>
-    <section class="card phone-app"><div class="card-head"><h2>On your phone</h2></div>
-      <p>The phone app has Home, Drift and Chat made for a small screen, and can sit on your home screen like any other app.</p>
-      <p class="row-links"><a href="/m/">Open the phone app</a><a href="/app">Install it on Android</a></p></section>
+    <p class="hint phone-app">On your phone? <a href="/m/">Open the phone app</a> · <a href="/app">Install it on Android</a></p>
     ${today ? `<div class="section-title">Apps</div>${appCards}` : ""}`, { user, wide: true, here: "home" });
 }
 

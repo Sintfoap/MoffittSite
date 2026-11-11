@@ -16,6 +16,7 @@ import stat
 import time
 import urllib.error
 import urllib.parse
+from datetime import date
 import urllib.request
 import webbrowser
 from pathlib import Path
@@ -264,6 +265,14 @@ def _q(s: str) -> str:
 
 def drift_state() -> dict:
     return _get("/todo/api/state")
+
+
+def drift_today() -> dict:
+    """What other apps add to Drift's Today: tonight's dinner and Sweep's waiting suggestions."""
+    try:
+        return _get("/todo/api/today?day=" + date.today().isoformat())
+    except Exception:
+        return {}
 
 
 def drift_version() -> str:
