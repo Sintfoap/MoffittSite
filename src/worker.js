@@ -33,7 +33,7 @@ import { recipes } from "./recipes.js";
 import { books } from "./books.js";
 import { sweepApp } from "./sweep.js";
 import { meals } from "./meals.js";
-import { pantry } from "./pantry.js";
+import { pantry, pantryScanner } from "./pantry.js";
 import { trips } from "./trips.js";
 import { board } from "./board.js";
 import { labels } from "./labels.js";
@@ -100,6 +100,9 @@ export default {
       return Response.redirect(url.toString(), 308);
     }
     if (pathname.startsWith("/pantry/")) {
+      // The scanner app pairs, then sends its own key instead of a session (src/pantry_scanner.js).
+      const scanned = await pantryScanner(request, env, pathname);
+      if (scanned) return scanned;
       return protect(request, env, areaOf("pantry"), user => pantry(request, env, user, pathname));
     }
     if (pathname === "/trips") {

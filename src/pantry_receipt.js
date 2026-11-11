@@ -9,14 +9,17 @@
 // an item, that store's line always means that item.
 //
 // /pantry/api/receipt      POST {images: [{data (base64)}, ...]} → {store, date, by, lines: [...]}: what to add, to check
-// /pantry/api/receipt/add  POST {store, lines: [{printed, item? (an id) | name, kind?, place?, unit?, size?, low?, amount, expires?, expires_by?}]}
-//                          → {added: [{printed, id, name, text}], failed: [{printed, error}], items}
+// /pantry/api/receipt/add  POST {store, lines: [{key?, printed, barcode?, item? (an id) | name, kind?, place?, unit?, size?, low?, amount, expires?, expires_by?}]}
+//                          → {added: [{key?, printed, id, name, text}], failed: [{key?, printed, error}], ticked: [{id, title, list}], items}
+//   (also /pantry/api/add, for lines that aren't from a receipt: the scanner app's barcodes). A line with a barcode
+//   remembers it as that item (src/pantry_scanner.js); and whatever comes in is ticked off your Drift shopping list.
 
 import { db } from "./db.js";
-import { BadRequest } from "./drift.js";
+import { BadRequest, SHOPPING, writableCollections, collectionWithItems, updateItem } from "./drift.js";
 import { readPictures } from "./recipe_photo.js";
 import { readAmount, guess, estimateExpiry, singular, UNITS } from "../public/pantry/units.js";
 import { addItem, addLot, editItem, listItems } from "./pantry.js";
+import { BARCODE, rememberProduct } from "./pantry_scanner.js";
 
 const fail = msg => { throw new BadRequest(msg); };
 const isObj = v => v && typeof v === "object" && !Array.isArray(v);
@@ -67,7 +70,19 @@ const storeKey = s => tidy(s, RECEIPT_LIMITS.store).toLowerCase();
 const plainWords = s => String(s || "").toLowerCase().split(/[^a-z0-9]+/).filter(Boolean).map(singular);
 // Words that don't make it a different food.
 const PLAIN = new Set(["whole", "large", "medium", "small", "extra", "jumbo", "organic", "fresh", "natural", "store", "brand", "value", "family", "size", "pack", "grade", "a", "aa", "of", "the", "and"]);
-const sameName =(a, b) => { const x = plainWords(a).join(" "); return x && x === plainWords(b).join(" "); };
+const sameName = (a, b) => { const x = plainWords(a).join(" "); return x && x === plainWords(b).join(" "); };
+// `name` is `mine` with only plain words added ("Whole milk" for Milk, not "Brown sugar" for Sugar).
+const plainerName = (mine, name) => {
+  const a = plainWords(mine), b = plainWords(name);
+  return a.length > 0 && a.every(w => b.includes(w)) && b.every(w => a.includes(w) || PLAIN.has(w));
+};
+// Whether a shopping list line ("2 lb whole wheat flour", "Eggs (for Pancakes)") is clearly this item.
+const LEAD = /^[\s\d½¼¾⅓⅔⅛.,/-]*(?:(?:x|×)\s*)?(?:(?:cups?|c|tbsps?|tablespoons?|tsps?|teaspoons?|lbs?|pounds?|oz|ounces?|g|grams?|kg|ml|l|liters?|litres?|gallons?|gal|quarts?|qt|pints?|pt|cans?|jars?|bottles?|boxes?|bags?|packs?|packages?|dozen|bunch(?:es)?|heads?|cloves?|sticks?|loaf|loaves|pieces?|pcs?)\.?\s+)?(?:of\s+)?/i;
+export function listLineIs(item, title) {
+  const bare = String(title || "").replace(/\s*[(,;].*$/, "").replace(LEAD, "").trim();
+  if (!bare) return false;
+  return [item.name, ...String(item.words || "").split(",")].some(n => n.trim() && (sameName(n, bare) || plainerName(n, bare)));
+}
 
 // The model's answer, tidied: [{printed, name, count, size, food, price}].
 export function linesFrom(found) {
@@ -91,11 +106,7 @@ export function proposal(line, items, aliases, day) {
     // Or the one thing whose name is the line's with only plain words added
     // (Milk for "Whole milk", but not Sugar for "Brown sugar").
     if (!item) {
-      const words = plainWords(line.name);
-      const fits = items.filter(i => {
-        const mine = plainWords(i.name);
-        return mine.length && mine.every(w => words.includes(w)) && words.every(w => mine.includes(w) || PLAIN.has(w));
-      });
+      const fits = items.filter(i => plainerName(i.name, line.name));
       if (fits.length === 1) item = fits[0];
     }
     if (item) how = "name";
@@ -145,9 +156,11 @@ export async function addReceipt(env, user, body) {
   if (body.lines.length > RECEIPT_LIMITS.lines) fail(`send at most ${RECEIPT_LIMITS.lines} lines at once`);
   const d = await db(env), store = storeKey(body.store);
   const kinds = new Map((await listItems(env, user)).items.map(i => [i.id, i.kind]));
-  const added = [], failed = [], learn = [];
+  const added = [], failed = [], learn = [], products = [], into = new Map();
   for (const line of body.lines) {
     const printed = tidy(line?.printed, RECEIPT_LIMITS.printed);
+    // The app's own name for a line (a barcode line has nothing printed), said back with what happened to it.
+    const key = isObj(line) && line.key != null ? tidy(line.key, 40) : undefined;
     try {
       if (!isObj(line)) fail("each line is an object");
       const lot = { amount: line.amount, expires: line.expires, expires_by: line.expires_by };
@@ -160,18 +173,42 @@ export async function addReceipt(env, user, body) {
       } else {
         const { item, ...rest } = line;
         out = await addItem(env, user, { name: rest.name, kind: rest.kind, place: rest.place, unit: rest.unit, size: rest.size, low: rest.low, level: rest.level, words: rest.words, ...lot });
+        kinds.set(out.id, out.kind);
       }
-      added.push({ printed, id: out.id, name: out.name, text: out.text });
+      added.push({ ...(key !== undefined ? { key } : {}), printed, id: out.id, name: out.name, text: out.text });
+      into.set(out.id, out);
       if (printed && store) learn.push([said(printed), out.id]);
+      const code = String(line.barcode ?? "");
+      if (BARCODE.test(code)) products.push([code, out, line]);
     } catch (e) {
       if (!(e instanceof BadRequest)) throw e;
-      failed.push({ printed, name: tidy(line?.name, RECEIPT_LIMITS.name), error: e.message });
+      failed.push({ ...(key !== undefined ? { key } : {}), printed, name: tidy(line?.name, RECEIPT_LIMITS.name), error: e.message });
     }
   }
-  if (learn.length) {
+  if (learn.length || products.length) {
     const t = new Date().toISOString().slice(0, 19);
-    await d.batch(learn.map(([s, id]) => d.prepare(`INSERT INTO pantry_aliases (owner, store, said, item, updated) VALUES (?, ?, ?, ?, ?)
-      ON CONFLICT (owner, store, said) DO UPDATE SET item = excluded.item, updated = excluded.updated`).bind(user.id, store, s, id, t)));
+    await d.batch([
+      ...learn.map(([s, id]) => d.prepare(`INSERT INTO pantry_aliases (owner, store, said, item, updated) VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT (owner, store, said) DO UPDATE SET item = excluded.item, updated = excluded.updated`).bind(user.id, store, s, id, t)),
+      ...products.map(([code, item, line]) => rememberProduct(d, user.id, code, item, line)),
+    ]);
   }
-  return { added, failed, items: (await listItems(env, user)).items };
+  const ticked = await tickOff(env, user, [...into.values()]);
+  return { added, failed, ticked, items: (await listItems(env, user)).items };
+}
+
+// What came in is ticked off your shopping list: each open line there that's clearly one of these
+// ("2 lb whole wheat flour" for Whole wheat flour, but not "brown sugar" for Sugar). → [{id, title, list}]
+async function tickOff(env, user, items) {
+  if (!items.length || !user.areas.has("todo")) return [];
+  const out = [];
+  for (const list of (await writableCollections(env, user)).filter(c => c.name.toLowerCase() === SHOPPING.toLowerCase())) {
+    const found = await collectionWithItems(env, user, list.id);
+    for (const it of found?.items || []) {
+      const check = it.meta?.checklist;
+      if (!check || check.done || !items.some(i => listLineIs(i, it.title))) continue;
+      if (await updateItem(env, user, it.id, { meta: { checklist: { ...check, done: true } } })) out.push({ id: it.id, title: it.title, list: list.name });
+    }
+  }
+  return out;
 }

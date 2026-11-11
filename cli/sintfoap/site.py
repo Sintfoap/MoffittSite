@@ -968,6 +968,21 @@ def add_receipt(store: str, lines: list[dict]) -> dict:
     return api("POST", "/pantry/api/receipt/add", {"store": store, "lines": lines}, timeout=60)
 
 
+def pantry_scanners() -> dict:
+    """Phones paired as Pantry scanners: {scanners: [{id, name, prefix, created, last_used}]}."""
+    return _get("/pantry/api/scanners")
+
+
+def pair_pantry_scanner() -> dict:
+    """A code to pair a phone with: {code, link, qr_text (the link as a QR code, in text), expires_in}. Works once, for 10 minutes."""
+    return api("POST", "/pantry/api/scanners", {})
+
+
+def unpair_pantry_scanner(scanner_id: str) -> dict:
+    """Stops that phone's key working: {scanners} left."""
+    return api("DELETE", f"/pantry/api/scanners/{_q(scanner_id)}")
+
+
 def pantry_key(key: str) -> dict:
     """Saves your Anthropic API key for reading receipts (the same one Recipe box and Sweep use): {photo}."""
     return api("PUT", "/pantry/api/key", {"key": key}, timeout=30)

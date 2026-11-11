@@ -11,8 +11,9 @@
 // amount and expiry date, used oldest-expiry first. Units, plurals and the
 // first guess at an item's kind are public/pantry/units.js, shared with the page.
 //
-// Receipts fill it (src/pantry_receipt.js). Barcodes, the phone scanner, and
-// taking from it for recipes on a shopping list come next (the Pantry plan doc).
+// Receipts fill it (src/pantry_receipt.js), and so does the phone scanner app with
+// barcodes and expiry dates (src/pantry_scanner.js, scanner/). Taking from it for
+// recipes on a shopping list comes next (the Pantry plan doc).
 //
 // /pantry/api/items                  GET ?day=YYYY-MM-DD → {items, places, counts, limits}
 //                                    POST {name, kind?, place?, amount?, expires?, low?, unit?, size?, level?, per_cup?, words?} → the new item
@@ -25,6 +26,10 @@
 //                                      or {level} for a gauged item → the item, with that taken out
 // /pantry/api/key                    PUT {key} → {photo}; DELETE → {photo}: the Anthropic key receipts are read with (Sweep's and Recipe box's too)
 // /pantry/api/receipt                POST {images} → what a receipt adds, to check; /pantry/api/receipt/add POST {store, lines} adds it (src/pantry_receipt.js)
+// /pantry/api/add                    POST {store?, lines}: the same, for lines not from a receipt (the scanner's barcodes)
+// /pantry/api/barcode/<digits>       GET → what a barcode is, and what it would add
+// /pantry/api/scanners[/<id>]        GET the paired phones, POST a pairing code, DELETE unpairs one (src/pantry_scanner.js)
+// /pantry/scanner/pair, /pantry/scanner/latest.json   the app's pairing (no session), and its newest release
 //   Lots record where their expiry date came from: by is "typed", "estimated" (from how long such things keep) or "scanned".
 
 import { db } from "./db.js";
@@ -33,6 +38,8 @@ import { withRail } from "./pages.js";
 import { readJson, BadRequest } from "./drift.js";
 import { readPhotoBody, photoState, saveKey, forgetKey } from "./recipe_photo.js";
 import { readReceipt, addReceipt } from "./pantry_receipt.js";
+import { latestOf } from "./phone.js";
+import { startPairing, finishPairing, listScanners, unpair, scannerUser, lookUp } from "./pantry_scanner.js";
 import { UNITS, ML_PER_CUP, LEVELS, readAmount, inUnit, unitsOf, plural, singular, counted, guess } from "../public/pantry/units.js";
 
 const fail = msg => { throw new BadRequest(msg); };
@@ -41,7 +48,9 @@ export const KINDS = ["staple", "counted", "gauged"];
 export const PLACES = ["Fridge", "Freezer", "Cupboard", "Spice rack"];
 const SOON_DAYS = 5;
 const ID = /^i_[0-9a-f]{10}$/;
-const ROUTE = /^\/pantry\/api\/(?:key|receipt(?:\/add)?|items(?:\/(i_[0-9a-f]{10})(?:\/(use|lots)(?:\/(t_[0-9a-f]{8}))?)?)?)\/?$/;
+export const SCANNER_TAG = /^scanner-v(\d{1,6})$/;
+export const SCANNER_APK = "pantry-scanner.apk";
+const ROUTE = /^\/pantry\/api\/(?:key|add|receipt(?:\/add)?|scanners(?:\/[0-9a-f]{16})?|barcode\/\d{6,14}|items(?:\/(i_[0-9a-f]{10})(?:\/(use|lots)(?:\/(t_[0-9a-f]{8}))?)?)?)\/?$/;
 const isObj = v => v && typeof v === "object" && !Array.isArray(v);
 const today = () => new Date().toISOString().slice(0, 10);
 const stamp = () => new Date().toISOString().slice(0, 19);
@@ -372,7 +381,34 @@ const PAGE_CSP = [
 const dayOf = request => { const day = new URL(request.url).searchParams.get("day"); return /^\d{4}-\d{2}-\d{2}$/.test(day || "") ? day : today(); };
 const json = (obj, status = 200) => new Response(JSON.stringify(obj), { status, headers: { "Content-Type": "application/json", "Cache-Control": "no-store" } });
 
-export async function pantry(request, env, user, pathname) {
+// A paired phone's request (Authorization: Bearer ps_…, from the scanner app): as its owner, but only
+// to Pantry's API, and never to the Anthropic key or pairing. Pairing itself is the app's one
+// request without a key. → a Response, or null when it's neither (and the session decides).
+export async function pantryScanner(request, env, pathname) {
+  const reply = (obj, status = 200) => new Response(JSON.stringify(obj), { status, headers: { "Content-Type": "application/json", "Cache-Control": "no-store" } });
+  if (pathname === "/pantry/scanner/pair") {
+    if (request.method !== "POST") return reply({ error: "method not allowed" }, 405);
+    try { return reply(await finishPairing(env, await readJson(request), new URL(request.url).origin)); }
+    catch (e) {
+      if (e instanceof BadRequest) return reply({ error: e.message }, 400);
+      console.error("pantry pairing:", e);
+      return reply({ error: "server error" }, 500);
+    }
+  }
+  if (pathname === "/pantry/scanner/latest.json") {
+    // The newest scanner app on GitHub (a scanner-v<N> release, .github/workflows/scanner.yml), for the page's
+    // download link and the app's own update check. {version: null} before the first.
+    if (request.method !== "GET") return reply({ error: "method not allowed" }, 405);
+    return reply({ version: null, ...await latestOf(env, SCANNER_TAG, SCANNER_APK) });
+  }
+  if (!/^Bearer\s/i.test(request.headers.get("Authorization") || "")) return null;
+  if (!pathname.startsWith("/pantry/api/") || /^\/pantry\/api\/(key|scanners)(\/|$)/.test(pathname)) return reply({ error: "a scanner can't do that" }, 403);
+  const user = await scannerUser(env, request);
+  if (!user) return reply({ error: "this phone isn't paired any more; pair it again from your Pantry page" }, 401);
+  return pantry(request, env, user, pathname, { scanner: true });
+}
+
+export async function pantry(request, env, user, pathname, { scanner = false } = {}) {
   if (!pathname.startsWith("/pantry/api/")) {
     const asset = await withRail(await env.ASSETS.fetch(request), user, "pantry");
     const res = new Response(asset.body, asset);
@@ -387,8 +423,25 @@ export async function pantry(request, env, user, pathname) {
   try {
     const m = pathname.match(ROUTE);
     if (!m) return json({ error: "not found" }, 404);
-    if (method !== "GET" && !sameOrigin(request)) return json({ error: "cross-origin request refused" }, 403);
+    // A scanner's key is sent by the app itself, never by a browser, so there's no other site to refuse.
+    if (method !== "GET" && !scanner && !sameOrigin(request)) return json({ error: "cross-origin request refused" }, 403);
     const notAllowed = () => json({ error: "method not allowed" }, 405);
+    const path = pathname.replace(/\/$/, "");
+    if (path.startsWith("/pantry/api/scanners")) {
+      const sid = path.split("/")[4];
+      if (!sid && method === "GET") return json(await listScanners(env, user));
+      if (!sid && method === "POST") return json(await startPairing(env, user, new URL(request.url).origin));
+      if (sid && method === "DELETE") { const left = await unpair(env, user, sid); return left ? json(left) : json({ error: "not found" }, 404); }
+      return notAllowed();
+    }
+    if (path.startsWith("/pantry/api/barcode/")) {
+      if (method !== "GET") return notAllowed();
+      return json(await lookUp(env, user, path.split("/")[4], dayOf(request)));
+    }
+    if (path === "/pantry/api/add") {
+      if (method !== "POST") return notAllowed();
+      return json(await addReceipt(env, user, { store: "", ...await readJson(request) }));
+    }
     const [, id, sub, lot] = m;
     let out;
     if (pathname.replace(/\/$/, "") === "/pantry/api/key") {

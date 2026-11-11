@@ -11,7 +11,8 @@ edits, p corrects or takes off a purchase, x removes it, f shows all, use
 soon or running low, / finds. c reads a grocery receipt from a photo (Claude
 with your key, k, or the site's AI): each line matched to what you have or
 offered as new, with an estimated expiry date, to check before it's added.
-Store abbreviations are remembered once added."""
+Store abbreviations are remembered once added. s pairs the Pantry scanner
+app on a phone (a QR code to scan), and unpairs phones."""
 from __future__ import annotations
 
 import datetime as dt
@@ -26,7 +27,7 @@ from textual.widgets.option_list import Option
 
 from . import site
 from .look import BAD, FAINT, GOLD, INK, MUTED, Ask, Confirm, Page, attempt, plural
-from .receipt_dialog import ReceiptDialog
+from .receipt_dialog import ReceiptDialog, ScannerDialog
 
 WARN = "#e0b25a"
 FILTERS = (("all", "All"), ("soon", "Use soon"), ("low", "Running low"))
@@ -334,7 +335,7 @@ class PantryPage(Page):
     BINDINGS = [Binding("n", "add", "Add food"), Binding("u", "use", "Use"), Binding("m", "more", "Bought more"),
                 Binding("e", "edit", "Edit"), Binding("p", "lots", "Purchases"), Binding("x", "remove", "Remove"),
                 Binding("f", "filter", "Show"), Binding("slash", "find", "Find"), Binding("c", "receipt", "Receipt"),
-                Binding("k", "key", "Claude key", show=False), Binding("r", "refresh", "Refresh")]
+                Binding("s", "scanner", "Phone scanner"), Binding("k", "key", "Claude key", show=False), Binding("r", "refresh", "Refresh")]
 
     def __init__(self):
         super().__init__()
@@ -631,3 +632,11 @@ class PantryPage(Page):
     async def save_key(self, key: str) -> None:
         self.data["photo"] = (await self.fetch(site.pantry_key, key))["photo"]
         self.app.notify("Key saved: receipts are read by Claude now.", timeout=3)
+
+    # ── the phone scanner ──────────────────────────────────────────────────
+
+    @attempt
+    async def action_scanner(self) -> None:
+        code = await self.fetch(site.pair_pantry_scanner)
+        phones = (await self.fetch(site.pantry_scanners))["scanners"]
+        self.app.push_screen(ScannerDialog(code, phones))
