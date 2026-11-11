@@ -124,6 +124,8 @@ export function fillWeek(nights, days, busy, recipes, lastWeek = new Set(), redo
   const out = structuredClone(nights);
   const ids = new Set(recipes.map(r => r.id));
   const needs = d => !out[d].out && !out[d].locked && !busy[d]?.away && (redo || !ids.has(out[d].recipe));
+  // A night away on a trip has nothing to cook, unless you locked a recipe there yourself.
+  for (const d of days) if (busy[d]?.away && !out[d].locked) Object.assign(out[d], { recipe: null, servings: null });
   const used = new Set(days.filter(d => !needs(d) && out[d].recipe).map(d => out[d].recipe));
   // Busy nights first, so the quick recipes go to them.
   for (const d of [...days.filter(d => busy[d]?.busy), ...days.filter(d => !busy[d]?.busy)]) {
@@ -199,11 +201,11 @@ async function calendar(env, user, days) {
 // night's servings, from `today` on (nights already past are bought for). The
 // same ingredient from two recipes is added up into one line, and the lines
 // come filed by aisle (src/shopping.js): [{line, for, aisle, staple}].
-export function shoppingFor(nights, days, byId, today = "") {
+export function shoppingFor(nights, days, byId, today = "", away = {}) {
   const lines = new Map();
   for (const [i, d] of days.entries()) {
     const n = nights[d], r = byId.get(n.recipe);
-    if (!r || n.out || d < today) continue;
+    if (!r || n.out || d < today || (away[d]?.away && !n.locked)) continue;
     const f = factorFor(r, { servings: n.servings });
     for (const raw of r.ingredients) {
       const line = scaleLine(raw, f).slice(0, 500);
@@ -250,7 +252,7 @@ async function week(env, user, monday, plan, today = "") {
       };
     }),
     recipes: recipes.map(r => ({ id: r.id, title: r.title, time: r.time, minutes: minutesOf(r.time), quick: isQuick(r), servings: r.servings, dinner: isDinner(r) })),
-    shopping: shoppingFor(plan.nights, days, byId, today),
+    shopping: shoppingFor(plan.nights, days, byId, today, cal || {}),
     today,
     club: await clubPick(env, user, (today && days.includes(today) ? today : monday).slice(0, 7), plan.nights).catch(() => null),
     shopped: plan.shopped,
@@ -323,7 +325,7 @@ export async function shop(env, user, monday, body, today = "") {
   const d = await db(env);
   const plan = await loadNights(d, user.id, monday);
   const recipes = await allRecipes(env, user);
-  const all = shoppingFor(plan.nights, weekDays(monday), new Map(recipes.map(r => [r.id, r])), today);
+  const all = shoppingFor(plan.nights, weekDays(monday), new Map(recipes.map(r => [r.id, r])), today, (await calendar(env, user, weekDays(monday))) || {});
   if (!all.length) fail("plan some dinners first");
   const pick = Array.isArray(body.lines) ? new Set(body.lines.map(Number)) : null;
   const chosen = all.filter((_, i) => !pick || pick.has(i));

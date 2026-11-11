@@ -69,6 +69,10 @@ test("filling a week: quick recipes on busy nights, no repeats, locked and out n
   // With no quick recipe, a busy night gets the quickest there is.
   const got = fillWeek(nights, WEEK, busy, [R("slow1", "1 hr"), R("slow2", "2 hr"), R("x", "")]);
   assert.equal(got["2030-01-07"].recipe, "slow1");
+  // A night away on a trip gets nothing, and loses what was planned there unless it's locked.
+  const away = fillWeek({ ...nights, "2030-01-08": { recipe: "slow4", servings: 4, out: false, locked: false } }, WEEK, { "2030-01-08": { away: "Lisbon" }, "2030-01-12": { away: "Lisbon" } }, recipes);
+  assert.equal(away["2030-01-08"].recipe, null);
+  assert.equal(away["2030-01-12"].recipe, "slow1", "locked");
   // Last week's dinners only once nothing else is left.
   const again = fillWeek(nights, WEEK, {}, [R("a", ""), R("b", "")], new Set(["a"]));
   assert.equal(again["2030-01-07"].recipe, "b");

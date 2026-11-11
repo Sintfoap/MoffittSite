@@ -80,12 +80,13 @@ label.field input, label.field textarea, label.field select { width: 100%; font-
 .add label.field { margin: 0; }
 .add .btn { margin: 0; }
 .keys { display: grid; gap: 14px; }
+.keys .card { margin-bottom: 0; }
 .key .head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
 .key .head h2 { margin: 0; color: var(--gold); }
 .key .head .count { color: var(--faint); font-size: 12.5px; }
 .key .head .tools { margin-left: auto; display: flex; gap: 6px; }
 .key .head .tools .btn { margin: 0; padding: 4px 10px; font-size: 11px; }
-.values { list-style: none; margin: 12px 0 10px; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.values { list-style: none; margin: 12px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
 .values li { display: inline-flex; align-items: stretch; border: 1px solid var(--line-2); background: var(--field); }
 .values li > span { padding: 3px 10px; }
 .values li small { color: var(--faint); margin-left: 6px; }
@@ -96,7 +97,7 @@ label.field input, label.field textarea, label.field select { width: 100%; font-
 .key:not(.editing) .values li > button:not(.plus), .key:not(.editing) .tools .btn:not(:last-child) { display: none; }
 .values li.add { border-style: dashed; background: none; }
 .values li.add button { border: 0; color: var(--gold); padding: 0 12px; font-weight: 700; }
-.more-values { display: flex; gap: 6px; }
+.more-values { display: flex; gap: 6px; margin-top: 10px; }
 .more-values input { flex: 1; }
 .more-values .btn { margin: 0; padding: 6px 12px; }
 .hint { font-size: 12.5px; color: var(--faint); }
