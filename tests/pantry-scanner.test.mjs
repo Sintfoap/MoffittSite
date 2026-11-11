@@ -187,3 +187,15 @@ test("the newest scanner app is offered for download", async () => {
   assert.equal(r.json.version, 2);
   assert.match(r.json.url, /pantry-scanner\.apk$/);
 });
+
+test("a gauged thing comes in as full as you say", async () => {
+  const { ryan } = await setup();
+  const cumin = (await api(ryan, "POST", "items", { name: "Ground cumin", level: 1 })).json;
+  const out = (await api(ryan, "POST", "add", { lines: [
+    { item: cumin.id, level: 3 },
+    { name: "Vanilla extract", kind: "gauged", level: 2 },
+  ] })).json;
+  assert.deepEqual(out.failed, []);
+  assert.deepEqual(out.added.map(a => a.text), ["½ left", "¼ left"]);
+  assert.equal((await api(ryan, "POST", "add", { lines: [{ item: cumin.id }] })).json.added[0].text, "Full");
+});

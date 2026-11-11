@@ -14,6 +14,7 @@ from textual.widgets.option_list import Option
 
 from .look import BAD, FAINT, GOLD, INK, MUTED
 
+LEVELS = ["Empty", "Almost out", "¼ left", "½ left", "¾ left", "Full"]
 KINDS = (("Staple: measured, like flour", "staple"), ("Counted: whole units, like cans", "counted"), ("Gauged: full to empty, like spices", "gauged"))
 HOW = {"remembered": "remembered from this store", "name": "matched by name"}
 
@@ -52,6 +53,8 @@ class ReceiptDialog(ModalScreen[list[dict] | None]):
     def line(r: dict) -> dict:
         """A row as the site takes it."""
         lot = {"printed": r["printed"], "amount": r["amount"], "expires": r["expires"], "expires_by": r["expires_by"] if r["expires"] else ""}
+        if r.get("level") is not None:
+            lot["level"] = r["level"]
         if r["item"]:
             return {**lot, "item": r["item"]}
         return {**lot, "name": r["name"], "kind": r["kind"], "place": r["place"], "unit": r["unit"], "size": r["size"], "low": r["low"]}
@@ -77,7 +80,7 @@ class ReceiptDialog(ModalScreen[list[dict] | None]):
             t.append(f"  {r['kind']}, {r['place'] or 'Cupboard'}", FAINT)
         t.append("\n    ")
         if (i or {}).get("kind", r["kind"]) == "gauged":
-            t.append("refills to full", MUTED)
+            t.append(f"{LEVELS[r['level'] if r.get('level') is not None else 5].lower()}", MUTED)
         else:
             t.append(f"+ {r['amount'] or '?'}", INK)
             if r["expires"]:
@@ -148,7 +151,7 @@ class LineDialog(ModalScreen[dict | None]):
     """One receipt line: what it adds to, how much, and when it expires."""
     BINDINGS = [Binding("escape", "cancel", "Cancel"), Binding("ctrl+s", "save", "Save", priority=True)]
     DEFAULT_CSS = """
-    LineDialog .grid { height: auto; }
+    LineDialog .grid, LineDialog #gauged, LineDialog #new { height: auto; }
     LineDialog .grid > Vertical { height: auto; width: 1fr; margin-right: 1; }
     """
 
@@ -180,6 +183,10 @@ class LineDialog(ModalScreen[dict | None]):
                     with Vertical(id="counted"):
                         yield Label("One is a", classes="lbl")
                         yield Input(r["unit"], id="unit", placeholder="can", max_length=20)
+            with Vertical(id="gauged"):
+                yield Label("How full", classes="lbl")
+                yield Select([(lv, n) for n, lv in reversed(list(enumerate(LEVELS)))], value=r.get("level") if r.get("level") is not None else 5,
+                             allow_blank=False, id="level")
             with Horizontal(classes="grid", id="amounts"):
                 with Vertical():
                     yield Label("How much", classes="lbl")
@@ -207,6 +214,7 @@ class LineDialog(ModalScreen[dict | None]):
         self.query_one("#staple").display = k == "staple"
         self.query_one("#counted").display = k == "counted"
         self.query_one("#amounts").display = k != "gauged"
+        self.query_one("#gauged").display = k == "gauged"
 
     def on_select_changed(self, e: Select.Changed) -> None:
         self.show_parts()
@@ -217,6 +225,7 @@ class LineDialog(ModalScreen[dict | None]):
         self.dismiss({**self.r, "item": str(self.query_one("#to", Select).value or ""), "name": v("name"),
                       "kind": str(self.query_one("#kind", Select).value), "place": v("place"), "low": v("low"), "unit": v("unit"),
                       "amount": v("amount"), "expires": expires,
+                      "level": self.query_one("#level", Select).value if self.kind() == "gauged" else None,
                       "expires_by": self.r["expires_by"] if expires == self.r["expires"] else "typed" if expires else ""})
 
     def action_cancel(self) -> None:

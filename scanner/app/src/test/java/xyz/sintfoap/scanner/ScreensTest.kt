@@ -3,6 +3,8 @@ package xyz.sintfoap.scanner
 import android.app.Application
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.onRoot
 import androidx.test.core.app.ApplicationProvider
 import com.github.takahirom.roborazzi.captureRoboImage
@@ -39,13 +41,26 @@ class ScreensTest {
         s.lines.addAll(listOf(
             Line(store = "Walmart", printed = "GV WW FLR 10LB", name = "Whole wheat flour", target = "i_0000000001", how = "remembered", amount = "10 lb", expires = "2027-02-09", expiresBy = "estimated"),
             Line(store = "Walmart", printed = "GV WHL MLK GAL", name = "Whole milk", kind = "staple", place = "Fridge", amount = "1 gallon", expires = "2026-11-18", expiresBy = "estimated"),
-            Line(store = "Walmart", printed = "MCCORM CUMIN", name = "Ground cumin", target = "i_0000000003", how = "name"),
+            Line(store = "Walmart", printed = "MCCORM CUMIN", name = "Ground cumin", target = "i_0000000003", how = "name", level = 4),
             Line(store = "Walmart", printed = "BAG FEE", name = "Bag", on = false, skip = true),
             Line(barcode = "0000000000017", amount = "1", error = "give it a name, like Whole wheat flour"),
         ))
         compose.setContent { App(s) }
         compose.onNodeWithText("[ ADD 4 TO PANTRY ]").assertExists()
         compose.onRoot().captureRoboImage("screens/basket.png")
+    }
+
+    @Test fun howFull() {
+        val s = scanner()
+        s.screen = Screen.Home
+        s.items = listOf(Item("i_0000000003", "Ground cumin", "gauged", "Almost out", "Spice rack"))
+        s.lines.addAll(listOf(
+            Line(barcode = "0052100004211", name = "Ground cumin", target = "i_0000000003", how = "barcode", level = 3),
+            Line(barcode = "0052100004212", name = "Vanilla extract", kind = "gauged", place = "Spice rack"),
+        ))
+        compose.setContent { App(s) }
+        compose.onAllNodesWithText("½ left").assertCountEquals(2)
+        compose.onRoot().captureRoboImage("screens/gauged.png")
     }
 
     @Test fun empty() {

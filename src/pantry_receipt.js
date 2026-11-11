@@ -9,7 +9,7 @@
 // an item, that store's line always means that item.
 //
 // /pantry/api/receipt      POST {images: [{data (base64)}, ...]} → {store, date, by, lines: [...]}: what to add, to check
-// /pantry/api/receipt/add  POST {store, lines: [{key?, printed, barcode?, item? (an id) | name, kind?, place?, unit?, size?, low?, amount, expires?, expires_by?}]}
+// /pantry/api/receipt/add  POST {store, lines: [{key?, printed, barcode?, item? (an id) | name, kind?, place?, unit?, size?, low?, amount, level? (gauged, 0-5; full when left out), expires?, expires_by?}]}
 //                          → {added: [{key?, printed, id, name, text}], failed: [{key?, printed, error}], ticked: [{id, title, list}], items}
 //   (also /pantry/api/add, for lines that aren't from a receipt: the scanner app's barcodes). A line with a barcode
 //   remembers it as that item (src/pantry_scanner.js); and whatever comes in is ticked off your Drift shopping list.
@@ -166,7 +166,8 @@ export async function addReceipt(env, user, body) {
       const lot = { amount: line.amount, expires: line.expires, expires_by: line.expires_by };
       let out;
       if (line.item && kinds.get(String(line.item)) === "gauged") {
-        out = await editItem(env, user, String(line.item), { level: 5 });   // bought again: full
+        // Bought again: full, unless you said how full (a jar you found half used).
+        out = await editItem(env, user, String(line.item), { level: line.level ?? 5 });
       } else if (line.item) {
         out = await addLot(env, user, String(line.item), lot);
         if (!out) fail("that's no longer in your pantry");

@@ -463,12 +463,12 @@ Push stays off, and the page says so, until the site has a VAPID key pair.
 
 ### Pantry scanner (the Android app)
 
-`scanner/` is a native Android app (Kotlin, Jetpack Compose, CameraX, ML Kit) for filling Pantry while you unpack groceries. It keeps no pantry of its own: everything goes to `/pantry/api/`.
+`scanner/` is a native Android app (Kotlin, Jetpack Compose, CameraX, ML Kit barcode scanning) for filling Pantry while you unpack groceries. It keeps no pantry of its own: everything goes to `/pantry/api/`.
 
 - **Pairing.** Pantry → **Phone scanner** shows a QR code (`sintfoap-scanner://pair?site=…&code=…`). The app scans it (or the phone's camera app opens the app with it, or you type the code), and trades the code for a key of its own (`ps_…`, only its hash is kept). The key is sent as `Authorization: Bearer` and only opens Pantry's API, as you: not the Anthropic key, not pairing, and nothing else on the site. Losing Pantry stops it; unpairing ends it.
-- **Snap the receipt** (up to 4 pictures, top to bottom): read by the site, as on the web page. **Scan barcodes**: each one goes in the list, and the same one again adds one more. **Snap the date** reads the printed expiry date on the phone (ML Kit text recognition and `Dates.kt`: "BEST BY 05/10/27", "EXP 10MAY27", "May 10, 2027"), replacing the estimate. Dates that matter (estimated within a month) ask for it.
+- **Snap the receipt** (up to 4 pictures, top to bottom): read by the site, as on the web page. **Scan barcodes**: each one goes in the list, and the same one again adds one more. Expiry dates start as estimates; tap one to set the real date (those estimated within a month ask for it, since packages print dates too faintly and too variously to read reliably). A gauged thing (spices) asks how full it is, Full unless you say.
 - **Nothing is added until you tap Add**, and lines the site won't take stay with the reason. With no connection, the additions wait on the phone and are sent when there's one again (WorkManager).
-- **Builds.** `.github/workflows/scanner.yml` runs its tests and a test build on every pull request that touches it. Pushing a tag `scanner-v<N>` builds version N, signed with the same key as the phone app, and attaches `pantry-scanner.apk` to a GitHub Release; the Pantry page links the newest, and the app offers updates. `gradle -p scanner testDebugUnitTest` runs its tests (the date reader, lines, and pictures of its screens through Robolectric; `-Proborazzi.test.record=true` saves them to `scanner/app/screens/`).
+- **Builds.** `.github/workflows/scanner.yml` runs its tests and a test build on every pull request that touches it. Pushing a tag `scanner-v<N>` builds version N, signed with the same key as the phone app, and attaches `pantry-scanner.apk` to a GitHub Release; the Pantry page links the newest, and the app offers updates. `gradle -p scanner testDebugUnitTest` runs its tests (lines, and pictures of its screens through Robolectric; `-Proborazzi.test.record=true` saves them to `scanner/app/screens/`).
 
 ## Sweep
 

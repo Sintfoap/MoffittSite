@@ -21,7 +21,6 @@ sealed class Screen {
     data object PairCamera : Screen()
     data object Receipt : Screen()
     data object Barcodes : Screen()
-    data class Date(val key: String) : Screen()
 }
 
 /**

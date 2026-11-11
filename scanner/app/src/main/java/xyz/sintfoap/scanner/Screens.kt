@@ -61,7 +61,6 @@ fun App(s: Scanner) {
                 Screen.Home -> HomeScreen(s)
                 Screen.Receipt -> ReceiptScreen(s)
                 Screen.Barcodes -> BarcodeScreen(s)
-                is Screen.Date -> DateScreen(s, sc.key)
             }
             s.busy?.let { doing ->
                 Row(Modifier.align(Alignment.BottomCenter).fillMaxWidth().background(Panel).border(1.dp, Gold).padding(14.dp),
@@ -88,7 +87,7 @@ fun PairScreen(s: Scanner) {
     var code by remember { mutableStateOf("") }
     Column(Modifier.fillMaxSize().padding(20.dp).imePadding(), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Kicker("Kitchen"); H1("Pantry scanner")
-        Hint("Snap receipts, scan barcodes and read expiry dates as you unpack the groceries. Everything goes into your Pantry on the site.")
+        Hint("Snap receipts and scan barcodes as you unpack the groceries. Everything goes into your Pantry on the site.")
         Hint("To start, on a computer open Pantry and press Phone scanner. Then scan the code it shows.", Ink)
         Btn("Scan the code", Modifier.fillMaxWidth()) { s.error = null; s.screen = Screen.PairCamera }
         Spacer(Modifier.height(8.dp))
@@ -151,7 +150,7 @@ fun HomeScreen(s: Scanner) {
         if (s.lines.isEmpty()) {
             Column(Modifier.weight(1f).padding(16.dp)) {
                 Hint("Start with the receipt: it does most of the work. Then scan the barcode of anything it couldn't make out, or anything bought without one. " +
-                    "Expiry dates are estimated; snap the printed date on anything where it matters.")
+                    "Expiry dates are estimated; set the real one on anything where it matters.")
             }
         } else {
             LazyColumn(Modifier.weight(1f).padding(horizontal = 16.dp)) {
@@ -218,20 +217,30 @@ fun LineCard(s: Scanner, l: Line) {
                 if (l.kind == "counted") Field("One is a", l.unit, Modifier.weight(1f), "can") { v -> s.change(l.key) { it.copy(unit = v) } }
             }
         }
-        if (kind == "gauged") Hint("Refills it to full.", Muted)
-        else {
+        if (kind == "gauged") {
+            Hint("How full is it?", Muted)
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                for (n in 5 downTo 1) {
+                    val on = (l.level ?: 5) == n
+                    Text(LEVELS[n], color = if (on) Bg else Muted, fontFamily = Mono, fontSize = 12.sp,
+                        modifier = Modifier.background(if (on) Gold else Bg).border(1.dp, if (on) Gold else Rule)
+                            .clickable { s.change(l.key) { it.copy(level = n) } }.padding(horizontal = 8.dp, vertical = 6.dp))
+                }
+            }
+        } else {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 Field("How much", l.amount, Modifier.weight(1f), if (kind == "staple") "10 lb" else "2") { v -> s.change(l.key) { it.copy(amount = v, each = v) } }
                 Column(Modifier.weight(1f)) {
                     val est = l.expiresBy == "estimated"
-                    Text(if (l.expires.isEmpty()) "No expiry date" else "Expires ${nice(l.expires)}" + if (est) " (est.)" else if (l.expiresBy == "scanned") " (read)" else "",
-                        color = if (dateMatters(l)) Gold else Ink, fontFamily = Mono, fontSize = 13.sp,
-                        modifier = Modifier.clickable {
-                            val d = runCatching { LocalDate.parse(l.expires) }.getOrNull() ?: LocalDate.now()
-                            DatePickerDialog(context, { _, y, m, day -> s.setDate(l.key, LocalDate.of(y, m + 1, day), "typed") }, d.year, d.monthValue - 1, d.dayOfMonth).show()
-                        })
-                    TextButton({ s.screen = Screen.Date(l.key) }, contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)) {
-                        Text(if (dateMatters(l)) "[ SNAP THE DATE ]" else "snap the date", color = Gold, fontFamily = Mono, fontSize = 12.sp)
+                    val pickDate = {
+                        val d = runCatching { LocalDate.parse(l.expires) }.getOrNull() ?: LocalDate.now()
+                        DatePickerDialog(context, { _, y, m, day -> s.setDate(l.key, LocalDate.of(y, m + 1, day), "typed") }, d.year, d.monthValue - 1, d.dayOfMonth).show()
+                    }
+                    Text(if (l.expires.isEmpty()) "No expiry date" else "Expires ${nice(l.expires)}" + if (est) " (est.)" else "",
+                        color = Ink, fontFamily = Mono, fontSize = 13.sp, modifier = Modifier.clickable { pickDate() })
+                    TextButton(pickDate, contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)) {
+                        Text(if (dateMatters(l)) "[ CHECK THE DATE ]" else if (l.expires.isEmpty()) "set a date" else "change it",
+                            color = Gold, fontFamily = Mono, fontSize = 12.sp)
                     }
                 }
             }
@@ -289,33 +298,6 @@ fun BarcodeScreen(s: Scanner) {
             s.error?.let { Hint(it, Bad) }
             Hint("${s.lines.count { it.barcode.isNotEmpty() }} scanned so far", Faint)
             Btn("Done", Modifier.fillMaxWidth()) { s.error = null; s.screen = Screen.Home }
-        }
-    }
-}
-
-@Composable
-fun DateScreen(s: Scanner, key: String) {
-    val line = s.lines.firstOrNull { it.key == key }
-    val seen = remember { mutableStateListOf<LocalDate?>() }
-    var found by remember { mutableStateOf<LocalDate?>(null) }
-    Column(Modifier.fillMaxSize()) {
-        Box(Modifier.weight(1f)) {
-            CameraView { listOf(textAnalysis { text ->
-                val d = Dates.expiry(text)
-                seen.add(d); while (seen.size > 5) seen.removeAt(0)
-                // The same date in two of the last few frames: it's really what's printed.
-                val sure = seen.filterNotNull().groupingBy { it }.eachCount().filter { it.value >= 2 }.keys.maxOrNull()
-                if (sure != null) found = sure
-            }) }
-        }
-        Column(Modifier.background(Panel).padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Hint("Point it at the printed date on the ${line?.title ?: "package"} (BEST BY, EXP, USE BY…).", Ink)
-            val f = found
-            if (f != null) {
-                Text("Expires ${nice(f.toString())}", color = Gold, fontWeight = FontWeight.Bold, fontFamily = Mono, fontSize = 20.sp)
-                Btn("Use this date", Modifier.fillMaxWidth()) { s.setDate(key, f, "scanned"); s.screen = Screen.Home }
-            } else Hint("Looking for a date…", Faint)
-            Btn("Back", quiet = true) { s.screen = Screen.Home }
         }
     }
 }

@@ -412,9 +412,11 @@ function receiptRow(l) {
     }
   }
   const k = kindOf(l);
-  const amount = k === "gauged" ? el("span", { className: "how amt", textContent: l.target === "new" ? "Starts full" : "Refills to full" })
+  const amount = k === "gauged" ? el("select", { className: "amt", ariaLabel: "How full" },
+      ...LEVELS.map((name, n) => el("option", { value: n, textContent: name, selected: n === (l.level ?? 5) })).reverse())
     : el("input", { type: "text", value: l.amount, maxLength: 40, placeholder: k === "staple" ? "10 lb" : "how many", ariaLabel: "How much", className: "amt" });
   if (k !== "gauged") amount.addEventListener("input", () => { l.amount = amount.value; });
+  else amount.addEventListener("change", () => { l.level = Number(amount.value); });
   const expires = el("div", { className: "exp" });
   if (k !== "gauged") {
     const date = el("input", { type: "date", value: l.expires || "", ariaLabel: "Expires" });
@@ -441,7 +443,7 @@ $("#receipt-form").addEventListener("submit", e => {
   if (e.submitter?.value !== "add") return;
   e.preventDefault();
   const lines = receipt.lines.filter(l => l.on).map(l => {
-    const lot = { printed: l.printed, amount: l.amount, expires: l.expires || "", expires_by: l.expires_by };
+    const lot = { printed: l.printed, amount: l.amount, expires: l.expires || "", expires_by: l.expires_by, ...(kindOf(l) === "gauged" ? { level: l.level ?? 5 } : {}) };
     if (l.target !== "new") return { ...lot, item: l.target };
     return { ...lot, name: l.name, kind: l.kind, place: l.place, unit: l.unit, size: l.size, low: l.low };
   });

@@ -348,7 +348,8 @@ test("reviews: people who made it give stars, say how it turned out and what the
   assert.equal(s.json.yours.rating, 4);
   assert.equal(s.json.yours.by, "Sam");
   assert.equal(s.json.yours.changes, "Half the sugar, added walnuts.");
-  // Just words is fine too.
+  // Just words is fine too. (A moment later, so it is newest even on a fast machine.)
+  await new Promise(done => setTimeout(done, 5));
   await api(josh, "PUT", `posts/${p.id}/reviews`, { note: "Made it twice." });
   let r = (await api(ryan, "GET", `posts/${p.id}/reviews`)).json;
   assert.deepEqual(r.reviews.map(x => x.by), ["Josh", "Sam"]);

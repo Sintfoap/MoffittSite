@@ -43,8 +43,6 @@ import com.google.mlkit.vision.barcode.BarcodeScannerOptions
 import com.google.mlkit.vision.barcode.BarcodeScanning
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.common.InputImage
-import com.google.mlkit.vision.text.TextRecognition
-import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.util.concurrent.Executors
@@ -89,14 +87,6 @@ fun barcodeAnalysis(qr: Boolean, found: (List<String>) -> Unit): ImageAnalysis {
     val scanner = BarcodeScanning.getClient(BarcodeScannerOptions.Builder().setBarcodeFormats(formats[0], *formats.drop(1).toIntArray()).build())
     return analysis { image, done ->
         scanner.process(image).addOnSuccessListener { codes -> found(codes.mapNotNull { it.rawValue }) }.addOnCompleteListener { done() }
-    }
-}
-
-/** The text the camera sees, one frame at a time. */
-fun textAnalysis(found: (String) -> Unit): ImageAnalysis {
-    val reader = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
-    return analysis { image, done ->
-        reader.process(image).addOnSuccessListener { found(it.text) }.addOnCompleteListener { done() }
     }
 }
 
