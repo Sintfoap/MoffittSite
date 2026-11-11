@@ -1,5 +1,6 @@
-// Tests for Recipe box's photo import: a picture of a recipe read by Claude (a
-// stand-in here) into a draft to check, and the API key it's read with.
+// Tests for Recipe box's photo import: a picture of a recipe read by Claude, or
+// by Workers AI without a key (stand-ins here), into a draft to check, and the
+// API key it's read with.
 // Run with:  node --no-warnings --test tests/*.test.mjs
 import { test, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
@@ -42,7 +43,7 @@ async function setup(extra = SEAL) {
 
 test("without a key, the box says so; a key is checked, kept sealed and shared with Sweep", async () => {
   const { env, ryan } = await setup();
-  assert.deepEqual((await api(ryan, "GET", "recipes")).json.photo, { ready: false, sealing: true, key: null });
+  assert.deepEqual((await api(ryan, "GET", "recipes")).json.photo, { ready: false, ai: false, sealing: true, key: null });
   const none = await api(ryan, "POST", "photo", { images: [{ data: JPEG }] });
   assert.equal(none.status, 400);
   assert.match(none.json.error, /API key/);
@@ -123,6 +124,72 @@ test("what isn't a recipe, or a picture, is turned away with a reason", async ()
   assert.match(busy.json.error, /busy/);
   status = 401;
   assert.match((await api(ryan, "POST", "photo", { images: pic })).json.error, /didn't accept your API key. Try again/);
+});
+
+// Stands in for Workers AI's vision model: answers with `answer`, or throws it when it's an Error.
+function fakeAI(seen, answer) {
+  return { async run(model, input) { seen.push({ model, input }); if (answer instanceof Error) throw answer; return { response: answer }; } };
+}
+const AI_READ = { found: true, title: "Nana's Shortbread", servings: 0, yield: "makes 24", time: "45 min",
+  ingredients: ["2 cups flour", "½ cup sugar"], steps: ["1. Cream butter & sugar.", "Bake 325° 30-35 min."], notes: "", picture: [0, 0, 1, 1] };
+
+test("without a key, Workers AI reads the photo: no picture box, nothing saved", async () => {
+  const seen = [];
+  const { env, ryan } = await setup({ ...SEAL, AI: fakeAI(seen, AI_READ), RECIPES_AI_MODEL: "@cf/test/vision" });
+  assert.deepEqual((await api(ryan, "GET", "recipes")).json.photo, { ready: false, ai: true, sealing: true, key: null });
+  const r = await api(ryan, "POST", "photo", { images: [{ data: JPEG }, { data: PNG }] });
+  assert.equal(r.status, 200, r.text);
+  assert.equal(r.json.by, "ai");
+  assert.deepEqual(r.json.recipe, {
+    title: "Nana's Shortbread", yield: "makes 24", time: "45 min", servings: 24, source: "",
+    ingredients: ["2 cups flour", "½ cup sugar"], steps: ["Cream butter & sugar.", "Bake 325° 30-35 min."], notes: "", picture: null,
+  });
+  assert.equal(calls.length, 0, "Claude isn't asked");
+  assert.equal(sqlOne(env, "SELECT COUNT(*) AS n FROM recipes").n, 0);
+  const [{ model, input }] = seen;
+  assert.equal(model, "@cf/test/vision");
+  assert.equal(input.response_format.type, "json_schema");
+  assert.ok(!("picture" in input.response_format.json_schema.properties), "no box is asked for");
+  assert.doesNotMatch(input.messages[0].content, /picture is where/);
+  const [words, a, b] = input.messages[1].content;
+  assert.match(words.text, /2 pictures/);
+  assert.equal(a.image_url.url, "data:image/jpeg;base64," + JPEG);
+  assert.equal(b.image_url.url, "data:image/png;base64," + PNG);
+});
+
+test("Workers AI: an answer as text is read, no recipe is turned away, a failure is a plain error", async () => {
+  const seen = [];
+  const ai = fakeAI(seen, "Here it is:\n```json\n" + JSON.stringify(AI_READ) + "\n```");
+  const { env, ryan } = await setup({ ...SEAL, AI: ai });
+  assert.equal((await api(ryan, "POST", "photo", { images: [{ data: JPEG }] })).json.recipe.title, "Nana's Shortbread");
+  env.AI = fakeAI(seen, { found: false, title: "", servings: 0, yield: "", time: "", ingredients: [], steps: [], notes: "a cat" });
+  const cat = await api(ryan, "POST", "photo", { images: [{ data: JPEG }] });
+  assert.equal(cat.status, 400);
+  assert.match(cat.json.error, /couldn.t find a recipe.*a cat/);
+  env.AI = fakeAI(seen, new Error("3040: out of capacity"));
+  const down = await api(ryan, "POST", "photo", { images: [{ data: JPEG }] });
+  assert.equal(down.status, 503);
+  assert.match(down.json.error, /couldn't read that photo right now/);
+  assert.doesNotMatch(down.json.error, /3040/);
+});
+
+test("with a key, Claude reads it; when Claude can't, Workers AI does and says why", async () => {
+  const seen = [];
+  const { ryan } = await setup({ ...SEAL, AI: fakeAI(seen, AI_READ) });
+  await api(ryan, "PUT", "key", { key: KEY });
+  const r = await api(ryan, "POST", "photo", { images: [{ data: JPEG }] });
+  assert.equal(r.json.by, "claude");
+  assert.equal(seen.length, 0);
+  status = 529;
+  const busy = await api(ryan, "POST", "photo", { images: [{ data: JPEG }] });
+  assert.equal(busy.status, 200, busy.text);
+  assert.equal(busy.json.by, "ai");
+  assert.match(busy.json.why, /busy/);
+  // Claude read it and found no recipe: that's the answer.
+  status = 200;
+  reply = () => ({ found: false, title: "", servings: 0, yield: "", time: "", ingredients: [], steps: [], notes: "A dog." });
+  assert.match((await api(ryan, "POST", "photo", { images: [{ data: JPEG }] })).json.error, /Claude saw: A dog/);
+  assert.equal(seen.length, 1);
 });
 
 test("photo import is part of Recipe box: off for accounts without it", async () => {

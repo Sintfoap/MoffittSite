@@ -208,7 +208,7 @@ details.about p { margin: 8px 0 0; }
   <h1>Recipes</h1>
   <!--kitchen-tabs-->
   <p class="lede">Keep recipes from any link, photo or file, scale them, and send what to buy to Drift.</p>
-  <details class="about"><summary>How it works</summary><p>Paste a link to a recipe (any recipe site, or one shared from Recipe Keeper), snap a photo of a cookbook page (read right on your device), paste a recipe's text, or import a whole file of them from <b>More ways to add</b>. Recipe Keeper's export works as its folder or .zip, pictures and all, and importing it again fills in any that are missing. Give recipes labels like <b>Season: Fall</b> (from the one list kept in Recipe labels) to filter and sort them, or let Suggest labels find them from each recipe's words, for you to check first.</p></details>
+  <details class="about"><summary>How it works</summary><p>Paste a link to a recipe (any recipe site, or one shared from Recipe Keeper), snap a photo of a cookbook page or recipe card (read by the site's AI, no key needed, or by Claude with your key), paste a recipe's text, or import a whole file of them from <b>More ways to add</b>. Recipe Keeper's export works as its folder or .zip, pictures and all, and importing it again fills in any that are missing. Give recipes labels like <b>Season: Fall</b> (from the one list kept in Recipe labels) to filter and sort them, or let Suggest labels find them from each recipe's words, for you to check first.</p></details>
   <div id="error" class="msg bad" role="alert" hidden></div>
   <div id="done" class="msg good" role="status" hidden></div>
 
@@ -257,7 +257,7 @@ details.about p { margin: 8px 0 0; }
 <dialog id="editor">
   <form method="dialog" id="edit-form">
     <h2 id="edit-title">Edit recipe</h2>
-    <div id="edit-hint" hidden><p id="edit-hint-text"></p><button class="btn quiet" type="button" id="with-claude" hidden title="Better with handwriting; needs your Anthropic API key">Read it with Claude instead</button></div>
+    <div id="edit-hint" hidden><p id="edit-hint-text"></p><button class="btn quiet" type="button" id="with-claude" hidden title="Best with handwriting; needs your Anthropic API key">Read it with Claude instead</button></div>
     <div id="edit-photos" class="shots" hidden></div>
     <label class="field">Title<input type="text" name="title" required maxlength="200"></label>
     <div class="two">
@@ -298,7 +298,7 @@ details.about p { margin: 8px 0 0; }
 <dialog id="keyer">
   <form method="dialog" id="key-form">
     <h2>Read photos with Claude</h2>
-    <p>Without a key, photos are read by text recognition on your device, which is good with printed pages. Claude reads them better, handwriting too, with your own Anthropic API key, so nobody else is billed for yours. Make one at <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener noreferrer">console.anthropic.com</a>. It's kept sealed on the site and never shown again; Sweep uses the same one.</p>
+    <p>Without a key, photos are read by the site's AI (Cloudflare's), or by text recognition on your device when that can't. Claude reads them better, handwriting too, with your own Anthropic API key, so nobody else is billed for yours. Make one at <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener noreferrer">console.anthropic.com</a>. It's kept sealed on the site and never shown again; Sweep uses the same one.</p>
     <label class="field">API key<input type="password" name="key" autocomplete="off" placeholder="sk-ant-…" required></label>
     <div class="row"><button class="btn" value="save">Save key</button><button class="btn quiet" value="cancel" formnovalidate>Cancel</button></div>
   </form>

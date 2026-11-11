@@ -106,3 +106,41 @@ def test_finding_by_ingredient_matches_the_website():
     cases = json.loads(Path(__file__).with_name("ingredient_cases.json").read_text())
     for text, lines, want in cases:
         assert R.ingredient_hits({"ingredients": lines}, R.ingredient_terms(text)) == want, (text, lines)
+
+
+PHOTOS = Path(__file__).parent.parent.parent / "tests" / "recipe-photos"
+
+
+def test_a_photo_is_cleaned_to_black_ink_on_white_the_right_size():
+    import pytest
+    Image = pytest.importorskip("PIL.Image")
+    from sintfoap import ocr
+    # Blue ink on a card with pale blue ruled lines.
+    im = Image.new("RGB", (800, 500), (252, 250, 240))
+    from PIL import ImageDraw
+    d = ImageDraw.Draw(im)
+    for y in range(40, 500, 30):
+        d.line((0, y, 800, y), fill=(200, 210, 235), width=2)
+    d.rectangle((100, 100, 300, 120), fill=(40, 50, 120))
+    upright, bw, k = ocr.ink(im)
+    assert k == 2 and bw.size == upright.size == (1600, 1000) and bw.mode == "L"
+    assert bw.getpixel((400, 220)) == 0                  # the ink is black
+    assert bw.getpixel((1200, 162)) == 255               # a ruled line is gone
+    assert bw.getpixel((1400, 600)) == 255               # the paper is white
+
+
+def test_tesseract_reads_the_sample_photos_with_their_fractions():
+    """The card (blue ink on ruled lines, tilted) and the cookbook page (½ ⅓ ¾ in it), read for real when tesseract is installed."""
+    import shutil
+    import pytest
+    pytest.importorskip("PIL.Image")
+    if not shutil.which("tesseract"):
+        pytest.skip("tesseract isn't installed")
+    from sintfoap import site
+    page = [line["text"] for line in site.ocr_page(str(PHOTOS / "cookbook-page.jpg"))]
+    assert any(t.startswith("⅓ cup melted butter") for t in page), page
+    assert any(t.startswith("¾ cup sugar") for t in page), page
+    assert any(t.startswith("1½ cups all-purpose flour") for t in page), page
+    assert any(t.startswith("1 large egg") for t in page), page          # a real 1 stays a 1
+    card = [line["text"] for line in site.ocr_page(str(PHOTOS / "card.jpg"))]
+    assert "Nana's Shortbread" in card and "2 cups flour" in card and "½ cup sugar" in card, card

@@ -777,8 +777,8 @@ def dish_picture(path: str, box: dict | None = None, text: list[dict] | None = N
                     5: Image.Transpose.TRANSPOSE, 6: Image.Transpose.ROTATE_270, 7: Image.Transpose.TRANSVERSE,
                     8: Image.Transpose.ROTATE_90}.get(im.getexif().get(0x0112))
             im = im.convert("RGB")
-            # Claude's box is on the photo the right way up; tesseract's lines are on it as stored.
-            if turn and box is not None:
+            # Claude's box and tesseract's lines (read with Pillow, as here) are on the photo the right way up.
+            if turn and (box is not None or text is not None):
                 im, turn = im.transpose(turn), None
             if box is None and text is not None:
                 k = min(1.0, 200 / im.width)
@@ -824,7 +824,7 @@ def tesseract_lines(tsv: str) -> list[dict]:
         key = tuple(cols[1:5])
         box = {"x0": x, "y0": y, "x1": x + w, "y1": y + h}
         line = lines.setdefault(key, {"words": [], "confs": []})
-        line["words"].append({"text": word, "bbox": box})
+        line["words"].append({"text": word, "bbox": box, "confidence": conf})
         line["confs"].append(conf)
     out = []
     for line in lines.values():
@@ -837,22 +837,49 @@ def tesseract_lines(tsv: str) -> list[dict]:
 
 
 def ocr_page(path: str) -> list[dict]:
-    """Reads one picture with the tesseract command, on this computer: its lines. Raises SiteError."""
+    """Reads one picture with the tesseract command, on this computer: its lines, in the pixels of the
+    photo the right way up. With Pillow, it's read in clean black and white and its fractions are put
+    right (sintfoap/ocr.py); without, as it's stored. Raises SiteError."""
     import shutil
     import subprocess
+    import tempfile
     exe = shutil.which("tesseract")
     if not exe:
         raise SiteError(TESSERACT_HINT)
     p = Path(path.strip().strip("'\"")).expanduser()
     if not p.is_file():
         raise SiteError(f"couldn't find {p}")
+    bw, k, tmp = None, 1.0, None
     try:
-        res = subprocess.run([exe, str(p), "stdout", "--psm", "3", "-l", "eng", "tsv"], capture_output=True, text=True, timeout=120)
+        from PIL import Image  # optional: pip install pillow
+        from . import ocr
+        with Image.open(p) as im:
+            _, bw, k = ocr.ink(im)
+        tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
+        tmp.close()
+        bw.save(tmp.name)
+    except Exception:  # noqa: BLE001  no Pillow, or not a picture it knows: tesseract reads the file itself
+        bw, k = None, 1.0
+    try:
+        res = subprocess.run([exe, tmp.name if bw is not None else str(p), "stdout", "--psm", "3", "-l", "eng", "tsv"],
+                             capture_output=True, text=True, timeout=120)
     except (OSError, subprocess.TimeoutExpired) as e:
         raise SiteError(f"tesseract couldn't read {p.name}: {e}") from None
+    finally:
+        if tmp is not None:
+            Path(tmp.name).unlink(missing_ok=True)
     if res.returncode != 0:
         raise SiteError(f"tesseract couldn't read {p.name}: {(res.stderr or '').strip().splitlines()[-1:] or ['it failed']}"[:300])
-    return tesseract_lines(res.stdout)
+    lines = tesseract_lines(res.stdout)
+    if bw is not None:
+        from . import ocr
+        ocr.fix_fractions(bw, lines)
+        if k != 1:
+            for line in lines:
+                for b in [line["bbox"]] + [w["bbox"] for w in line["words"]]:
+                    for key in b:
+                        b[key] = round(b[key] / k)
+    return lines
 
 
 def read_recipe_text(text: str | None = None, pages: list[list[dict]] | None = None) -> dict:

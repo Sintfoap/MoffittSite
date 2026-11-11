@@ -79,6 +79,9 @@
   // (src/translate.js). No key needed; it runs on this Cloudflare account,
   // inside the free daily allowance. TRANSLATE_MODEL, a Text variable, picks
   // the model (@cf/meta/llama-3.3-70b-instruct-fp8-fast if it isn't set).
+  // Recipe box also reads photos of recipes with it when there's no Claude key
+  // (src/recipe_photo.js); RECIPES_AI_MODEL picks that model, one that sees
+  // pictures (@cf/meta/llama-4-scout-17b-16e-instruct if it isn't set).
   "ai": { "binding": "AI" },
 
   // Accounts and todo lists (Storage & Databases → D1 → moffittsite).
