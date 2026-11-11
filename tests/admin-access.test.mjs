@@ -33,16 +33,16 @@ test("the admin page has a toggle for every app on every account, and they work"
   await josh.signup("josh");
   const page = (await ryan.get("/admin")).text;
   for (const a of APPS) {
-    assert.match(page, new RegExp(`name="app" value="${a.id}"[\\s\\S]*?aria-label="${a.name} for josh"`), `${a.name} toggle for josh`);
+    assert.match(page, new RegExp(`name="apps" value="${a.id}"[^>]*aria-label="${a.name} for josh"`), `${a.name} switch for josh`);
   }
-  assert.match(page, /aria-pressed="true" disabled title="You can't remove your own admin access\."/);
+  assert.match(page, /name="apps" value="admin" checked disabled aria-label="Admin for ryan"><span>Admin<\/span><\/label><input type="hidden" name="apps" value="admin">/);
 
   const id = sqlOne(env, "SELECT id FROM users WHERE username = 'josh'").id;
   for (const a of APPS.filter(a => a.id !== "admin")) {
     if (a.parent) await ryan.post("/admin/access", { user_id: id, app: a.parent, on: "1" });
     const on = await ryan.post("/admin/access", { user_id: id, app: a.id, on: "1" });
     assert.match(on.text, new RegExp(`${a.name} is on for josh`));
-    assert.match(on.text, new RegExp(`aria-pressed="true" aria-label="${a.name} for josh"`));
+    assert.match(on.text, new RegExp(`value="${a.id}" checked aria-label="${a.name} for josh"`));
     assert.equal((await josh.get(PATHS[a.id])).status, 200, `${a.id} on`);
     await ryan.post("/admin/access", { user_id: id, app: a.id, on: "0" });
     assert.equal((await josh.get(PATHS[a.id])).status, 403, `${a.id} off`);
@@ -58,7 +58,7 @@ test("the terminal's admin API lists and changes the same toggles", async () => 
   const env = makeEnv(), ryan = await admin(env), josh = new Browser(env);
   await josh.signup("josh");
   const list = (await ryan.get("/admin/api/access")).json;
-  assert.deepEqual(list.apps, APPS.map(a => ({ id: a.id, name: a.name })));
+  assert.deepEqual(list.apps, APPS.map(a => ({ id: a.id, name: a.name, group: a.group || "site", ...(a.parent ? { parent: a.parent } : {}) })));
   const j = list.users.find(u => u.username === "josh");
   assert.deepEqual(j.apps, ["drift"]);
   assert.equal(list.users.find(u => u.username === "ryan").you, true);
@@ -93,4 +93,52 @@ test("accounts that had Drift before the split keep the plugin store and chat, o
   const again = new Browser({ ...env, TODO_DB: { ...env.TODO_DB } }); again.cookie = josh.cookie;
   assert.equal((await again.get("/chat/")).status, 403);
   assert.deepEqual(areas(env, "josh"), ["plugins", "todo"]);
+});
+
+test("an account's apps are saved all at once, and the page comes back with that account open", async () => {
+  const env = makeEnv(), ryan = await admin(env), josh = new Browser(env);
+  await josh.signup("josh");
+  const id = sqlOne(env, "SELECT id FROM users WHERE username = 'josh'").id;
+  // Browser.post sends one value per name, so the checkboxes go as a raw form.
+  const post = async apps => {
+    const form = new URLSearchParams({ user_id: id });
+    for (const a of apps) form.append("apps", a);
+    const res = await (await import("../src/worker.js")).default.fetch(new Request("https://sintfoap.test/admin/access-set", {
+      method: "POST", body: form.toString(),
+      headers: { "Content-Type": "application/x-www-form-urlencoded", Origin: "https://sintfoap.test", Cookie: `__Host-sid=${ryan.cookie}`, "CF-Connecting-IP": ryan.ip },
+    }), env);
+    return res;
+  };
+  const r = await post(["drift", "chat", "recipes", "meals"]);
+  assert.equal(r.status, 303);
+  assert.match(r.headers.get("Location"), new RegExp(`^/admin\\?saved=${id}&on=chat%2Crecipes%2Cmeals#u-${id}$`));
+  assert.deepEqual(areas(env, "josh"), ["chat", "meals", "recipes", "todo"]);
+  const back = await ryan.get(r.headers.get("Location").split("#")[0]);
+  assert.match(back.text, new RegExp(`<details class="person" id="u-${id}"[^>]* open>`), "the saved account is open");
+  assert.match(back.text, /Saved josh&#39;s apps\. On: Chat, Recipe box, Meal plan\./);
+  assert.match(back.text, /class="section-title">Kitchen|<legend>Kitchen<\/legend>/);
+
+  // Leaving boxes out turns those apps off; nothing ticked turns everything off.
+  await post(["recipes"]);
+  assert.deepEqual(areas(env, "josh"), ["recipes"]);
+  await post([]);
+  assert.deepEqual(areas(env, "josh"), []);
+  // Your own admin access stays on even if its box isn't sent.
+  const me = sqlOne(env, "SELECT id FROM users WHERE username = 'ryan'").id;
+  const form = new URLSearchParams({ user_id: me });
+  await (await import("../src/worker.js")).default.fetch(new Request("https://sintfoap.test/admin/access-set", {
+    method: "POST", body: form.toString(),
+    headers: { "Content-Type": "application/x-www-form-urlencoded", Origin: "https://sintfoap.test", Cookie: `__Host-sid=${ryan.cookie}`, "CF-Connecting-IP": ryan.ip },
+  }), env);
+  assert.deepEqual(areas(env, "ryan"), ["admin"]);
+});
+
+test("the terminal's admin API sets several apps at once", async () => {
+  const env = makeEnv(), ryan = await admin(env), josh = new Browser(env);
+  await josh.signup("josh");
+  const id = sqlOne(env, "SELECT id FROM users WHERE username = 'josh'").id;
+  const after = (await ryan.req("POST", "/admin/api/access", { json: { user_id: id, apps: ["chat", "board", "labels"] } })).json;
+  assert.deepEqual(after.users.find(u => u.username === "josh").apps, ["chat", "board", "labels"]);
+  assert.equal((await ryan.req("POST", "/admin/api/access", { json: { user_id: id, apps: ["nope"] } })).status, 400);
+  assert.deepEqual(areas(env, "josh"), ["board", "chat", "labels"], "an unknown app changes nothing");
 });

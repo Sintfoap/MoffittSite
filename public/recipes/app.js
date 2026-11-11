@@ -10,6 +10,7 @@ import { arrange } from "./columns.js";
 import { findPicture } from "./picture.js";
 import { openSuggestions } from "./suggest.js";
 import { ingredientTerms, ingredientHits } from "./ingredients.js";
+import { looksEnglish } from "./english.js";
 
 const $ = s => document.querySelector(s);
 const el = (tag, props = {}, ...kids) => {
@@ -27,6 +28,7 @@ const skip = new Map();   // recipe id → ingredient indexes not to send
 let filters = [];         // [{key, value}] labels a recipe must have: any value of the same key, every key
 let hits = new Map();     // recipe id → its ingredient lines the ingredient search found, while there is one
 let sortKey = "";
+let findBy = "name";      // what the one search box looks for: "name" (titles, labels, ingredients) or "ingredient" (all of these, -nuts leaves out)
 // recipe id → {language, english, fields, on}: its English, from "Translate to English",
 // shown in place of the original while `on`, and only saved over it when asked.
 const english = new Map();
@@ -157,8 +159,8 @@ $("#sort").addEventListener("change", e => {
 // ── the list ───────────────────────────────────────────────────────────────
 
 function renderList() {
-  const q = $("#find").value.trim().toLowerCase();
-  const terms = ingredientTerms($("#ingredient").value);
+  const q = findBy === "name" ? $("#find").value.trim().toLowerCase() : "";
+  const terms = findBy === "ingredient" ? ingredientTerms($("#find").value) : [];
   const by = (a, b) => a.localeCompare(b, undefined, { sensitivity: "base", numeric: true });
   hits = new Map();
   let match = data.recipes.filter(r => {
@@ -316,21 +318,12 @@ function renderDetail() {
 
   const edit = el("button", { className: "btn quiet", type: "button", textContent: "Edit" });
   edit.addEventListener("click", () => openEditor(base));
-  const tl = tr ? null : el("button", { className: "btn quiet", type: "button", id: "translate", textContent: "Translate to English" });
+  // Offered only when it doesn't already read as English; E translates any recipe.
+  const tl = tr || looksEnglish(base) ? null : el("button", { className: "btn quiet", type: "button", id: "translate", textContent: "Translate to English" });
   tl?.addEventListener("click", () => translate(base));
-  const del = el("button", { className: "btn danger", type: "button", textContent: "Delete" });
-  del.addEventListener("click", () => {
-    if (!confirm(`Delete ${r.title}?`)) return;
-    run(async () => {
-      await api("DELETE", "recipes/" + r.id);
-      data.recipes = data.recipes.filter(x => x.id !== r.id);
-      renderFilters();
-      pick(data.recipes[0]?.id || null);
-    });
-  });
   // Sharing it on the Recipe board, for anyone with it.
   const share = data.board ? el("a", { className: "btn quiet", href: `/board/?share=${encodeURIComponent(r.id)}`, textContent: "Share on the board" }) : null;
-  card.append(el("div", { className: "actions" }, edit, tl, share, del));
+  card.append(el("div", { className: "actions" }, edit, tl, share));
   box.append(card);
 }
 
@@ -397,6 +390,7 @@ const HINTS = {
 // it (or, whole, the photo itself), put in as the recipe's picture to keep on Save.
 function openEditor(r, draft = null, shots = [], how = "claude", why = "", picture = null) {
   editing = r || {};
+  $("#delete-recipe").hidden = !r?.id;
   const f = $("#edit-form");
   $("#edit-title").textContent = r ? "Edit recipe" : draft ? "Check the recipe" : "New recipe";
   $("#edit-hint").hidden = !draft;
@@ -775,7 +769,8 @@ let lastPhotos = [];  // what the open draft was read from, to read again with C
 async function fromPhotos(files, { claude = !!data.photo?.ready } = {}) {
   const btn = $("#photo");
   btn.disabled = true;
-  btn.textContent = "Reading…";
+  // The button is in the closed menu, so the page says it's reading.
+  say("done", `Reading ${files.length === 1 ? "the photo" : `${files.length} photos`}…`);
   const err = await run(async () => {
     if (files.length > 4) throw new Error("pick at most 4 pictures of one recipe");
     lastPhotos = files;
@@ -806,7 +801,6 @@ async function fromPhotos(files, { claude = !!data.photo?.ready } = {}) {
     openEditor(null, recipe, shots, how, why, blob && { blob, whole: !box });
   });
   btn.disabled = false;
-  btn.textContent = "From a photo";
   $("#photo-file").value = "";
 }
 
@@ -841,22 +835,57 @@ async function reload() {
 const suggest = () => run(() => openSuggestions({ api, say, done: reload }));
 document.addEventListener("click", e => { if (e.target.closest("[data-suggest-labels]")) suggest(); });
 $("#photo-file").addEventListener("change", e => e.target.files.length && fromPhotos([...e.target.files]));
-$("#find").addEventListener("input", () => { page = 0; follow = false; renderList(); });
-$("#ingredient").addEventListener("input", () => { page = 0; follow = false; renderList(); renderDetail(); });
+$("#find").addEventListener("input", () => { page = 0; follow = false; renderList(); renderDetail(); });
+
+// The one search box finds by name (titles, labels, any ingredient's words) or
+// by ingredient (every one of these, commas between; -nuts leaves those out).
+const FIND_HINT = { name: "Find a recipe", ingredient: "With ingredients: eggs, spinach, -nuts" };
+function findMode(mode, focus = true) {
+  findBy = mode;
+  for (const b of document.querySelectorAll(".mode button")) b.setAttribute("aria-pressed", String(b.dataset.mode === mode));
+  $("#find").placeholder = FIND_HINT[mode];
+  $("#find").setAttribute("aria-label", mode === "name" ? "Find a recipe" : "Find recipes with these ingredients, separated by commas; a minus leaves one out");
+  page = 0; follow = false; renderList(); renderDetail();
+  if (focus) $("#find").focus();
+}
+for (const b of document.querySelectorAll(".mode button")) b.addEventListener("click", () => findMode(b.dataset.mode));
+
+// "More ways to add": a menu that closes once something in it is picked, on
+// Escape, or on a click anywhere else.
+const addMenu = $("#add-menu");
+addMenu.addEventListener("click", e => { if (e.target.closest(".menu-list button")) addMenu.open = false; });
+addMenu.addEventListener("keydown", e => { if (e.key === "Escape" && addMenu.open) { addMenu.open = false; addMenu.querySelector("summary").focus(); } });
+document.addEventListener("click", e => { if (addMenu.open && !addMenu.contains(e.target)) addMenu.open = false; });
+
+// Deleting is in the editor, out of the way of the everyday buttons.
+$("#delete-recipe").addEventListener("click", () => {
+  const r = editing;
+  if (!r?.id || !confirm(`Delete ${r.title}?`)) return;
+  editing = null;
+  $("#editor").close();
+  run(async () => {
+    await api("DELETE", "recipes/" + r.id);
+    data.recipes = data.recipes.filter(x => x.id !== r.id);
+    renderFilters();
+    pick(data.recipes[0]?.id || null);
+  });
+});
 
 document.addEventListener("keydown", e => {
   const t = e.target;
   if (e.metaKey || e.ctrlKey || e.altKey || t.isContentEditable || t.matches?.("input, textarea, select") || $("#editor").open || $("#keyer").open || $("#paster").open || $("#suggester")?.open) {
-    if (e.key === "Escape" && (t === $("#find") || t === $("#ingredient"))) { t.value = ""; renderList(); renderDetail(); t.blur(); }
+    if (e.key === "Escape" && t === $("#find")) { t.value = ""; renderList(); renderDetail(); t.blur(); }
     return;
   }
   const r = current();
   const at = shown.indexOf(open);
   const keys = {
-    n: () => $("#url").focus(),
+    // The same letters as the terminal's Recipe box: a from a link, n by hand.
+    a: () => $("#url").focus(),
+    n: () => openEditor(null),
     l: () => $("#label-filter").disabled || $("#label-filter").focus(),
-    "/": () => $("#find").focus(),
-    f: () => $("#ingredient").focus(),
+    "/": () => findMode("name"),
+    f: () => findMode("ingredient"),
     "[": () => $("#pager button:first-child")?.click(),
     "]": () => $("#pager button:last-child")?.click(),
     j: () => shown.length && pick(shown[Math.min(shown.length - 1, at + 1)]),

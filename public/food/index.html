@@ -141,6 +141,9 @@ dialog .modes input { accent-color: var(--gold); }
   dialog .two, dialog .three { grid-template-columns: 1fr; }
   .photos { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
+details.about { margin: -8px 0 18px; font-size: 13px; color: var(--muted); max-width: 70ch; }
+details.about summary { cursor: pointer; color: var(--gold); width: max-content; }
+details.about p { margin: 8px 0 0; }
 </style>
 </head>
 <body>
@@ -149,7 +152,8 @@ dialog .modes input { accent-color: var(--gold); }
 <main>
   <div class="kicker">Food club</div>
   <h1 id="headline">Food club</h1>
-  <p class="lede">Like the book club, but everyone cooks. Each month one of us picks a food (a meal, a dessert, anything) and shares the recipe, and we all make it. Mark it made, keep your favorites, and add photos of how yours turned out.</p>
+  <p class="lede">A food a month, picked by one of us and made by everyone.</p>
+  <details class="about"><summary>How it works</summary><p>Like the book club, but everyone cooks. Each month one of us picks a food (a meal, a dessert, anything) and shares the recipe, and we all make it. Mark it made, keep your favorites, and add photos of how yours turned out.</p></details>
   <div id="error" class="msg bad" role="alert" hidden></div>
   <div id="done" class="msg good" role="status" hidden></div>
 

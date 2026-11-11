@@ -1,6 +1,7 @@
 // Tests for Recipe box: reading recipes from pages, scaling, the API, and
 // sending ingredients to a Drift list.
 // Run with:  node --no-warnings --test tests/*.test.mjs
+import { looksEnglish } from "../public/recipes/english.js";
 import { test, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -38,6 +39,11 @@ test("a page's JSON-LD recipe is read: through @graph, sections, entities and du
 test("finding by ingredient: the cases the terminal checks too", () => {
   const cases = JSON.parse(readFileSync(new URL("../cli/tests/ingredient_cases.json", import.meta.url)));
   for (const [text, ingredients, want] of cases) assert.deepEqual(ingredientHits({ ingredients }, ingredientTerms(text)), want, `${text} in ${ingredients}`);
+});
+
+test("Translate to English is offered only for recipes that don't read as English: the cases the terminal checks too", () => {
+  const cases = JSON.parse(readFileSync(new URL("../cli/tests/english_cases.json", import.meta.url)));
+  for (const { recipe, english } of cases) assert.equal(looksEnglish(recipe), english, recipe.title);
 });
 
 test("microdata works when there's no JSON-LD, and a page without a recipe gives null", () => {

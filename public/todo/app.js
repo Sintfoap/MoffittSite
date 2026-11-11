@@ -608,11 +608,13 @@ document.addEventListener("keydown", e => {
 });
 
 $("#keysBtn").onclick = () => $("#keys").showModal();
+// The moon is the rail's Dark mode button (/rail.js), so the look is the same on every page.
 $("#themeBtn").onclick = () => {
+  if (window.sintfoapTheme) { window.sintfoapTheme.toggle(); return; }
   const dark = document.documentElement.dataset.theme ? document.documentElement.dataset.theme === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
   document.documentElement.dataset.theme = dark ? "light" : "dark"; store.set("theme", document.documentElement.dataset.theme);
 };
-{ const th = store.get("theme", null); if (th) document.documentElement.dataset.theme = th; }
+if (!window.sintfoapTheme) { const th = store.get("theme", null); if (th) document.documentElement.dataset.theme = th; }
 
 /* ── boot ──────────────────────────────────────── */
 // What store plugins see and may change. They only ever get plain data, and

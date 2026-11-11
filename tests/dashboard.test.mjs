@@ -52,7 +52,9 @@ test("Drift, the plugin store and chat get the dashboard's rail, Chat included",
     assert.match(r.text, new RegExp(`aria-current="page"[^>]*>[\\s\\S]{0,600}<span>${here}</span>`), `${path} marks itself`);
     assert.match(r.text, /Ryan Moffitt/);
     assert.match(r.text, /<script src="\/rail.js"><\/script><nav class="rail"/, `${path} can fold its rail, set before it's drawn`);
-    assert.match(r.text, /<button type="button" class="go" data-rail-fold/);
+    assert.match(r.text, /<button type="button" class="go fold" data-rail-fold/);
+    assert.match(r.text, /data-theme-toggle/, `${path} has the Dark mode button`);
+    assert.match(r.text, /data-rail-menu[^>]*>[\s\S]*?<span>Menu<\/span>/, `${path} has the phone's Menu button`);
     assert.equal(r.headers.get("ETag"), null, "the page differs per person, so no shared validator");
   }
   // The dashboard shows the same menu.

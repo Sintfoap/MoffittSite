@@ -105,10 +105,12 @@ main { padding: 44px clamp(16px, 5vw, 64px) 120px; width: 100%; min-width: 0; }
 .composer .plus { color: var(--accent); display: grid; place-items: center; }
 .composer input { flex: 1; min-width: 0; border: 0; outline: 0; background: none; padding: 9px 0; font-size: 15.5px; }
 .composer input::placeholder { color: var(--faint); }
+/* Buttons look like the rest of the site's: square, bracketed capitals. */
 .composer .go {
-  border: 0; border-radius: 8px; background: var(--accent); color: var(--accent-ink);
-  padding: 8px 14px; font-weight: 600; font-size: 14px;
+  border: 1px solid var(--accent); border-radius: 0; background: var(--accent); color: var(--accent-ink);
+  padding: 8px 14px; font: 700 12.5px var(--sans); letter-spacing: 1.5px; text-transform: uppercase;
 }
+.composer .go::before { content: "[ "; } .composer .go::after { content: " ]"; }
 .composer .go:disabled { opacity: .35; cursor: default; }
 .preview { min-height: 26px; padding: 7px 4px 0; display: flex; gap: 10px; flex-wrap: wrap; font-size: 12.5px; color: var(--faint); }
 .toolbar { display: flex; gap: 10px; align-items: center; margin: 12px 0 6px; }
@@ -398,7 +400,8 @@ dialog .acts { display: flex; justify-content: space-between; align-items: cente
 .quickdates button { border: 1px solid var(--line); background: var(--bg); border-radius: 0; padding: 3px 10px; font-size: 12.5px; color: var(--muted); }
 .quickdates button:hover { border-color: var(--accent); color: var(--ink); }
 .danger { border: 0; background: none; color: var(--red); font-size: 13px; padding: 6px 0; }
-.btn { border: 1px solid var(--line); background: var(--bg); padding: 8px 14px; border-radius: 8px; font-weight: 500; font-size: 14px; }
+.btn { border: 1px solid var(--line-2); background: transparent; color: var(--accent); padding: 8px 14px; border-radius: 0; font: 700 12.5px var(--sans); letter-spacing: 1.5px; text-transform: uppercase; }
+.btn::before { content: "[ "; } .btn::after { content: " ]"; }
 .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
 .link { border: 0; background: none; padding: 0; color: var(--accent); font-size: 12.5px; font-weight: 500; }
 kbd { font: 500 11.5px var(--sans); padding: 1px 6px; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 5px; background: var(--bg); color: var(--muted); }

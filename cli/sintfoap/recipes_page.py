@@ -75,9 +75,16 @@ def value_of(r: dict, key: str) -> str | None:
     return next((lb.get("value", "") for lb in r.get("labels", []) if lb["key"].casefold() == key.casefold()), None)
 
 
-def arranged(recipes: list[dict], filters: list[dict], sort_key: str, terms: list[dict] | None = None) -> list[dict]:
-    """The shelf: the recipes the filters (and ingredient terms) let through, by title or by a label's value (those without it last)."""
-    shown = [r for r in by_title(recipes) if passes(r, filters) and (not terms or R.ingredient_hits(r, terms) is not None)]
+def named(r: dict, q: str) -> bool:
+    """/'s find by name, as the website's search box: in the title, an ingredient or a label."""
+    q = q.strip().casefold()
+    return not q or q in r["title"].casefold() or any(q in i.casefold() for i in r.get("ingredients", [])) \
+        or any(q in label_text(lb).casefold() for lb in r.get("labels", []))
+
+
+def arranged(recipes: list[dict], filters: list[dict], sort_key: str, terms: list[dict] | None = None, name: str = "") -> list[dict]:
+    """The shelf: the recipes the filters (and the search, by name or ingredient) let through, by title or by a label's value (those without it last)."""
+    shown = [r for r in by_title(recipes) if passes(r, filters) and named(r, name) and (not terms or R.ingredient_hits(r, terms) is not None)]
     if sort_key:
         shown.sort(key=lambda r: (value_of(r, sort_key) is None, (value_of(r, sort_key) or "").casefold()))
     return shown
@@ -204,6 +211,9 @@ class RecipeDialog(ModalScreen[dict | None]):
             with Horizontal(classes="buttons"):
                 yield Button("Save", id="save")
                 yield Button("Cancel", id="cancel", classes="quiet")
+                if self.r.get("id"):
+                    # Deleting is here, as in the website's editor, out of the way of everyday keys.
+                    yield Button("Delete recipe", id="delete", classes="danger")
             yield Static(Text("ctrl+s saves, esc cancels", style=FAINT))
 
     def on_mount(self) -> None:
@@ -234,7 +244,10 @@ class RecipeDialog(ModalScreen[dict | None]):
         self.dismiss(None)
 
     def on_button_pressed(self, e: Button.Pressed) -> None:
-        self.action_save() if e.button.id == "save" else self.dismiss(None)
+        if e.button.id == "delete":
+            self.dismiss({"_delete": True})
+        else:
+            self.action_save() if e.button.id == "save" else self.dismiss(None)
 
 
 class PasteDialog(ModalScreen[str | None]):
@@ -371,6 +384,7 @@ class RecipesPage(Page):
     """
     BINDINGS = [
         Binding("a", "add", "From a link"),
+        Binding("slash", "find", "Find"),
         Binding("n", "new", "By hand"),
         Binding("i", "import_file", "Import file"),
         Binding("p", "photo", "From a photo"),
@@ -386,11 +400,16 @@ class RecipesPage(Page):
         Binding("f", "ingredients", "Ingredients"),
         Binding("o", "sort", "Sort"),
         Binding("b", "board", "Share on board"),
+        # Shown only for a recipe that doesn't read as English (or has its
+        # English ready); the second E translates any recipe, as on the website.
         Binding("E", "english", "English"),
+        Binding("E", "english_any", "English", show=False),
         Binding("S", "save_english", "Save the English", show=False),
-        Binding("d", "delete", "Delete"),
+        Binding("d", "delete", "Delete", show=False),
         Binding("r", "refresh", "Refresh"),
         Binding("backslash", "fold", "Shelf"),
+        # Recipe labels is Recipe box's Labels tab, on the website too.
+        Binding("ctrl+l", "labels_tab", "Labels tab"),
     ]
 
     def __init__(self):
@@ -403,12 +422,13 @@ class RecipesPage(Page):
         self.filters: list[dict] = []          # labels the shelf shows only recipes with
         self.sort_key = ""                     # "" by title, else a label's key
         self.ingredients = ""                  # what f looks for: "eggs, spinach, -nuts"
+        self.find_name = ""                    # what / looks for; one search at a time, like the website's one box
         self.english: dict[str, dict] = {}     # recipe id → {language, fields, on}: E's translation, shown while on
 
     def compose(self) -> ComposeResult:
         yield from self.top()
         with Vertical(id="body"):
-            yield Static("R E C I P E   B O X", classes="kicker")
+            yield Static("R E C I P E   B O X", classes="kicker", id="kicker")
             yield Input(placeholder="Paste a link to a recipe (any site, or Recipe Keeper) and press enter (a)", id="url")
             yield Static(id="filters")
             with Horizontal(id="main"):
@@ -441,6 +461,13 @@ class RecipesPage(Page):
     async def action_refresh(self) -> None:
         self.data = await self.fetch(site.recipes)
         self.data["recipes"] = by_title(self.data["recipes"])
+        # The tabs, as on the website: Recipes here, and Labels for whoever keeps the list.
+        kicker = Text("R E C I P E   B O X", style=f"bold {GOLD}")
+        if self.data.get("labels"):
+            kicker.append("     RECIPES", style=f"bold {INK}")
+            kicker.append("  ·  labels (ctrl+l)", style=FAINT)
+        self.query_one("#kicker", Static).update(kicker)
+        self.refresh_bindings()
         shown = self.shelved()
         if not any(r["id"] == self.open for r in shown):
             self.open = shown[0]["id"] if shown else None
@@ -451,7 +478,7 @@ class RecipesPage(Page):
         return R.ingredient_terms(self.ingredients)
 
     def shelved(self) -> list[dict]:
-        return arranged(self.data["recipes"], self.filters, self.sort_key, self.terms())
+        return arranged(self.data["recipes"], self.filters, self.sort_key, self.terms(), self.find_name)
 
     def current(self) -> dict | None:
         return next((r for r in (self.data or {}).get("recipes", []) if r["id"] == self.open), None)
@@ -466,7 +493,7 @@ class RecipesPage(Page):
                 shelf.add_option(Option(Text("No recipes yet. Paste a link above.", style=FAINT), disabled=True))
                 return
             if not recipes:
-                why = "Nothing matches. " + " or ".join(k for k, on in (("l", self.filters), ("f", self.ingredients.strip())) if on) + " changes the filter."
+                why = "Nothing matches. " + " or ".join(k for k, on in (("l", self.filters), ("/", self.find_name.strip()), ("f", self.ingredients.strip())) if on) + " changes the filter."
                 shelf.add_option(Option(Text(why, style=FAINT), disabled=True))
                 return
             terms = self.terms()
@@ -488,6 +515,10 @@ class RecipesPage(Page):
             bits.append("FILTER  ", style=FAINT)
             bits.append("  ".join(label_text(f) for f in self.filters), style=f"bold {GOLD}")
             bits.append("   l changes", style=FAINT)
+        if self.find_name.strip():
+            bits.append(("   " if bits.plain else "") + "FIND  ", style=FAINT)
+            bits.append(self.find_name.strip(), style=f"bold {GOLD}")
+            bits.append("   / changes", style=FAINT)
         terms = self.terms()
         if terms:
             bits.append(("   " if bits.plain else "") + "INGREDIENTS  ", style=FAINT)
@@ -587,6 +618,7 @@ class RecipesPage(Page):
             steps.append(s, style=INK)
         self.query_one("#steps", Static).update(steps)
         self.query_one("#notes", Static).update(Text(r.get("notes", ""), style=MUTED))
+        self.refresh_bindings()   # E shows in the footer only for a recipe that isn't in English
 
     def show_send(self, r: dict) -> None:
         n = len(r["ingredients"]) - len([i for i in self.skip.get(r["id"], set()) if i < len(r["ingredients"])])
@@ -638,7 +670,12 @@ class RecipesPage(Page):
         # Typing in the link box or the editor shouldn't scale or delete anything.
         if action == "board" and not (self.data or {}).get("board"):
             return None
-        if action in ("servings", "add", "new", "import_file", "photo", "paste", "key", "edit", "picture", "send", "delete", "refresh", "board", "labels", "suggest", "ingredients", "sort", "english", "save_english") and isinstance(self.focused, (Input, TextArea)):
+        if action == "labels_tab" and not (self.data or {}).get("labels"):
+            return False
+        if action == "english" and not self.offers_english():
+            return False   # the footer's E; the hidden one (english_any) still translates
+
+        if action in ("servings", "add", "find", "new", "import_file", "photo", "paste", "key", "edit", "picture", "send", "delete", "refresh", "board", "labels", "suggest", "ingredients", "sort", "english", "english_any", "save_english") and isinstance(self.focused, (Input, TextArea)):
             return False
         return True
 
@@ -741,7 +778,9 @@ class RecipesPage(Page):
 
     def after_dialog(self, was: dict | None):
         async def done(fields: dict | None) -> None:
-            if fields is not None:
+            if fields and fields.get("_delete") and was:
+                self.ask_delete(was)
+            elif fields is not None:
                 await self.save(was, fields)
         return done
 
@@ -775,11 +814,20 @@ class RecipesPage(Page):
                 self.reshelve()
         self.app.push_screen(LabelFilter(labels, self.filters), chosen)
 
+    def action_find(self) -> None:
+        """/: find by name, as the website's search box does: titles, labels and ingredients' words."""
+        def chosen(text: str | None) -> None:
+            if text is not None:
+                self.find_name, self.ingredients = text.strip(), ""
+                self.reshelve()
+        self.app.push_screen(Ask("Find a recipe", "By its name, a label or any ingredient's words. f finds by ingredient instead. "
+                                 "Leave it empty to show every recipe.", self.find_name, "chili", ok="Find"), chosen)
+
     def action_ingredients(self) -> None:
         """f: show only recipes with these ingredients (commas between; -nuts leaves out ones with nuts)."""
         def chosen(text: str | None) -> None:
             if text is not None:
-                self.ingredients = text.strip()
+                self.ingredients, self.find_name = text.strip(), ""
                 self.reshelve()
         self.app.push_screen(Ask("Find by ingredient", "Separate several with commas; all of them must be in the recipe. "
                                  "-nuts leaves out recipes with nuts. Leave it empty to show every recipe.",
@@ -831,6 +879,11 @@ class RecipesPage(Page):
             self.open = shown[0]["id"] if shown else None
         self.show_shelf()
         self.show_recipe()
+
+    def action_labels_tab(self) -> None:
+        """ctrl+l: the Labels tab, the one label list (Recipe labels) recipes pick from."""
+        from .labels_page import LabelsPage
+        self.app.push_screen(LabelsPage())
 
     def action_board(self) -> None:
         """b: share the open recipe on the Recipe board (for anyone with it)."""
@@ -1028,6 +1081,14 @@ class RecipesPage(Page):
 
     # ── translating ───────────────────────────────────────────────────────
 
+    def offers_english(self) -> bool:
+        """Whether the footer offers E: the open recipe doesn't read as English, or its English is ready."""
+        r = self.current()
+        return bool(r) and (r["id"] in self.english or not R.looks_english(r))
+
+    async def action_english_any(self) -> None:
+        await self.action_english()
+
     @attempt
     async def action_english(self) -> None:
         """E: the open recipe in English, or back and forth between it and the original."""
@@ -1071,9 +1132,10 @@ class RecipesPage(Page):
 
     def action_delete(self) -> None:
         r = self.current()
-        if not r:
-            return
+        if r:
+            self.ask_delete(r)
 
+    def ask_delete(self, r: dict) -> None:
         async def answer(yes: bool | None) -> None:
             if yes:
                 await self.delete(r)
