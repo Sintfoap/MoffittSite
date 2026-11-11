@@ -3,7 +3,8 @@
 // The categories are the label keys from Recipe labels; a post is under each
 // key its labels use, and an open key lists its values to narrow it down.
 // Your feed is the categories, and single values, you follow. Any post can be saved into your
-// Recipe box. The Worker side is src/board.js.
+// Recipe box, and anyone who made it can review it: stars, how it turned out, what they changed.
+// The Worker side is src/board.js.
 
 const $ = s => document.querySelector(s);
 const el = (tag, props = {}, ...kids) => {
@@ -28,6 +29,9 @@ let editing = null;    // the post in the editor, or {} for a new one
 // shown in place of the original while `on`. Anyone can translate; only whoever can edit it saves it.
 const english = new Map();
 const RECIPE_TEXT = ["yield", "time", "ingredients", "steps", "notes"];
+// post id → GET posts/<id>/reviews ({reviews, yours, summary, can_review}), fetched when the post is opened.
+const reviewsOf = new Map();
+let reviewing = null;  // the post in the review dialog
 // The post as it's shown: in English while that's on.
 function shown(p) {
   const tr = english.get(p.id);
@@ -78,6 +82,13 @@ let featuredOpen = false;
 const low = s => String(s || "").toLowerCase();
 const catOf = id => id ? board.categories.find(c => low(c.id) === low(id)) : null;
 const valueOf = (c, id) => c?.values.find(v => v.id === id);
+// "★ 4.5 · 2 reviews", for a post's line (or nothing before anyone's reviewed it).
+const stars = n => "★".repeat(n) + "☆".repeat(5 - n);
+function reviewLine(p) {
+  const r = p.reviews;
+  if (!r?.count) return "";
+  return `${r.stars != null ? `★ ${r.stars} · ` : ""}${r.count} review${r.count === 1 ? "" : "s"}`;
+}
 // "Course: Dinner · Cuisine: Irish", for a post's line.
 function labelChips(p) {
   const ls = p.recipe?.labels || [];
@@ -191,6 +202,7 @@ function recipeBody(post) {
   if (p.from_box) full.append(el("p", { className: "empty synced" }, p.recipe_id
     ? el("span", {}, "Kept in step with ", el("a", { href: `/recipes/#${p.recipe_id}`, textContent: "your Recipe box" }), ": change it there or here.")
     : `Kept in step with ${p.by}'s Recipe box.`));
+  full.append(reviewsBlock(post));
   const acts = el("div", { className: "actions" });
   if (board.recipe_box) {
     const save = el("button", { type: "button", className: p.saved ? "btn quiet save" : "btn save", textContent: p.saved ? "Saved ✓ open it" : "Save to Recipe box" });
@@ -221,6 +233,111 @@ function recipeBody(post) {
   full.append(acts);
   return full;
 }
+
+// ── reviews ────────────────────────────────────────────────────────────────
+
+// Under an open post: its reviews, newest first, and writing (or changing) yours.
+function reviewsBlock(p) {
+  const box = el("section", { className: "reviews" });
+  const got = reviewsOf.get(p.id);
+  const sum = got?.summary || p.reviews;
+  box.append(el("h3", { textContent: "Reviews" + (sum?.count ? ` · ${sum.count}` : "") }));
+  if (!got) {
+    box.append(el("p", { className: "empty", textContent: "Loading reviews…" }));
+    loadReviews(p);
+    return box;
+  }
+  if (sum.stars != null) box.append(el("p", { className: "avg" }, el("span", { className: "stars", textContent: stars(Math.round(sum.stars)) }),
+    ` ${sum.stars} from ${sum.rated} ${sum.rated === 1 ? "person" : "people"}`));
+  if (!got.reviews.length) box.append(el("p", { className: "empty", textContent: got.can_review ? "Nobody's reviewed it yet. Made it? Say how it went." : "Nobody's reviewed it yet. When people make it, what they thought shows here." }));
+  for (const r of got.reviews) {
+    const li = el("article", { className: "review" + (r.yours ? " yours" : "") },
+      el("div", { className: "who" }, r.rating ? el("span", { className: "stars", textContent: stars(r.rating), title: `${r.rating} of 5` }) : null,
+        el("b", { textContent: r.yours ? "You" : r.by }), el("span", { className: "empty", textContent: ago(r.updated) })));
+    if (r.note) li.append(el("p", { textContent: r.note }));
+    if (r.changes) li.append(el("p", { className: "changes" }, el("b", { textContent: "Changed: " }), r.changes));
+    if (r.can_delete && !r.yours) {
+      const del = el("button", { type: "button", className: "link", textContent: "Take it down" });
+      del.addEventListener("click", () => removeReview(p, r));
+      li.append(del);
+    }
+    box.append(li);
+  }
+  if (got.can_review) {
+    const b = el("button", { type: "button", className: got.yours ? "btn quiet review-btn" : "btn review-btn", textContent: got.yours ? "Change your review" : "Made it? Review it" });
+    b.addEventListener("click", () => openReview(p));
+    box.append(b);
+    if (got.yours) {
+      const del = el("button", { type: "button", className: "btn danger", textContent: "Take yours down" });
+      del.addEventListener("click", () => removeReview(p, got.yours));
+      box.append(del);
+    }
+  }
+  return box;
+}
+
+const loadingReviews = new Map();   // post id → the fetch of its reviews, while it's under way
+function loadReviews(p) {
+  if (reviewsOf.has(p.id)) return Promise.resolve();
+  if (!loadingReviews.has(p.id)) {
+    loadingReviews.set(p.id, run(async () => gotReviews(p.id, await api("GET", `posts/${p.id}/reviews`)))
+      .finally(() => loadingReviews.delete(p.id)));
+  }
+  return loadingReviews.get(p.id);
+}
+// A post's reviews, and its summary on every copy of it shown.
+function gotReviews(id, out) {
+  reviewsOf.set(id, out);
+  for (const x of [board.featured, ...posts]) if (x?.id === id) { x.reviews = out.summary; x.reviewed = !!out.yours; }
+  renderPosts();
+}
+
+function removeReview(p, r) {
+  if (!confirm(r.yours ? `Take your review of ${p.title} down?` : `Take ${r.by}'s review of ${p.title} down?`)) return;
+  run(async () => gotReviews(p.id, await api("DELETE", `posts/${p.id}/reviews` + (r.yours ? "" : "/" + r.id))));
+}
+
+function setStars(n) {
+  const f = $("#review-form");
+  f.rating.value = String(n);
+  for (const b of document.querySelectorAll("#star-pick button")) b.setAttribute("aria-pressed", String(Number(b.dataset.n) <= n));
+  $("#star-said").textContent = n ? `${n} of 5` : "No stars";
+}
+
+function openReview(p) {
+  const got = reviewsOf.get(p.id);
+  if (!got?.can_review) return;
+  reviewing = p;
+  const f = $("#review-form"), mine = got.yours;
+  $("#review-title").textContent = `${mine ? "Your review of" : "Review"} ${p.title}`;
+  f.note.value = mine?.note || "";
+  f.changes.value = mine?.changes || "";
+  setStars(mine?.rating || 0);
+  $("#review-btn").textContent = mine ? "Save" : "Post review";
+  $("#reviewer").showModal();
+}
+
+$("#star-pick").replaceChildren(...[1, 2, 3, 4, 5].map(n => {
+  const b = el("button", { type: "button", textContent: "★", title: `${n} of 5` });
+  b.dataset.n = n;
+  b.setAttribute("aria-label", `${n} star${n === 1 ? "" : "s"}`);
+  // Clicking the stars you have takes them back.
+  b.addEventListener("click", () => setStars(Number($("#review-form").rating.value) === n ? 0 : n));
+  return b;
+}));
+
+$("#reviewer").addEventListener("close", () => {
+  const p = reviewing;
+  reviewing = null;
+  if ($("#reviewer").returnValue !== "save" || !p) return;
+  const f = $("#review-form"), rating = Number(f.rating.value) || null;
+  const body = { rating, note: f.note.value, changes: f.changes.value };
+  run(async () => {
+    const had = !!reviewsOf.get(p.id)?.yours;
+    gotReviews(p.id, await api("PUT", `posts/${p.id}/reviews`, body));
+    say("done", had ? `Changed your review of ${p.title}.` : `Thanks! Your review of ${p.title} is up.`);
+  });
+});
 
 // ── translating ────────────────────────────────────────────────────────────
 
@@ -272,7 +389,8 @@ function renderFeatured(box) {
   card.append(el("div", {},
     el("div", { className: "kicker", textContent: "Recipe of the day" }),
     el("h2", { textContent: p.title }),
-    el("div", { className: "meta" }, labelChips(p), `${p.recipe.labels.length ? " · " : ""}shared by ${p.yours ? "you" : p.by}`),
+    el("div", { className: "meta" }, labelChips(p), `${p.recipe.labels.length ? " · " : ""}shared by ${p.yours ? "you" : p.by}`,
+      reviewLine(p) ? el("span", { className: "rated", textContent: " · " + reviewLine(p) }) : null),
     p.note ? el("p", { className: "note", textContent: p.note }) : null));
   if (p.recipe.image) {
     const img = el("img", { className: "thumb", src: p.recipe.image, alt: "", referrerPolicy: "no-referrer", loading: "lazy" });
@@ -303,7 +421,8 @@ function renderPosts() {
     const main = el("div", {},
       el("h2", { textContent: p.title }),
       el("div", { className: "meta" }, labelChips(p), `${p.recipe.labels.length ? " · " : ""}${p.by} · ${ago(p.created)}`,
-        p.saves ? ` · saved ${p.saves}×` : "", p.new ? el("span", { className: "new", textContent: "new" }) : null),
+        p.saves ? ` · saved ${p.saves}×` : "", reviewLine(p) ? el("span", { className: "rated", textContent: " · " + reviewLine(p) }) : null,
+        p.new ? el("span", { className: "new", textContent: "new" }) : null),
       p.note ? el("p", { className: "note", textContent: p.note }) : null);
     card.append(main);
     if (p.recipe.image) {
@@ -473,7 +592,7 @@ $("#remove-cat").addEventListener("click", () => {
 
 document.addEventListener("keydown", e => {
   const t = e.target;
-  if (e.metaKey || e.ctrlKey || e.altKey || t.isContentEditable || t.matches?.("input, textarea, select") || $("#editor").open) return;
+  if (e.metaKey || e.ctrlKey || e.altKey || t.isContentEditable || t.matches?.("input, textarea, select") || $("#editor").open || $("#reviewer").open) return;
   const moveTo = i => {
     if (!posts.length) return;
     focus = Math.max(0, Math.min(posts.length - 1, i));
@@ -487,6 +606,13 @@ document.addEventListener("keydown", e => {
     j: () => moveTo(focus + 1),
     k: () => moveTo(focus - 1),
     s: () => p && board.recipe_box && saveIt(p),
+    // Review the focused post: open it, and its review dialog once its reviews are in.
+    v: async () => {
+      if (!p) return;
+      if (openId !== p.id) { openId = p.id; renderPosts(); }
+      await loadReviews(p);
+      openReview(p);
+    },
     f: () => { const c = catOf(at.category); if (c) toggleFollow(c); },
     // English: translate the focused post, or flip between it and the original.
     E: () => { if (!p) return; const tr = english.get(p.id); if (tr) { tr.on = !tr.on; renderPosts(); } else { openId = p.id; translate(p); } },

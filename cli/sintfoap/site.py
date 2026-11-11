@@ -1191,6 +1191,23 @@ def delete_board_post(post_id: str) -> dict:
 def save_board_post(post_id: str) -> dict:
     """The post's recipe, copied into your Recipe box: {recipe, already}."""
     return api("POST", f"/board/api/posts/{_q(post_id)}/save")
+
+
+def board_reviews(post_id: str) -> dict:
+    """{reviews, yours, summary, can_review}: what people who made the post thought (newest first), yours or None,
+    {count, rated, stars} and whether you can review it (anyone but whoever shared it)."""
+    return _get(f"/board/api/posts/{_q(post_id)}/reviews")
+
+
+def review_board_post(post_id: str, fields: dict) -> dict:
+    """Your review, new or changed: {rating (1 to 5, or None), note (how it turned out), changes (what you did differently)};
+    only the fields sent change. The post's reviews back, as board_reviews gives them."""
+    return api("PUT", f"/board/api/posts/{_q(post_id)}/reviews", fields)
+
+
+def delete_board_review(post_id: str, review_id: str = "") -> dict:
+    """Takes your review down (or, for an admin, the one with that id). The post's reviews back."""
+    return api("DELETE", f"/board/api/posts/{_q(post_id)}/reviews" + (f"/{_q(review_id)}" if review_id else ""))
 # ───────────────────────────── recipe labels ────────────────────────────────
 # /labels/api/ (src/labels.js): the one list of labels recipes pick from, kept by whoever has Recipe labels.
 

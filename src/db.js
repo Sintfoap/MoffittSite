@@ -490,6 +490,19 @@ const SCHEMA = [
      created   TEXT NOT NULL,
      PRIMARY KEY (post, user_id)
    )`,
+  // What people who made a board post thought of it: stars, how it turned out, and
+  // what they changed. One each per post, theirs to change or take back.
+  `CREATE TABLE IF NOT EXISTS board_reviews (
+     id       TEXT PRIMARY KEY,                    -- "v_" + random hex
+     post     TEXT NOT NULL,
+     user_id  TEXT NOT NULL,
+     rating   INTEGER,                             -- 1 to 5 stars, or NULL for just words
+     note     TEXT NOT NULL DEFAULT '',            -- how it turned out
+     changes  TEXT NOT NULL DEFAULT '',            -- what they did differently
+     created  TEXT NOT NULL,
+     updated  TEXT NOT NULL,
+     UNIQUE (post, user_id)
+   )`,
   // Food club (src/food.js): a pick a month, who made it and loved it, and photos of their attempts.
   `CREATE TABLE IF NOT EXISTS food_picks (
      id      TEXT PRIMARY KEY,                     -- "f_" + random hex

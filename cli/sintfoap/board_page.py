@@ -5,7 +5,8 @@ you follow it (f stars the highlighted one, or just one of its values). The cate
 from Recipe labels: a post is under every key its labels use, and the open key
 lists its values to narrow it down. The posts of whichever is open sit on the
 right, newest first, with the highlighted one's recipe under them; s saves it
-into your Recipe box, n shares one of yours (tick its labels to file it)."""
+into your Recipe box, n shares one of yours (tick its labels to file it), and
+v reviews it once you've made it: stars, how it turned out, what you changed."""
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -26,6 +27,18 @@ VIEWS = [("feed", "Your feed"), ("all", "Everything"), ("mine", "Shared by you")
 def label_line(p: dict) -> str:
     """"Course: Dinner · Cuisine: Irish"."""
     return " · ".join(f"{lb['key']}: {lb['value']}" if lb["value"] else lb["key"] for lb in (p.get("recipe") or {}).get("labels", []))
+
+
+def stars(n: int) -> str:
+    return "★" * n + "☆" * (5 - n)
+
+
+def review_line(p: dict) -> str:
+    """"★ 4.5 · 2 reviews", or "" before anyone's reviewed it (the web page's reviewLine)."""
+    r = p.get("reviews") or {}
+    if not r.get("count"):
+        return ""
+    return (f"★ {r['stars']:g} · " if r.get("stars") is not None else "") + plural(r["count"], "review")
 
 
 BLURB = {"all": "Every recipe on the board.", "mine": "The recipes you've posted.", "saved": "Recipes you've saved to your Recipe box."}
@@ -213,6 +226,61 @@ class ShareDialog(ModalScreen[dict | None]):
         self.action_save() if e.button.id == "save" else self.dismiss(None)
 
 
+class ReviewDialog(ModalScreen[dict | None]):
+    """Your review of a post: stars, how it turned out, what you changed. Dismisses with what to send,
+    {"delete": True} to take yours down, or None."""
+    BINDINGS = [Binding("escape", "cancel", "Cancel"), Binding("ctrl+s", "save", "Post", priority=True)]
+    DEFAULT_CSS = """
+    ReviewDialog #note, ReviewDialog #changes { height: 5; }
+    """
+    STARS = [("No stars", 0)] + [(f"{stars(n)}  {n} of 5", n) for n in range(5, 0, -1)]
+
+    def __init__(self, post: dict, mine: dict | None):
+        super().__init__()
+        self.post, self.mine = post, mine
+
+    def compose(self) -> ComposeResult:
+        m = self.mine or {}
+        with VerticalScroll(classes="dialog"):
+            yield Label(Text(("Your review of " if self.mine else "Review ") + self.post["title"], style=f"bold {INK}"))
+            yield Static(Text("For people who made it: how it turned out, and anything you did differently.", style=FAINT))
+            yield Label("How good was it?", classes="lbl")
+            yield Select(self.STARS, value=m.get("rating") or 0, allow_blank=False, id="rating")
+            yield Label("How it turned out", classes="lbl")
+            yield TextArea(m.get("note", ""), id="note", soft_wrap=True)
+            yield Label("What you changed (optional)", classes="lbl")
+            yield TextArea(m.get("changes", ""), id="changes", soft_wrap=True)
+            with Horizontal(classes="buttons"):
+                yield Button("Save" if self.mine else "Post review", id="save")
+                if self.mine:
+                    yield Button("Take mine down", id="delete", classes="quiet")
+                yield Button("Cancel", id="cancel", classes="quiet")
+            yield Static(Text("ctrl+s posts, esc cancels", style=FAINT))
+
+    def on_mount(self) -> None:
+        self.query_one("#rating").focus()
+
+    def fields(self) -> dict:
+        t = lambda i: self.query_one(f"#{i}", TextArea).text.strip()  # noqa: E731
+        return {"rating": self.query_one("#rating", Select).value or None, "note": t("note"), "changes": t("changes")}
+
+    def action_save(self) -> None:
+        f = self.fields()
+        if not (f["rating"] or f["note"] or f["changes"]):
+            self.app.notify("Give it some stars, or say how it turned out or what you changed.", severity="error", timeout=3)
+            return
+        self.dismiss(f)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+    def on_button_pressed(self, e: Button.Pressed) -> None:
+        if e.button.id == "save":
+            self.action_save()
+        else:
+            self.dismiss({"delete": True} if e.button.id == "delete" else None)
+
+
 RECIPE_TEXT = ("yield", "time", "ingredients", "steps", "notes")
 
 
@@ -238,12 +306,13 @@ class BoardPage(Page):
     BoardPage #english {{ color: {MUTED}; background: #24251a; padding: 0 1; margin-bottom: 1; }}
     BoardPage #post-meta {{ color: {FAINT}; margin-bottom: 1; }}
     BoardPage .group {{ color: {FAINT}; }}
-    BoardPage #ingredients, BoardPage #steps, BoardPage #notes, BoardPage #note {{ margin-bottom: 1; }}
+    BoardPage #ingredients, BoardPage #steps, BoardPage #notes, BoardPage #note, BoardPage #reviews {{ margin-bottom: 1; }}
     """
     BINDINGS = [
         Binding("n", "share", "Share"),
         Binding("f", "follow", "Follow"),
         Binding("s", "save", "Save to box"),
+        Binding("v", "review", "Review"),
         Binding("x", "remove_category", "Remove category", show=False),
         Binding("m", "older", "Older"),
         Binding("E", "english", "English"),
@@ -263,6 +332,7 @@ class BoardPage(Page):
         self.open: str | None = None
         self.share_id = share
         self.english: dict[str, dict] = {}     # post id → {language, fields, on}: E's translation, shown while on
+        self.reviews: dict[str, dict] = {}     # post id → its reviews ({reviews, yours, summary, can_review}), once fetched
 
     def compose(self) -> ComposeResult:
         yield from self.top()
@@ -285,6 +355,8 @@ class BoardPage(Page):
                         yield Static(id="steps")
                         yield Static("NOTES", classes="group", id="notes-head")
                         yield Static(id="notes")
+                        yield Static("REVIEWS", classes="group", id="rev-head")
+                        yield Static(id="reviews")
         yield Footer()
 
     async def on_mount(self) -> None:
@@ -299,6 +371,7 @@ class BoardPage(Page):
     @attempt
     async def action_refresh(self) -> None:
         self.board = await self.fetch(site.board)
+        self.reviews.clear()
         await self.load()
 
     async def load(self, older: bool = False) -> None:
@@ -384,6 +457,8 @@ class BoardPage(Page):
                 t = Text.assemble(("★ RECIPE OF THE DAY  ", f"bold {GOLD}"), (f["title"], f"bold {INK}"), ("  ✓ saved" if f["saved"] else "", GOLD_DIM))
                 t.append("\n" + (label_line(f) + " · " if label_line(f) else ""), style=GOLD_DIM)
                 t.append("shared by " + ("you" if f.get("yours") else f["by"]), style=FAINT)
+                if review_line(f):
+                    t.append(" · " + review_line(f), style=GOLD_DIM)
                 box.add_option(Option(t, id="featured"))
             if not self.posts:
                 none = "You don't follow any categories yet." if not self.at["category"] and self.at["view"] == "feed" \
@@ -395,6 +470,8 @@ class BoardPage(Page):
                                   ("  ✓ saved" if p["saved"] else "", GOLD_DIM))
                 t.append("\n" + (label_line(p) + " · " if label_line(p) else ""), style=GOLD_DIM)
                 t.append(f"{p['by']} · {ago(p['created'])}" + (f" · saved {p['saves']}×" if p["saves"] else ""), style=FAINT)
+                if review_line(p):
+                    t.append(" · " + review_line(p), style=GOLD_DIM)
                 box.add_option(Option(t, id=p["id"]))
             if self.more:
                 box.add_option(Option(Text("Older…  m", style=GOLD_DIM), id="more"))
@@ -422,7 +499,7 @@ class BoardPage(Page):
                 (f"Translated from {tr['language']}" if tr["on"] else f"In {tr['language']}; the English is ready", MUTED),
                 ("   E ", f"bold {GOLD}"), ("the original" if tr["on"] else "the English", INK),
                 *((("   S ", f"bold {GOLD}"), ("save the English", INK)) if p["can_edit"] else ())))
-        for w in ("#post-meta", "#note", "#ing-head", "#ingredients", "#steps-head", "#steps", "#notes-head", "#notes"):
+        for w in ("#post-meta", "#note", "#ing-head", "#ingredients", "#steps-head", "#steps", "#notes-head", "#notes", "#rev-head", "#reviews"):
             self.query_one(w).display = bool(p)
         if not p:
             self.query_one("#post-title", Static).update("")
@@ -455,6 +532,85 @@ class BoardPage(Page):
             self.query_one(f"#{key}-head").display = bool(body.plain)
             self.query_one(f"#{w}").display = bool(body.plain)
             self.query_one(f"#{w}", Static).update(body)
+        self.show_reviews(p)
+
+    # ── reviews ───────────────────────────────────────────────────────────
+
+    def show_reviews(self, p: dict) -> None:
+        got = self.reviews.get(p["id"])
+        sum_ = (got or {}).get("summary") or p.get("reviews") or {}
+        self.query_one("#rev-head", Static).update("REVIEWS" + (f" · {sum_['count']}" if sum_.get("count") else ""))
+        box = self.query_one("#reviews", Static)
+        if got is None:
+            box.update(Text("Loading reviews…", style=FAINT))
+            self.run_worker(self.load_reviews(p["id"]), group="reviews")
+            return
+        t = Text()
+        if sum_.get("stars") is not None:
+            t.append(stars(round(sum_["stars"])), style=GOLD)
+            t.append(f"  {sum_['stars']:g} from {sum_['rated']} {'person' if sum_['rated'] == 1 else 'people'}\n\n", style=INK)
+        if not got["reviews"]:
+            t.append("Nobody's reviewed it yet." + (" Made it? v says how it went." if got["can_review"] else
+                                                     " When people make it, what they thought shows here."), style=FAINT)
+        for i, r in enumerate(got["reviews"]):
+            if i:
+                t.append("\n\n")
+            if r.get("rating"):
+                t.append(stars(r["rating"]) + "  ", style=GOLD)
+            t.append("You" if r["yours"] else r["by"], style=f"bold {INK}")
+            t.append(f"  {ago(r['updated'])}", style=FAINT)
+            if r["note"]:
+                t.append("\n" + r["note"], style=MUTED)
+            if r["changes"]:
+                t.append("\nChanged: ", style=GOLD_DIM)
+                t.append(r["changes"], style=MUTED)
+        if got["can_review"] and got["reviews"]:
+            t.append("\n\n" + ("v changes your review" if got["yours"] else "Made it? v reviews it"), style=GOLD_DIM)
+        box.update(t)
+
+    @attempt
+    async def load_reviews(self, pid: str) -> None:
+        self.got_reviews(pid, await self.fetch(site.board_reviews, pid))
+
+    def got_reviews(self, pid: str, out: dict) -> None:
+        """A post's reviews, and its summary on every copy of it shown."""
+        self.reviews[pid] = out
+        for x in [(self.board or {}).get("featured"), *self.posts]:
+            if x and x["id"] == pid:
+                x["reviews"], x["reviewed"] = out["summary"], bool(out["yours"])
+        self.show_posts()
+        cur = self.current()
+        if cur and cur["id"] == pid:
+            self.show_post()
+
+    @attempt
+    async def action_review(self) -> None:
+        """v: review the open post (or change, or take down, yours)."""
+        p = self.current()
+        if not p:
+            return
+        if p["id"] not in self.reviews:
+            await self.load_reviews(p["id"])
+        got = self.reviews.get(p["id"])
+        if not got:
+            return
+        if not got["can_review"]:
+            self.app.notify("It's your recipe; reviews are for the people who made it.", timeout=3)
+            return
+
+        async def done(fields: dict | None) -> None:
+            if fields is not None:
+                await self.send_review(p, fields, bool(got["yours"]))
+        self.app.push_screen(ReviewDialog(p, got["yours"]), done)
+
+    @attempt
+    async def send_review(self, p: dict, fields: dict, had: bool) -> None:
+        if fields.get("delete"):
+            self.got_reviews(p["id"], await self.fetch(site.delete_board_review, p["id"]))
+            self.app.notify(f"Took your review of {p['title']} down.", timeout=3)
+            return
+        self.got_reviews(p["id"], await self.fetch(site.review_board_post, p["id"], fields))
+        self.app.notify(f"Changed your review of {p['title']}." if had else f"Thanks! Your review of {p['title']} is up.", timeout=3)
 
     # ── moving around ─────────────────────────────────────────────────────
 
@@ -517,7 +673,7 @@ class BoardPage(Page):
         return c, self.value(c, self.at["label"])
 
     def check_action(self, action: str, parameters: tuple) -> bool | None:
-        if action in ("share", "follow", "save", "remove_category", "older", "edit", "delete", "refresh", "english", "save_english") and isinstance(self.focused, (Input, TextArea)):
+        if action in ("share", "follow", "save", "review", "remove_category", "older", "edit", "delete", "refresh", "english", "save_english") and isinstance(self.focused, (Input, TextArea)):
             return False
         return True
 
