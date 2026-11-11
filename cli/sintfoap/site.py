@@ -500,6 +500,12 @@ def admin_access() -> dict:
     return _get("/admin/api/access")
 
 
+def admin_stats() -> dict:
+    """/admin/stats as data (admins): {accounts: {total, max, left, signups, active_7d, ...}, storage: {d1, r2},
+    columns: [{name, ids}], kinds: [{id, app, label, photos?}], totals, users: [{username, last_active, counts, photos, total_bytes, ...}]}."""
+    return _get("/admin/api/stats")
+
+
 def set_access_all(user_id: str, apps: list[str]) -> dict:
     """Sets exactly which apps an account has (your own admin access stays on); the same as admin_access() after."""
     return api("POST", "/admin/api/access", {"user_id": user_id, "apps": list(apps)})

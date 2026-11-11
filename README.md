@@ -68,10 +68,11 @@ src/             the Worker: runs only for the paths in run_worker_first
   trips.js         Trip planner: shared trips, their itinerary, pinned places, and packing lists sent to Drift
   food.js          Food club: the month's pick and its recipe (from a link or Recipe box), who made and loved it, and photos (photos.js)
   feedback.js      Feedback: notes to the admins, photos (photos.js), links to things the sender can see (kept as a snapshot), statuses and replies
+  stats.js         /admin/stats: accounts against MAX_USERS, who's active, and what each person keeps in each app and in D1 and R2 (bytes)
   bridges.js       chat connections: other platforms' rooms in chat, with sealed credentials
   matrix.js        the Matrix provider for those
   vendor/uqr.mjs   QR codes for two-factor setup (MIT)
-cli/             the `sintfoap` command: sign in from a terminal; dashboard, Drift, plugin store, chat, Recipe box, Recipe board, Recipe labels, Meal plan, Sweep, Trip planner, Food club, Feedback and settings as a terminal UI
+cli/             the `sintfoap` command: sign in from a terminal; dashboard, Drift, plugin store, chat, Recipe box, Recipe board, Recipe labels, Meal plan, Sweep, Trip planner, Food club, Feedback, settings and (for admins) app access and stats as a terminal UI
 apps/todo-esque/ the original Drift app (Python engine, terminal UI, CLI)
 tests/           node --no-warnings --test tests/*.test.mjs  (the CLI's: cd cli && python -m pytest tests)
 wrangler.jsonc   Worker configuration (name, static files, variables, database)

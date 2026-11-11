@@ -42,6 +42,8 @@
     // (Matrix pushers: <SITE_URL>/_matrix/push/v1/notify).
     "SITE_URL": "https://sintfoap.xyz"
   },
+  // D1_LIMIT_MB, a Text variable, is the D1 plan's database size limit for the
+  // admin stats page's storage meter (500 if it isn't set, Workers Free's; 10240 on Paid).
   // Also needed, set as a secret (not here): ADMIN_CLAIM_CODE, which lets one
   // account claim admin while there is none. See README.
   // CHAT_BRIDGE_KEY, also a secret, encrypts the tokens people give Chat to

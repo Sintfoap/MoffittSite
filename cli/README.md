@@ -25,6 +25,7 @@ sintfoap                    # signs you in the first time, then opens your dashb
 | `sintfoap feedback` | Feedback: notes to the site's owner, with photos and links; admins read the inbox |
 | `sintfoap food` | Food club: the month's food, its recipe, favorites and everyone's photos |
 | `sintfoap admin` | which apps each account can use (admins) |
+| `sintfoap stats` | accounts against MAX_USERS, who's active, and how much each person keeps in D1 and R2 (admins) |
 | `sintfoap app` | the Android app: a QR code to scan with your phone, and the download link |
 | `sintfoap login` | shows a code and opens the site; approve it there |
 | `sintfoap dashboard --plain` | the dashboard as text, for scripts and pipes |
@@ -317,3 +318,7 @@ The site's side is `src/cli.js` (signing in, the dashboard and settings) and the
 ## Admin
 
 For admins: every account, with a switch for each app on the site (the same list as the website's menu, so a new app shows up here by itself, off for everyone). `tab` moves between switches and `space` turns one on or off; your own Admin switch stays on. Passwords, two-factor and disabling or deleting accounts are on the website: `w` opens `/admin`.
+
+### Stats
+
+`t` on the admin page (or `sintfoap stats`) opens the same numbers as `/admin/stats`: accounts against MAX_USERS and who's been active, how full D1 is and what's moved to R2, each person's Drift items, recipes, pantry items, messages, photos and storage (biggest first), and every app's totals. `r` refreshes.

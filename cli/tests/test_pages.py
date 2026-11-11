@@ -443,6 +443,34 @@ def test_admins_switch_apps_on_and_off_in_the_terminal(admin_site):
     run_app("admin", access)
 
 
+def test_admin_stats_in_the_terminal(admin_site):
+    from sintfoap.stats_page import size, ago
+    async def stats(app, pilot):
+        page = app.screen
+        assert type(page).__name__ == "AdminPage"
+        await pilot.press("t")
+        await settle(pilot, 0.6)
+        page = app.screen
+        assert type(page).__name__ == "StatsPage"
+        s = page.data
+        assert s == site.admin_stats() | {"now": s["now"]}
+        assert s["accounts"]["total"] == len(s["users"]) and s["accounts"]["max"] > 0
+        assert [c["name"] for c in s["columns"]] == ["Drift", "Recipes", "Pantry", "Messages", "Photos"]
+        summary = str(page.query_one("#summary").render())
+        assert f"{s['accounts']['total']} / {s['accounts']['max']} accounts" in summary
+        assert "D1" in str(page.query_one("#storage").render())
+        people = page.query_one("#people")
+        assert people.border_title.endswith("people")
+        # Biggest first, as on the website.
+        sizes = [u["total_bytes"] for u in s["users"]]
+        assert sizes == sorted(sizes, reverse=True)
+        await pilot.press("escape")
+        await settle(pilot)
+        assert type(app.screen).__name__ == "AdminPage"
+    assert size(1536) == "1.5 KB" and size(None) == "—" and ago(None) == "never" and ago(1000, 1030) == "just now"
+    run_app("admin", stats)
+
+
 def test_g_a_opens_the_terminal_admin_page(admin_site):
     async def go(app, pilot):
         await settle(pilot, 0.5)
