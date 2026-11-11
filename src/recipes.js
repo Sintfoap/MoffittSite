@@ -26,6 +26,7 @@ import { imageType } from "./food.js";
 import { scaleLine, servingsOf, factorFor, format } from "../public/recipes/scale.js";
 import { photoState, readPhoto, readPhotoBody, saveKey, forgetKey, readText } from "./recipe_photo.js";
 import { SweepError } from "./sweep.js";
+import { storePhoto, unstorePhoto, photoResponse, photoIds, dropPhotos } from "./photos.js";
 import { suggestFor, termsOf } from "./autolabel.js";
 import { translate, recipeText, TranslateError } from "./translate.js";
 
@@ -241,6 +242,7 @@ export async function addLabels(env, user, body) {
 
 export async function remove(env, user, id) {
   const d = await db(env);
+  const photos = await photoIds(d, "SELECT id FROM recipe_photos WHERE owner = ? AND recipe = ?", user.id, id);
   const res = await d.prepare("DELETE FROM recipes WHERE owner = ? AND id = ?").bind(user.id, id).run();
   if (!res.meta.changes) return null;
   await d.batch([
@@ -248,6 +250,7 @@ export async function remove(env, user, id) {
     // Its posts on the board stay, as it last was.
     d.prepare("UPDATE board_posts SET data = json_remove(data, '$.from') WHERE author = ? AND json_extract(data, '$.from') = ?").bind(user.id, id),
   ]);
+  await dropPhotos(env, "recipe_photos", photos);
   return { removed: true };
 }
 
@@ -603,8 +606,8 @@ export async function importPages(env, user, body) {
 
 // ── pictures kept here ─────────────────────────────────────────────────────
 
-// An export's photos, and pictures added by hand, are kept in D1 as Food
-// club's are (src/food.js), one per recipe: a new one replaces the old.
+// An export's photos, and pictures added by hand, are kept as Food club's are
+// (src/photos.js: in R2, their rows in D1), one per recipe: a new one replaces the old.
 export async function setPhoto(env, user, id, body) {
   if (!isObj(body)) fail("body must be a JSON object");
   const d = await db(env);
@@ -613,14 +616,17 @@ export async function setPhoto(env, user, id, body) {
   if (bytes.length > PHOTO_BYTES) fail(`that picture is too big (at most ${Math.round(PHOTO_BYTES / 1024)} KB); make it smaller first`);
   const type = imageType(bytes);
   if (!type) fail("that isn't a JPEG, PNG, WebP or GIF picture");
-  let bin = "";
-  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
   const photo = "p_" + newId().slice(2), now = new Date().toISOString();
-  await d.batch([
-    d.prepare("DELETE FROM recipe_photos WHERE owner = ? AND recipe = ?").bind(user.id, id),
-    d.prepare("INSERT INTO recipe_photos (id, owner, recipe, type, data, created) VALUES (?, ?, ?, ?, ?, ?)").bind(photo, user.id, id, type, btoa(bin), now),
-    d.prepare("UPDATE recipes SET data = json_set(data, '$.image', ?), updated = ? WHERE owner = ? AND id = ?").bind(`/recipes/api/photos/${photo}`, now, user.id, id),
-  ]);
+  const old = await photoIds(d, "SELECT id FROM recipe_photos WHERE owner = ? AND recipe = ?", user.id, id);
+  const data = await storePhoto(env, "recipe_photos", photo, bytes, type);
+  try {
+    await d.batch([
+      d.prepare("DELETE FROM recipe_photos WHERE owner = ? AND recipe = ?").bind(user.id, id),
+      d.prepare("INSERT INTO recipe_photos (id, owner, recipe, type, data, created) VALUES (?, ?, ?, ?, ?, ?)").bind(photo, user.id, id, type, data, now),
+      d.prepare("UPDATE recipes SET data = json_set(data, '$.image', ?), updated = ? WHERE owner = ? AND id = ?").bind(`/recipes/api/photos/${photo}`, now, user.id, id),
+    ]);
+  } catch (e) { await unstorePhoto(env, "recipe_photos", photo); throw e; }
+  await dropPhotos(env, "recipe_photos", old);
   await syncBoard(d, user.id, id);
   return get(d, user.id, id);
 }
@@ -629,10 +635,12 @@ export async function setPhoto(env, user, id, body) {
 export async function removePhoto(env, user, id) {
   const d = await db(env);
   if (!await get(d, user.id, id)) return null;
+  const old = await photoIds(d, "SELECT id FROM recipe_photos WHERE owner = ? AND recipe = ?", user.id, id);
   await d.batch([
     d.prepare("DELETE FROM recipe_photos WHERE owner = ? AND recipe = ?").bind(user.id, id),
     d.prepare("UPDATE recipes SET data = json_set(data, '$.image', ''), updated = ? WHERE owner = ? AND id = ?").bind(new Date().toISOString(), user.id, id),
   ]);
+  await dropPhotos(env, "recipe_photos", old);
   await syncBoard(d, user.id, id);
   return get(d, user.id, id);
 }
@@ -647,12 +655,9 @@ function decodePhoto(data) {
 // the ids are random.
 async function photoFile(env, photo) {
   const d = await db(env);
-  const p = await d.prepare("SELECT type, data FROM recipe_photos WHERE id = ?").bind(photo).first();
+  const p = await d.prepare("SELECT id, type, data FROM recipe_photos WHERE id = ?").bind(photo).first();
   if (!p) return new Response("not found", { status: 404 });
-  return new Response(Uint8Array.from(atob(p.data), c => c.charCodeAt(0)), { headers: {
-    "Content-Type": p.type, "X-Content-Type-Options": "nosniff", "Content-Security-Policy": "default-src 'none'",
-    "Content-Disposition": "inline", "Cache-Control": "private, max-age=31536000, immutable",
-  } });
+  return photoResponse(env, "recipe_photos", p);
 }
 
 async function readImport(request) {

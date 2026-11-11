@@ -18,10 +18,11 @@
 // /food/api/picks/<id>/save               POST → {recipe}: the pick's recipe, saved to your Recipe box
 // /food/api/photos/<photo>                GET → the picture
 //
-// Photos are kept in D1 (base64, at most PHOTO_BYTES each); the page shrinks
+// Photos are kept in R2, their rows in D1 (src/photos.js; at most PHOTO_BYTES each); the page shrinks
 // them before sending, so a phone's 6 MB picture arrives as a few hundred KB.
 
 import { db } from "./db.js";
+import { storePhoto, unstorePhoto, photoResponse, photoIds, dropPhotos } from "./photos.js";
 import { sameOrigin } from "./account.js";
 import { withRail } from "./pages.js";
 import { BadRequest } from "./drift.js";
@@ -193,8 +194,10 @@ export async function deletePick(env, user, id) {
   const r = await row(d, id);
   if (!r) return null;
   if (r.chooser !== user.id && !isAdmin(user)) fail("only whoever picked it can delete it");
+  const photos = await photoIds(d, "SELECT id FROM food_photos WHERE pick = ?", id);
   await d.batch(["food_photos", "food_marks"].map(t => d.prepare(`DELETE FROM ${t} WHERE pick = ?`).bind(id))
     .concat(d.prepare("DELETE FROM food_picks WHERE id = ?").bind(id)));
+  await dropPhotos(env, "food_photos", photos);
   return { removed: true };
 }
 
@@ -242,16 +245,17 @@ export async function addPhoto(env, user, id, body) {
   const caption = str("caption", body.caption, LIMITS.caption);
   const { n } = await d.prepare("SELECT COUNT(*) AS n FROM food_photos WHERE pick = ? AND user_id = ?").bind(id, user.id).first();
   if (n >= LIMITS.photosEach) fail(`you can add at most ${LIMITS.photosEach} photos to one month`);
-  let bin = "";
-  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
-  const t = new Date().toISOString();
-  await d.batch([
-    d.prepare("INSERT INTO food_photos (id, pick, user_id, type, data, caption, created) VALUES (?, ?, ?, ?, ?, ?, ?)")
-      .bind(newId("p"), id, user.id, type, btoa(bin), caption, t),
-    // A photo of your attempt means you made it.
-    d.prepare(`INSERT INTO food_marks (pick, user_id, made, favorite, updated) VALUES (?, ?, 1, 0, ?)
-      ON CONFLICT (pick, user_id) DO UPDATE SET made = 1, updated = excluded.updated`).bind(id, user.id, t),
-  ]);
+  const t = new Date().toISOString(), photo = newId("p");
+  const data = await storePhoto(env, "food_photos", photo, bytes, type);
+  try {
+    await d.batch([
+      d.prepare("INSERT INTO food_photos (id, pick, user_id, type, data, caption, created) VALUES (?, ?, ?, ?, ?, ?, ?)")
+        .bind(photo, id, user.id, type, data, caption, t),
+      // A photo of your attempt means you made it.
+      d.prepare(`INSERT INTO food_marks (pick, user_id, made, favorite, updated) VALUES (?, ?, 1, 0, ?)
+        ON CONFLICT (pick, user_id) DO UPDATE SET made = 1, updated = excluded.updated`).bind(id, user.id, t),
+    ]);
+  } catch (e) { await unstorePhoto(env, "food_photos", photo); throw e; }
   return getPick(env, user, id);
 }
 
@@ -261,17 +265,15 @@ export async function removePhoto(env, user, id, photo) {
   if (!p) return null;
   if (p.user_id !== user.id && !isAdmin(user)) fail("only whoever added a photo can take it off");
   await d.prepare("DELETE FROM food_photos WHERE id = ?").bind(photo).run();
+  await dropPhotos(env, "food_photos", [photo]);
   return getPick(env, user, id);
 }
 
 async function photoFile(env, photo) {
   const d = await db(env);
-  const p = await d.prepare("SELECT type, data FROM food_photos WHERE id = ?").bind(photo).first();
+  const p = await d.prepare("SELECT id, type, data FROM food_photos WHERE id = ?").bind(photo).first();
   if (!p) return new Response("not found", { status: 404 });
-  return new Response(Uint8Array.from(atob(p.data), c => c.charCodeAt(0)), { headers: {
-    "Content-Type": p.type, "X-Content-Type-Options": "nosniff", "Content-Security-Policy": "default-src 'none'",
-    "Content-Disposition": "inline", "Cache-Control": "private, max-age=31536000, immutable",
-  } });
+  return photoResponse(env, "food_photos", p);
 }
 
 // The pick's recipe, into your own Recipe box.
