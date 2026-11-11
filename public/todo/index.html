@@ -384,6 +384,11 @@ dialog fieldset.off { border-style: dashed; }
 dialog legend { display: flex; gap: 6px; align-items: center; padding: 0 6px; font-size: 13px; font-weight: 600; color: var(--ink); }
 dialog fieldset .hint { margin: 0; }
 dialog .row { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+/* "Translate to English", under the item's fields */
+dialog .tl { margin-top: -6px; }
+dialog .tl.on { display: grid; gap: 6px; margin: 0; padding: 10px 14px; border: 1px dashed var(--line); border-radius: var(--radius-m); background: var(--bg); }
+dialog .tl.on b { font-weight: 500; font-size: 15px; color: var(--ink); }
+dialog .tl.on p { margin: 0; white-space: pre-wrap; color: var(--ink); }
 dialog .acts { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-top: 4px; }
 .plug { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; align-items: start; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--radius-m); cursor: pointer; }
 .plug input { margin-top: 4px; }

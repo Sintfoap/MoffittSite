@@ -274,6 +274,7 @@ class RecipesPage(Page):
     RecipesPage #shelf {{ width: 36; height: 1fr; border-right: solid {GOLD_DIM}; margin-right: 2; }}
     RecipesPage #recipe {{ width: 1fr; height: 1fr; }}
     RecipesPage #title {{ color: {INK}; text-style: bold; }}
+    RecipesPage #english {{ color: {MUTED}; background: #24251a; padding: 0 1; margin-bottom: 1; }}
     RecipesPage #facts {{ color: {FAINT}; }}
     RecipesPage #tags {{ margin-bottom: 1; }}
     RecipesPage #filters {{ color: {FAINT}; height: auto; }}
@@ -302,6 +303,8 @@ class RecipesPage(Page):
         Binding("f", "ingredients", "Ingredients"),
         Binding("o", "sort", "Sort"),
         Binding("b", "board", "Share on board"),
+        Binding("E", "english", "English"),
+        Binding("S", "save_english", "Save the English", show=False),
         Binding("d", "delete", "Delete"),
         Binding("r", "refresh", "Refresh"),
         Binding("backslash", "fold", "Shelf"),
@@ -317,6 +320,7 @@ class RecipesPage(Page):
         self.filters: list[dict] = []          # labels the shelf shows only recipes with
         self.sort_key = ""                     # "" by title, else a label's key
         self.ingredients = ""                  # what f looks for: "eggs, spinach, -nuts"
+        self.english: dict[str, dict] = {}     # recipe id → {language, fields, on}: E's translation, shown while on
 
     def compose(self) -> ComposeResult:
         yield from self.top()
@@ -327,6 +331,7 @@ class RecipesPage(Page):
             with Horizontal(id="main"):
                 yield OptionList(id="shelf")
                 with VerticalScroll(id="recipe"):
+                    yield Static(id="english")
                     yield Static(id="title")
                     yield Static(id="facts")
                     yield Static(id="tags")
@@ -417,8 +422,22 @@ class RecipesPage(Page):
         f = R.factor_for(r, s.get("servings"), s.get("factor"))
         return f, (round(r["servings"] * f * 100) / 100 if r.get("servings") else None)
 
-    def show_recipe(self) -> None:
+    def shown(self) -> dict | None:
+        """The open recipe as it's shown: in English while E's translation is on."""
         r = self.current()
+        tr = r and self.english.get(r["id"])
+        return {**r, **tr["fields"]} if tr and tr["on"] else r
+
+    def show_recipe(self) -> None:
+        r = self.shown()
+        tr = r and self.english.get(r["id"])
+        bar = self.query_one("#english", Static)
+        bar.display = bool(tr)
+        if tr:
+            bar.update(Text.assemble(
+                (f"Translated from {tr['language']}" if tr["on"] else f"In {tr['language']}; the English is ready", MUTED),
+                ("   E ", f"bold {GOLD}"), ("the original" if tr["on"] else "the English", INK),
+                ("   S ", f"bold {GOLD}"), ("save the English", INK)))
         parts = ["#ing-head", "#ingredients", "#send", "#no-drift", "#steps-head", "#steps", "#notes-head", "#notes", "#serves", "#facts", "#tags"]
         for p in parts:
             self.query_one(p).display = bool(r)
@@ -536,7 +555,7 @@ class RecipesPage(Page):
         # Typing in the link box or the editor shouldn't scale or delete anything.
         if action == "board" and not (self.data or {}).get("board"):
             return None
-        if action in ("servings", "add", "new", "import_file", "photo", "paste", "key", "edit", "picture", "send", "delete", "refresh", "board", "labels", "ingredients", "sort") and isinstance(self.focused, (Input, TextArea)):
+        if action in ("servings", "add", "new", "import_file", "photo", "paste", "key", "edit", "picture", "send", "delete", "refresh", "board", "labels", "ingredients", "sort", "english", "save_english") and isinstance(self.focused, (Input, TextArea)):
             return False
         return True
 
@@ -649,6 +668,7 @@ class RecipesPage(Page):
         self.pending_picture = None
         if was:
             r = await self.fetch(site.update_recipe, was["id"], fields)
+            self.english.pop(r["id"], None)
             if r.get("servings") != was.get("servings"):
                 self.scale.pop(r["id"], None)
         else:
@@ -890,6 +910,49 @@ class RecipesPage(Page):
         self.app.push_screen(RecipeDialog(fields, heading="Check the recipe", hint=hint, label_list=self.data.get("label_list"), picture=offer),
                              self.after_dialog(None))
         return True
+
+    # ── translating ───────────────────────────────────────────────────────
+
+    @attempt
+    async def action_english(self) -> None:
+        """E: the open recipe in English, or back and forth between it and the original."""
+        r = self.current()
+        if not r:
+            return
+        tr = self.english.get(r["id"])
+        if tr:
+            tr["on"] = not tr["on"]
+            self.show_recipe()
+            return
+        self.app.notify(f"Translating {r['title']}…", timeout=2)
+        out = await self.fetch(site.translate_recipe, r["id"])
+        if out.get("english"):
+            self.app.notify(f"{r['title']} is already in English.", timeout=3)
+            return
+        self.english[r["id"]] = {"language": out["language"], "fields": out["fields"], "on": True}
+        if self.open == r["id"]:
+            self.show_recipe()
+
+    def action_save_english(self) -> None:
+        r = self.current()
+        tr = r and self.english.get(r["id"])
+        if not tr:
+            self.app.notify("Press E to translate it first.", timeout=3)
+            return
+
+        async def answer(yes: bool | None) -> None:
+            if yes:
+                await self.save_english(r, tr)
+        self.app.push_screen(Confirm(f"Save the English over the {tr['language']}?", f"{r['title']}'s words are replaced; the original isn't kept.",
+                                     yes="Save the English"), answer)
+
+    @attempt
+    async def save_english(self, r: dict, tr: dict) -> None:
+        saved = await self.fetch(site.update_recipe, r["id"], tr["fields"])
+        self.english.pop(r["id"], None)
+        self.data["recipes"] = by_title([saved if x["id"] == r["id"] else x for x in self.data["recipes"]])
+        self.reshelve()
+        self.app.notify(f"Saved {saved['title']} in English.", timeout=3)
 
     def action_delete(self) -> None:
         r = self.current()

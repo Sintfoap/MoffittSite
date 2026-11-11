@@ -24,6 +24,20 @@ let at = { view: "feed", category: "", label: "" };
 let posts = [], more = false;
 let openId = null, focus = -1;
 let editing = null;    // the post in the editor, or {} for a new one
+// post id → {language, english, fields, on}: its English, from "Translate to English",
+// shown in place of the original while `on`. Anyone can translate; only whoever can edit it saves it.
+const english = new Map();
+const RECIPE_TEXT = ["yield", "time", "ingredients", "steps", "notes"];
+// The post as it's shown: in English while that's on.
+function shown(p) {
+  const tr = english.get(p.id);
+  return tr?.on ? inEnglish(p, tr.fields) : p;
+}
+function inEnglish(p, f) {
+  const recipe = { ...p.recipe };
+  for (const k of RECIPE_TEXT) if (k in f) recipe[k] = f[k];
+  return { ...p, title: f.title ?? p.title, note: f.note ?? p.note, recipe };
+}
 
 async function api(method, path, body) {
   const res = await fetch("/board/api/" + path, {
@@ -155,10 +169,11 @@ function renderTop() {
   $("#sub").textContent = sub;
 }
 
-function recipeBody(p) {
-  const r = p.recipe;
+function recipeBody(post) {
+  const p = shown(post), r = p.recipe, tr = english.get(post.id);
   const full = el("div", { className: "full" });
   full.addEventListener("click", e => e.stopPropagation());
+  if (tr) full.append(translatedBar(post, tr));
   if (r.image) {
     const img = el("img", { className: "hero", src: r.image, alt: "", referrerPolicy: "no-referrer", loading: "lazy" });
     img.addEventListener("error", () => img.remove());
@@ -175,12 +190,17 @@ function recipeBody(p) {
   const acts = el("div", { className: "actions" });
   if (board.recipe_box) {
     const save = el("button", { type: "button", className: p.saved ? "btn quiet save" : "btn save", textContent: p.saved ? "Saved ✓ open it" : "Save to Recipe box" });
-    save.addEventListener("click", () => saveIt(p));
+    save.addEventListener("click", () => saveIt(post));
     acts.append(save);
+  }
+  if (!tr) {
+    const tl = el("button", { type: "button", className: "btn quiet translate", textContent: "Translate to English" });
+    tl.addEventListener("click", () => translate(post, tl));
+    acts.append(tl);
   }
   if (p.can_edit) {
     const edit = el("button", { type: "button", className: "btn quiet", textContent: "Edit" });
-    edit.addEventListener("click", () => openEditor(p));
+    edit.addEventListener("click", () => openEditor(post));
     const del = el("button", { type: "button", className: "btn danger", textContent: "Delete" });
     del.addEventListener("click", () => {
       if (!confirm(`Take ${p.title} off the board? Copies people saved stay in their Recipe box.`)) return;
@@ -198,9 +218,51 @@ function recipeBody(p) {
   return full;
 }
 
+// ── translating ────────────────────────────────────────────────────────────
+
+async function translate(p, b) {
+  if (b) { b.disabled = true; b.textContent = "Translating…"; }
+  const err = await run(async () => {
+    const out = await api("POST", `posts/${p.id}/translate`);
+    if (out.english) { say("done", `${p.title} is already in English.`); return; }
+    english.set(p.id, { ...out, on: true });
+  });
+  if (err && b) { b.disabled = false; b.textContent = "Translate to English"; }
+  if (!err) renderPosts();
+}
+
+// Above a translated post: what it was in, switching back, and (for whoever can edit it) saving the English over it.
+function translatedBar(p, tr) {
+  const flip = el("button", { type: "button", className: "link", textContent: tr.on ? "Show the original" : "Show the English" });
+  flip.addEventListener("click", () => { tr.on = !tr.on; renderPosts(); });
+  let save = null;
+  if (p.can_edit) {
+    save = el("button", { type: "button", className: "link", textContent: "Save the English" });
+    save.title = "Replace the post's words with the English, for everyone. The original isn't kept.";
+    save.addEventListener("click", () => {
+      if (!confirm(`Save the English over the ${tr.language} in ${p.title}, for everyone? The original isn't kept.`)) return;
+      run(async () => {
+        const e = inEnglish(p, tr.fields), recipe = { ...e.recipe, labels: e.recipe.labels.map(l => l.id) };
+        delete recipe.title;
+        const saved = await api("PATCH", "posts/" + p.id, { title: e.title, note: e.note, recipe });
+        english.delete(p.id);
+        posts = posts.map(x => x.id === saved.id ? saved : x);
+        if (board.featured?.id === saved.id) board.featured = saved;
+        say("done", `Saved ${saved.title} in English.`);
+        renderPosts();
+      });
+    });
+  }
+  const hide = el("button", { type: "button", className: "link", textContent: "Close" });
+  hide.addEventListener("click", () => { english.delete(p.id); renderPosts(); });
+  return el("div", { className: "translated", role: "status" },
+    el("span", { textContent: tr.on ? `Translated from ${tr.language}` : `In ${tr.language}; the English is ready` }), flip, save, hide);
+}
+
 // The recipe of the day, at the top of your feed and Everything.
 function renderFeatured(box) {
-  const p = board.featured;
+  const post = board.featured;
+  const p = post && shown(post);
   if (!p || at.category || !["feed", "all"].includes(at.view)) return;
   const card = el("article", { className: "card post featured", tabIndex: 0 });
   card.append(el("div", {},
@@ -213,7 +275,7 @@ function renderFeatured(box) {
     img.addEventListener("error", () => img.remove());
     card.append(img);
   } else card.append(el("span"));
-  if (featuredOpen) card.append(recipeBody(p));
+  if (featuredOpen) card.append(recipeBody(post));
   const flip = () => { featuredOpen = !featuredOpen; renderPosts(); };
   card.addEventListener("click", flip);
   card.addEventListener("keydown", e => { if (e.key === "Enter" && e.target === card) flip(); });
@@ -230,7 +292,8 @@ function renderPosts() {
       at.view === "saved" && !at.category ? "Nothing saved yet." : "No recipes here yet. Share one!" }));
     return;
   }
-  posts.forEach((p, i) => {
+  posts.forEach((post, i) => {
+    const p = shown(post);
     const card = el("article", { className: "card post" + (i === focus ? " focus" : ""), tabIndex: 0 });
     card.dataset.id = p.id;
     const main = el("div", {},
@@ -244,7 +307,7 @@ function renderPosts() {
       img.addEventListener("error", () => img.remove());
       card.append(img);
     } else card.append(el("span"));
-    if (openId === p.id) card.append(recipeBody(p));
+    if (openId === p.id) card.append(recipeBody(post));
     card.addEventListener("click", () => toggle(p.id, i));
     card.addEventListener("keydown", e => { if (e.key === "Enter" && e.target === card) toggle(p.id, i); });
     box.append(card);
@@ -367,6 +430,7 @@ $("#editor").addEventListener("close", () => {
   run(async () => {
     try {
       const saved = was.id ? await api("PATCH", "posts/" + was.id, body) : await api("POST", "posts", body);
+      if (was.id) english.delete(was.id);
       board = await loadBoard();
       if (!was.id) say("done", saved.categories.length ? `Posted ${saved.title} in ${saved.categories.join(", ")}.` : `Posted ${saved.title}. Give it labels to put it in categories.`);
       if (was.id) {
@@ -419,6 +483,8 @@ document.addEventListener("keydown", e => {
     k: () => moveTo(focus - 1),
     s: () => p && board.recipe_box && saveIt(p),
     f: () => { const c = catOf(at.category); if (c) toggleFollow(c); },
+    // English: translate the focused post, or flip between it and the original.
+    E: () => { if (!p) return; const tr = english.get(p.id); if (tr) { tr.on = !tr.on; renderPosts(); } else { openId = p.id; translate(p); } },
   };
   if (keys[e.key]) { e.preventDefault(); keys[e.key](); }
 });

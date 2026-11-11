@@ -26,6 +26,9 @@ const skip = new Map();   // recipe id → ingredient indexes not to send
 let filters = [];         // [{key, value}] labels a recipe must have: any value of the same key, every key
 let hits = new Map();     // recipe id → its ingredient lines the ingredient search found, while there is one
 let sortKey = "";
+// recipe id → {language, english, fields, on}: its English, from "Translate to English",
+// shown in place of the original while `on`, and only saved over it when asked.
+const english = new Map();
 // The shelf shows a page of recipes at a time; it turns to the open one's page.
 const PAGE = 20;
 let page = 0, follow = true;         // "" sorts by title; a label's key sorts by its value
@@ -222,7 +225,9 @@ function listChoices() {
 
 function renderDetail() {
   const box = $("#detail");
-  const r = current();
+  const base = current(), tr = base && english.get(base.id);
+  // Showing the English: the same recipe with its words swapped, so scaling and sending work on it too.
+  const r = tr?.on ? { ...base, ...tr.fields } : base;
   box.replaceChildren();
   if (!r) {
     box.append(el("p", { className: "empty", textContent: data.recipes.length ? "Pick a recipe." : "Your recipes will show up here." }));
@@ -234,6 +239,7 @@ function renderDetail() {
     img.addEventListener("error", () => img.remove());
     card.append(img);
   }
+  if (tr) card.append(translatedBar(base, tr));
   card.append(el("h2", { textContent: r.title }));
   const facts = el("div", { className: "facts" });
   const bits = [r.time, r.yield && !/^\d+(\.\d+)?$/.test(r.yield) ? r.yield : ""].filter(Boolean);
@@ -308,7 +314,9 @@ function renderDetail() {
   if (r.notes) card.append(el("h3", { textContent: "Notes" }), el("p", { className: "notes", textContent: r.notes }));
 
   const edit = el("button", { className: "btn quiet", type: "button", textContent: "Edit" });
-  edit.addEventListener("click", () => openEditor(r));
+  edit.addEventListener("click", () => openEditor(base));
+  const tl = tr ? null : el("button", { className: "btn quiet", type: "button", id: "translate", textContent: "Translate to English" });
+  tl?.addEventListener("click", () => translate(base));
   const del = el("button", { className: "btn danger", type: "button", textContent: "Delete" });
   del.addEventListener("click", () => {
     if (!confirm(`Delete ${r.title}?`)) return;
@@ -321,8 +329,45 @@ function renderDetail() {
   });
   // Sharing it on the Recipe board, for anyone with it.
   const share = data.board ? el("a", { className: "btn quiet", href: `/board/?share=${encodeURIComponent(r.id)}`, textContent: "Share on the board" }) : null;
-  card.append(el("div", { className: "actions" }, edit, share, del));
+  card.append(el("div", { className: "actions" }, edit, tl, share, del));
   box.append(card);
+}
+
+// ── translating ────────────────────────────────────────────────────────────
+
+async function translate(r) {
+  const b = $("#translate");
+  if (b) { b.disabled = true; b.textContent = "Translating…"; }
+  const err = await run(async () => {
+    const out = await api("POST", `recipes/${r.id}/translate`);
+    if (out.english) { say("done", `${r.title} is already in English.`); return; }
+    english.set(r.id, { ...out, on: true });
+  });
+  if (err && b) { b.disabled = false; b.textContent = "Translate to English"; }
+  if (!err) renderDetail();
+}
+
+// Above a translated recipe: what it was in, and switching back, keeping it, or saving the English over it.
+function translatedBar(r, tr) {
+  const flip = el("button", { type: "button", className: "link", textContent: tr.on ? "Show the original" : "Show the English" });
+  flip.addEventListener("click", () => { tr.on = !tr.on; renderDetail(); });
+  const save = el("button", { type: "button", className: "link", textContent: "Save the English" });
+  save.title = "Replace the recipe's words with the English. The original isn't kept.";
+  save.addEventListener("click", () => {
+    if (!confirm(`Save the English over the ${tr.language} in ${r.title}? The original isn't kept.`)) return;
+    run(async () => {
+      const saved = await api("PATCH", "recipes/" + r.id, tr.fields);
+      data.recipes = data.recipes.map(x => x.id === r.id ? saved : x);
+      english.delete(r.id);
+      say("done", `Saved ${saved.title} in English.`);
+      renderList();
+      renderDetail();
+    });
+  });
+  const hide = el("button", { type: "button", className: "link", textContent: "Close" });
+  hide.addEventListener("click", () => { english.delete(r.id); renderDetail(); });
+  return el("div", { className: "translated", role: "status" },
+    el("span", { textContent: tr.on ? `Translated from ${tr.language}` : `In ${tr.language}; the English is ready` }), flip, save, hide);
 }
 
 async function sendToList(r, list) {
@@ -432,6 +477,7 @@ $("#editor").addEventListener("close", () => {
   editing = null;
   run(async () => {
     let saved = was.id ? await api("PATCH", "recipes/" + was.id, body) : await api("POST", "recipes", body);
+    if (was.id) english.delete(was.id);
     if (change === "remove" && saved.image) saved = await api("DELETE", `recipes/${saved.id}/photo`);
     else if (change instanceof File) {
       const small = await shrink(change);
@@ -810,6 +856,8 @@ document.addEventListener("keydown", e => {
     p: () => pickPhoto(),
     t: () => $("#paste").click(),
     s: () => r && $("#send") && !$("#send").disabled && $("#send").click(),
+    // English: translate the open recipe, or flip between it and the original.
+    E: () => { if (!r) return; const tr = english.get(r.id); if (tr) { tr.on = !tr.on; renderDetail(); } else translate(r); },
   };
   if (keys[e.key]) { e.preventDefault(); keys[e.key](); }
 });

@@ -278,6 +278,11 @@ def update_item(item_id: str, changes: dict) -> dict:
     return api("PATCH", f"/todo/api/items/{_q(item_id)}", changes)
 
 
+def translate_item(item_id: str) -> dict:
+    """{language, english, fields: {title, notes}}: the item in English, to show beside it; nothing is saved (src/translate.js)."""
+    return api("POST", f"/todo/api/items/{_q(item_id)}/translate", timeout=60)
+
+
 def delete_item(item_id: str) -> dict:
     return api("DELETE", f"/todo/api/items/{_q(item_id)}")
 
@@ -642,6 +647,11 @@ def set_recipe_photo(recipe_id: str, raw: bytes) -> dict:
 
 def update_recipe(recipe_id: str, changes: dict) -> dict:
     return api("PATCH", f"/recipes/api/recipes/{_q(recipe_id)}", changes)
+
+
+def translate_recipe(recipe_id: str) -> dict:
+    """{language, english, fields}: the recipe's title, yield, time, ingredients, steps and notes in English, line for line; nothing is saved."""
+    return api("POST", f"/recipes/api/recipes/{_q(recipe_id)}/translate", timeout=60)
 
 
 def delete_recipe(recipe_id: str) -> dict:
@@ -1038,6 +1048,11 @@ def add_board_post(fields: dict) -> dict:
 
 def update_board_post(post_id: str, changes: dict) -> dict:
     return api("PATCH", f"/board/api/posts/{_q(post_id)}", changes)
+
+
+def translate_board_post(post_id: str) -> dict:
+    """{language, english, fields}: the post (title, note and its recipe's words) in English; anyone on the board can, and nothing is saved."""
+    return api("POST", f"/board/api/posts/{_q(post_id)}/translate", timeout=60)
 
 
 def delete_board_post(post_id: str) -> dict:

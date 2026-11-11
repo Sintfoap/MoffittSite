@@ -120,8 +120,12 @@ def month_grid(month: str, sel: str, events: list[dict], wx: dict[str, tuple[str
 
 class ItemDialog(ModalScreen[dict | None]):
     """Edit an item: its base fields, plus Checklist and Events if the collection uses them."""
-    BINDINGS = [Binding("escape", "cancel", "Cancel"), Binding("ctrl+s", "save", "Save", priority=True)]
+    BINDINGS = [Binding("escape", "cancel", "Cancel"), Binding("ctrl+s", "save", "Save", priority=True),
+                Binding("ctrl+t", "translate", "English", priority=True)]
     DEFAULT_CSS = """
+    ItemDialog #english { height: auto; display: none; border: dashed #6a6243; padding: 0 1; margin-top: 1; }
+    ItemDialog #english Horizontal { height: auto; }
+    ItemDialog #english-tools { height: auto; }
     ItemDialog .grid { height: auto; }
     ItemDialog .grid > Vertical { height: auto; width: 1fr; margin-right: 1; }
     ItemDialog TextArea { height: 6; }
@@ -137,6 +141,7 @@ class ItemDialog(ModalScreen[dict | None]):
         self.has_event = "event" in plugins or "event" in it["meta"]
         self.has_place = "location" in plugins or "location" in it["meta"]
         self.has_weather = "weather" in plugins or "weather" in it["meta"]
+        self.english: dict | None = None   # ctrl+t's {language, fields}: shown under the notes, used only if asked
 
     def compose(self) -> ComposeResult:
         it, m = self.it, self.it["meta"]
@@ -147,6 +152,16 @@ class ItemDialog(ModalScreen[dict | None]):
             yield Input(it["title"], id="title", disabled=self.ro)
             yield Label("Notes", classes="lbl")
             yield TextArea(it.get("notes", ""), id="notes", disabled=self.ro, soft_wrap=True)
+            # "Translate to English": the title and notes in English, under them; nothing changes until
+            # "Use the English" puts it in the boxes and the item is saved (src/translate.js).
+            with Horizontal(id="english-tools"):
+                yield Button("Translate to English", id="translate", classes="quiet")
+            with Vertical(id="english"):
+                yield Static(id="english-text")
+                if not self.ro:
+                    with Horizontal():
+                        yield Button("Use the English", id="use-english")
+                        yield Button("Close", id="close-english", classes="quiet")
             with Horizontal(classes="grid"):
                 with Vertical():
                     yield Label("Tags", classes="lbl")
@@ -195,7 +210,7 @@ class ItemDialog(ModalScreen[dict | None]):
                 yield Button("Cancel" if not self.ro else "Close", id="cancel", classes="quiet")
                 if not self.ro:
                     yield Button("Delete item", id="delete", classes="danger")
-            yield Static(Text("ctrl+s save   esc cancel", style=FAINT))
+            yield Static(Text("ctrl+s save   ctrl+t English   esc cancel", style=FAINT))
 
     def on_mount(self) -> None:
         self.query_one("#title", Input).focus()
@@ -203,6 +218,14 @@ class ItemDialog(ModalScreen[dict | None]):
     def on_button_pressed(self, e: Button.Pressed) -> None:
         if e.button.id == "save":
             self.action_save()
+        elif e.button.id == "translate":
+            self.action_translate()
+        elif e.button.id == "use-english":
+            self.use_english()
+        elif e.button.id == "close-english":
+            self.english = None
+            self.query_one("#english").display = False
+            self.query_one("#translate").display = True
         elif e.button.id == "delete":
             self.dismiss({"deleted": True})
         else:
@@ -216,6 +239,45 @@ class ItemDialog(ModalScreen[dict | None]):
 
     def fail(self, msg: str) -> None:
         self.query_one("#err", Static).update(Text(msg, style=BAD))
+
+    # ── translating ───────────────────────────────────────────────────────
+
+    def action_translate(self) -> None:
+        if self.english is None:
+            self.run_worker(self.translate(), exclusive=True, group="translate")
+
+    async def translate(self) -> None:
+        btn = self.query_one("#translate", Button)
+        btn.disabled, btn.label = True, "Translating…"
+        try:
+            out = await fetch(self.app, site.translate_item, self.it["id"])
+        except Failed:
+            btn.disabled, btn.label = False, "Translate to English"
+            return
+        btn.disabled, btn.label = False, "Translate to English"
+        if out.get("english"):
+            self.app.notify("That's already in English.", timeout=3)
+            return
+        self.english = out
+        f = out["fields"]
+        t = Text(f"Translated from {out['language']}", style=FAINT)
+        if f.get("title"):
+            t.append("\n" + f["title"], style=f"bold {INK}")
+        if f.get("notes"):
+            t.append("\n" + f["notes"], style=INK)
+        self.query_one("#english-text", Static).update(t)
+        self.query_one("#english").display = True
+        btn.display = False
+
+    def use_english(self) -> None:
+        """Puts the English in the title and notes boxes; ctrl+s saves it over the original, esc doesn't."""
+        f = (self.english or {}).get("fields", {})
+        if "title" in f:
+            self.query_one("#title", Input).value = f["title"]
+        if "notes" in f:
+            self.query_one("#notes", TextArea).text = f["notes"]
+        self.query_one("#english").display = False
+        self.query_one("#err", Static).update(Text("The English is in the boxes. ctrl+s saves it over the original; esc keeps the original.", style=GOLD))
 
     def action_save(self) -> None:
         if self.ro:

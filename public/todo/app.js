@@ -260,6 +260,9 @@ function renderItemDialog() {
     ${ro ? `<p class="hint">Shared by ${esc(col.owner_name)}. You can view it but not change it.</p>` : ""}
     <input type="text" class="t" name="title" value="${esc(it.title)}" aria-label="Title" required>
     <label>Notes<textarea name="notes" placeholder="Details, links, anything">${esc(it.notes)}</textarea></label>
+    </fieldset>
+    ${translation(it, ro)}
+    <fieldset class="bare" ${ro ? "disabled" : ""}>
     <div class="grid">
       <label>Tags<input type="text" name="tags" value="${esc(it.tags.join(" "))}" placeholder="Separate with spaces"></label>
       <label>Collection<select name="collection">${moveTo.map(c => `<option value="${esc(c.id)}" ${c.id === it.collection ? "selected" : ""}>${esc(c.name)}</option>`).join("")}</select></label>
@@ -277,6 +280,31 @@ function renderItemDialog() {
     if (!p?.store && typeof p?.mountEditor === "function") p.mountEditor(fs, it, ctx());
   }
 }
+// "Translate to English": the item's title and notes in English, shown under
+// them (outside the form, so it works on view-only items too) and only saved
+// over them when asked. state.english is {id, language, fields} or {id, busy}.
+function translation(it, ro) {
+  const tr = state.english?.id === it.id ? state.english : null;
+  if (!tr?.fields) return `<div class="tl"><button type="button" class="link" data-translate ${tr?.busy ? "disabled" : ""}>${tr?.busy ? "Translating…" : "Translate to English"}</button></div>`;
+  const f = tr.fields;
+  return `<section class="tl on" aria-label="In English">
+    <div class="row"><span class="hint">Translated from ${esc(tr.language)}</span><span>
+      ${ro ? "" : `<button type="button" class="link" data-tl-save title="Replace the title and notes with the English. The original isn't kept.">Save the English</button> · `}
+      <button type="button" class="link" data-tl-close>Close</button></span></div>
+    ${f.title ? `<b>${esc(f.title)}</b>` : ""}
+    ${f.notes ? `<p>${esc(f.notes)}</p>` : ""}
+  </section>`;
+}
+async function translateItem(it) {
+  state.english = { id: it.id, busy: true }; renderItemDialog();
+  try {
+    const out = await req("POST", `items/${it.id}/translate`);
+    state.english = out.english ? null : { id: it.id, ...out };
+    if (out.english) toast("That’s already in English");
+  } catch (e) { state.english = null; if (e.message !== "signed out") toast("Couldn’t translate: " + e.message); }
+  if (state.editing === it.id) renderItemDialog();
+}
+
 function readFieldset(fs) {
   const out = {};
   for (const el of fs.querySelectorAll("[name]")) {
@@ -315,12 +343,20 @@ $("#itemForm").addEventListener("click", e => {
   const de = e.target.closest("[data-detach]");
   if (de) return setMeta(it.id, de.dataset.detach, null);
   if (e.target.closest("[data-del]")) { $("#itemDlg").close(); removeItem(it.id); }
+  if (e.target.closest("[data-translate]")) return translateItem(it);
+  if (e.target.closest("[data-tl-close]")) { state.english = null; return renderItemDialog(); }
+  if (e.target.closest("[data-tl-save]") && state.english?.fields) {
+    const { fields, language } = state.english;
+    if (!confirm(`Save the English over the ${language}? The original isn’t kept.`)) return;
+    state.english = null;
+    return update(it.id, fields).then(renderItemDialog);
+  }
 });
 $("#itemDlg").addEventListener("close", () => {
   const t = $("#itemForm [name=title]");                 // save a title still being typed
   const it = state.items.find(x => x.id === state.editing);
   if (it && t && t.value.trim() && t.value !== it.title) update(it.id, { title: t.value });
-  state.editing = null; render();
+  state.editing = null; state.english = null; render();
 });
 
 /* ── collection dialog ─────────────────────────── */
