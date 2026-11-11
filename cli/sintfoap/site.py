@@ -946,6 +946,33 @@ def delete_pantry_lot(item_id: str, lot_id: str) -> dict:
     return api("DELETE", f"/pantry/api/items/{_q(item_id)}/lots/{_q(lot_id)}")
 
 
+RECEIPT_PHOTOS = 4
+
+
+def read_receipt(paths: list[str], day: str = "") -> dict:
+    """Pictures of one grocery receipt (up to 4, top to bottom), read by Claude with your key or the
+    site's AI: {store, date, by, lines: [{printed, name, count, skip, match, new, amount, expires, expires_by}]},
+    each matched to something in your pantry or offered as new, to check. Nothing is saved."""
+    import base64
+    if not paths:
+        raise SiteError("say which picture")
+    if len(paths) > RECEIPT_PHOTOS:
+        raise SiteError(f"pick at most {RECEIPT_PHOTOS} pictures of one receipt")
+    images = [{"data": base64.b64encode(recipe_picture(p)).decode()} for p in paths]
+    return api("POST", "/pantry/api/receipt" + (f"?day={_q(day)}" if day else ""), {"images": images}, timeout=180)
+
+
+def add_receipt(store: str, lines: list[dict]) -> dict:
+    """The checked lines into the pantry: {added: [{printed, id, name, text}], failed: [{printed, name, error}], items}.
+    Each line is {printed, item (an id), amount, expires, expires_by} or a new one {printed, name, kind, place, unit, size, low, amount, ...}."""
+    return api("POST", "/pantry/api/receipt/add", {"store": store, "lines": lines}, timeout=60)
+
+
+def pantry_key(key: str) -> dict:
+    """Saves your Anthropic API key for reading receipts (the same one Recipe box and Sweep use): {photo}."""
+    return api("PUT", "/pantry/api/key", {"key": key}, timeout=30)
+
+
 # ────────────────────────────── meal plan ───────────────────────────────────
 # /meals/api/ (src/meals.js)
 

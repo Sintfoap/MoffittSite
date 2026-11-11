@@ -3,7 +3,7 @@
 // side is src/pantry.js; public/pantry/units.js reads amounts and guesses a
 // new item's kind from its name, here as there.
 
-import { readAmount, UNITS, LEVELS, guess } from "./units.js";
+import { readAmount, UNITS, LEVELS, guess, estimateExpiry } from "./units.js";
 
 const $ = s => document.querySelector(s);
 const el = (tag, props = {}, ...kids) => {
@@ -12,14 +12,14 @@ const el = (tag, props = {}, ...kids) => {
   return n;
 };
 
-let data = null;            // GET /pantry/api/items: {items, places, counts, levels, usual_places}
+let data = null;            // GET /pantry/api/items: {items, places, counts, levels, usual_places, photo}
 let filter = "all";
 const open = new Set();     // items showing their purchases
 const day = () => new Date().toLocaleDateString("sv");
 
-async function api(method, path, body) {
+async function api(method, path, body, raw) {
   const res = await fetch("/pantry/api/" + path, {
-    method, headers: body ? { "Content-Type": "application/json" } : {}, body: body ? JSON.stringify(body) : undefined,
+    method, headers: body ? { "Content-Type": "application/json" } : {}, body: raw ?? (body ? JSON.stringify(body) : undefined),
   });
   if (res.status === 401) { location.href = "/login?next=" + encodeURIComponent(location.pathname); throw new Error("not signed in"); }
   const out = await res.json().catch(() => ({}));
@@ -45,7 +45,8 @@ const nice = s => `${MONTHS[Number(s.slice(5, 7)) - 1]} ${Number(s.slice(8, 10))
 function when(i) {
   if (!i.expires) return el("span", { className: "when" });
   if (i.expired) return el("span", { className: "when expired", textContent: `Expired ${nice(i.expires)}` });
-  return el("span", { className: "when" + (i.soon ? " soon" : ""), textContent: `${i.soon ? "Use by" : "Expires"} ${nice(i.expires)}` });
+  return el("span", { className: "when" + (i.soon ? " soon" : ""), textContent: `${i.soon ? "Use by" : "Expires"} ${nice(i.expires)}` },
+    i.expires_by === "estimated" ? el("span", { className: "est-tag", textContent: " (est.)", title: "Estimated from how long such things usually keep" }) : null);
 }
 
 // What a typed amount reads as, for the line under the box.
@@ -113,7 +114,7 @@ function lots(i) {
       if (confirm(`Take the ${l.text} of ${i.name} bought ${nice(l.added)} off your pantry?`)) run(async () => { await api("DELETE", `items/${i.id}/lots/${l.id}`); await load(); });
     });
     return el("li", {}, el("b", { textContent: l.text }), el("span", { textContent: `bought ${nice(l.added)}` }),
-      el("span", { textContent: l.expires ? `expires ${nice(l.expires)}` : "no expiry date" }), fix, x);
+      el("span", { textContent: l.expires ? `expires ${nice(l.expires)}${l.by === "estimated" ? " (estimated)" : l.by === "scanned" ? " (scanned)" : ""}` : "no expiry date" }), fix, x);
   }));
 }
 
@@ -298,17 +299,182 @@ $("#lot-dialog").addEventListener("close", () => {
   });
 });
 
+// ── a receipt ──────────────────────────────────────────────────────────────
+// Its photos are read on the site (Claude with your key, or the site's own AI),
+// then every line is shown to check: which pantry item it adds to (or a new
+// one), how much, and its expiry date (estimated). Nothing is saved until Add.
+
+const PHOTO_SIDE = 1568, PHOTO_BYTES = 3_500_000;   // what Anthropic reads; more is wasted
+async function shrinkPhoto(file) {
+  const bmp = await createImageBitmap(file, { imageOrientation: "from-image" }).catch(() => null);
+  if (!bmp) throw new Error(`${file.name} isn't a picture this browser can read`);
+  const k = Math.min(1, PHOTO_SIDE / Math.max(bmp.width, bmp.height));
+  const canvas = Object.assign(document.createElement("canvas"), { width: Math.round(bmp.width * k), height: Math.round(bmp.height * k) });
+  const ctx = canvas.getContext("2d");
+  ctx.fillStyle = "#fff";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(bmp, 0, 0, canvas.width, canvas.height);
+  for (const q of [0.88, 0.78, 0.65]) {
+    const blob = await new Promise(res => canvas.toBlob(res, "image/jpeg", q));
+    if (blob && blob.size <= PHOTO_BYTES) return blob;
+  }
+  throw new Error(`${file.name} is too big even after shrinking it`);
+}
+const base64 = blob => new Promise((ok, bad) => { const r = new FileReader(); r.onload = () => ok(String(r.result).split(",")[1]); r.onerror = bad; r.readAsDataURL(blob); });
+
+let keyThen = null;
+function askForKey(then) {
+  if (!data.photo?.sealing) { say("error", "This site can't keep API keys yet, so receipts can't be read. Ask its admin to set CHAT_BRIDGE_KEY."); return; }
+  keyThen = then;
+  $("#key-form").reset();
+  $("#keyer").showModal();
+}
+$("#keyer").addEventListener("close", () => {
+  const then = keyThen;
+  keyThen = null;
+  if ($("#keyer").returnValue !== "save") return;
+  run(async () => {
+    data.photo = (await api("PUT", "key", { key: $("#key-form").key.value.trim() })).photo;
+    say("done", "Key saved.");
+    then?.();
+  });
+});
+
+function pickReceipt() {
+  if (!data) return;
+  if (!data.photo?.ready && !data.photo?.ai) { askForKey(() => $("#receipt-file").click()); return; }
+  $("#receipt-file").click();
+}
+$("#receipt-file").addEventListener("change", e => {
+  const files = [...e.target.files].slice(0, 4);
+  e.target.value = "";
+  if (!files.length) return;
+  const btn = $("#receipt-btn");
+  btn.disabled = true;
+  btn.textContent = "Reading…";
+  say("done", `Reading the receipt${files.length > 1 ? ` (${files.length} pictures)` : ""}. This takes a few seconds.`);
+  run(async () => {
+    const images = [];
+    for (const f of files) images.push({ data: await base64(await shrinkPhoto(f)) });
+    const out = await api("POST", `receipt?day=${day()}`, null, JSON.stringify({ images }));
+    say("done", "");
+    openReceipt(out);
+  }).finally(() => { btn.disabled = false; btn.textContent = "Scan a receipt"; });
+});
+
+let receipt = null;   // {store, by, why?, lines: [{...the proposal, on, target, error?}]}
+
+function openReceipt(out) {
+  receipt = { ...out, lines: out.lines.map(l => ({ ...l, on: !l.skip, target: l.match?.id || "new", ...(l.new || {}), name: l.name })) };
+  $("#receipt-title").textContent = out.store ? `Check the ${out.store} receipt` : "Check the receipt";
+  $("#receipt-by").textContent = [out.date && `bought ${nice(out.date)}`, out.by === "ai" ? "read by the site's AI" : "read by Claude", out.why && `(${out.why})`].filter(Boolean).join(" · ");
+  renderReceipt();
+  $("#receipt-dialog").showModal();
+}
+
+const itemById = id => data.items.find(i => i.id === id);
+function kindOf(l) { return l.target === "new" ? l.kind : itemById(l.target)?.kind || "counted"; }
+
+function receiptRow(l) {
+  const li = el("li", { className: "rline" + (l.on ? "" : " off") });
+  const tick = el("input", { type: "checkbox", checked: l.on, ariaLabel: `Add ${l.name}` });
+  tick.addEventListener("change", () => { l.on = tick.checked; li.classList.toggle("off", !l.on); updateAdd(); });
+  const target = el("select", { ariaLabel: `What ${l.printed || l.name} is` },
+    el("option", { value: "new", textContent: `New: ${l.name}` }),
+    ...data.items.map(i => el("option", { value: i.id, textContent: `${i.name} (have ${i.text})` })));
+  target.value = l.target;
+  target.addEventListener("change", () => {
+    l.target = target.value;
+    if (l.target !== "new") l.expires = itemById(l.target).kind === "gauged" ? "" : estimateExpiry(itemById(l.target).name, itemById(l.target).kind, itemById(l.target).place, day());
+    li.replaceWith(receiptRow(l));
+  });
+  const how = l.target === "new" ? "New to your pantry" : l.match?.id === l.target ? (l.match.how === "remembered" ? `Remembered from your ${receipt.store || "last"} receipt` : "Matched by name") : "Picked by you";
+  const what = el("div", { className: "what" }, target, el("span", { className: "how" + (l.target === "new" ? " new" : ""), textContent: how }));
+  if (l.target === "new") {
+    const name = el("input", { type: "text", value: l.name, maxLength: 80, ariaLabel: "Name" });
+    name.addEventListener("input", () => { l.name = name.value; });
+    const kind = el("select", { ariaLabel: "Kind" }, ...[["staple", "Staple"], ["counted", "Counted"], ["gauged", "Gauged"]].map(([v, t]) => el("option", { value: v, textContent: t })));
+    kind.value = l.kind;
+    kind.addEventListener("change", () => { l.kind = kind.value; li.replaceWith(receiptRow(l)); });
+    const place = el("input", { type: "text", value: l.place, maxLength: 30, ariaLabel: "Where it's kept", placeholder: "Cupboard" });
+    place.setAttribute("list", "place-list");
+    place.addEventListener("input", () => { l.place = place.value; });
+    what.append(name, el("div", { className: "extra" }, kind, place));
+    if (l.kind === "staple") {
+      const low = el("input", { type: "text", value: l.low || "", maxLength: 40, placeholder: "Low at, like 2 lb", ariaLabel: "Running low at" });
+      low.addEventListener("input", () => { l.low = low.value; });
+      what.append(low);
+    }
+    if (l.kind === "counted") {
+      const unit = el("input", { type: "text", value: l.unit || "", maxLength: 20, placeholder: "One is a… (can)", ariaLabel: "One is a" });
+      unit.addEventListener("input", () => { l.unit = unit.value; });
+      what.append(unit);
+    }
+  }
+  const k = kindOf(l);
+  const amount = k === "gauged" ? el("span", { className: "how amt", textContent: l.target === "new" ? "Starts full" : "Refills to full" })
+    : el("input", { type: "text", value: l.amount, maxLength: 40, placeholder: k === "staple" ? "10 lb" : "how many", ariaLabel: "How much", className: "amt" });
+  if (k !== "gauged") amount.addEventListener("input", () => { l.amount = amount.value; });
+  const expires = el("div", { className: "exp" });
+  if (k !== "gauged") {
+    const date = el("input", { type: "date", value: l.expires || "", ariaLabel: "Expires" });
+    const est = el("small", { className: "est", textContent: l.expires && l.expires_by === "estimated" ? "est." : "" });
+    date.addEventListener("input", () => { l.expires = date.value; l.expires_by = "typed"; est.textContent = ""; });
+    expires.append(date, est);
+  }
+  li.append(el("span", { className: "tick" }, tick), el("div", { className: "said" }, el("div", { className: "printed", textContent: l.printed }), el("b", { textContent: l.name })), what, amount, expires);
+  if (l.error) li.append(el("div", { className: "err", textContent: cap(l.error) }));
+  return li;
+}
+
+function renderReceipt() {
+  $("#rlines").replaceChildren(...receipt.lines.map(receiptRow));
+  updateAdd();
+}
+function updateAdd() {
+  const n = receipt.lines.filter(l => l.on).length;
+  $("#receipt-add").textContent = n ? `Add ${n} to pantry` : "Add to pantry";
+  $("#receipt-add").disabled = !n;
+}
+
+$("#receipt-form").addEventListener("submit", e => {
+  if (e.submitter?.value !== "add") return;
+  e.preventDefault();
+  const lines = receipt.lines.filter(l => l.on).map(l => {
+    const lot = { printed: l.printed, amount: l.amount, expires: l.expires || "", expires_by: l.expires_by };
+    if (l.target !== "new") return { ...lot, item: l.target };
+    return { ...lot, name: l.name, kind: l.kind, place: l.place, unit: l.unit, size: l.size, low: l.low };
+  });
+  const btn = $("#receipt-add");
+  btn.disabled = true;
+  run(async () => {
+    const out = await api("POST", "receipt/add", { store: receipt.store, lines });
+    const failed = new Map(out.failed.map(f => [f.printed, f.error]));
+    receipt.lines = receipt.lines.filter(l => l.on && failed.has(l.printed)).map(l => ({ ...l, error: failed.get(l.printed) }));
+    await load();
+    if (receipt.lines.length) {
+      say("done", `Added ${out.added.length}. ${receipt.lines.length} still need${receipt.lines.length === 1 ? "s" : ""} a fix.`);
+      renderReceipt();
+    } else {
+      $("#receipt-dialog").close("done");
+      say("done", `Added ${out.added.length} from the receipt: ${out.added.map(a => a.name).join(", ")}.`);
+    }
+  }).finally(() => updateAdd());
+});
+
 // ── the page ───────────────────────────────────────────────────────────────
 
 for (const b of document.querySelectorAll("[data-filter]")) b.addEventListener("click", () => { filter = b.dataset.filter; render(); });
 $("#find").addEventListener("input", () => render());
 $("#add-btn").addEventListener("click", () => itemDialog());
+$("#receipt-btn").addEventListener("click", pickReceipt);
 
 document.addEventListener("keydown", e => {
   const t = e.target;
   if (e.metaKey || e.ctrlKey || e.altKey || t.isContentEditable || t.matches?.("input, textarea, select") || document.querySelector("dialog[open]")) return;
   if (e.key === "n") { e.preventDefault(); itemDialog(); }
   if (e.key === "/") { e.preventDefault(); $("#find").focus(); }
+  if (e.key === "r") { e.preventDefault(); pickReceipt(); }
 });
 
 run(load);

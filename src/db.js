@@ -347,6 +347,15 @@ const SCHEMA = [
      updated TEXT NOT NULL,
      PRIMARY KEY (owner, id)
    )`,
+  // Pantry receipts (src/pantry_receipt.js): what a store's receipt line means, learned once you've added it.
+  `CREATE TABLE IF NOT EXISTS pantry_aliases (
+     owner   TEXT NOT NULL,          -- user id
+     store   TEXT NOT NULL,          -- the store's name, lower case ('' when the receipt didn't say)
+     said    TEXT NOT NULL,          -- the line as printed, in capitals ("GV WW FLR 10LB")
+     item    TEXT NOT NULL,          -- a pantry_items id
+     updated TEXT NOT NULL,
+     PRIMARY KEY (owner, store, said)
+   )`,
   // Votes on the public book suggestions page (src/books.js). One per browser,
   // by the random id in its __Host-bv cookie; it can be changed or taken back.
   `CREATE TABLE IF NOT EXISTS book_votes (

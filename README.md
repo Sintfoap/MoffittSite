@@ -57,6 +57,7 @@ src/             the Worker: runs only for the paths in run_worker_first
   autolabel.js     Recipe box's Suggest labels: labels from the list that a recipe's words point to (a label's value, or keywords set on it), no AI
   recipe_photo.js  Recipe box: a recipe read from a photo (by Claude, with Sweep's API key, or by Workers AI's vision model without one) or from text (pasted, or read off a photo on the device), to check before saving
   pantry.js        Pantry: each person's food as staples (measured, with a low point), counted things (whole units) and gauged ones (Full to Empty), each purchase with its own expiry
+  pantry_receipt.js  Pantry: a grocery receipt read from photos (through recipe_photo.js), each line matched to what you have or offered as new, with an estimated expiry; store abbreviations remembered
   meals.js         Meal plan: a week of dinners picked from Recipe box, quick ones on busy Drift nights, and the week's shopping sent to a Drift list
   sweep.js         Sweep: reads chosen chat rooms with Claude and suggests Drift events, tasks and list items
   translate.js     "Translate to English" for Drift items, recipes and board posts: shown beside the original, saved only when asked; read with Workers AI (the "ai" binding), or your own Claude key from Sweep without it
@@ -430,12 +431,15 @@ Push stays off, and the page says so, until the site has a VAPID key pair.
 
 ## Pantry
 
-`/pantry/` keeps the food you have, in real amounts. It's an app in `APPS` with its own toggle on `/admin`, off for everyone. Each person has their own pantry, like Recipe box. The plan for the rest (receipts and barcodes from a phone scanner app, and shopping lists that check the pantry first) is in the Pantry plan doc; this is the first step.
+`/pantry/` keeps the food you have, in real amounts. It's an app in `APPS` with its own toggle on `/admin`, off for everyone. Each person has their own pantry, like Recipe box. The plan for the rest (receipts and barcodes from a phone scanner app, and shopping lists that check the pantry first) is in the Pantry plan doc. Food goes in by hand, or from a photo of a receipt.
 
 - **Three kinds.** A **staple** (flour, sugar, oil) is measured: kept in grams or millilitres underneath and shown in the unit you typed, with a low point you set. A **counted** thing (cans, eggs) goes by whole units, so using part of one uses it all. A **gauged** thing (spices, vanilla) is a level from Full to Empty that you move yourself.
 - **Guessing.** A new item's kind, where it's kept, what one of it is (a can) and its grams per cup are guessed from its name (`guess` in `public/pantry/units.js`). Everything can be changed. Changing an item's kind asks how much you have now, in the new kind's terms.
 - **Cups and pounds.** A staple weighed in pounds can be used by the cup (and the other way round), through its grams per cup. Common staples know theirs; for anything else, set it once.
 - **Purchases.** Each time you buy something it's kept apart, with its own amount and expiry date, and the soonest to expire is used first. A purchase can be corrected or taken off.
+- **Receipts.** "Scan a receipt" (`r`) reads a photo of one (up to 4 for a long one) the way Recipe box reads recipe photos: by Claude with your Anthropic key (the same sealed key Recipe box and Sweep use, settable here too), or by Workers AI without one. Each line comes back to check, nothing saved yet: matched to something you have (by name, by its other names, or when its name is yours with only words like "whole" or "large" added), or offered as new with its kind guessed. Lines that aren't food start unticked. A staple adds the size times how many; a counted thing adds how many, or the pack's count ("12 ct"); a gauged thing is refilled to Full. A new staple still needs its low point, and a line that can't go in comes back saying why while the rest are added.
+- **Store abbreviations are remembered.** Once "GV WW FLR 10LB" from Walmart is added to an item, that store's line means that item from then on (`pantry_aliases`), whatever the model calls it.
+- **Estimated expiry dates.** A purchase from a receipt gets an expiry date from how long such things usually keep where they're kept (`keepsFor` in `units.js`: milk a week, eggs four weeks, cans two years, anything in the freezer six months), marked "est." until it's corrected. Each purchase says whether its date was typed, estimated or (later, from the scanner) scanned.
 - **Use soon and running low** are worked out for your own date: something expiring within 5 days, a staple at or under its low point, or a gauged thing at Almost out.
 - **Terminal:** `sintfoap pantry` (`g y`).
 
@@ -444,9 +448,12 @@ Push stays off, and the page says so, until the site has a VAPID key pair.
 | `GET /pantry/api/items?day=<day>` | your food: `{items, places, counts: {all, soon, low}, levels}` |
 | `POST /pantry/api/items` | `{name, kind?, place?, amount?, expires?, low?, unit?, size?, level?, per_cup?, words?}` → the new item |
 | `PATCH /pantry/api/items/<id>` | `{name?, place?, words?, low?, per_cup?, shows?, unit?, size?, level?, expires?, kind? (with amount)}` → the item; `DELETE` removes it |
-| `POST /pantry/api/items/<id>/lots` | `{amount, expires?}`: another purchase → the item |
+| `POST /pantry/api/items/<id>/lots` | `{amount, expires?, expires_by?}`: another purchase → the item |
 | `PATCH /pantry/api/items/<id>/lots/<lot>` | `{amount?, expires?}` → the item; `DELETE` takes that purchase off |
 | `POST /pantry/api/items/<id>/use` | `{amount}`, `{all}` or `{all, tossed}`; `{level}` for a gauged thing → the item |
+| `POST /pantry/api/receipt?day=<day>` | `{images: [{data (base64)}, ...]}` → `{store, date, by, lines: [{printed, name, count, size, skip, match, new, amount, expires, expires_by}]}`, to check; nothing is saved |
+| `POST /pantry/api/receipt/add` | `{store, lines: [{printed, item, amount, expires?, expires_by?}` or a new one `{printed, name, kind, place, unit, size, low, amount, ...}]}` → `{added, failed: [{printed, error}], items}` |
+| `PUT /pantry/api/key` | `{key}`: your Anthropic API key for reading receipts (shared with Recipe box and Sweep) → `{photo}`; `DELETE` forgets it |
 
 ## Sweep
 
