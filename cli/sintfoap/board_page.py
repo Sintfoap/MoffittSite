@@ -77,6 +77,9 @@ class ShareDialog(ModalScreen[dict | None]):
         r = p.get("recipe") or {}
         with VerticalScroll(classes="dialog"):
             yield Label(Text("Edit post" if self.post else "Share a recipe", style=f"bold {INK}"))
+            if p.get("from_box"):
+                yield Label(Text("This post is a recipe in a Recipe box, so what you change here changes there too "
+                                 "(the note is just the post's).", style=FAINT), id="synced-hint")
             if not self.post:
                 yield Label("The recipe", classes="lbl")
                 yield Select(self.froms, value=self.froms[0][1], allow_blank=False, id="from")
@@ -404,6 +407,9 @@ class BoardPage(Page):
             meta.append("\n" + " · ".join(bits), style=FAINT)
         if self.board.get("recipe_box"):
             meta.append("\n" + ("Saved in your Recipe box" if p["saved"] else "s saves it to your Recipe box"), style=GOLD if not p["saved"] else FAINT)
+        if p.get("from_box"):
+            meta.append("\n" + ("Kept in step with your Recipe box: change it there or here" if p.get("recipe_id")
+                                 else f"Kept in step with {p['by']}'s Recipe box"), style=FAINT)
         if p["can_edit"]:
             meta.append("   e edits · d deletes", style=FAINT)
         self.query_one("#post-meta", Static).update(meta)

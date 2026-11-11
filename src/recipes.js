@@ -165,20 +165,63 @@ export async function create(env, user, fields) {
 }
 
 export async function update(env, user, id, changes) {
-  const d = await db(env);
+  return updateFor(await db(env), user.id, id, changes);
+}
+
+// Also the Recipe board's: a change to a post that's someone's box recipe is made to the recipe.
+export async function updateFor(d, owner, id, changes) {
   const patch = clean(changes);
   await checkLabels(d, patch.labels);
-  const res = await d.prepare("UPDATE recipes SET data = json_patch(data, ?), updated = ? WHERE owner = ? AND id = ?")
-    .bind(JSON.stringify(patch), new Date().toISOString(), user.id, id).run();
-  return res.meta.changes ? get(d, user.id, id) : null;
+  const before = await rawRecipe(d, owner, id);
+  if (!before) return null;
+  await d.prepare("UPDATE recipes SET data = json_patch(data, ?), updated = ? WHERE owner = ? AND id = ?")
+    .bind(JSON.stringify(patch), new Date().toISOString(), owner, id).run();
+  await syncBoard(d, owner, id, before);
+  return get(d, owner, id);
 }
 
 export async function remove(env, user, id) {
   const d = await db(env);
   const res = await d.prepare("DELETE FROM recipes WHERE owner = ? AND id = ?").bind(user.id, id).run();
   if (!res.meta.changes) return null;
-  await d.prepare("DELETE FROM recipe_photos WHERE owner = ? AND recipe = ?").bind(user.id, id).run();
+  await d.batch([
+    d.prepare("DELETE FROM recipe_photos WHERE owner = ? AND recipe = ?").bind(user.id, id),
+    // Its posts on the board stay, as it last was.
+    d.prepare("UPDATE board_posts SET data = json_remove(data, '$.from') WHERE author = ? AND json_extract(data, '$.from') = ?").bind(user.id, id),
+  ]);
   return { removed: true };
+}
+
+// ── the Recipe board's copy ────────────────────────────────────────────────
+
+// A recipe shared on the Recipe board (src/board.js) is the same recipe there,
+// not a copy that goes stale: its posts keep `from`, the recipe's id, and every
+// change to it here (labels, ingredients, its picture, its title) is made to
+// them too. That keeps the board's categories, which go by a post's labels, right.
+export const BOARD_FIELDS = ["source", "image", "yield", "servings", "time", "ingredients", "steps", "notes", "labels"];
+export const boardRecipe = r => Object.fromEntries(BOARD_FIELDS.map(k => [k, r[k] ?? RECIPE[k]]));
+
+async function rawRecipe(d, owner, id) {
+  const row = await d.prepare("SELECT data FROM recipes WHERE owner = ? AND id = ?").bind(owner, id).first();
+  return row ? { ...RECIPE, ...JSON.parse(row.data) } : null;
+}
+
+// `before` is the recipe as it was: posts shared before they were linked (by
+// their title and ingredients, as sharing copied them) are linked to it now.
+export async function syncBoard(d, owner, id, before = null) {
+  const r = await rawRecipe(d, owner, id);
+  if (!r) return;
+  const now = new Date().toISOString();
+  const stmts = [];
+  if (before) {
+    stmts.push(d.prepare(`UPDATE board_posts SET data = json_set(data, '$.from', ?) WHERE author = ?
+      AND json_extract(data, '$.from') IS NULL AND json_extract(data, '$.title') = ? COLLATE NOCASE
+      AND json(COALESCE(json_extract(data, '$.recipe.ingredients'), '[]')) = json(?)`)
+      .bind(id, owner, before.title, JSON.stringify(before.ingredients || [])));
+  }
+  stmts.push(d.prepare(`UPDATE board_posts SET data = json_set(data, '$.title', ?, '$.recipe', json(?)), updated = ?
+    WHERE author = ? AND json_extract(data, '$.from') = ?`).bind(r.title, JSON.stringify(boardRecipe(r)), now, owner, id));
+  await d.batch(stmts);
 }
 
 // Its ingredients, scaled, onto a Drift list. `lines` picks which (by index);
@@ -519,6 +562,7 @@ export async function setPhoto(env, user, id, body) {
     d.prepare("INSERT INTO recipe_photos (id, owner, recipe, type, data, created) VALUES (?, ?, ?, ?, ?, ?)").bind(photo, user.id, id, type, btoa(bin), now),
     d.prepare("UPDATE recipes SET data = json_set(data, '$.image', ?), updated = ? WHERE owner = ? AND id = ?").bind(`/recipes/api/photos/${photo}`, now, user.id, id),
   ]);
+  await syncBoard(d, user.id, id);
   return get(d, user.id, id);
 }
 
@@ -530,6 +574,7 @@ export async function removePhoto(env, user, id) {
     d.prepare("DELETE FROM recipe_photos WHERE owner = ? AND recipe = ?").bind(user.id, id),
     d.prepare("UPDATE recipes SET data = json_set(data, '$.image', ''), updated = ? WHERE owner = ? AND id = ?").bind(new Date().toISOString(), user.id, id),
   ]);
+  await syncBoard(d, user.id, id);
   return get(d, user.id, id);
 }
 
