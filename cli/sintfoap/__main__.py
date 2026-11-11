@@ -20,7 +20,6 @@ sintfoap — sintfoap.xyz from the terminal.
   sintfoap feedback           Feedback: notes to the site's owner, with photos and links (admins: the inbox)
   sintfoap admin              which apps each account can use (admins)
   sintfoap app                the Android app: a QR code to scan, and the download
-  sintfoap books [--plain]    the book club pick: read about the books and vote (no sign-in needed)
   sintfoap whoami
   sintfoap logout             ends this terminal's session on the site
 """
@@ -59,20 +58,6 @@ def plain(data: dict) -> None:
           f"  {C['gold']}{a['url']}{C['r']}\n")
 
 
-def plain_books(data: dict) -> None:
-    """The book club pick as text, with the votes so far."""
-    print(f"\n  {C['gold']}BOOK CLUB{C['r']}  {C['dim']}{data['total']} vote{'s' * (data['total'] != 1)} so far{C['r']}\n")
-    for b in data["books"]:
-        mine = f"  {C['grn']}✓ your vote{C['r']}" if b["id"] == data.get("mine") else ""
-        series = f"  {C['dim']}{b['series']}{C['r']}" if b.get("series") else ""
-        print(f"  {C['b']}{b['title']}{C['r']}{series}{mine}\n  {b['author']} · {b['year']} · {b['votes']} vote{'s' * (b['votes'] != 1)}\n"
-              f"  {C['dim']}{b['blurb']}{C['r']}")
-        for link in b["links"]:
-            print(f"  {C['gold']}{link['label']}{C['r']}  {link['url']}")
-        print()
-    print(f"  {C['dim']}Vote with  sintfoap books  in a terminal, or at {site.site_url('/books/')}{C['r']}\n")
-
-
 def app_info(data: dict) -> None:
     """Where to get the Android app: a QR code for the phone, and the links."""
     print(f"\n  {C['gold']}THE PHONE APP{C['r']}  {C['dim']}scan with your phone's camera{C['r']}\n")
@@ -107,8 +92,6 @@ def main(argv=None):
                        ("feedback", "Feedback: notes to the site's owner, with photos and links (admins: the inbox)"),
                        ("admin", "which apps each account can use (admins)")):
         sub.add_parser(page, help=what)
-    bk = sub.add_parser("books", help="the book club pick: read about the books and vote (no sign-in needed)")
-    bk.add_argument("--plain", action="store_true", help="print them instead of opening the terminal UI")
     ch = sub.add_parser("chat", help="chat rooms")
     ch.add_argument("room", nargs="?", help="a room to open, by name")
     sub.add_parser("app", help="the Android app: a QR code to scan, and the download")
@@ -124,16 +107,6 @@ def main(argv=None):
         elif cmd == "logout":
             where = site.logout()
             print(f"  signed out of {where}" if where else "  wasn't signed in")
-        elif cmd == "books":
-            # Public: no sign-in needed. Signed in, it opens over the dashboard, so esc leads back to it.
-            if args.plain or not sys.stdout.isatty():
-                plain_books(site.books())
-            elif site.load_login():
-                from .tui import run
-                run("books")
-            else:
-                from .books_page import run as run_books
-                run_books()
         elif cmd == "app":
             app_info(site.app_release())
         elif cmd == "whoami":
