@@ -18,8 +18,9 @@ import { mailReady, sendMail, MailError } from "./mail.js";
 import { agenda, visitorNow } from "./drift.js";
 import { installed } from "./store.js";
 import { BOOKS, bookVotes, removeBookVote } from "./books.js";
+import { userStats } from "./stats.js";
 import {
-  html, loginPage, signupPage, mfaPage, forgotPage, forgotDonePage, forgotEmailSentPage, resetPage, dashboardPage, accountPage, changePasswordRequiredPage, adminPage, adminClaimPage, messagePage,
+  html, loginPage, signupPage, mfaPage, forgotPage, forgotDonePage, forgotEmailSentPage, resetPage, dashboardPage, accountPage, changePasswordRequiredPage, adminPage, adminStatsPage, adminClaimPage, messagePage,
 } from "./pages.js";
 
 const DEFAULT_NEXT = "/dashboard";
@@ -501,6 +502,12 @@ async function admin(request, env, me, pathname, method) {
   const d = await db(env);
   if (pathname === "/admin/api/access") return adminAccessApi(request, env, d, me, method);
   if (pathname === "/admin/api/books") return adminBooksApi(request, env, d, method);
+  // Accounts against MAX_USERS, who's active, and what each person keeps (src/stats.js).
+  if (pathname === "/admin/api/stats" || pathname === "/admin/stats") {
+    if (method !== "GET") return json({ error: "method not allowed" }, 405);
+    const stats = await userStats(env, d);
+    return pathname === "/admin/stats" ? html(adminStatsPage({ user: me, stats })) : json(stats);
+  }
   const show = async (extra = {}, status = 200) => {
     const { results: users } = await d.prepare(`
       SELECT u.id, u.username, u.display_name, u.created_at, u.disabled, u.must_change_pw, u.totp_secret IS NOT NULL AS totp,

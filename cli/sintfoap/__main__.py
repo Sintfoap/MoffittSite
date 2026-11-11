@@ -19,6 +19,7 @@ sintfoap — sintfoap.xyz from the terminal.
   sintfoap food               Food club: the month's food, its recipe, favorites and everyone's photos
   sintfoap feedback           Feedback: notes to the site's owner, with photos and links (admins: the inbox)
   sintfoap admin              which apps each account can use (admins)
+  sintfoap stats              accounts, who's active and how much each keeps in D1 and R2 (admins)
   sintfoap app                the Android app: a QR code to scan, and the download
   sintfoap books [--plain]    the book club pick: read about the books and vote (no sign-in needed)
   sintfoap whoami
@@ -105,7 +106,8 @@ def main(argv=None):
                        ("labels", "Recipe labels: the one list of labels recipes pick from"),
                        ("food", "Food club: the month's food, its recipe, favorites and everyone's photos"),
                        ("feedback", "Feedback: notes to the site's owner, with photos and links (admins: the inbox)"),
-                       ("admin", "which apps each account can use (admins)")):
+                       ("admin", "which apps each account can use (admins)"),
+                       ("stats", "accounts, who's active and how much each keeps in D1 and R2 (admins)")):
         sub.add_parser(page, help=what)
     bk = sub.add_parser("books", help="the book club pick: read about the books and vote (no sign-in needed)")
     bk.add_argument("--plain", action="store_true", help="print them instead of opening the terminal UI")

@@ -1,6 +1,6 @@
 """
 The site in the terminal (Textual): the dashboard, and from it Drift, the
-plugin store, chat, Recipe box, Recipe board, Recipe labels, Meal plan, Pantry, Sweep, Trip planner, Food club, Feedback, account settings and (for admins) who can use which app,
+plugin store, chat, Recipe box, Recipe board, Recipe labels, Meal plan, Pantry, Sweep, Trip planner, Food club, Feedback, account settings and (for admins) who can use which app and the site's stats,
 in the same colours as the website.
 """
 from __future__ import annotations
@@ -24,7 +24,7 @@ WARN = "#e0b25a"
 REFRESH_EVERY = 30   # seconds
 
 # Which site pages have a terminal version, by the path the dashboard links to.
-IN_TERMINAL = {"/todo/": "drift", "/plugins/": "store", "/chat/": "chat", "/admin": "admin", "/notifications/": "notifications", "/recipes/": "recipes", "/meals/": "meals", "/pantry/": "pantry", "/trips/": "trips", "/board/": "board", "/labels/": "labels", "/food/": "food", "/feedback/": "feedback", "/sweep/": "sweep"}
+IN_TERMINAL = {"/admin/stats": "stats", "/todo/": "drift", "/plugins/": "store", "/chat/": "chat", "/admin": "admin", "/notifications/": "notifications", "/recipes/": "recipes", "/meals/": "meals", "/pantry/": "pantry", "/trips/": "trips", "/board/": "board", "/labels/": "labels", "/food/": "food", "/feedback/": "feedback", "/sweep/": "sweep"}
 
 
 def account_lines(data: dict) -> Text:
@@ -312,6 +312,9 @@ class SiteApp(App):
         elif name == "admin":
             from .admin_page import AdminPage
             self.push_screen(AdminPage())
+        elif name == "stats":
+            from .stats_page import StatsPage
+            self.push_screen(StatsPage())
         elif name == "notifications":
             from .notifications_page import NotificationsPage
             self.push_screen(NotificationsPage())

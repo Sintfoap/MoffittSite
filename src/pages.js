@@ -287,6 +287,20 @@ ${SHELL_CSS}
   [data-unsaved] { color: var(--warn); }
   @media (max-width: 820px) { .person-body { padding-left: 16px; } details.person .tags { margin-left: 0; } }
   .admin-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 12px; margin-bottom: 18px; }
+  .admin-tabs { display: flex; gap: 18px; margin: -6px 0 18px; font-size: 13px; }
+  .admin-tabs a { text-decoration: none; color: var(--muted); padding-bottom: 3px; border-bottom: 2px solid transparent; }
+  .admin-tabs a[aria-current] { color: var(--gold); border-bottom-color: var(--gold); }
+  .meter { height: 8px; background: var(--line); margin: 8px 0 4px; }
+  .meter i { display: block; height: 100%; background: var(--gold); }
+  .meter.warn i { background: var(--warn); }
+  .meter.bad i { background: var(--bad); }
+  .stat .meter { margin: 6px 0 2px; height: 4px; }
+  table.stats td.n, table.stats th.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  table.stats td .meter { margin: 4px 0 0; height: 3px; min-width: 60px; }
+  table.stats .zero { color: var(--faint); }
+  table.stats td:first-child, table.stats td:nth-child(2) { white-space: nowrap; }
+  table.stats td.store { width: 230px; }
+  table.stats td.store .hint { white-space: normal; }
 `;
 
 // The tab icon, web app manifest and home-screen icon, so the site can be added to a
@@ -669,6 +683,7 @@ export function adminPage({ user, users, orphans, apps, books = [], bookVotes = 
   </section>`;
   return page("Admin", `
     <div class="kicker">Admin</div><h1>Accounts</h1>
+    ${adminTabs("accounts")}
     ${open && users.some(u => u.id === open) ? "" : msg(error) + msg(notice, "good")}
     <div class="admin-stats">
       <div class="stat"><b>${users.length}</b><span>${users.length === 1 ? "account" : "accounts"}</span></div>
@@ -684,6 +699,84 @@ export function adminPage({ user, users, orphans, apps, books = [], bookVotes = 
     <script src="/admin.js" defer></script>
     ${orphanRows}
     ${bookRows}`, { user, wide: true, here: "admin" });
+}
+
+// Accounts | Stats, under the admin pages' heading.
+const adminTabs = here => `<nav class="admin-tabs" aria-label="Admin">${[["accounts", "/admin", "Accounts"], ["stats", "/admin/stats", "Stats"]]
+  .map(([id, href, name]) => `<a href="${href}"${id === here ? ` aria-current="page"` : ""}>${name}</a>`).join("")}</nav>`;
+
+// 1234567 → "1.2 MB".
+export function bytes(n) {
+  if (n == null) return "—";
+  const units = ["B", "KB", "MB", "GB"];
+  let i = 0;
+  while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
+  return `${i && n < 10 ? n.toFixed(1) : Math.round(n)} ${units[i]}`;
+}
+
+// How long ago a unix time was, roughly: "just now", "5 min ago", "3 days ago".
+export function ago(t, now = Math.floor(Date.now() / 1000)) {
+  if (!t) return "never";
+  const s = Math.max(0, now - t);
+  if (s < 120) return "just now";
+  if (s < 3600) return `${Math.floor(s / 60)} min ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)} h ago`;
+  const d = Math.floor(s / 86400);
+  return d < 60 ? `${d} day${d === 1 ? "" : "s"} ago` : date(t);
+}
+
+// A bar for part of whole; `share` bars (one person against the biggest) never turn warning colours.
+const meter = (part, whole, share = false) => {
+  const f = whole ? Math.min(1, part / whole) : 0;
+  return `<div class="meter${share ? "" : f >= 0.9 ? " bad" : f >= 0.7 ? " warn" : ""}" role="meter" aria-valuenow="${Math.round(f * 100)}" aria-valuemin="0" aria-valuemax="100"><i style="width:${(f * 100).toFixed(1)}%"></i></div>`;
+};
+
+export function adminStatsPage({ user, stats }) {
+  const { accounts: a, storage: st, users, kinds, totals, columns } = stats;
+  const n = (v, cls = "n") => `<td class="${cls}${v ? "" : " zero"}">${v ? v.toLocaleString("en-US") : "0"}</td>`;
+  const pct = (part, whole) => whole ? `${Math.round(100 * part / whole)}%` : "—";
+  const d1 = st.d1, d1Known = d1.bytes != null;
+  const top = Math.max(1, ...users.map(u => u.total_bytes));
+  const tiles = [
+    [`${a.total}<small style="font-size:14px;color:var(--faint)"> / ${a.max}</small>`, `accounts (MAX_USERS) · signups ${a.signups}`, meter(a.total, a.max)],
+    [a.active_7d, `active this week`], [a.active_30d, `active in 30 days`], [a.joined_30d, `joined in 30 days`],
+    [d1Known ? bytes(d1.bytes) : bytes(d1.data_bytes + d1.photo_bytes), d1Known ? `D1 of ${bytes(d1.limit_bytes)}` : "kept in D1 (rows)", meter(d1Known ? d1.bytes : d1.data_bytes + d1.photo_bytes, d1.limit_bytes)],
+  ];
+  const people = users.map(u => {
+    const cols = columns.map(c => n(c.ids.reduce((s, id) => s + (u.counts[id] || 0), 0))).join("");
+    const where = [u.photos.d1_bytes ? `photos in D1 ${bytes(u.photos.d1_bytes)}` : "", u.photos.r2_count ? `photos in R2 ${st.r2.bound ? bytes(u.photos.r2_bytes) : `${u.photos.r2_count}`}` : ""].filter(Boolean).join(" · ");
+    return `<tr id="s-${esc(u.id)}">
+      <td><strong>${esc(u.display_name)}</strong>${u.display_name.toLowerCase() === u.username ? "" : ` <span class="mono">${esc(u.username)}</span>`}${u.disabled ? ` <span class="tag off">disabled</span>` : ""}
+        <br><span class="hint">joined ${date(u.created_at)}</span></td>
+      <td title="${u.last_active ? esc(new Date(u.last_active * 1000).toISOString()) : ""}">${ago(u.last_active, stats.now)}${u.devices ? `<br><span class="hint">${u.devices} device${u.devices === 1 ? "" : "s"}</span>` : ""}</td>
+      ${n(u.apps.length)}${cols}
+      <td class="n store">${bytes(u.total_bytes)}${meter(u.total_bytes, top, true)}${where ? `<span class="hint">${where}</span>` : ""}</td></tr>`;
+  }).join("");
+  const kindRows = kinds.map(k => {
+    const ph = k.photos ? totals.photos[k.id] : null;
+    return `<tr><td>${esc(k.label)}</td><td class="hint">${esc(k.app_name)}</td>${n(totals.counts[k.id])}
+      <td class="n">${ph && ph.count ? `${bytes(ph.d1_bytes)} in D1${ph.r2_bytes ? ` · ${bytes(ph.r2_bytes)} in R2` : ""}` : ""}</td></tr>`;
+  }).join("");
+  const r2Line = st.r2.bound
+    ? `<b>${bytes(st.r2.bytes)}</b> in R2 across ${st.r2.photo_count} picture${st.r2.photo_count === 1 ? "" : "s"}${st.r2.partial ? " (more than could be listed; the total is short)" : ""}.`
+    : st.r2.photo_count ? `${st.r2.photo_count} picture${st.r2.photo_count === 1 ? " is" : "s are"} in R2; its sizes show once the PHOTOS bucket is bound.` : `No pictures in R2 yet.`;
+  return page("Admin stats", `
+    <div class="kicker">Admin</div><h1>Stats</h1>
+    ${adminTabs("stats")}
+    <div class="admin-stats">${tiles.map(([b, label, m = ""]) => `<div class="stat"><b>${b}</b>${m}<span>${label}</span></div>`).join("")}</div>
+    <section class="card" id="storage"><h2>Storage</h2>
+      ${d1Known ? `<p><b>${bytes(d1.bytes)}</b> of D1's ${bytes(d1.limit_bytes)} limit is used (${pct(d1.bytes, d1.limit_bytes)}).</p>${meter(d1.bytes, d1.limit_bytes)}`
+        : `<p class="hint">D1 didn't report the database's size here, so this counts the rows below.</p>`}
+      <p>People's own things take <b>${bytes(d1.data_bytes)}</b> and pictures still in D1 take <b>${bytes(d1.photo_bytes)}</b> (${d1.photo_count} picture${d1.photo_count === 1 ? "" : "s"}, kept as base64). ${r2Line}</p>
+      <p class="hint">Set the D1_LIMIT_MB variable to your plan's limit (500 MB on Workers Free, 10 GB on Paid). ${a.left} account${a.left === 1 ? "" : "s"} left before MAX_USERS; at today's average of ${bytes(a.total ? (d1.data_bytes + d1.photo_bytes) / a.total : 0)} a person, ${a.max} accounts would keep about ${bytes(a.total ? (d1.data_bytes + d1.photo_bytes) / a.total * a.max : 0)} in D1.</p>
+    </section>
+    <section class="card scroll" id="people"><h2>People</h2>
+      <p class="hint">Biggest first. Last active is the latest of a signed-in page, an API key or a chat message. Storage is what their rows and pictures take.</p>
+      <table class="stats"><tr><th>Who</th><th>Last active</th><th class="n">Apps</th>${columns.map(c => `<th class="n">${esc(c.name)}</th>`).join("")}<th class="n">Storage</th></tr>${people}</table>
+    </section>
+    <section class="card scroll" id="apps"><h2>By app</h2>
+      <table class="stats"><tr><th>What</th><th>App</th><th class="n">Count</th><th class="n">Pictures</th></tr>${kindRows}</table>
+    </section>`, { user, wide: true, here: "admin" });
 }
 
 export const adminClaimPage = ({ user, error, enabled }) => page("Become admin", `

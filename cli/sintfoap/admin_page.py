@@ -6,7 +6,8 @@ it. Space flips a switch; nothing is sent until ctrl+s saves that account's
 switches all at once, so several can change together. There's a switch for
 every app in the site's app list (APPS in src/auth.js), so a new app shows up
 here by itself, off for everyone. The rest of /admin (passwords, two-factor,
-disabling and deleting accounts) is on the website: press w to open it."""
+disabling and deleting accounts) is on the website: press w to open it.
+t opens the stats page (stats_page.py), as /admin/stats."""
 from __future__ import annotations
 
 from rich.text import Text
@@ -56,6 +57,7 @@ class AdminPage(Page):
         Binding("e", "expand(True)", "Expand all"),
         Binding("c", "expand(False)", "Collapse all"),
         Binding("r", "refresh", "Refresh"),
+        Binding("t", "stats", "Stats"),
     ]
 
     def __init__(self):
@@ -71,13 +73,18 @@ class AdminPage(Page):
             yield Static(Text("Who can use which app", style=f"bold {INK}"), classes="h1")
             yield Static(Text("Enter opens an account. Space flips a switch, a turns them all on and x all off; ctrl+s saves "
                               "that account's changes together. New apps start off for everyone. Passwords, two-factor and "
-                              "disabling or deleting accounts are on the website: press w.", style=MUTED), classes="sub")
+                              "disabling or deleting accounts are on the website: press w. t shows stats: who's active and how much each person keeps.", style=MUTED), classes="sub")
             yield Static(id="feedback-line", classes="sub")
             yield Vertical(id="people", classes="card")
         yield Footer()
 
     async def on_mount(self) -> None:
         await self.action_refresh()
+
+    def action_stats(self) -> None:
+        """t: accounts, activity and storage (/admin/stats)."""
+        from .stats_page import StatsPage
+        self.app.push_screen(StatsPage())
 
     @attempt
     async def action_refresh(self) -> None:
