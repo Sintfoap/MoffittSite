@@ -88,5 +88,13 @@
   // Previews don't get this binding, so test branches never touch real data.
   "d1_databases": [
     { "binding": "TODO_DB", "database_name": "moffittsite", "database_id": "c34cd7d8-cf0d-460d-8b4f-c0e627a0dfb3" }
+  ],
+
+  // Pictures for Recipe box, Food club and Feedback (Storage & Databases → R2 →
+  // moffittsite-photos), so they don't fill D1; their rows stay in D1. See
+  // src/photos.js. Make the bucket before deploying this; without the binding
+  // pictures go back to being kept in D1.
+  "r2_buckets": [
+    { "binding": "PHOTOS", "bucket_name": "moffittsite-photos" }
   ]
 }

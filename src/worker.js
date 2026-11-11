@@ -40,6 +40,7 @@ import { feedback } from "./feedback.js";
 import { notifications, driftReminders, pushGateway, bridgeUpkeep } from "./notify.js";
 import { state, version, createItem, updateItem, createCollection, updateCollection, setBases, shareCollection, unshareCollection, readJson, BadRequest, ID, getItem } from "./drift.js";
 import { planDay } from "./routing.js";
+import { movePhotos } from "./photos.js";
 import { translate, TranslateError } from "./translate.js";
 
 // /todo/api/state, /todo/api/version, /todo/api/items[/<id>[/translate]],
@@ -161,6 +162,8 @@ export default {
   async scheduled(controller, env, ctx) {
     ctx.waitUntil(driftReminders(env, controller.scheduledTime).catch(e => console.error("drift reminders failed:", e)));
     ctx.waitUntil(bridgeUpkeep(env).catch(e => console.error("connection upkeep failed:", e)));
+    // Pictures from before the PHOTOS bucket, a few at a time from D1 into R2 (src/photos.js).
+    ctx.waitUntil(movePhotos(env).catch(e => console.error("moving photos failed:", e)));
   },
 };
 

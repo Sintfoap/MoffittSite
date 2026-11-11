@@ -46,6 +46,7 @@ src/             the Worker: runs only for the paths in run_worker_first
   glance.js        one live line per app for the dashboard's cards, on the web and in the terminal
   nav.js           the site's menu: one list, from APPS, that the rail and the terminal UI both use
   db.js            D1 tables (created on first use)
+  photos.js        where Recipe box, Food club and Feedback keep pictures: R2 (the PHOTOS bucket), their rows in D1; moves older ones out of D1
   drift.js         Drift storage: collections and items per account
   weather.js       the forecast for Drift's Weather plugin: 16 days at a spot, from Open-Meteo
   store.js         the plugin store: drafts, review queue, approved plugins
@@ -53,7 +54,7 @@ src/             the Worker: runs only for the paths in run_worker_first
   gifs.js          chat's GIF picker: search, trending and categories from GIPHY (or KLIPY), and favorites
   push.js          sending Web Push: encryption (RFC 8291) and VAPID signing, with WebCrypto
   notify.js        notifications: settings, browsers, Chat's pushes and Drift's reminders
-  recipes.js       Recipe box: recipes (with labels like Season: Fall, picked from the Recipe labels list) read from a link's schema.org data (Recipe Keeper's shared recipes too) or imported in bulk from a file (Recipe Keeper's export, its folder or .zip, with pictures kept in D1), and their ingredients sent to a Drift list
+  recipes.js       Recipe box: recipes (with labels like Season: Fall, picked from the Recipe labels list) read from a link's schema.org data (Recipe Keeper's shared recipes too) or imported in bulk from a file (Recipe Keeper's export, its folder or .zip, with pictures kept in R2, see photos.js), and their ingredients sent to a Drift list
   autolabel.js     Recipe box's Suggest labels: labels from the list that a recipe's words point to (a label's value, or keywords set on it), no AI
   recipe_photo.js  Recipe box: a recipe read from a photo (by Claude, with Sweep's API key, or by Workers AI's vision model without one) or from text (pasted, or read off a photo on the device), to check before saving
   pantry.js        Pantry: each person's food as staples (measured, with a low point), counted things (whole units) and gauged ones (Full to Empty), each purchase with its own expiry
@@ -65,8 +66,8 @@ src/             the Worker: runs only for the paths in run_worker_first
   board.js         Recipe board: posts (from a link, Recipe box, or typed in) filed under their labels' keys, follows, the feed and its unread count, the recipe of the day, saves into Recipe box, reviews (stars, how it turned out, what was changed)
   labels.js        Recipe labels: the label list (add many values at once, rename or remove a value or a whole key), its page and API
   trips.js         Trip planner: shared trips, their itinerary, pinned places, and packing lists sent to Drift
-  food.js          Food club: the month's pick and its recipe (from a link or Recipe box), who made and loved it, and photos kept in D1
-  feedback.js      Feedback: notes to the admins, photos kept in D1, links to things the sender can see (kept as a snapshot), statuses and replies
+  food.js          Food club: the month's pick and its recipe (from a link or Recipe box), who made and loved it, and photos (photos.js)
+  feedback.js      Feedback: notes to the admins, photos (photos.js), links to things the sender can see (kept as a snapshot), statuses and replies
   bridges.js       chat connections: other platforms' rooms in chat, with sealed credentials
   matrix.js        the Matrix provider for those
   vendor/uqr.mjs   QR codes for two-factor setup (MIT)
@@ -89,6 +90,8 @@ The site is a Cloudflare **Worker** with static assets, deployed by Workers Buil
 `wrangler.jsonc` holds everything else. The `name` in it must match the Worker's name in the dashboard. Only the paths in `run_worker_first` (sign-in pages, `/dashboard`, `/account`, `/admin`, `/todo`) run any code; everything else is served straight from `public/`.
 
 Settings in `wrangler.jsonc` replace dashboard settings on every deploy. Change variables and bindings there, not in the dashboard. Secrets added in the dashboard are kept, and so are dashboard Text variables that `wrangler.jsonc` doesn't name (`keep_vars`).
+
+**Storage.** Everything is in one D1 database (`moffittsite`, the `TODO_DB` binding) except pictures. Recipe box, Food club and Feedback pictures go in the R2 bucket `moffittsite-photos` (the `PHOTOS` binding), so they don't fill D1's size limit. Create the bucket once under **Storage & Databases → R2** before deploying with the binding. Pictures saved before the bucket existed stay in D1 until the 5-minute job moves them, a few per app on each run, and are served from wherever they are meanwhile. Without the binding, pictures are kept in D1 as base64.
 
 Branch builds run `npx wrangler preview`, which uses the `previews` section of `wrangler.jsonc` instead of the production settings. It must list every variable. Previews get no database, so signing in fails closed on preview URLs while the rest of the site previews normally.
 

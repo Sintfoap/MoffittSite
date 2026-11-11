@@ -17,6 +17,7 @@ import { createKey, listKeys, revokeKey } from "./apikeys.js";
 import { mailReady, sendMail, MailError } from "./mail.js";
 import { agenda, visitorNow } from "./drift.js";
 import { installed } from "./store.js";
+import { photosOf, dropPhotos } from "./photos.js";
 import {
   html, loginPage, signupPage, mfaPage, forgotPage, forgotDonePage, forgotEmailSentPage, resetPage, dashboardPage, accountPage, changePasswordRequiredPage, adminPage, adminClaimPage, messagePage,
 } from "./pages.js";
@@ -582,6 +583,7 @@ async function admin(request, env, me, pathname, method) {
       case "/admin/delete":
         needTarget();
         if (String(f.confirm ?? "").trim().toLowerCase() !== target.username) throw new AuthError(`Type ${target.username} in the box to delete that account.`);
+        const photos = await photosOf(d, target.id);
         await d.batch([
           d.prepare("DELETE FROM sessions WHERE user_id = ?").bind(target.id),
           d.prepare("DELETE FROM store_versions WHERE plugin_id IN (SELECT id FROM store_plugins WHERE owner = ?)").bind(target.id),
@@ -633,6 +635,7 @@ async function admin(request, env, me, pathname, method) {
           ...["sweep_rooms", "sweep_suggestions", "sweep_runs", "sweep_keys"].map(t => d.prepare(`DELETE FROM ${t} WHERE user_id = ?`).bind(target.id)),
           d.prepare("DELETE FROM users WHERE id = ?").bind(target.id),
         ]);
+        for (const [table, ids] of Object.entries(photos)) await dropPhotos(env, table, ids);
         return show({ notice: `${target.username} and their tasks are deleted.` });
       case "/admin/move-tasks": {
         const to = await getUser(env, { id: String(f.to) });

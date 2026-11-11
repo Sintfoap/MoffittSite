@@ -24,6 +24,7 @@
 // /feedback/api/photos/<photo>                 GET → the picture (sender and admins only)
 
 import { db } from "./db.js";
+import { storePhoto, unstorePhoto, photoResponse, photoIds, dropPhotos } from "./photos.js";
 import { sameOrigin } from "./account.js";
 import { withRail } from "./pages.js";
 import { BadRequest } from "./drift.js";
@@ -277,8 +278,10 @@ export async function deleteNote(env, user, id) {
   const d = await db(env);
   const r = await row(d, id);
   if (!canSee(user, r)) return null;
+  const photos = await photoIds(d, "SELECT id FROM feedback_photos WHERE item = ?", id);
   await d.batch(["feedback_photos", "feedback_replies"].map(t => d.prepare(`DELETE FROM ${t} WHERE item = ?`).bind(id))
     .concat(d.prepare("DELETE FROM feedback WHERE id = ?").bind(id)));
+  await dropPhotos(env, "feedback_photos", photos);
   return { removed: true };
 }
 
@@ -320,13 +323,14 @@ export async function addPhoto(env, user, id, body) {
   const caption = str("caption", body.caption, LIMITS.caption);
   const { n } = await d.prepare("SELECT COUNT(*) AS n FROM feedback_photos WHERE item = ?").bind(id).first();
   if (n >= PHOTOS_EACH) fail(`a note can have at most ${PHOTOS_EACH} photos`);
-  let bin = "";
-  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
-  const t = new Date().toISOString();
-  await d.batch([
-    d.prepare("INSERT INTO feedback_photos (id, item, type, data, caption, created) VALUES (?, ?, ?, ?, ?, ?)").bind(newId("fp"), id, type, btoa(bin), caption, t),
-    d.prepare("UPDATE feedback SET updated = ? WHERE id = ?").bind(t, id),
-  ]);
+  const t = new Date().toISOString(), photo = newId("fp");
+  const data = await storePhoto(env, "feedback_photos", photo, bytes, type);
+  try {
+    await d.batch([
+      d.prepare("INSERT INTO feedback_photos (id, item, type, data, caption, created) VALUES (?, ?, ?, ?, ?, ?)").bind(photo, id, type, data, caption, t),
+      d.prepare("UPDATE feedback SET updated = ? WHERE id = ?").bind(t, id),
+    ]);
+  } catch (e) { await unstorePhoto(env, "feedback_photos", photo); throw e; }
   return getNote(env, user, id);
 }
 
@@ -335,17 +339,15 @@ export async function removePhoto(env, user, id, photo) {
   const r = await row(d, id);
   if (!canSee(user, r)) return null;
   const res = await d.prepare("DELETE FROM feedback_photos WHERE id = ? AND item = ?").bind(photo, id).run();
+  if (res.meta.changes) await dropPhotos(env, "feedback_photos", [photo]);
   return res.meta.changes ? getNote(env, user, id) : null;
 }
 
 async function photoFile(env, user, photo) {
   const d = await db(env);
-  const p = await d.prepare("SELECT p.type, p.data, f.author FROM feedback_photos p JOIN feedback f ON f.id = p.item WHERE p.id = ?").bind(photo).first();
+  const p = await d.prepare("SELECT p.id, p.type, p.data, f.author FROM feedback_photos p JOIN feedback f ON f.id = p.item WHERE p.id = ?").bind(photo).first();
   if (!p || (p.author !== user.id && !isAdmin(user))) return new Response("not found", { status: 404 });
-  return new Response(Uint8Array.from(atob(p.data), c => c.charCodeAt(0)), { headers: {
-    "Content-Type": p.type, "X-Content-Type-Options": "nosniff", "Content-Security-Policy": "default-src 'none'",
-    "Content-Disposition": "inline", "Cache-Control": "private, max-age=31536000, immutable",
-  } });
+  return photoResponse(env, "feedback_photos", p);
 }
 
 // ── the page and its API ───────────────────────────────────────────────────
