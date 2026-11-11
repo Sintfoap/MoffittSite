@@ -25,6 +25,7 @@
 //                                            reading it marks it read), all, mine or saved; category is a key, label one value's id
 // /board/api/posts                         POST {title?, note?, labels?, recipe? | url? | recipe_id?} → the new post
 // /board/api/posts/<id>                    GET → the post; PATCH → change the fields sent; DELETE → remove it
+// /board/api/posts/<id>/translate         POST → {language, english, fields}: the post in English, for anyone to read (src/translate.js)
 // /board/api/posts/<id>/save               POST → {recipe, already}: the post's recipe, in your Recipe box
 
 import { db } from "./db.js";
@@ -33,6 +34,7 @@ import { withRail } from "./pages.js";
 import { BadRequest } from "./drift.js";
 import { clean as cleanRecipe, get as getRecipe, create as createRecipe, updateFor as updateRecipe, syncBoard, boardRecipe, BOARD_FIELDS, importFrom, NotARecipe, labelList, withLabels, cleanLabels, checkLabels } from "./recipes.js";
 import { deleteKey } from "./labels.js";
+import { translate, recipeText, TranslateError } from "./translate.js";
 
 const fail = msg => { throw new BadRequest(msg); };
 
@@ -40,7 +42,7 @@ const LIMITS = { title: 200, note: 2000, page: 40, posts: 2000, body: 256 * 1024
 const LABEL = /^l_[0-9a-f]{10}$/;
 const ROUTE_LABEL = /^\/board\/api\/labels\/([^/]+)\/follow\/?$/;
 const ROUTE_CAT = /^\/board\/api\/categories\/([^/]+?)(?:\/(follow))?\/?$/;
-const ROUTE_POST = /^\/board\/api\/posts(?:\/(b_[0-9a-f]{10})(?:\/(save))?)?\/?$/;
+const ROUTE_POST = /^\/board\/api\/posts(?:\/(b_[0-9a-f]{10})(?:\/(save|translate))?)?\/?$/;
 const VIEWS = ["feed", "all", "mine", "saved"];
 const RECIPE_FIELDS = BOARD_FIELDS;
 const BLANK_RECIPE = { source: "", image: "", yield: "", servings: null, time: "", ingredients: [], steps: [], notes: "", labels: [] };
@@ -413,6 +415,11 @@ export async function board(request, env, user, pathname) {
       return method === "POST" ? json(await createPost(env, user, await readBody(request)), 201) : notAllowed();
     }
     let out;
+    if (sub === "translate") {
+      if (method !== "POST") return notAllowed();
+      const p = await getPost(env, user, id);
+      return p ? json(await translate(env, user, { ...(p.recipe ? recipeText(p.recipe) : {}), title: p.title, note: p.note })) : json({ error: "not found" }, 404);
+    }
     if (sub) out = method === "POST" ? await saveToBox(env, user, id) : undefined;
     else if (method === "GET") out = await getPost(env, user, id);
     else if (method === "PATCH") out = await updatePost(env, user, id, await readBody(request));
@@ -422,6 +429,7 @@ export async function board(request, env, user, pathname) {
   } catch (e) {
     if (e instanceof BadRequest) return json({ error: e.message }, 400);
     if (e instanceof NotARecipe) return json({ error: e.message, manual: true }, 422);
+    if (e instanceof TranslateError) return json({ error: e.message }, 503);
     console.error("recipe board error:", e);
     return json({ error: "server error" }, 500);
   }

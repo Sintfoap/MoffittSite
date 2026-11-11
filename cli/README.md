@@ -85,7 +85,7 @@ The composer takes the same quick-add as the web page: `Lunch #family +home !2 ^
 | Key (on the items) | |
 |---|---|
 | `a` | add an item |
-| `enter` / `e` | edit it: title, notes, tags, collection, priority, date and time, place (an address, a place's name or coordinates; the site finds it), outdoors (Weather) |
+| `enter` / `e` | edit it: title, notes, tags, collection, priority, date and time, place (an address, a place's name or coordinates; the site finds it), outdoors (Weather). `ctrl+t` there shows the title and notes in English under them; "Use the English" puts it in the boxes, and `ctrl+s` saves it over the original |
 | `x` / `space` | tick it off |
 | `0`–`3` | priority |
 | `t` | date it today |
@@ -158,6 +158,7 @@ The same recipes as `/recipes/`: the list on the left, the open one on the right
 | `space` | on the ingredients: tick which to send |
 | `s` | send the ticked ingredients, scaled, to a Drift list: your Shopping list (made the first time), or any list you can add to |
 | `b` | share the recipe on the Recipe board (if you have it) |
+| `E` | the recipe in English, in place of the original (scaling works on it too); `E` again flips back, `S` saves the English over the original |
 | `l` | filter the shelf by labels: tick any (two values of one key show either; different keys show only recipes with both); `c` clears |
 | `f` | find recipes by ingredient: `eggs, spinach` shows only recipes with both, `-nuts` leaves out any with nuts (walnuts too); singular and plural both match, and the lines it found are lit up. Works with `l`; empty clears |
 | `o` | sort the shelf by title, then by each label in turn (recipes without that label go last) |
@@ -223,6 +224,7 @@ The same board as `/board/`: your feed (new recipes in the categories you follow
 | `n` | share a recipe: from your Recipe box (its labels come ticked), a link, or typed in, ticking its labels (`ctrl+s` posts) |
 | `x` | remove the highlighted category, which removes its key from Recipe labels (if you have that app) |
 | `m` | older recipes |
+| `E` | the open post in English (anyone's); `E` again flips back, `S` saves it over the original on your own post |
 | `e` `d` | edit or delete your own post |
 | `r` | refresh |
 

@@ -21,6 +21,7 @@
 // rain tomorrow and the day after the clear one; ryan is near London.
 // ryan and sam have Trip planner, Recipe board, where sam shared Shortbread (Course: Dessert),
 // and Food club, where sam picked last month (Pavlova).
+// Workers AI (the stand-in) translates the Spanish in WORDS below into English, line for line.
 import http from "node:http";
 import worker from "../../src/worker.js";
 import { Browser, makeEnv, sqlOne, run, grantApps } from "../../tests/helpers.mjs";
@@ -83,7 +84,23 @@ if (notify) {
       precipitation_probability_max: codes.map(c => c >= 61 ? 80 : 10), precipitation_sum: codes.map(c => c >= 61 ? 5 : 0) } });
   };
 }
-const env = makeEnv({ CHAT_BRIDGE_KEY: "devsite-bridge-key-0123456789", ...vapid });
+// Workers AI, for "Translate to English" (src/translate.js): these Spanish lines, and nothing else.
+const WORDS = { "Tortilla española": "Spanish omelette", "La de mi abuela, la mejor.": "My grandmother's, the best.",
+  "4 huevos": "4 eggs", "3 patatas medianas": "3 medium potatoes", "1 cebolla": "1 onion", "Aceite de oliva": "Olive oil", "Sal": "Salt",
+  "Pelar y cortar las patatas en láminas finas.": "Peel the potatoes and cut them into thin slices.",
+  "Freír las patatas y la cebolla a fuego lento, 20 minutos.": "Fry the potatoes and onion over low heat, 20 minutes.",
+  "Batir los huevos y mezclar.": "Beat the eggs and mix them in.", "Cuajar 3 minutos por cada lado.": "Set for 3 minutes on each side.",
+  "Mejor tibia.": "Best served warm.", "Cena con la abuela": "Dinner with grandma",
+  "Llevar el vino y el postre. Ella vive en la calle Mayor 12.": "Bring the wine and dessert. She lives at Calle Mayor 12." };
+const AI = {
+  async run(model, input) {
+    const fields = JSON.parse(input.messages.at(-1).content);
+    const tr = v => Array.isArray(v) ? v.map(tr) : WORDS[v] ?? v;
+    const out = Object.fromEntries(Object.entries(fields).map(([k, v]) => [k, tr(v)]));
+    return { response: { language: JSON.stringify(out) === JSON.stringify(fields) ? "English" : "Spanish", fields: out } };
+  },
+};
+const env = makeEnv({ CHAT_BRIDGE_KEY: "devsite-bridge-key-0123456789", AI, ...vapid });
 const ryan = new Browser(env), sam = new Browser(env);
 await ryan.signup("ryan", undefined, "Ryan M");
 await sam.signup("sam", undefined, "Sam");

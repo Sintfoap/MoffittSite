@@ -75,6 +75,12 @@
   // (scheduled() in src/worker.js).
   "triggers": { "crons": ["*/5 * * * *"] },
 
+  // Workers AI: "Translate to English" in Drift, Recipe box and Recipe board
+  // (src/translate.js). No key needed; it runs on this Cloudflare account,
+  // inside the free daily allowance. TRANSLATE_MODEL, a Text variable, picks
+  // the model (@cf/meta/llama-3.3-70b-instruct-fp8-fast if it isn't set).
+  "ai": { "binding": "AI" },
+
   // Accounts and todo lists (Storage & Databases → D1 → moffittsite).
   // Previews don't get this binding, so test branches never touch real data.
   "d1_databases": [

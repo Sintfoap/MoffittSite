@@ -133,6 +133,11 @@ ol.steps li { margin-bottom: 10px; color: var(--ink); }
 ol.steps li::marker { color: var(--gold); font-weight: 700; }
 .notes { white-space: pre-wrap; }
 .actions { margin-top: 18px; }
+/* "Translate to English": what it was in, and switching back or saving it. */
+.translated { display: flex; flex-wrap: wrap; gap: 4px 16px; align-items: baseline; margin: 0 0 14px; padding: 8px 12px;
+  border: 1px dashed var(--line-2); background: var(--gold-soft); color: var(--ink); font-size: 13px; }
+.translated span { margin-right: auto; color: var(--muted); }
+.translated button.link { background: none; border: 0; padding: 0; font: 700 12.5px var(--mono); color: var(--gold); cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
 
 dialog { width: min(680px, calc(100vw - 32px)); max-height: calc(100vh - 32px); background: var(--panel); color: var(--ink); border: 1px solid var(--gold); padding: 22px 24px; }
 dialog::backdrop { background: rgb(0 0 0 / .55); }
@@ -256,7 +261,7 @@ dialog .two { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
   </form>
 </dialog>
 
-<footer class="keybar" aria-label="Keyboard shortcuts"><span><kbd>n</kbd>new from a link</span><span><kbd>/</kbd>find</span><span><kbd>f</kbd>by ingredient</span><span><kbd>l</kbd>filter by label</span><span><kbd>j k</kbd>next, previous</span><span><kbd>[ ]</kbd>page</span><span><kbd>+ -</kbd>servings</span><span><kbd>s</kbd>send to list</span><span><kbd>e</kbd>edit</span><span><kbd>p</kbd>from a photo</span><span><kbd>t</kbd>paste text</span><span><kbd>i</kbd>import a file</span><span><kbd>L</kbd>suggest labels</span><span><kbd>g</kbd>then a key from the menu to jump</span><span><kbd>\</kbd>Sidebar</span><a class="end" href="/logout" data-key="o"><kbd>g o</kbd>Sign out</a></footer>
+<footer class="keybar" aria-label="Keyboard shortcuts"><span><kbd>n</kbd>new from a link</span><span><kbd>/</kbd>find</span><span><kbd>f</kbd>by ingredient</span><span><kbd>l</kbd>filter by label</span><span><kbd>j k</kbd>next, previous</span><span><kbd>[ ]</kbd>page</span><span><kbd>+ -</kbd>servings</span><span><kbd>s</kbd>send to list</span><span><kbd>e</kbd>edit</span><span><kbd>E</kbd>English</span><span><kbd>p</kbd>from a photo</span><span><kbd>t</kbd>paste text</span><span><kbd>i</kbd>import a file</span><span><kbd>L</kbd>suggest labels</span><span><kbd>g</kbd>then a key from the menu to jump</span><span><kbd>\</kbd>Sidebar</span><a class="end" href="/logout" data-key="o"><kbd>g o</kbd>Sign out</a></footer>
 <script src="/keys.js" defer></script>
 <script type="module" src="/recipes/app.js"></script>
 </body>

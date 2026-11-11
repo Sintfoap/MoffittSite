@@ -55,6 +55,7 @@ src/             the Worker: runs only for the paths in run_worker_first
   recipe_photo.js  Recipe box: a recipe read from a photo (by Claude, with Sweep's API key) or from text (pasted, or read off a photo on the device), to check before saving
   meals.js         Meal plan: a week of dinners picked from Recipe box, quick ones on busy Drift nights, and the week's shopping sent to a Drift list
   sweep.js         Sweep: reads chosen chat rooms with Claude and suggests Drift events, tasks and list items
+  translate.js     "Translate to English" for Drift items, recipes and board posts: shown beside the original, saved only when asked; read with Workers AI (the "ai" binding), or your own Claude key from Sweep without it
   board.js         Recipe board: posts (from a link, Recipe box, or typed in) filed under their labels' keys, follows, the feed and its unread count, the recipe of the day, saves into Recipe box
   labels.js        Recipe labels: the label list (add many values at once, rename or remove a value or a whole key), its page and API
   trips.js         Trip planner: shared trips, their itinerary, pinned places, and packing lists sent to Drift

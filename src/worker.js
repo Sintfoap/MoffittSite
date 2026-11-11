@@ -38,12 +38,13 @@ import { board } from "./board.js";
 import { labels } from "./labels.js";
 import { food } from "./food.js";
 import { notifications, driftReminders, pushGateway, bridgeUpkeep } from "./notify.js";
-import { state, version, createItem, updateItem, createCollection, updateCollection, setBases, shareCollection, unshareCollection, readJson, BadRequest, ID } from "./drift.js";
+import { state, version, createItem, updateItem, createCollection, updateCollection, setBases, shareCollection, unshareCollection, readJson, BadRequest, ID, getItem } from "./drift.js";
 import { planDay } from "./routing.js";
+import { translate, TranslateError } from "./translate.js";
 
-// /todo/api/state, /todo/api/version, /todo/api/items[/<id>],
+// /todo/api/state, /todo/api/version, /todo/api/items[/<id>[/translate]],
 // /todo/api/collections[/<id>[/shares[/<username>]]]
-const API = /^\/todo\/api\/(state|version|items|collections|installs|places|route|weather)(?:\/([^/]+)(?:\/(shares)(?:\/([^/]+))?)?)?\/?$/;
+const API = /^\/todo\/api\/(state|version|items|collections|installs|places|route|weather)(?:\/([^/]+)(?:\/(shares|translate)(?:\/([^/]+))?)?)?\/?$/;
 const USERNAME = /^[a-z0-9_.-]{1,64}$/;
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -226,6 +227,14 @@ async function todo(request, env, user, pathname) {
       return out ? json(out) : json({ error: "not found" }, 404);
     }
 
+    // POST items/<id>/translate → {language, english, fields: {title, notes}}: the item in English,
+    //   to show beside it (src/translate.js); saving it is a PATCH like any other
+    if (sub === "translate") {
+      if (kind !== "items" || who || !ID.test(id)) return json({ error: "not found" }, 404);
+      if (method !== "POST") return json({ error: "method not allowed" }, 405);
+      const it = await getItem(env, user, id);
+      return it ? json(await translate(env, user, { title: it.title, notes: it.notes })) : json({ error: "not found" }, 404);
+    }
     if (sub) {
       // POST   collections/<id>/shares             {username, role} → share it, or change their role
       // DELETE collections/<id>/shares/<username>  → stop sharing (or leave, if it's you)
@@ -282,6 +291,7 @@ async function handle(fn) {
   try { return await fn(); }
   catch (e) {
     if (e instanceof BadRequest) return json({ error: e.message }, 400);
+    if (e instanceof TranslateError) return json({ error: e.message }, 503);
     console.error("drift api error:", e);
     return json({ error: "server error" }, 500);
   }

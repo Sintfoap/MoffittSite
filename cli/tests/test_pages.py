@@ -1830,3 +1830,100 @@ def test_g_f_opens_the_terminal_food_club(real_site):
         await settle(pilot, 0.5)
         assert type(app.screen).__name__ == "FoodPage"
     run_app("dashboard", go)
+
+
+# ── translate to English ───────────────────────────────────────────────────
+# Workers AI is a stand-in here (tests/devsite.mjs) that knows a little Spanish.
+
+TORTILLA = {"title": "Tortilla española", "servings": 4, "time": "45 min", "notes": "Mejor tibia.",
+            "ingredients": ["4 huevos", "3 patatas medianas", "1 cebolla", "Aceite de oliva", "Sal"],
+            "steps": ["Pelar y cortar las patatas en láminas finas.", "Freír las patatas y la cebolla a fuego lento, 20 minutos.",
+                      "Batir los huevos y mezclar.", "Cuajar 3 minutos por cada lado."]}
+
+
+def test_recipe_box_translates_to_english_and_saves_it_only_when_asked(real_site):
+    rid = site.add_recipe(TORTILLA)["id"]
+
+    async def recipes(app, pilot):
+        page = app.screen
+        assert page.current()["id"] == rid
+        assert not page.query_one("#english").display
+        # E: the English, in place of the Spanish; nothing saved yet.
+        await pilot.press("E")
+        await settle(pilot, 0.6)
+        assert "Translated from Spanish" in str(page.query_one("#english").render())
+        assert str(page.query_one("#title").render()) == "Spanish omelette"
+        assert str(page.query_one("#ingredients").get_option_at_index(0).prompt) == "4 eggs"
+        if SHOTS:
+            app.save_screenshot("recipes-english.svg", SHOTS)
+        # Scaling works on the English too.
+        await pilot.press("plus", "plus")
+        assert str(page.query_one("#ingredients").get_option_at_index(0).prompt) == "6 eggs"
+        assert site.recipes()["recipes"][0]["title"] == "Tortilla española"
+        # E again: back to the original.
+        await pilot.press("E")
+        await settle(pilot)
+        assert str(page.query_one("#title").render()) == "Tortilla española"
+        # S: save the English over it, after asking.
+        await pilot.press("S")
+        await settle(pilot)
+        await pilot.press("y")
+        await settle(pilot, 0.6)
+        saved = site.recipes()["recipes"][0]
+        assert saved["title"] == "Spanish omelette" and saved["ingredients"][1] == "3 medium potatoes"
+        assert not page.query_one("#english").display
+        # Already English: nothing to show.
+        await pilot.press("E")
+        await settle(pilot, 0.6)
+        assert not page.english
+    run_app("recipes", recipes)
+
+
+def test_board_post_translates_for_anyone_and_drift_item_shows_english_under_it(real_site):
+    post = site.add_board_post({"title": "Tortilla española", "note": "La de mi abuela, la mejor.", "labels": ["l_0000000004"],
+                                "recipe": {k: v for k, v in TORTILLA.items() if k != "title"}})
+    col = site.drift_state()["collections"][0]
+    item = site.add_item({"title": "Cena con la abuela", "notes": "Llevar el vino y el postre. Ella vive en la calle Mayor 12.", "collection": col["id"],
+                          "meta": {"checklist": {"done": False, "priority": 0}}})
+
+    async def board(app, pilot):
+        page = app.screen
+        await page.go(view="mine")
+        await settle(pilot, 0.6)
+        page.open = post["id"]
+        page.show_post()
+        await pilot.press("E")
+        await settle(pilot, 0.6)
+        assert str(page.query_one("#post-title").render()) == "Spanish omelette"
+        assert "My grandmother's, the best." in str(page.query_one("#note").render())
+        assert "1 onion" in str(page.query_one("#ingredients").render())
+        if SHOTS:
+            app.save_screenshot("board-english.svg", SHOTS)
+        assert site.board_posts("mine")["posts"][0]["title"] == "Tortilla española"
+    run_app("board", board)
+
+    async def drift(app, pilot):
+        page = app.screen
+        page.view = "c:" + col["id"]
+        page.render_all()
+        page.query_one("#items").focus()
+        await settle(pilot)
+        await pilot.press("e")
+        await settle(pilot)
+        dialog = app.screen
+        assert type(dialog).__name__ == "ItemDialog"
+        await pilot.press("ctrl+t")
+        await settle(pilot, 0.6)
+        shown = str(dialog.query_one("#english-text").render())
+        assert "Translated from Spanish" in shown and "Dinner with grandma" in shown and "Calle Mayor 12" in shown
+        if SHOTS:
+            app.save_screenshot("drift-english.svg", SHOTS)
+        assert dialog.query_one("#title").value == "Cena con la abuela"
+        # Use the English: into the boxes; ctrl+s saves it.
+        dialog.use_english()
+        assert dialog.query_one("#title").value == "Dinner with grandma"
+        await pilot.press("ctrl+s")
+        await settle(pilot, 0.6)
+        it = next(x for x in site.drift_state()["items"] if x["id"] == item["id"])
+        assert it["title"] == "Dinner with grandma" and it["notes"].startswith("Bring the wine")
+    run_app("drift", drift)

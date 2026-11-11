@@ -213,6 +213,15 @@ class ShareDialog(ModalScreen[dict | None]):
         self.action_save() if e.button.id == "save" else self.dismiss(None)
 
 
+RECIPE_TEXT = ("yield", "time", "ingredients", "steps", "notes")
+
+
+def in_english(p: dict, fields: dict) -> dict:
+    """A post with the words of its translation swapped in (src/translate.js sends only the fields that had text)."""
+    recipe = {**p["recipe"], **{k: fields[k] for k in RECIPE_TEXT if k in fields}}
+    return {**p, "title": fields.get("title", p["title"]), "note": fields.get("note", p["note"]), "recipe": recipe}
+
+
 class BoardPage(Page):
     WEB_PATH = "/board/"
     SIDE = "#side"
@@ -226,6 +235,7 @@ class BoardPage(Page):
     BoardPage #posts {{ height: 2fr; min-height: 6; border-bottom: solid {GOLD_DIM}; }}
     BoardPage #post {{ height: 3fr; padding-top: 1; }}
     BoardPage #post-title {{ color: {INK}; text-style: bold; }}
+    BoardPage #english {{ color: {MUTED}; background: #24251a; padding: 0 1; margin-bottom: 1; }}
     BoardPage #post-meta {{ color: {FAINT}; margin-bottom: 1; }}
     BoardPage .group {{ color: {FAINT}; }}
     BoardPage #ingredients, BoardPage #steps, BoardPage #notes, BoardPage #note {{ margin-bottom: 1; }}
@@ -236,6 +246,8 @@ class BoardPage(Page):
         Binding("s", "save", "Save to box"),
         Binding("x", "remove_category", "Remove category", show=False),
         Binding("m", "older", "Older"),
+        Binding("E", "english", "English"),
+        Binding("S", "save_english", "Save the English", show=False),
         Binding("e", "edit", "Edit", show=False),
         Binding("d", "delete", "Delete", show=False),
         Binding("r", "refresh", "Refresh"),
@@ -250,6 +262,7 @@ class BoardPage(Page):
         self.more = False
         self.open: str | None = None
         self.share_id = share
+        self.english: dict[str, dict] = {}     # post id → {language, fields, on}: E's translation, shown while on
 
     def compose(self) -> ComposeResult:
         yield from self.top()
@@ -262,6 +275,7 @@ class BoardPage(Page):
                     yield Static(id="sub")
                     yield OptionList(id="posts")
                     with VerticalScroll(id="post"):
+                        yield Static(id="english")
                         yield Static(id="post-title")
                         yield Static(id="post-meta")
                         yield Static(id="note")
@@ -392,8 +406,22 @@ class BoardPage(Page):
             return self.featured()
         return next((p for p in self.posts if p["id"] == self.open), None)
 
-    def show_post(self) -> None:
+    def shown(self) -> dict | None:
+        """The open post as it's shown: in English while E's translation is on."""
         p = self.current()
+        tr = p and self.english.get(p["id"])
+        return in_english(p, tr["fields"]) if tr and tr["on"] else p
+
+    def show_post(self) -> None:
+        p = self.shown()
+        tr = p and self.english.get(p["id"])
+        bar = self.query_one("#english", Static)
+        bar.display = bool(tr)
+        if tr:
+            bar.update(Text.assemble(
+                (f"Translated from {tr['language']}" if tr["on"] else f"In {tr['language']}; the English is ready", MUTED),
+                ("   E ", f"bold {GOLD}"), ("the original" if tr["on"] else "the English", INK),
+                *((("   S ", f"bold {GOLD}"), ("save the English", INK)) if p["can_edit"] else ())))
         for w in ("#post-meta", "#note", "#ing-head", "#ingredients", "#steps-head", "#steps", "#notes-head", "#notes"):
             self.query_one(w).display = bool(p)
         if not p:
@@ -489,7 +517,7 @@ class BoardPage(Page):
         return c, self.value(c, self.at["label"])
 
     def check_action(self, action: str, parameters: tuple) -> bool | None:
-        if action in ("share", "follow", "save", "remove_category", "older", "edit", "delete", "refresh") and isinstance(self.focused, (Input, TextArea)):
+        if action in ("share", "follow", "save", "remove_category", "older", "edit", "delete", "refresh", "english", "save_english") and isinstance(self.focused, (Input, TextArea)):
             return False
         return True
 
@@ -573,7 +601,10 @@ class BoardPage(Page):
     async def send(self, was: dict | None, fields: dict) -> None:
         if was:
             p = await self.fetch(site.update_board_post, was["id"], fields)
+            self.english.pop(p["id"], None)
             self.posts = [p if x["id"] == p["id"] else x for x in self.posts]
+            if (self.board.get("featured") or {}).get("id") == p["id"]:
+                self.board["featured"] = p
             self.board = await self.fetch(site.board)
             self.app.notify(f"Saved {p['title']}.", timeout=2)
             self.show_nav()
@@ -591,6 +622,47 @@ class BoardPage(Page):
         self.open = p["id"]
         self.show_posts()
         self.show_post()
+
+    # ── translating ───────────────────────────────────────────────────────
+
+    @attempt
+    async def action_english(self) -> None:
+        """E: the open post in English, or back and forth between it and the original."""
+        p = self.current()
+        if not p:
+            return
+        tr = self.english.get(p["id"])
+        if tr:
+            tr["on"] = not tr["on"]
+            self.show_post()
+            return
+        self.app.notify(f"Translating {p['title']}…", timeout=2)
+        out = await self.fetch(site.translate_board_post, p["id"])
+        if out.get("english"):
+            self.app.notify(f"{p['title']} is already in English.", timeout=3)
+            return
+        self.english[p["id"]] = {"language": out["language"], "fields": out["fields"], "on": True}
+        self.show_post()
+
+    def action_save_english(self) -> None:
+        p = self.current()
+        tr = p and self.english.get(p["id"])
+        if not tr:
+            self.app.notify("Press E to translate it first.", timeout=3)
+            return
+        if not p["can_edit"]:
+            self.app.notify("Only whoever posted it can save it in English.", timeout=3)
+            return
+
+        async def answer(yes: bool | None) -> None:
+            if yes:
+                e = in_english(p, tr["fields"])
+                recipe = {k: v for k, v in e["recipe"].items() if k != "title"}
+                recipe["labels"] = [lb["id"] for lb in recipe.get("labels", [])]
+                self.english.pop(p["id"], None)
+                await self.send(p, {"title": e["title"], "note": e["note"], "recipe": recipe})
+        self.app.push_screen(Confirm(f"Save the English over the {tr['language']}?", f"{p['title']} changes for everyone on the board; the original isn't kept.",
+                                     yes="Save the English"), answer)
 
     def action_delete(self) -> None:
         p = self.current()
