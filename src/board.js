@@ -27,6 +27,13 @@
 // /board/api/posts/<id>                    GET → the post; PATCH → change the fields sent; DELETE → remove it
 // /board/api/posts/<id>/translate         POST → {language, english, fields}: the post in English, for anyone to read (src/translate.js)
 // /board/api/posts/<id>/save               POST → {recipe, already}: the post's recipe, in your Recipe box
+// /board/api/posts/<id>/reviews            GET → {reviews, yours, summary}: what people who made it thought, newest first;
+//                                            PUT {rating?, note?, changes?} → your review (one each); DELETE → yours gone
+// /board/api/posts/<id>/reviews/<rid>      DELETE → that review gone (yours, or any for an admin)
+//
+// Reviews: anyone on the board but the post's author can say how it turned out
+// (1 to 5 stars, words, or both) and what they changed. A post carries their
+// count and average stars; deleting the post takes its reviews with it.
 
 import { db } from "./db.js";
 import { sameOrigin } from "./account.js";
@@ -38,11 +45,12 @@ import { translate, recipeText, TranslateError } from "./translate.js";
 
 const fail = msg => { throw new BadRequest(msg); };
 
-const LIMITS = { title: 200, note: 2000, page: 40, posts: 2000, body: 256 * 1024 };
+const LIMITS = { title: 200, note: 2000, page: 40, posts: 2000, body: 256 * 1024, review: 2000 };
 const LABEL = /^l_[0-9a-f]{10}$/;
 const ROUTE_LABEL = /^\/board\/api\/labels\/([^/]+)\/follow\/?$/;
 const ROUTE_CAT = /^\/board\/api\/categories\/([^/]+?)(?:\/(follow))?\/?$/;
 const ROUTE_POST = /^\/board\/api\/posts(?:\/(b_[0-9a-f]{10})(?:\/(save|translate))?)?\/?$/;
+const ROUTE_REVIEWS = /^\/board\/api\/posts\/(b_[0-9a-f]{10})\/reviews(?:\/(v_[0-9a-f]{10}))?\/?$/;
 const VIEWS = ["feed", "all", "mine", "saved"];
 const RECIPE_FIELDS = BOARD_FIELDS;
 const BLANK_RECIPE = { source: "", image: "", yield: "", servings: null, time: "", ingredients: [], steps: [], notes: "", labels: [] };
@@ -174,7 +182,11 @@ export async function followLabel(env, user, id, body) {
 
 const POST_SELECT = `SELECT p.*, u.username, u.display_name,
     (SELECT COUNT(*) FROM board_saves s WHERE s.post = p.id) AS saves,
-    (SELECT recipe_id FROM board_saves s WHERE s.post = p.id AND s.user_id = ?) AS saved_as
+    (SELECT recipe_id FROM board_saves s WHERE s.post = p.id AND s.user_id = ?1) AS saved_as,
+    (SELECT COUNT(*) FROM board_reviews v WHERE v.post = p.id) AS review_count,
+    (SELECT AVG(rating) FROM board_reviews v WHERE v.post = p.id AND rating IS NOT NULL) AS review_stars,
+    (SELECT COUNT(*) FROM board_reviews v WHERE v.post = p.id AND rating IS NOT NULL) AS review_rated,
+    EXISTS (SELECT 1 FROM board_reviews v WHERE v.post = p.id AND v.user_id = ?1) AS reviewed
   FROM board_posts p LEFT JOIN users u ON u.id = p.author`;
 
 // A post's recipe keeps label ids, like Recipe box; `labels` is the site's list to read them with.
@@ -190,8 +202,14 @@ function toPost(r, user, seen, labels = []) {
     // The Recipe box recipe it's kept in step with (only its author's to open).
     from_box: !!data.from, ...(data.from && r.author === user.id ? { recipe_id: data.from } : {}),
     created: r.created, updated: r.updated, saves: r.saves, saved: !!r.saved_as,
+    reviews: reviewSummary(r), reviewed: !!r.reviewed,
     ...(seen !== undefined ? { new: r.author !== user.id && (!seen || r.created > seen) } : {}),
   };
+}
+
+// {count, rated, stars}: how many reviews, how many gave stars, and their average (to one place), or null stars.
+function reviewSummary(r) {
+  return { count: r.review_count || 0, rated: r.review_rated || 0, stars: r.review_stars == null ? null : Math.round(r.review_stars * 10) / 10 };
 }
 
 export async function getPost(env, user, id) {
@@ -324,7 +342,8 @@ export async function deletePost(env, user, id) {
   if (!r) return null;
   if (r.author !== user.id && !isAdmin(user)) fail("only whoever posted it can delete it");
   // Copies already saved to someone's Recipe box stay theirs.
-  await d.batch([d.prepare("DELETE FROM board_saves WHERE post = ?").bind(id), d.prepare("DELETE FROM board_posts WHERE id = ?").bind(id)]);
+  await d.batch(["board_saves", "board_reviews"].map(t => d.prepare(`DELETE FROM ${t} WHERE post = ?`).bind(id))
+    .concat(d.prepare("DELETE FROM board_posts WHERE id = ?").bind(id)));
   return { removed: true };
 }
 
@@ -346,6 +365,77 @@ export async function saveToBox(env, user, id) {
     ON CONFLICT (post, user_id) DO UPDATE SET recipe_id = excluded.recipe_id, created = excluded.created`)
     .bind(id, user.id, recipe.id, new Date().toISOString()).run();
   return { recipe, already: false };
+}
+
+// ── reviews: how it turned out for the people who made it ──────────────────
+
+function cleanReview(body) {
+  if (!isObj(body)) fail("body must be a JSON object");
+  const out = {};
+  for (const [f, v] of Object.entries(body)) {
+    switch (f) {
+      case "rating":
+        if (v === null || v === 0 || v === "") { out.rating = null; break; }
+        if (!Number.isInteger(v) || v < 1 || v > 5) fail("rating is a whole number of stars from 1 to 5 (or null)");
+        out.rating = v; break;
+      case "note": case "changes":
+        out[f] = String(v ?? "").replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, "").trim();
+        if (out[f].length > LIMITS.review) fail(`${f} is longer than ${LIMITS.review} characters`);
+        break;
+      default: fail(`unknown field ${JSON.stringify(f)}`);
+    }
+  }
+  return out;
+}
+
+const toReview = (r, user) => ({
+  id: r.id, by: nameOf(r), yours: r.user_id === user.id, can_delete: r.user_id === user.id || isAdmin(user),
+  rating: r.rating ?? null, note: r.note, changes: r.changes, created: r.created, updated: r.updated,
+});
+
+// Every review of a post, newest first, with yours (or null) and the post's summary.
+export async function listReviews(env, user, id) {
+  const d = await db(env);
+  const p = await d.prepare(`${POST_SELECT} WHERE p.id = ?`).bind(user.id, id).first();
+  if (!p) return null;
+  const { results } = await d.prepare(`SELECT v.*, u.username, u.display_name FROM board_reviews v LEFT JOIN users u ON u.id = v.user_id
+    WHERE v.post = ? ORDER BY v.updated DESC, v.id DESC`).bind(id).all();
+  const reviews = results.map(r => toReview(r, user));
+  return { reviews, yours: reviews.find(r => r.yours) || null, summary: reviewSummary(p), can_review: p.author !== user.id };
+}
+
+// Yours, new or changed: only the fields sent change. A review needs stars or words.
+export async function saveReview(env, user, id, body) {
+  const d = await db(env);
+  const post = await postRow(d, id);
+  if (!post) return null;
+  if (post.author === user.id) fail("it's your recipe; reviews are for the people who made it");
+  const patch = cleanReview(body);
+  const had = await d.prepare("SELECT * FROM board_reviews WHERE post = ? AND user_id = ?").bind(id, user.id).first();
+  const next = { rating: had?.rating ?? null, note: had?.note || "", changes: had?.changes || "", ...patch };
+  if (next.rating == null && !next.note && !next.changes) fail("give it some stars, or say how it turned out or what you changed");
+  const t = new Date().toISOString();
+  if (had) {
+    await d.prepare("UPDATE board_reviews SET rating = ?, note = ?, changes = ?, updated = ? WHERE id = ?")
+      .bind(next.rating, next.note, next.changes, t, had.id).run();
+  } else {
+    await d.prepare("INSERT INTO board_reviews (id, post, user_id, rating, note, changes, created, updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+      .bind(newId("v"), id, user.id, next.rating, next.note, next.changes, t, t).run();
+  }
+  return listReviews(env, user, id);
+}
+
+// Yours (no rid), or the one with that id: its writer's or an admin's to take down.
+export async function deleteReview(env, user, id, rid = "") {
+  const d = await db(env);
+  if (!(await postRow(d, id))) return null;
+  const r = rid
+    ? await d.prepare("SELECT * FROM board_reviews WHERE id = ? AND post = ?").bind(rid, id).first()
+    : await d.prepare("SELECT * FROM board_reviews WHERE post = ? AND user_id = ?").bind(id, user.id).first();
+  if (!r) return null;
+  if (r.user_id !== user.id && !isAdmin(user)) fail("only whoever wrote a review can take it down");
+  await d.prepare("DELETE FROM board_reviews WHERE id = ?").bind(r.id).run();
+  return listReviews(env, user, id);
 }
 
 // ── the page and its API ───────────────────────────────────────────────────
@@ -408,6 +498,16 @@ export async function board(request, env, user, pathname) {
       try { key = decodeURIComponent(raw); } catch { return json({ error: "not found" }, 404); }
       if (sub && method === "PUT") out = await follow(env, user, key, await readBody(request));
       else if (!sub && method === "DELETE") out = await deleteCategory(env, user, key);
+      if (out === undefined) return notAllowed();
+      return out ? json(out) : json({ error: "not found" }, 404);
+    }
+    m = pathname.match(ROUTE_REVIEWS);
+    if (m) {
+      const [, id, rid] = m;
+      let out;
+      if (method === "GET" && !rid) out = await listReviews(env, user, id);
+      else if (method === "PUT" && !rid) out = await saveReview(env, user, id, await readBody(request));
+      else if (method === "DELETE") out = await deleteReview(env, user, id, rid || "");
       if (out === undefined) return notAllowed();
       return out ? json(out) : json({ error: "not found" }, 404);
     }

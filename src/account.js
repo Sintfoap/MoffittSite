@@ -7,7 +7,7 @@ import { db, now } from "./db.js";
 import { randomToken, safeEqual } from "./crypto.js";
 import { renderSVG } from "./vendor/uqr.mjs";
 import {
-  AuthError, APPS, PLACES, areaOf, getUser, createUser, setPassword, checkLogin, checkSignupAllowed, recordSignup,
+  AuthError, APPS, PLACES, areaOf, canUse, getUser, createUser, setPassword, checkLogin, checkSignupAllowed, recordSignup,
   createSession, currentSession, endSession, endUserSessions, sessionCookie, clearCookie,
   startTotp, otpauthUri, confirmTotp, replaceRecoveryCodes, disableTotp, checkSecondFactor, recoveryCodesLeft, resetWithRecoveryCode,
   adminExists, cleanDisplayName, clientIp,
@@ -66,7 +66,8 @@ export async function protect(request, env, area, inner) {
   if (user.must_change_pw || (user.areas.has("admin") && !user.totp_secret)) {
     return api ? json({ error: "finish setting up your account first" }, 403) : redirect("/account");
   }
-  if (!user.areas.has(area)) {
+  // One area, or a list of them, any of which lets the account in.
+  if (![].concat(area).some(a => user.areas.has(a))) {
     return api ? json({ error: "no access" }, 403) : messagePage("No access", "Your account doesn't have access to this part of the site.", { user, status: 403 });
   }
   const res = await inner(user);
@@ -264,7 +265,7 @@ async function dashboard(request, env) {
     try { agendaData = await agenda(env, user, day); }
     catch (e) { console.error("dashboard agenda failed:", e); }
   }
-  const apps = PLACES.filter(a => user.areas.has(a.area));
+  const apps = PLACES.filter(a => canUse(user, a));
   return html(dashboardPage({
     user, apps, glances: await glance(env, user, apps, { day, agenda: agendaData }), sessionCount, recoveryLeft: await recoveryCodesLeft(env, user.id),
     agenda: agendaData, installs: drift ? (await installed(env, user.id)).length : null, mail: mailReady(env),
@@ -441,15 +442,22 @@ async function setAccessAll(d, me, target, ids) {
   return changed;
 }
 
-// GET  /admin/api/access → {apps: [{id, name, group, parent}], users: [{id, username, display_name, disabled, you, apps: [id]}]}
+// GET  /admin/api/access → {feedback: {total, unread, open}, apps: [{id, name, group, parent}], users: [{id, username, display_name, disabled, you, apps: [id]}]}
 // POST /admin/api/access {user_id, app, on} → the same, after the change
 // POST /admin/api/access {user_id, apps: [id]} → the same, with exactly those apps on
+// How the feedback inbox stands, for the admin pages: {total, unread, open}.
+async function feedbackCounts(d) {
+  return await d.prepare(`SELECT COUNT(*) AS total, COALESCE(SUM(owner_seen IS NULL OR owner_seen < last_at), 0) AS unread,
+    COALESCE(SUM(status IN ('new', 'planned')), 0) AS open FROM feedback`).first();
+}
+
 async function adminAccessApi(request, env, d, me, method) {
   const list = async () => {
     const { results } = await d.prepare(`
       SELECT u.id, u.username, u.display_name, u.disabled, (SELECT group_concat(area) FROM user_areas a WHERE a.user_id = u.id) AS areas
       FROM users u ORDER BY u.created_at`).all();
     return json({
+      feedback: await feedbackCounts(d),
       apps: APPS.map(a => ({ id: a.id, name: a.name, group: a.group || "site", ...(a.parent ? { parent: a.parent } : {}) })),
       users: results.map(u => {
         const areas = new Set(u.areas ? u.areas.split(",") : []);
@@ -503,7 +511,7 @@ async function admin(request, env, me, pathname, method) {
     const { results: orphans } = await d.prepare(`
       SELECT owner, COUNT(*) AS n FROM todo_tasks WHERE owner NOT IN (SELECT id FROM users) GROUP BY owner`).all();
     return html(adminPage({
-      user: me, apps: APPS, orphans, books: BOOKS, bookVotes: await bookVotes(d),
+      user: me, apps: APPS, orphans, books: BOOKS, bookVotes: await bookVotes(d), feedback: await feedbackCounts(d),
       users: users.map(u => ({ ...u, areas: u.areas ? u.areas.split(",") : [] })), ...extra,
     }), { status });
   };
@@ -626,10 +634,15 @@ async function admin(request, env, me, pathname, method) {
           ...["trip_entries", "trip_members"].map(t => d.prepare(`DELETE FROM ${t} WHERE trip IN (SELECT id FROM trips WHERE owner = ?)`).bind(target.id)),
           d.prepare("DELETE FROM trips WHERE owner = ?").bind(target.id),
           d.prepare("DELETE FROM trip_members WHERE user_id = ?").bind(target.id),
-          // Their recipe board posts, follows and saves go.
+          // Their recipe board posts, follows, saves and reviews go (and the reviews of their posts).
+          d.prepare("DELETE FROM board_reviews WHERE user_id = ? OR post IN (SELECT id FROM board_posts WHERE author = ?)").bind(target.id, target.id),
           d.prepare("DELETE FROM board_saves WHERE user_id = ? OR post IN (SELECT id FROM board_posts WHERE author = ?)").bind(target.id, target.id),
           ...["board_follows", "board_seen"].map(t => d.prepare(`DELETE FROM ${t} WHERE user_id = ?`).bind(target.id)),
           d.prepare("DELETE FROM board_posts WHERE author = ?").bind(target.id),
+          // Feedback they sent goes with them; replies they wrote on others' notes too.
+          ...["feedback_photos", "feedback_replies"].map(t => d.prepare(`DELETE FROM ${t} WHERE item IN (SELECT id FROM feedback WHERE author = ?)`).bind(target.id)),
+          d.prepare("DELETE FROM feedback WHERE author = ?").bind(target.id),
+          d.prepare("DELETE FROM feedback_replies WHERE user_id = ?").bind(target.id),
           // Their marks and photos come off Food club; months they picked stay in its history.
           ...["food_marks", "food_photos"].map(t => d.prepare(`DELETE FROM ${t} WHERE user_id = ?`).bind(target.id)),
           ...["sweep_rooms", "sweep_suggestions", "sweep_runs", "sweep_keys"].map(t => d.prepare(`DELETE FROM ${t} WHERE user_id = ?`).bind(target.id)),

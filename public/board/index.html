@@ -136,6 +136,23 @@ ol.steps li::marker { color: var(--gold); font-weight: 700; }
 .translated span { margin-right: auto; color: var(--muted); }
 .translated button.link { background: none; border: 0; padding: 0; font: 700 12.5px var(--mono); color: var(--gold); cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
 .more { text-align: center; }
+/* Reviews, under an open post: what people who made it thought, and writing yours. */
+.reviews { margin-top: 18px; padding-top: 2px; border-top: 1px dashed var(--line); }
+.reviews .stars, .post .meta .rated { color: var(--gold); }
+.reviews .stars { letter-spacing: 2px; }
+.reviews .avg { color: var(--ink); margin: 0 0 10px; }
+.review { padding: 8px 0 8px 12px; border-left: 2px solid var(--line); margin-bottom: 10px; }
+.review.yours { border-left-color: var(--gold); }
+.review .who { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; font-size: 13px; }
+.review .who b { color: var(--ink); }
+.review p { margin: 4px 0 0; white-space: pre-wrap; }
+.review .changes b { color: var(--gold); font-weight: 400; }
+.review button.link, .reviews button.link { background: none; border: 0; padding: 0; margin-top: 4px; font: 400 12px var(--mono); color: var(--faint); cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+#star-pick { display: inline-flex; gap: 2px; }
+#star-pick button { background: none; border: 0; padding: 0 3px; font-size: 26px; line-height: 1; color: var(--line-2); cursor: pointer; }
+#star-pick button[aria-pressed="true"] { color: var(--gold); }
+#star-pick button:hover { color: var(--gold); }
+#star-said { color: var(--faint); font-size: 13px; margin-left: 8px; }
 
 dialog { width: min(680px, calc(100vw - 32px)); max-height: calc(100vh - 32px); background: var(--panel); color: var(--ink); border: 1px solid var(--gold); padding: 22px 24px; }
 dialog::backdrop { background: rgb(0 0 0 / .55); }
@@ -175,7 +192,7 @@ details.about p { margin: 8px 0 0; }
   <div class="kicker">Recipe board</div>
   <h1>Shared recipes</h1>
   <p class="lede">Recipes everyone shares, filed under their labels' categories. Follow the ones you like.</p>
-  <details class="about"><summary>How it works</summary><p>Each recipe is filed under the keys of its labels, like Season or Cuisine, so a recipe can be in several categories. Star a category, or one of its values, and anything new in it shows up in your feed. Save any of them to your Recipe box. Each day there's one recipe of the day from the board, the same for everyone.</p></details>
+  <details class="about"><summary>How it works</summary><p>Each recipe is filed under the keys of its labels, like Season or Cuisine, so a recipe can be in several categories. Star a category, or one of its values, and anything new in it shows up in your feed. Save any of them to your Recipe box, and once you've made one, review it: give it stars, say how it turned out and what you changed. Each day there's one recipe of the day from the board, the same for everyone.</p></details>
   <div id="error" class="msg bad" role="alert" hidden></div>
   <div id="done" class="msg good" role="status" hidden></div>
 
@@ -231,7 +248,19 @@ details.about p { margin: 8px 0 0; }
   </form>
 </dialog>
 
-<footer class="keybar" aria-label="Keyboard shortcuts"><span><kbd>n</kbd>share a recipe</span><span><kbd>j k</kbd>next, previous</span><span><kbd>enter</kbd>open</span><span><kbd>s</kbd>save to Recipe box</span><span><kbd>E</kbd>English</span><span><kbd>f</kbd>follow this category</span><span><kbd>g</kbd>then a key from the menu to jump</span><span><kbd>\</kbd>Sidebar</span><a class="end" href="/logout" data-key="o"><kbd>g o</kbd>Sign out</a></footer>
+<dialog id="reviewer">
+  <form method="dialog" id="review-form">
+    <h2 id="review-title">Review</h2>
+    <p class="empty">For people who made it: how it turned out, and anything you did differently.</p>
+    <div class="field">How good was it?<div class="row"><span id="star-pick" role="group" aria-label="Stars"></span><span id="star-said">No stars</span></div></div>
+    <input type="hidden" name="rating" value="0">
+    <label class="field">How it turned out<textarea name="note" rows="3" maxlength="2000" placeholder="A hit with everyone; a little dry the second day"></textarea></label>
+    <label class="field">What you changed (optional)<textarea name="changes" rows="3" maxlength="2000" placeholder="Half the sugar, added walnuts, baked 5 minutes less"></textarea></label>
+    <div class="row"><button class="btn" value="save" id="review-btn">Post review</button><button class="btn quiet" value="cancel" formnovalidate>Cancel</button></div>
+  </form>
+</dialog>
+
+<footer class="keybar" aria-label="Keyboard shortcuts"><span><kbd>n</kbd>share a recipe</span><span><kbd>j k</kbd>next, previous</span><span><kbd>enter</kbd>open</span><span><kbd>s</kbd>save to Recipe box</span><span><kbd>v</kbd>review it</span><span><kbd>E</kbd>English</span><span><kbd>f</kbd>follow this category</span><span><kbd>g</kbd>then a key from the menu to jump</span><span><kbd>\</kbd>Sidebar</span><a class="end" href="/logout" data-key="o"><kbd>g o</kbd>Sign out</a></footer>
 <script src="/keys.js" defer></script>
 <script type="module" src="/board/app.js"></script>
 </body>

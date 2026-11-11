@@ -1191,6 +1191,23 @@ def delete_board_post(post_id: str) -> dict:
 def save_board_post(post_id: str) -> dict:
     """The post's recipe, copied into your Recipe box: {recipe, already}."""
     return api("POST", f"/board/api/posts/{_q(post_id)}/save")
+
+
+def board_reviews(post_id: str) -> dict:
+    """{reviews, yours, summary, can_review}: what people who made the post thought (newest first), yours or None,
+    {count, rated, stars} and whether you can review it (anyone but whoever shared it)."""
+    return _get(f"/board/api/posts/{_q(post_id)}/reviews")
+
+
+def review_board_post(post_id: str, fields: dict) -> dict:
+    """Your review, new or changed: {rating (1 to 5, or None), note (how it turned out), changes (what you did differently)};
+    only the fields sent change. The post's reviews back, as board_reviews gives them."""
+    return api("PUT", f"/board/api/posts/{_q(post_id)}/reviews", fields)
+
+
+def delete_board_review(post_id: str, review_id: str = "") -> dict:
+    """Takes your review down (or, for an admin, the one with that id). The post's reviews back."""
+    return api("DELETE", f"/board/api/posts/{_q(post_id)}/reviews" + (f"/{_q(review_id)}" if review_id else ""))
 # ───────────────────────────── recipe labels ────────────────────────────────
 # /labels/api/ (src/labels.js): the one list of labels recipes pick from, kept by whoever has Recipe labels.
 
@@ -1284,3 +1301,57 @@ def remove_food_photo(pick_id: str, photo_id: str) -> dict:
 def save_food_recipe(pick_id: str) -> dict:
     """The pick's recipe, copied into your Recipe box: {recipe}."""
     return api("POST", f"/food/api/picks/{_q(pick_id)}/save")
+
+
+# ──────────────────────────────── feedback ──────────────────────────────────
+# /feedback/api/ (src/feedback.js)
+
+def feedback() -> dict:
+    """{mine, inbox (admins; else None), owner, kinds, statuses, sources, photos_each, links_each}."""
+    return _get("/feedback/api/feedback")
+
+
+def feedback_linkable(app: str, q: str = "") -> list:
+    """Up to 30 things in one app (a source id from feedback()["sources"]) whose name has q in it: [{app, id, title, sub}]."""
+    return _get(f"/feedback/api/linkable?app={_q(app)}&q={_q(q)}")["items"]
+
+
+def feedback_note(note_id: str) -> dict:
+    """The whole note (opening it marks it read): {kind, subject, message, status, links, photos, replies, can_*}."""
+    return _get(f"/feedback/api/items/{_q(note_id)}")
+
+
+def send_feedback(fields: dict) -> dict:
+    """{kind, subject, message, links: [{app, id} | {app: "url", url}]} → the new note."""
+    return api("POST", "/feedback/api/items", fields)
+
+
+def update_feedback(note_id: str, changes: dict) -> dict:
+    """{kind?, subject?, message?, links?} for your own note, or {status} for admins."""
+    return api("PATCH", f"/feedback/api/items/{_q(note_id)}", changes)
+
+
+def delete_feedback(note_id: str) -> dict:
+    return api("DELETE", f"/feedback/api/items/{_q(note_id)}")
+
+
+def reply_feedback(note_id: str, text: str) -> dict:
+    return api("POST", f"/feedback/api/items/{_q(note_id)}/replies", {"text": text})
+
+
+def add_feedback_photo(note_id: str, path: str, caption: str = "") -> dict:
+    """Sends a picture file (JPEG, PNG, WebP or GIF, at most PHOTO_BYTES) with your note; the note back."""
+    import base64
+    p = Path(path).expanduser()
+    try:
+        raw = p.read_bytes()
+    except OSError as e:
+        raise SiteError(f"couldn't read {p}: {e.strerror or e}") from None
+    if len(raw) > PHOTO_BYTES:
+        raise SiteError(f"that photo is {len(raw) // 1024} KB; the most the site keeps is {PHOTO_BYTES // 1024} KB, "
+                        "so make it smaller first (or add it from the website, which shrinks it for you)")
+    return api("POST", f"/feedback/api/items/{_q(note_id)}/photos", {"data": base64.b64encode(raw).decode(), "caption": caption})
+
+
+def remove_feedback_photo(note_id: str, photo_id: str) -> dict:
+    return api("DELETE", f"/feedback/api/items/{_q(note_id)}/photos/{_q(photo_id)}")

@@ -13,6 +13,8 @@
 //          platform tells the site (a pusher, see src/bridges.js); with no
 //          pusher, the cron's syncs push what they bring in. Encrypted
 //          messages say only who sent them: their keys are in your browser.
+//   Feedback  a new note (or a sender's answer) to the admins, and an admin's
+//          reply to whoever sent the note (src/feedback.js). Always on.
 //   Drift  a reminder before a timed item starts (drift_lead minutes), and at
 //          8am on the day of an all-day one. Done and deleted items don't
 //          remind. Times are read in your time zone, which the page sends.
@@ -229,6 +231,23 @@ export async function chatPushes(env, { room, author, message, hereSince }) {
     else if (room.kind === "dm" ? p.chat_dms : p.chat_rooms) groups[room.kind === "dm" ? "dm" : "room"].push(p.id);
   }
   await Promise.all(Object.entries(groups).map(([k, list]) => deliver(env, d, list, kinds[k], { urgency: "high", ttl: 3600 })));
+}
+
+// Feedback (src/feedback.js): a new note or a sender's answer to every admin
+// (to: "owner"), or an admin's reply to the note's sender (to: their id).
+// Never to whoever wrote it.
+export async function feedbackPushes(env, { to, from, note, text, reply = false }) {
+  if (!configured(env)) return;
+  const d = await db(env);
+  const ids = to === "owner"
+    ? (await d.prepare("SELECT user_id FROM user_areas WHERE area = 'admin'").all()).results.map(r => r.user_id)
+    : [to];
+  const people = (await reachable(d, ids.filter(id => id !== from.id), to === "owner" ? "admin" : "feedback")).map(p => p.id);
+  const who = from.display_name || from.username;
+  await deliver(env, d, people, {
+    title: reply ? `${who} replied about “${clip(note.subject)}”` : `Feedback from ${who}: ${clip(note.subject)}`,
+    body: clip(text), url: `/feedback/#${note.id}`, tag: `feedback-${note.id}`,
+  }, { ttl: 86400 });
 }
 
 // ── messages from connected platforms ──────────────────────────────────────

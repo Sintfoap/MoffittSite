@@ -399,12 +399,15 @@ def test_admins_switch_apps_on_and_off_in_the_terminal(admin_site):
         page = app.screen
         assert type(page).__name__ == "AdminPage"
         apps = [a["id"] for a in page.data["apps"]]
-        assert apps == ["drift", "admin", "plugins", "chat", "chat-bridges", "recipes", "meals", "pantry", "sweep", "trips", "board", "labels", "food", "notifications"]
+        assert apps == ["drift", "admin", "plugins", "chat", "chat-bridges", "recipes", "meals", "pantry", "sweep", "trips", "board", "labels", "food", "feedback", "notifications"]
         # Grouped as the menu is, with Chat connections under Chat.
         assert [(t, [a["id"] for a in xs]) for t, xs in grouped(page.data["apps"])] == [
-            ("APPS", ["drift", "plugins", "chat", "chat-bridges", "sweep", "trips"]),
+            ("APPS", ["drift", "plugins", "chat", "chat-bridges", "sweep", "trips", "feedback"]),
             ("KITCHEN", ["recipes", "labels", "meals", "pantry", "board", "food"]),
             ("ACCOUNT", ["admin", "notifications"])]
+        # The feedback inbox's counts: sam's note is waiting.
+        assert page.data["feedback"] == {"total": 1, "unread": 1, "open": 1}
+        assert "1 note, 1 unread" in str(page.query_one("#feedback-line").render())
         # A switch for every app on every account; your own admin one can't be turned off.
         assert len(page.boxes) == len(apps) * len(page.data["users"])
         me = next(i for i, u in enumerate(page.data["users"]) if u["you"])
@@ -1700,6 +1703,50 @@ def test_recipe_board_follows_a_label_key_saves_a_post_and_shares_one(real_site)
     run_app("board", board)
 
 
+def test_recipe_board_reviews_a_post_with_stars_and_what_was_changed(real_site):
+    async def review(app, pilot):
+        page = app.screen
+        await page.go(view="all")
+        await settle(pilot, 0.6)
+        # sam's Shortbread, open: nobody's reviewed it yet.
+        assert page.current()["title"] == "Shortbread"
+        assert "Nobody's reviewed it yet" in str(page.query_one("#reviews").render())
+        page.query_one("#posts").focus()
+        # v: ryan made it; four stars, how it went, what he changed.
+        await pilot.press("v")
+        await settle(pilot, 0.4)
+        dialog = app.screen
+        assert type(dialog).__name__ == "ReviewDialog"
+        dialog.query_one("#rating").value = 4
+        dialog.query_one("#note").text = "Crumbly in the best way."
+        dialog.query_one("#changes").text = "Added lemon zest."
+        await pilot.press("ctrl+s")
+        await settle(pilot, 0.6)
+        assert page.current()["reviews"] == {"count": 1, "rated": 1, "stars": 4}
+        shown = str(page.query_one("#reviews").render())
+        assert "★★★★☆" in shown and "Crumbly in the best way." in shown and "Changed: Added lemon zest." in shown
+        assert "★ 4 · 1 review" in str(page.query_one("#posts").get_option_at_index(page.query_one("#posts").highlighted).prompt)
+        mine = site.board_reviews(page.current()["id"])["yours"]
+        assert (mine["rating"], mine["changes"]) == (4, "Added lemon zest.")
+        # v again changes it: the dialog starts with what he wrote.
+        await pilot.press("v")
+        await settle(pilot, 0.4)
+        dialog = app.screen
+        assert dialog.query_one("#rating").value == 4 and dialog.query_one("#note").text == "Crumbly in the best way."
+        dialog.query_one("#rating").value = 5
+        await pilot.press("ctrl+s")
+        await settle(pilot, 0.6)
+        assert page.current()["reviews"]["stars"] == 5
+        # And takes it down.
+        await pilot.press("v")
+        await settle(pilot, 0.4)
+        await pilot.click("#delete")
+        await settle(pilot, 0.6)
+        assert page.current()["reviews"]["count"] == 0
+        assert site.board_reviews(page.current()["id"])["yours"] is None
+    run_app("board", review)
+
+
 def test_g_b_opens_the_terminal_recipe_board(real_site):
     async def go(app, pilot):
         await settle(pilot, 0.5)
@@ -1907,6 +1954,119 @@ def test_g_f_opens_the_terminal_food_club(real_site):
         app.go("f")
         await settle(pilot, 0.5)
         assert type(app.screen).__name__ == "FoodPage"
+    run_app("dashboard", go)
+
+
+# ── feedback ───────────────────────────────────────────────────────────────
+
+def test_feedback_sends_a_note_with_links_photos_and_a_reply(real_site, tmp_path):
+    photo = tmp_path / "screenshot.png"
+    photo.write_bytes(bytes([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]) + bytes(24))
+
+    async def feedback(app, pilot):
+        page = app.screen
+        assert type(page).__name__ == "FeedbackPage"
+        assert page.data["mine"] == [] and page.data["inbox"] is None and page.note is None
+        assert {s["id"] for s in page.data["sources"]} >= {"recipes", "pantry", "food", "drift"}
+
+        # n: write a note.
+        await pilot.press("n")
+        dialog = app.screen
+        assert type(dialog).__name__ == "WriteDialog"
+        dialog.query_one("#kind").value = "bug"
+        dialog.query_one("#subject").value = "Flour went missing"
+        dialog.query_one("#message").text = "My flour isn't on the shopping list."
+        await pilot.press("ctrl+s")
+        await settle(pilot, 0.6)
+        n = page.note
+        assert (n["subject"], n["kind"], n["status"], n["yours"]) == ("Flour went missing", "bug", "new", True)
+
+        # l: link the pantry's flour, found by searching.
+        await pilot.press("l")
+        await settle(pilot, 0.3)
+        picker = app.screen
+        assert type(picker).__name__ == "LinkDialog"
+        picker.query_one("#source").value = "pantry"
+        picker.query_one("#find").value = "flour"
+        await settle(pilot, 0.8)
+        assert [i["title"] for i in picker.items] == ["Whole wheat flour"]
+        picker.query_one("#found").focus()
+        await pilot.press("enter")
+        await settle(pilot, 0.2)
+        await pilot.press("escape")
+        await settle(pilot, 0.6)
+        assert [(l["app"], l["title"]) for l in page.note["links"]] == [("pantry", "Whole wheat flour")]
+
+        # u: any web link too.
+        await pilot.press("u")
+        await settle(pilot, 0.3)
+        app.screen.query_one("#answer").value = "https://example.com/flour"
+        await pilot.press("enter")
+        await settle(pilot, 0.6)
+        assert [l["app"] for l in page.note["links"]] == ["pantry", "url"]
+        assert page.query_one("#links").option_count == 2
+
+        # p: a screenshot from a file.
+        await pilot.press("p")
+        await settle(pilot, 0.3)
+        app.screen.query_one("#path").value = str(photo)
+        app.screen.query_one("#caption").value = "The list"
+        await pilot.click("#ok")
+        await settle(pilot, 0.6)
+        assert [p["caption"] for p in page.note["photos"]] == ["The list"]
+
+        # c: say more; s does nothing for someone who isn't an admin.
+        await pilot.press("c")
+        await settle(pilot, 0.3)
+        app.screen.query_one("#text").text = "It came back after a refresh."
+        await pilot.press("ctrl+s")
+        await settle(pilot, 0.6)
+        assert [r["text"] for r in page.note["replies"]] == ["It came back after a refresh."]
+        await pilot.press("s")
+        await settle(pilot, 0.4)
+        assert page.note["status"] == "new"
+        assert [x["subject"] for x in site.feedback()["mine"]] == ["Flour went missing"]
+    run_app("feedback", feedback)
+
+
+def test_feedback_inbox_for_admins_sets_status_and_replies(admin_site):
+    async def inbox(app, pilot):
+        page = app.screen
+        # sam's note is waiting, so the page opens on the inbox, with it open (and now read).
+        assert page.tab == "inbox"
+        n = page.note
+        assert (n["subject"], n["by"], n["can_set_status"], n["can_edit"]) == ("Pavlova cracked", "Sam", True, False)
+        assert [(l["app"], l["title"]) for l in n["links"]] == [("food", "Pavlova")]
+        assert site.feedback()["inbox"][0]["unread"] is False
+        await pilot.press("s")
+        await settle(pilot, 0.5)
+        assert page.note["status"] == "planned"
+        await pilot.press("c")
+        await settle(pilot, 0.3)
+        app.screen.query_one("#text").text = "Probably the oven door. Leave it shut!"
+        await pilot.press("ctrl+s")
+        await settle(pilot, 0.6)
+        assert [(r["by"], r["from_owner"]) for r in page.note["replies"]] == [("Ryan M", True)]
+        # v: ryan's own sent notes (none).
+        await pilot.press("v")
+        await settle(pilot, 0.5)
+        assert page.tab == "mine" and page.note is None
+    run_app("feedback", inbox)
+
+
+def test_feedback_status_filter():
+    from sintfoap.feedback_page import matches
+    assert [s for s in ("new", "planned", "done", "closed") if matches({"status": s}, "open")] == ["new", "planned"]
+    assert matches({"status": "done"}, "all") and matches({"status": "done"}, "done") and not matches({"status": "done"}, "new")
+
+
+def test_g_k_opens_the_terminal_feedback(real_site):
+    async def go(app, pilot):
+        await settle(pilot, 0.5)
+        assert any(n["key"] == "k" for n in app.data["nav"])
+        app.go("k")
+        await settle(pilot, 0.5)
+        assert type(app.screen).__name__ == "FeedbackPage"
     run_app("dashboard", go)
 
 

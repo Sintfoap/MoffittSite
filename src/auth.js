@@ -45,6 +45,8 @@ export const APPS = [
   { id: "board", area: "board", name: "Recipe board", href: "/board/", icon: "board", key: "b", group: "kitchen", blurb: "Share recipes, follow the label categories you like, and save what turns up in your feed." },
   { id: "labels", area: "labels", parent: "recipes", name: "Recipe labels", href: "/labels/", icon: "labels", key: "l", group: "kitchen", blurb: "Keep the one list of labels, like Season: Fall, that recipes and the Recipe board's categories use." },
   { id: "food", area: "food", name: "Food club", href: "/food/", icon: "food", key: "f", group: "kitchen", blurb: "A food a month, picked by one of us and made by everyone: recipes, favorites and photos." },
+  // Admins can always open Feedback, toggle or not: its inbox is where they read what people send.
+  { id: "feedback", area: "feedback", name: "Feedback", href: "/feedback/", icon: "feedback", key: "k", admins: true, blurb: "Tell the site's owner what you think, with photos and links to the exact recipe, item or post." },
   { id: "notifications", area: "notifications", name: "Notifications", href: "/notifications/", icon: "bell", key: "n", blurb: "Alerts on your phone or computer for Chat and Drift.", group: "account" },
 ];
 // The apps that are places of their own: the menu, the dashboard's cards.
@@ -53,6 +55,8 @@ export const PLACES = APPS.filter(a => !a.parent);
 export const AREAS = APPS.map(a => a.area);                                // every area the site knows about
 export const DEFAULT_AREAS = APPS.filter(a => a.onForNew).map(a => a.area); // what a new account can use
 export const areaOf = id => APPS.find(a => a.id === id).area;
+// Whether this account can open this app: its toggle, or (for apps marked `admins`) being an admin.
+export const canUse = (user, a) => user.areas.has(a.area) || (!!a.admins && user.areas.has("admin"));
 
 const RESERVED = new Set(["admin", "administrator", "root", "system", "support", "help", "login", "logout",
   "signup", "account", "dashboard", "api", "www", "mail", "moderator", "owner", "security", "null", "undefined"]);

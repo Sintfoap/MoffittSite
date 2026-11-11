@@ -24,7 +24,7 @@
 import { glance } from "./glance.js";
 import { db, now } from "./db.js";
 import { randomBytes, randomToken, sha256 } from "./crypto.js";
-import { createSession, currentSession, clientIp, getUser, recoveryCodesLeft, endUserSessions, cleanDisplayName, AuthError, PLACES } from "./auth.js";
+import { createSession, currentSession, clientIp, getUser, recoveryCodesLeft, endUserSessions, cleanDisplayName, AuthError, PLACES, canUse } from "./auth.js";
 import { mailReady } from "./mail.js";
 import { sameOrigin } from "./account.js";
 import { agenda, visitorNow } from "./drift.js";
@@ -153,7 +153,7 @@ async function dashboard(request, env) {
       today = { late: a.late.map(out), due: a.due.map(out), url: origin + "/todo/" };
     } catch (e) { console.error("dashboard agenda failed:", e); }
   }
-  const places = setup ? [] : PLACES.filter(a => user.areas.has(a.area));
+  const places = setup ? [] : PLACES.filter(a => canUse(user, a));
   // The web dashboard's live line on each card (src/glance.js), as `now`.
   const now = await glance(env, user, places, { day: clock.day, agenda: today && { late: today.late, due: today.due } });
   return json({

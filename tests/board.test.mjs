@@ -325,3 +325,59 @@ test("removing a category is removing its key, for whoever keeps Recipe labels",
   // The post stays, under the keys it has left.
   assert.deepEqual((await api(ryan, "GET", `posts/${p.id}`)).json.categories, ["Course"]);
 });
+
+test("reviews: people who made it give stars, say how it turned out and what they changed", async () => {
+  const env = await board(), ryan = await member(env, "ryan"), sam = await member(env, "sam"), josh = await member(env, "josh");
+  const p = (await api(ryan, "POST", "posts", { labels: [L.baking], title: "Brownies", recipe: RECIPE })).json;
+  // Nothing yet.
+  assert.deepEqual(p.reviews, { count: 0, rated: 0, stars: null });
+  assert.equal(p.reviewed, false);
+  const none = (await api(sam, "GET", `posts/${p.id}/reviews`)).json;
+  assert.deepEqual(none.reviews, []);
+  assert.equal(none.yours, null);
+  assert.equal(none.can_review, true);
+  // It's ryan's own recipe, so he can't review it.
+  assert.equal((await api(ryan, "GET", `posts/${p.id}/reviews`)).json.can_review, false);
+  assert.match((await api(ryan, "PUT", `posts/${p.id}/reviews`, { rating: 5 })).json.error, /your recipe/);
+  // A review needs stars or words, and the stars are 1 to 5.
+  for (const bad of [{}, { rating: 6 }, { rating: 2.5 }, { rating: "4" }, { note: "  " }, { mood: "happy" }, { note: "x".repeat(2001) }]) {
+    assert.equal((await api(sam, "PUT", `posts/${p.id}/reviews`, bad)).status, 400, JSON.stringify(bad));
+  }
+  const s = await api(sam, "PUT", `posts/${p.id}/reviews`, { rating: 4, note: "Fudgy and gone in a day.", changes: "Half the sugar, added walnuts." });
+  assert.equal(s.status, 200, s.text);
+  assert.equal(s.json.yours.rating, 4);
+  assert.equal(s.json.yours.by, "Sam");
+  assert.equal(s.json.yours.changes, "Half the sugar, added walnuts.");
+  // Just words is fine too.
+  await api(josh, "PUT", `posts/${p.id}/reviews`, { note: "Made it twice." });
+  let r = (await api(ryan, "GET", `posts/${p.id}/reviews`)).json;
+  assert.deepEqual(r.reviews.map(x => x.by), ["Josh", "Sam"]);
+  assert.deepEqual(r.summary, { count: 2, rated: 1, stars: 4 });
+  assert.ok(r.reviews.every(x => !x.yours && !x.can_delete));
+  // The post carries the summary, and whether you've reviewed it, wherever it shows.
+  const seen = (await api(sam, "GET", "posts?view=all")).json.posts[0];
+  assert.deepEqual(seen.reviews, { count: 2, rated: 1, stars: 4 });
+  assert.equal(seen.reviewed, true);
+  assert.equal((await api(ryan, "GET", `posts/${p.id}`)).json.reviewed, false);
+  // One each: sending again changes yours, keeping what wasn't sent.
+  r = (await api(josh, "PUT", `posts/${p.id}/reviews`, { rating: 5 })).json;
+  assert.equal(r.reviews.length, 2);
+  assert.equal(r.yours.note, "Made it twice.");
+  assert.equal(r.summary.stars, 4.5);
+  // Stars can be taken back, leaving the words.
+  r = (await api(josh, "PUT", `posts/${p.id}/reviews`, { rating: null })).json;
+  assert.equal(r.yours.rating, null);
+  assert.deepEqual(r.summary, { count: 2, rated: 1, stars: 4 });
+  // Only its writer takes a review down.
+  const samsId = r.reviews.find(x => x.by === "Sam").id;
+  assert.match((await api(josh, "DELETE", `posts/${p.id}/reviews/${samsId}`)).json.error, /only/);
+  assert.equal((await api(sam, "DELETE", `posts/${p.id}/reviews/${samsId}`)).json.reviews.length, 1);
+  r = (await api(josh, "DELETE", `posts/${p.id}/reviews`)).json;
+  assert.deepEqual(r.reviews, []);
+  assert.equal((await api(josh, "DELETE", `posts/${p.id}/reviews`)).status, 404);
+  assert.equal((await api(josh, "GET", "posts/b_00000000ff/reviews")).status, 404);
+  // Deleting the post takes its reviews with it.
+  await api(sam, "PUT", `posts/${p.id}/reviews`, { rating: 3 });
+  await api(ryan, "DELETE", `posts/${p.id}`);
+  assert.equal(sql(env, "SELECT * FROM board_reviews").length, 0);
+});
