@@ -4,7 +4,9 @@ Each key (Season, Cuisine...) with its values under it. The keys are also the
 Recipe board's categories. n adds labels: a key and any number of values, like
 "Season: Fall, Winter" (a key that's already there gets the new values), a adds
 more values under the highlighted key, e renames the highlighted value or key,
-x removes it. Renaming or removing applies to every recipe that has it."""
+x removes it. Renaming or removing applies to every recipe that has it. k sets
+a value's keywords (pumpkin, squash): words that make Recipe box's Suggest
+labels offer it."""
 from __future__ import annotations
 
 from rich.text import Text
@@ -36,7 +38,7 @@ class LabelsPage(Page):
     LabelsPage #list { height: auto; max-height: 30; }
     """
     BINDINGS = [Binding("n", "add", "Add labels"), Binding("a", "add_under", "Add under key"),
-                Binding("e", "rename", "Rename"), Binding("x", "remove", "Remove"), Binding("r", "refresh", "Refresh")]
+                Binding("e", "rename", "Rename"), Binding("k", "keywords", "Keywords"), Binding("x", "remove", "Remove"), Binding("r", "refresh", "Refresh")]
 
     def __init__(self):
         super().__init__()
@@ -50,7 +52,8 @@ class LabelsPage(Page):
             yield Static(Text("The label list", style=f"bold {INK}"), classes="h1")
             yield Static(Text("The one list everyone picks from in Recipe box, like Season: Fall, so nobody ends up with Fall and Autumn. "
                               "Each key is also a category on the Recipe board. n adds labels (Season: Fall, Winter), a adds more under the "
-                              "highlighted key, e renames, x removes; renaming or removing applies to every recipe.", style=MUTED), classes="sub")
+                              "highlighted key, e renames, x removes; renaming or removing applies to every recipe. k sets a value's keywords "
+                              "(pumpkin, squash for Fall), so Recipe box's Suggest labels offers it for recipes that mention them.", style=MUTED), classes="sub")
             yield OptionList(id="list", classes="card")
         yield Footer()
 
@@ -76,7 +79,8 @@ class LabelsPage(Page):
             for lb in (x for x in data["labels"] if x["key"].casefold() == k["key"].casefold()):
                 self.rows.append(("label", lb))
                 box.add_option(Option(Text.assemble(("    " + (lb["value"] or "(no value)"), INK if lb["value"] else FAINT),
-                                                    (f"   {used(lb)}" if used(lb) else "", FAINT))))
+                                                    (f"   {used(lb)}" if used(lb) else "", FAINT),
+                                                    (f"   ≈ {lb['keywords']}" if lb.get("keywords") else "", MUTED))))
         box.border_title = plural(len(data["labels"]), "label")
         if self.rows:
             box.highlighted = min(at or 0, len(self.rows) - 1)
@@ -136,6 +140,23 @@ class LabelsPage(Page):
             self.app.push_screen(Ask(f"Rename {x['key']}", "Every value under it moves with it.", value=x["key"], ok="Rename"), renamed)
         else:
             self.app.push_screen(Ask(f"Rename {x['key']}: {x['value']}", "It changes on every recipe that has it.", value=x["value"], ok="Rename"), renamed)
+
+    def action_keywords(self) -> None:
+        row = self.current()
+        if not row or row[0] != "label":
+            self.app.notify("Highlight a value (like Fall) to give it keywords.", timeout=3)
+            return
+        lb = row[1]
+        name = f"{lb['key']}: {lb['value']}" if lb["value"] else lb["key"]
+
+        async def answer(text: str | None) -> None:
+            if text is not None and text.strip() != (lb.get("keywords") or ""):
+                await self.call(site.set_label_keywords, lb["id"], text)
+        also = f", as well as {lb['value']} itself" if lb["value"] else ""
+        self.app.push_screen(Ask(f"Keywords for {name}",
+                                 f"Separated by commas. Recipe box's Suggest labels offers this label for a recipe with any of them in its "
+                                 f"title, ingredients, steps or notes{also}. Start one with - to ignore a phrase (-fall apart).",
+                                 value=lb.get("keywords") or "", placeholder="pumpkin, squash, apple cider", ok="Save"), answer)
 
     def action_remove(self) -> None:
         row = self.current()

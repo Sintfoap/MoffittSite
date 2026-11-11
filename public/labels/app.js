@@ -37,6 +37,7 @@ async function run(fn) {
 const plural = (n, one, many = one + "s") => `${n} ${n === 1 ? one : many}`;
 const used = x => [x.recipes && plural(x.recipes, "recipe"), x.posts && plural(x.posts, "board post")].filter(Boolean).join(", ");
 const low = s => String(s || "").toLowerCase();
+const labelText = l => l.value ? `${l.key}: ${l.value}` : l.key;
 
 // "Season: Fall, Winter" in the key box, or a key and its values in their own boxes.
 export function parseAdd(key, values) {
@@ -76,13 +77,20 @@ function render() {
         const to = prompt(`Rename ${l.key}: ${l.value || "(no value)"} to:`, l.value);
         if (to !== null && to.trim() !== l.value) run(async () => { await api("PATCH", `labels/${l.id}`, { value: to }); await load(); });
       });
+      // Keywords: the words in a recipe that Recipe box's Suggest labels takes to mean this label.
+      const kw = el("button", { type: "button", className: "kw", textContent: l.keywords ? `≈ ${l.keywords}` : "+ keywords",
+        title: `Keywords for Suggest labels${l.keywords ? `: ${l.keywords}` : ""}`, ariaLabel: `Keywords for ${labelText(l)}` });
+      kw.addEventListener("click", () => {
+        const to = prompt(`Keywords for ${labelText(l)}, separated by commas. Recipe box's Suggest labels offers this label for a recipe with any of them in its title, ingredients, steps or notes${l.value ? `, as well as ${l.value} itself` : ""}. Start one with - to ignore a phrase (-fall apart).`, l.keywords || "");
+        if (to !== null && to.trim() !== (l.keywords || "")) run(async () => { await api("PATCH", `labels/${l.id}`, { keywords: to }); await load(); });
+      });
       const x = el("button", { type: "button", className: "x", textContent: "×", title: `Remove ${l.value || l.key}`, ariaLabel: `Remove ${l.key}: ${l.value}` });
       x.addEventListener("click", () => {
         const u = used(l);
         if (!confirm(`Remove ${l.value ? `${l.key}: ${l.value}` : l.key}?${u ? ` It comes off ${u}.` : ""}`)) return;
         run(async () => { await api("DELETE", `labels/${l.id}`); await load(); });
       });
-      return el("li", {}, el("span", {}, l.value || el("i", { className: "empty", textContent: "no value" }), el("small", { textContent: l.recipes || "", title: used(l) || "not used yet" })), ren, x);
+      return el("li", {}, el("span", {}, l.value || el("i", { className: "empty", textContent: "no value" }), el("small", { textContent: l.recipes || "", title: used(l) || "not used yet" })), kw, ren, x);
     }));
     const more = el("form", { className: "more-values" },
       el("input", { type: "text", name: "values", maxLength: 2000, placeholder: `More under ${k.key}, separated by commas`, ariaLabel: `More values under ${k.key}`, required: true }),

@@ -187,6 +187,10 @@ function recipeBody(post) {
   if (r.steps.length) full.append(el("h3", { textContent: "Steps" }), el("ol", { className: "steps" }, ...r.steps.map(s => el("li", { textContent: s }))));
   if (r.notes) full.append(el("h3", { textContent: "Notes" }), el("p", { className: "notes", textContent: r.notes }));
 
+  // Shared from a Recipe box: the same recipe, so changes there show here.
+  if (p.from_box) full.append(el("p", { className: "empty synced" }, p.recipe_id
+    ? el("span", {}, "Kept in step with ", el("a", { href: `/recipes/#${p.recipe_id}`, textContent: "your Recipe box" }), ": change it there or here.")
+    : `Kept in step with ${p.by}'s Recipe box.`));
   const acts = el("div", { className: "actions" });
   if (board.recipe_box) {
     const save = el("button", { type: "button", className: p.saved ? "btn quiet save" : "btn save", textContent: p.saved ? "Saved ✓ open it" : "Save to Recipe box" });
@@ -387,6 +391,7 @@ function openEditor(p, { recipe } = {}) {
   editing = p || {};
   const f = $("#edit-form");
   $("#edit-title").textContent = p ? "Edit post" : "Share a recipe";
+  $("#edit-synced").hidden = !p?.from_box;
   $("#post-btn").textContent = p ? "Save" : "Post";
   f.recipe_id.replaceChildren(...board.recipes.map(r => new Option(r.title, r.id)));
   if (recipe) f.recipe_id.value = recipe;

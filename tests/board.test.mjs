@@ -246,6 +246,63 @@ test("a recipe's labels go to the board and back into Recipe box", async () => {
   assert.deepEqual((await api(sam, "GET", `posts/${p.id}`)).json.recipe.labels.map(l => l.value), ["Fall"]);
 });
 
+test("a post from your Recipe box is that recipe: changes either side show on the other", async () => {
+  const env = await board(), ryan = await member(env, "ryan", "recipes"), sam = await member(env, "sam");
+  const mine = (await ryan.req("POST", "/recipes/api/recipes", { json: { title: "Stew", ...RECIPE, labels: [L.fall] } })).json;
+  const p = (await api(ryan, "POST", "posts", { recipe_id: mine.id, note: "Good cold too" })).json;
+  assert.equal(p.from_box, true);
+  assert.equal(p.recipe_id, mine.id);
+  const theirs = async () => (await api(sam, "GET", `posts/${p.id}`)).json;
+  assert.equal((await theirs()).recipe_id, undefined);
+
+  // A label added in the box files the post under its key, for everyone.
+  await ryan.req("PATCH", `/recipes/api/recipes/${mine.id}`, { json: { labels: [L.fall, L.irish], ingredients: ["3 potatoes"], title: "Irish stew" } });
+  let seen = await theirs();
+  assert.deepEqual(seen.categories, ["Cuisine", "Season"]);
+  assert.deepEqual(seen.recipe.ingredients, ["3 potatoes"]);
+  assert.equal(seen.title, "Irish stew");
+  assert.equal(seen.note, "Good cold too");
+  assert.deepEqual((await api(sam, "GET", "posts?category=Cuisine")).json.posts.map(x => x.id), [p.id]);
+  // Its picture too.
+  await ryan.req("PATCH", `/recipes/api/recipes/${mine.id}`, { json: { image: "https://example.com/stew.jpg" } });
+  assert.equal((await theirs()).recipe.image, "https://example.com/stew.jpg");
+  await ryan.req("DELETE", `/recipes/api/recipes/${mine.id}/photo`);
+  assert.equal((await theirs()).recipe.image, "");
+
+  // Editing the post edits the box recipe.
+  const e = await api(ryan, "PATCH", `posts/${p.id}`, { title: "Stew for a crowd", labels: [L.dinner], recipe: { ingredients: "6 potatoes", steps: "Simmer" } });
+  assert.equal(e.status, 200, e.text);
+  const box = (await ryan.req("GET", "/recipes/api/recipes")).json.recipes.find(r => r.id === mine.id);
+  assert.equal(box.title, "Stew for a crowd");
+  assert.deepEqual(box.labels.map(l => l.value), ["Dinner"]);
+  assert.deepEqual(box.ingredients, ["6 potatoes"]);
+  // Labels picked while sharing are the recipe's in the box too.
+  const pie = (await ryan.req("POST", "/recipes/api/recipes", { json: { title: "Pie", ...RECIPE } })).json;
+  await api(ryan, "POST", "posts", { recipe_id: pie.id, labels: [L.dessert] });
+  assert.deepEqual((await ryan.req("GET", "/recipes/api/recipes")).json.recipes.find(r => r.id === pie.id).labels.map(l => l.value), ["Dessert"]);
+
+  // Deleted from the box, the post stays as it last was.
+  await ryan.req("DELETE", `/recipes/api/recipes/${mine.id}`);
+  seen = await theirs();
+  assert.equal(seen.title, "Stew for a crowd");
+  assert.equal(seen.from_box, false);
+});
+
+test("a post shared before posts kept in step is linked to its recipe on the recipe's next change", async () => {
+  const env = await board(), ryan = await member(env, "ryan", "recipes");
+  const mine = (await ryan.req("POST", "/recipes/api/recipes", { json: { title: "Soda bread", ...RECIPE } })).json;
+  const p = (await api(ryan, "POST", "posts", { recipe_id: mine.id })).json;
+  // As posts were stored before: a copy, with nothing pointing back at the recipe.
+  run(env, "UPDATE board_posts SET data = json_remove(data, '$.from') WHERE id = ?", p.id);
+  const typed = (await api(ryan, "POST", "posts", { title: "Soda bread", recipe: { ...RECIPE, ingredients: ["something else"] } })).json;
+  await ryan.req("PATCH", `/recipes/api/recipes/${mine.id}`, { json: { labels: [L.irish] } });
+  const after = (await api(ryan, "GET", `posts/${p.id}`)).json;
+  assert.deepEqual(after.categories, ["Cuisine"]);
+  assert.equal(after.recipe_id, mine.id);
+  // One typed in with the same name but a different recipe is left alone.
+  assert.deepEqual((await api(ryan, "GET", `posts/${typed.id}`)).json.categories, []);
+});
+
 test("removing a category is removing its key, for whoever keeps Recipe labels", async () => {
   const env = await board(), ryan = await member(env, "ryan"), kim = await member(env, "kim", "labels");
   await api(ryan, "PUT", "categories/Season/follow", { follow: true });

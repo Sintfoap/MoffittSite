@@ -12,6 +12,8 @@
 // /recipes/api/recipes/<id>        PATCH → change the fields sent; DELETE → remove it
 //   A recipe's labels come from the site's list (see labelList): sent as ids, read back as [{id, key, value}].
 //   GET also sends label_list, the whole list to pick from.
+// /recipes/api/recipes/suggest-labels  GET → labels each recipe's words point to, to check before adding (src/autolabel.js)
+// /recipes/api/recipes/add-labels      POST {add: [{id, labels: [label ids]}], at most 200} → {recipes, labels, full}: added to the ones they have
 // /recipes/api/recipes/<id>/translate  POST → {language, english, fields}: the recipe in English, saved only by a PATCH (src/translate.js)
 // /recipes/api/recipes/<id>/shop   POST {servings | factor, lines?, list?} → its ingredients onto a Drift list
 // /recipes/api/photo, /recipes/api/key   a recipe read from a photo, and the API key it's read with (src/recipe_photo.js)
@@ -24,6 +26,7 @@ import { imageType } from "./food.js";
 import { scaleLine, servingsOf, factorFor, format } from "../public/recipes/scale.js";
 import { photoState, readPhoto, readPhotoBody, saveKey, forgetKey, readText } from "./recipe_photo.js";
 import { SweepError } from "./sweep.js";
+import { suggestFor, termsOf } from "./autolabel.js";
 import { translate, recipeText, TranslateError } from "./translate.js";
 
 const fail = msg => { throw new BadRequest(msg); };
@@ -31,7 +34,7 @@ export class NotARecipe extends Error {}
 
 const LIMITS = { labels: 20, recipes: 1000, importPages: 10, importBody: 4 * 1024 * 1024, title: 200, url: 2000, yield: 100, time: 50, lines: 100, ingredient: 300, step: 3000, notes: 5000, page: 3 * 1024 * 1024 };
 const ID = /^r_[0-9a-f]{10}$/;
-const ROUTE = /^\/recipes\/api\/recipes(?:\/(import)|\/(r_[0-9a-f]{10})(?:\/(shop|photo|translate))?)?\/?$/;
+const ROUTE = /^\/recipes\/api\/recipes(?:\/(import|suggest-labels|add-labels)|\/(r_[0-9a-f]{10})(?:\/(shop|photo|translate))?)?\/?$/;
 const PHOTO = /^\/recipes\/api\/photos\/(p_[0-9a-f]{10})$/;
 // A picture kept here (an imported recipe's own photo) instead of a link to a site's.
 const OWN_PHOTO = /^\/recipes\/api\/photos\/p_[0-9a-f]{10}$/;
@@ -167,20 +170,117 @@ export async function create(env, user, fields) {
 }
 
 export async function update(env, user, id, changes) {
-  const d = await db(env);
+  return updateFor(await db(env), user.id, id, changes);
+}
+
+// Also the Recipe board's: a change to a post that's someone's box recipe is made to the recipe.
+export async function updateFor(d, owner, id, changes) {
   const patch = clean(changes);
   await checkLabels(d, patch.labels);
-  const res = await d.prepare("UPDATE recipes SET data = json_patch(data, ?), updated = ? WHERE owner = ? AND id = ?")
-    .bind(JSON.stringify(patch), new Date().toISOString(), user.id, id).run();
-  return res.meta.changes ? get(d, user.id, id) : null;
+  const before = await rawRecipe(d, owner, id);
+  if (!before) return null;
+  await d.prepare("UPDATE recipes SET data = json_patch(data, ?), updated = ? WHERE owner = ? AND id = ?")
+    .bind(JSON.stringify(patch), new Date().toISOString(), owner, id).run();
+  await syncBoard(d, owner, id, before);
+  return get(d, owner, id);
+}
+
+// ── suggested labels ───────────────────────────────────────────────────────
+
+// Every recipe in the box that its words say should have labels it hasn't got,
+// by title: {suggestions: [{id, title, labels: [{id, key, value, word, where}]}], checked, labels}.
+// A recipe with its 20 labels already gets none; one near it, only as many as fit.
+export async function suggestLabels(env, user) {
+  const d = await db(env);
+  const kw = new Map((await d.prepare("SELECT id, keywords FROM recipe_labels").all()).results.map(r => [r.id, r.keywords]));
+  const labels = (await labelList(d)).map(l => ({ ...l, keywords: kw.get(l.id) || "" }));
+  const terms = new Map(labels.map(l => [l.id, termsOf(l)]));
+  const box = await list(env, user);
+  const suggestions = [];
+  for (const r of box) {
+    const room = LIMITS.labels - r.labels.length;
+    const found = room > 0 ? suggestFor(r, labels, terms).slice(0, room) : [];
+    if (found.length) suggestions.push({ id: r.id, title: r.title, labels: found });
+  }
+  return { suggestions, checked: box.length, labels: labels.length };
+}
+
+// Clients send a big box in batches of this many (a request's body is capped at 64 KB).
+export const ADD_BATCH = 200;
+
+// Adds labels to many recipes at once, keeping the ones they have:
+// {recipes: how many changed, labels: how many added, full: recipes that had no room for them all}.
+export async function addLabels(env, user, body) {
+  if (!isObj(body) || !Array.isArray(body.add)) fail("send {add: [{id, labels: [label ids]}]}");
+  if (body.add.length > ADD_BATCH) fail(`send at most ${ADD_BATCH} recipes at a time`);
+  const want = new Map();
+  for (const a of body.add) {
+    if (!isObj(a) || !ID.test(String(a.id ?? ""))) fail("each one needs a recipe's id");
+    want.set(a.id, [...new Set([...(want.get(a.id) || []), ...cleanLabels(a.labels ?? [])])]);
+  }
+  const d = await db(env);
+  await checkLabels(d, [...new Set([...want.values()].flat())]);
+  const { results } = await d.prepare("SELECT id, json_extract(data, '$.labels') AS labels FROM recipes WHERE owner = ?").bind(user.id).all();
+  const mine = new Map(results.map(r => [r.id, JSON.parse(r.labels || "[]")]));
+  const t = new Date().toISOString(), writes = [];
+  let added = 0, full = 0;
+  for (const [id, ids] of want) {
+    const have = mine.get(id);
+    if (!have) continue;
+    const fresh = ids.filter(x => !have.includes(x));
+    const fits = fresh.slice(0, Math.max(0, LIMITS.labels - have.length));
+    if (fits.length < fresh.length) full++;
+    if (!fits.length) continue;
+    added += fits.length;
+    writes.push(d.prepare("UPDATE recipes SET data = json_set(data, '$.labels', json(?)), updated = ? WHERE owner = ? AND id = ?")
+      .bind(JSON.stringify([...have, ...fits]), t, user.id, id));
+  }
+  for (let i = 0; i < writes.length; i += 100) await d.batch(writes.slice(i, i + 100));
+  return { recipes: writes.length, labels: added, full };
 }
 
 export async function remove(env, user, id) {
   const d = await db(env);
   const res = await d.prepare("DELETE FROM recipes WHERE owner = ? AND id = ?").bind(user.id, id).run();
   if (!res.meta.changes) return null;
-  await d.prepare("DELETE FROM recipe_photos WHERE owner = ? AND recipe = ?").bind(user.id, id).run();
+  await d.batch([
+    d.prepare("DELETE FROM recipe_photos WHERE owner = ? AND recipe = ?").bind(user.id, id),
+    // Its posts on the board stay, as it last was.
+    d.prepare("UPDATE board_posts SET data = json_remove(data, '$.from') WHERE author = ? AND json_extract(data, '$.from') = ?").bind(user.id, id),
+  ]);
   return { removed: true };
+}
+
+// ── the Recipe board's copy ────────────────────────────────────────────────
+
+// A recipe shared on the Recipe board (src/board.js) is the same recipe there,
+// not a copy that goes stale: its posts keep `from`, the recipe's id, and every
+// change to it here (labels, ingredients, its picture, its title) is made to
+// them too. That keeps the board's categories, which go by a post's labels, right.
+export const BOARD_FIELDS = ["source", "image", "yield", "servings", "time", "ingredients", "steps", "notes", "labels"];
+export const boardRecipe = r => Object.fromEntries(BOARD_FIELDS.map(k => [k, r[k] ?? RECIPE[k]]));
+
+async function rawRecipe(d, owner, id) {
+  const row = await d.prepare("SELECT data FROM recipes WHERE owner = ? AND id = ?").bind(owner, id).first();
+  return row ? { ...RECIPE, ...JSON.parse(row.data) } : null;
+}
+
+// `before` is the recipe as it was: posts shared before they were linked (by
+// their title and ingredients, as sharing copied them) are linked to it now.
+export async function syncBoard(d, owner, id, before = null) {
+  const r = await rawRecipe(d, owner, id);
+  if (!r) return;
+  const now = new Date().toISOString();
+  const stmts = [];
+  if (before) {
+    stmts.push(d.prepare(`UPDATE board_posts SET data = json_set(data, '$.from', ?) WHERE author = ?
+      AND json_extract(data, '$.from') IS NULL AND json_extract(data, '$.title') = ? COLLATE NOCASE
+      AND json(COALESCE(json_extract(data, '$.recipe.ingredients'), '[]')) = json(?)`)
+      .bind(id, owner, before.title, JSON.stringify(before.ingredients || [])));
+  }
+  stmts.push(d.prepare(`UPDATE board_posts SET data = json_set(data, '$.title', ?, '$.recipe', json(?)), updated = ?
+    WHERE author = ? AND json_extract(data, '$.from') = ?`).bind(r.title, JSON.stringify(boardRecipe(r)), now, owner, id));
+  await d.batch(stmts);
 }
 
 // Its ingredients, scaled, onto a Drift list. `lines` picks which (by index);
@@ -521,6 +621,7 @@ export async function setPhoto(env, user, id, body) {
     d.prepare("INSERT INTO recipe_photos (id, owner, recipe, type, data, created) VALUES (?, ?, ?, ?, ?, ?)").bind(photo, user.id, id, type, btoa(bin), now),
     d.prepare("UPDATE recipes SET data = json_set(data, '$.image', ?), updated = ? WHERE owner = ? AND id = ?").bind(`/recipes/api/photos/${photo}`, now, user.id, id),
   ]);
+  await syncBoard(d, user.id, id);
   return get(d, user.id, id);
 }
 
@@ -532,6 +633,7 @@ export async function removePhoto(env, user, id) {
     d.prepare("DELETE FROM recipe_photos WHERE owner = ? AND recipe = ?").bind(user.id, id),
     d.prepare("UPDATE recipes SET data = json_set(data, '$.image', ''), updated = ? WHERE owner = ? AND id = ?").bind(new Date().toISOString(), user.id, id),
   ]);
+  await syncBoard(d, user.id, id);
   return get(d, user.id, id);
 }
 
@@ -598,6 +700,8 @@ export async function recipes(request, env, user, pathname) {
     const m = pathname.match(ROUTE);
     if (!m) return json({ error: "not found" }, 404);
     const [, bulk, id, sub] = m;
+    if (bulk === "suggest-labels") return method === "GET" ? json(await suggestLabels(env, user)) : notAllowed();
+    if (bulk === "add-labels") return method === "POST" ? json(await addLabels(env, user, await readJson(request))) : notAllowed();
     if (bulk) return method === "POST" ? json(await importPages(env, user, await readImport(request))) : notAllowed();
     if (!id) {
       if (method === "GET") {

@@ -202,6 +202,7 @@ dialog .three { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
 <dialog id="editor">
   <form method="dialog" id="edit-form">
     <h2 id="edit-title">Share a recipe</h2>
+    <p class="empty" id="edit-synced" hidden>This post is a recipe in a Recipe box, so what you change here changes there too (the note is just the post's).</p>
     <div class="from" id="from" role="radiogroup" aria-label="Where the recipe comes from">
       <label><input type="radio" name="from" value="box"> From my Recipe box</label>
       <label><input type="radio" name="from" value="url"> From a link</label>
