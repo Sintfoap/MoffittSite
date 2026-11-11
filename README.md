@@ -7,7 +7,8 @@ public/          the website, served as static files
   index.html       homepage
   llm.txt          guide for AI agents using Drift through the MCP server (/mcp)
   keys.js          the signed-in pages' g-chord shortcuts (g h, g d, g p, g s, g a, g o)
-  rail.js          folds the side rail down to its icons and back (its button, or \), remembered per browser
+  rail.js          folds the side rail down to its icons and back (its button, or \), opens it as a Menu on phones, and picks Dark or Light mode for every page, remembered per browser
+  admin.js         the admin page's account list: find, expand all, All on / All off, unsaved changes
   friends/         Friends & Associates page
   books/           Book club pick: public, no sign-in; anyone can vote (app.js talks to /books/api)
   todo/            Drift (signed-in users only)
@@ -41,6 +42,7 @@ src/             the Worker: runs only for the paths in run_worker_first
   crypto.js        password hashing (PBKDF2) and authenticator codes (TOTP)
   mail.js          sending email through Resend (address checks, reset links)
   pages.js         the sign-in, dashboard and account pages, and the side rail every signed-in page shows
+  glance.js        one live line per app for the dashboard's cards, on the web and in the terminal
   nav.js           the site's menu: one list, from APPS, that the rail and the terminal UI both use
   db.js            D1 tables (created on first use)
   drift.js         Drift storage: collections and items per account
