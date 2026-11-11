@@ -173,7 +173,7 @@ export async function addReceipt(env, user, body) {
         if (!out) fail("that's no longer in your pantry");
       } else {
         const { item, ...rest } = line;
-        out = await addItem(env, user, { name: rest.name, kind: rest.kind, place: rest.place, unit: rest.unit, size: rest.size, low: rest.low, level: rest.level, words: rest.words, ...lot });
+        out = await addItem(env, user, { name: rest.name, kind: rest.kind, place: rest.place, unit: rest.unit, size: rest.size, low: rest.low, words: rest.words, ...(rest.level != null ? { level: rest.level } : {}), ...lot });
         kinds.set(out.id, out.kind);
       }
       added.push({ ...(key !== undefined ? { key } : {}), printed, id: out.id, name: out.name, text: out.text });
