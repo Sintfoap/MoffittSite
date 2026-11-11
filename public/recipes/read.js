@@ -28,7 +28,7 @@ function tidy(text) {
   return String(text ?? "").slice(0, LIMITS.text)
     .replace(/\r\n?/g, "\n").replace(/[⁄∕]/g, "/").replace(/ﬁ/g, "fi").replace(/ﬂ/g, "fl")
     .replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, "").replace(/[ \t ]+/g, " ")
-    .split("\n").map(l => l.trim().replace(/^[|_~]+\s*|\s*[|_~]+$/g, ""));
+    .split("\n").map(l => l.trim().replace(/^[|_~]+\s*|\s*[|_~]+$/g, "").replace(/\s+[;,.'‘’`]+$/, ""));
 }
 
 const isAmount = l => AMOUNT.test(l);
@@ -47,8 +47,9 @@ function servingsIn(y) {
   return n > 0 && n <= 1000 ? n : null;
 }
 
-// Amounts text recognition often misreads: ½ ⅓ ¾ come out as %, ¥, Y2 and the like.
-const MISREAD = /^(?:\d*\s*[%¥£§®©°¢»«]|\d*\s*[Yy]\d\b|[Il|]\s*\/\s*\d)/;
+// Amounts text recognition often misreads: ½ ⅓ ¾ come out as %, ¥, Y2 and the like, or as
+// a number that can't be right before a single cup or spoon ("14 cup" for ½ cup).
+const MISREAD = /^(?:\d*\s*[%¥£§®©°¢»«]|\d*\s*[Yy]\d\b|[Il|]\s*\/\s*\d|(?:[2-9]|\d{2,})\s+(?:cup|teaspoon|tablespoon)\b)/i;
 
 // "Prep 15 min · Cook 1 hr" → "1 hr 15 min"; "Total time: 45 minutes" → "45 min".
 function minutesIn(s) {
@@ -69,12 +70,20 @@ function timeOf(lines) {
   for (const part of text.matchAll(/\b(?:prep(?:aration)?|cook(?:ing)?|bake|baking|chill|rest(?:ing)?|active)\b(?: time)?\s*:?\s*(\d+\s*(?:hours?|hrs?|h|minutes?|mins?|m)\b(?:\s*(?:and\s*)?\d+\s*(?:minutes?|mins?|m)\b)?)/gi)) {
     sum += minutesIn(part[1]) || 0;
   }
-  return sum ? span(sum) : "";
+  if (sum) return span(sum);
+  // A time on its own in a short line of facts ("makes 24 · 45 min"): the total.
+  for (const l of lines) {
+    if (l.length > 60) continue;
+    for (const part of l.split(/\s+[·•|+~*©:–—-]\s+|\s{2,}/)) {
+      if (/^(?:about\s+)?\d+\s*(?:hours?|hrs?|h|minutes?|mins?|m)\.?(?:\s*\d+\s*(?:minutes?|mins?|m)\.?)?$/i.test(part.trim())) return span(minutesIn(part));
+    }
+  }
+  return "";
 }
 
 function yieldOf(lines) {
   for (const l of lines) {
-    const m = l.match(new RegExp(`\\b((?:serves|servings?|makes|yields?|portions?)\\b\\s*:?\\s*${NUMBER}(?:\\s*(?:-|–|to)\\s*\\d+)?(?:\\s+[a-z0-9][\\w-]*){0,3})`, "i"));
+    const m = l.match(new RegExp(`\\b((?:serves|servings?|makes|yields?|portions?)\\b\\s*:?\\s*${NUMBER}(?:\\s*(?:-|–|to)\\s*\\d+(?!\\d)(?!\\s*(?:hours?|hrs?|h|minutes?|mins?|m)\\b))?(?:\\s+(?!\\d+\\s*(?:hours?|hrs?|h|minutes?|mins?|m)\\b)[a-z0-9][\\w-]*){0,3})`, "i"));
     if (m) return m[1].replace(/\s+(?:prep|cook|total|time|bake)\b.*$/i, "").trim();
   }
   return "";

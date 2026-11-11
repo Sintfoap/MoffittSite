@@ -18,7 +18,10 @@ export function arrange(lines) {
   for (const l of lines) {
     const g = level[level.length - 1];
     const h = g && Math.min(l.bbox.y1 - l.bbox.y0, g.bbox.y1 - g.bbox.y0);
-    if (g && Math.min(g.bbox.y1, l.bbox.y1) - Math.max(g.bbox.y0, l.bbox.y0) > h * 0.5) {
+    // Only lines that sit beside each other: a tilted photo's long line can
+    // reach down beside the short one under it, which is the next row.
+    const beside = g && (l.bbox.x0 >= g.bbox.x1 - h || l.bbox.x1 <= g.bbox.x0 + h);
+    if (g && beside && Math.min(g.bbox.y1, l.bbox.y1) - Math.max(g.bbox.y0, l.bbox.y0) > h * 0.5) {
       g.words.push(...l.words);
       g.bbox = { x0: Math.min(g.bbox.x0, l.bbox.x0), y0: Math.min(g.bbox.y0, l.bbox.y0), x1: Math.max(g.bbox.x1, l.bbox.x1), y1: Math.max(g.bbox.y1, l.bbox.y1) };
     } else level.push({ bbox: { ...l.bbox }, words: [...l.words] });

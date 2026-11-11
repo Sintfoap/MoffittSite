@@ -1,8 +1,9 @@
 // Recipe box: a recipe read from a photo (a recipe card, a cookbook page, a
-// screenshot) by Claude. Nothing is saved here: the page and the terminal show
+// screenshot) by Claude, or by Workers AI without a key. Nothing is saved here: the page and the terminal show
 // what was read in the recipe editor, and saving it is an ordinary new recipe.
 //
-// /recipes/api/photo   POST {images: [{data (base64)}, ...]} → {recipe}: up to 4 pictures of one recipe
+// /recipes/api/photo   POST {images: [{data (base64)}, ...]} → {recipe, by}: up to 4 pictures of one recipe;
+//                      by is "claude" or "ai" (Workers AI), whichever read it
 // /recipes/api/key     PUT {key} → {photo}; DELETE → {photo}
 // /recipes/api/text    POST {text} or {pages: [[line, ...], ...]} → {recipe}: recipe
 //                      text cut into a recipe, no AI and no key. text is pasted;
@@ -15,13 +16,18 @@
 // It reads with the person's own Anthropic API key, the one Sweep uses
 // (src/sweep.js): added once, on either page, sealed under CHAT_BRIDGE_KEY and
 // never sent back. RECIPES_MODEL picks the model (SWEEP_MODEL, then Sweep's
-// default, if it isn't set).
+// default, if it isn't set). Without a key, or when Claude can't be reached,
+// it reads with Workers AI, the site's own (the "ai" binding, as translating
+// uses: no key), with a model that sees pictures; RECIPES_AI_MODEL picks it.
+// Only when neither can does the page fall back to text recognition on the
+// device (/recipes/api/text below).
 
 import { db } from "./db.js";
 import { BadRequest } from "./drift.js";
 import { bridgeReady } from "./bridges.js";
 import { imageType } from "./food.js";
 import { keyOf, setKey, dropKey, askClaude, SweepError, DEFAULT_MODEL } from "./sweep.js";
+import { parseAnswer } from "./translate.js";
 import { servingsOf } from "../public/recipes/scale.js";
 import { readRecipe } from "../public/recipes/read.js";
 import { arrange } from "../public/recipes/columns.js";
@@ -32,12 +38,15 @@ const isObj = v => v && typeof v === "object" && !Array.isArray(v);
 // Anthropic takes pictures of up to 5 MB of base64 (3.75 MB of picture).
 export const LIMITS = { images: 4, imageBytes: 3_750_000, body: 16 * 1024 * 1024, title: 200, yield: 100, time: 50, lines: 100, ingredient: 300, step: 3000, notes: 5000 };
 
-// Whether photo import can run for this account: {ready, sealing, key: {hint, added_at} | null}.
+// Whether photo import can run for this account: {ready (with Claude), ai (with Workers AI), sealing, key: {hint, added_at} | null}.
 export async function photoState(env, user) {
   const sealing = bridgeReady(env);
   const key = sealing ? await (await db(env)).prepare("SELECT hint, added_at FROM sweep_keys WHERE user_id = ?").bind(user.id).first() : null;
-  return { ready: !!key, sealing, key: key || null };
+  return { ready: !!key, ai: !!env.AI, sealing, key: key || null };
 }
+
+// Llama 4 Scout sees pictures, follows a JSON schema, and is in Workers AI's free daily allowance.
+export const DEFAULT_AI_MODEL = "@cf/meta/llama-4-scout-17b-16e-instruct";
 
 export async function saveKey(env, user, body) {
   await setKey(env, user, body);
@@ -112,22 +121,26 @@ export function draftFrom(found) {
   return r;
 }
 
-export async function readPhoto(env, user, body) {
+// The pictures in a request, checked: [{type, data (base64)}].
+function picturesIn(body) {
   if (!isObj(body)) fail("body must be a JSON object");
   const list = Array.isArray(body.images) ? body.images : body.image != null ? [{ data: body.image }] : [];
   if (!list.length) fail("send {images: [{data}, ...]}: a picture of the recipe, as base64");
   if (list.length > LIMITS.images) fail(`send at most ${LIMITS.images} pictures of one recipe`);
-  const content = [];
-  for (const img of list) {
+  return list.map(img => {
     const { s, bytes } = decode(isObj(img) ? img.data : img);
     if (bytes.length > LIMITS.imageBytes) fail(`that picture is too big (at most ${Math.round(LIMITS.imageBytes / 1e6 * 10) / 10} MB); make it smaller first`);
     const type = imageType(bytes);
     if (!type) fail("that isn't a JPEG, PNG, WebP or GIF picture");
-    content.push({ type: "image", source: { type: "base64", media_type: type, data: s } });
-  }
-  const key = await keyOf(env, user);
-  if (!key) fail("add your Anthropic API key first: the photo is read with it");
-  content.push({ type: "text", text: list.length > 1 ? `These ${list.length} pictures are one recipe. Write it out.` : "Write out the recipe in this picture." });
+    return { type, data: s };
+  });
+}
+
+const ask = n => n > 1 ? `These ${n} pictures are one recipe. Write it out.` : "Write out the recipe in this picture.";
+
+async function withClaude(env, key, pics) {
+  const content = pics.map(p => ({ type: "image", source: { type: "base64", media_type: p.type, data: p.data } }));
+  content.push({ type: "text", text: ask(pics.length) });
   let reply;
   try {
     reply = await askClaude(key, {
@@ -140,11 +153,52 @@ export async function readPhoto(env, user, body) {
     if (e instanceof SweepError && /didn't accept your API key/.test(e.message)) throw new SweepError("Anthropic didn't accept your API key. Try again to add a new one.");
     throw e;
   }
-  let found;
-  try { found = JSON.parse(reply); } catch { throw new SweepError("Claude's answer couldn't be read."); }
+  try { return JSON.parse(reply); } catch { throw new SweepError("Claude's answer couldn't be read."); }
+}
+
+// Workers AI's reading has no box for the dish's photo (its boxes are too rough
+// to cut by), and is told to write fractions as they're printed.
+const AI_SYSTEM = SYSTEM.replace(/\n\npicture is where[^\n]*/, "") + `
+
+Copy amounts exactly as printed, fractions too: ½ ⅓ ¼ ¾ ⅔ ⅛ as those characters, or 1/2 when it's written that way. Never make up an ingredient, amount or step that isn't in the picture. Answer only with the JSON object.`;
+const AI_SCHEMA = { ...SCHEMA, required: SCHEMA.required.filter(k => k !== "picture"), properties: Object.fromEntries(Object.entries(SCHEMA.properties).filter(([k]) => k !== "picture")) };
+
+async function withWorkersAI(env, pics) {
+  const content = [{ type: "text", text: ask(pics.length) }, ...pics.map(p => ({ type: "image_url", image_url: { url: `data:${p.type};base64,${p.data}` } }))];
+  let res;
+  try {
+    res = await env.AI.run(env.RECIPES_AI_MODEL || DEFAULT_AI_MODEL, {
+      messages: [{ role: "system", content: AI_SYSTEM }, { role: "user", content }],
+      response_format: { type: "json_schema", json_schema: AI_SCHEMA },
+      max_tokens: 4000, temperature: 0,
+    });
+  } catch (e) {
+    console.error("workers ai photo failed:", e?.message || e);
+    throw new SweepError("Cloudflare's AI couldn't read that photo right now.");
+  }
+  const found = parseAnswer(res?.response ?? res);
+  if (!found) throw new SweepError("Cloudflare's AI answer couldn't be read.");
+  return found;
+}
+
+export async function readPhoto(env, user, body) {
+  const pics = picturesIn(body);
+  const key = await keyOf(env, user);
+  if (!key && !env.AI) fail("add your Anthropic API key first: the photo is read with it");
+  let found = null, by = "claude", why = "";
+  if (key) {
+    try { found = await withClaude(env, key, pics); }
+    catch (e) {
+      // A bad key, Claude busy, no connection: Workers AI reads it instead, when the site has it.
+      if (!env.AI || !(e instanceof SweepError)) throw e;
+      why = e.message;
+    }
+  }
+  if (!found) { found = await withWorkersAI(env, pics); by = "ai"; }
   const recipe = draftFrom(found);
-  if (!recipe) fail(`couldn't find a recipe in that picture${found?.notes ? ` (Claude saw: ${tidy(found.notes, 200)})` : ""}`);
-  return { recipe };
+  if (!recipe) fail(`couldn't find a recipe in that picture${found?.notes ? ` (${by === "claude" ? "Claude" : "it"} saw: ${tidy(found.notes, 200)})` : ""}`);
+  if (by === "ai") recipe.picture = null;
+  return why ? { recipe, by, why } : { recipe, by };
 }
 
 export async function readPhotoBody(request) {

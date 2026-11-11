@@ -131,3 +131,47 @@ test("the page may run text recognition in a worker, from the site only", async 
   // wasm-unsafe-eval: browsers that hold the worker to the page's own policy (Safari) still let it run.
   assert.match(csp, /script-src 'self' 'wasm-unsafe-eval';/);
 });
+
+// What tesseract read off a tilted recipe card (cli/sintfoap/ocr.py's black and white
+// copy): its long step line reaches down beside the short "pinch of salt" above it.
+const CARD = JSON.parse(readFileSync(new URL("./recipe-ocr-card.json", import.meta.url)));
+
+test("a tilted card: a long line beside a short one isn't one row; a lone time is the total; stray marks go", () => {
+  const { text, title } = arrange(CARD);
+  assert.match(text, /^pinch of salt ;$/m);
+  assert.match(text, /^Cream butter & sugar till pale\./m);
+  const r = readRecipe(text, { title });
+  assert.equal(r.title, "Nana's Shortbread");
+  assert.equal(r.yield, "makes 24");
+  assert.equal(r.servings, 24);
+  assert.equal(r.time, "45 min");
+  assert.deepEqual(r.ingredients, ["2 cups flour", "1 cup butter, softened", "½ cup sugar", "pinch of salt"]);
+  assert.equal(r.steps.length, 2);
+  // "makes 24 - 45 min" isn't a range of servings.
+  assert.equal(readRecipe("Shortbread\nmakes 24 - 45 min\n2 cups flour\n1 cup butter\nMix and bake.").yield, "makes 24");
+  assert.equal(readRecipe("Stew\nServes 4 - 6\n2 cups stock\n1 onion\nCook it.").yield, "Serves 4 - 6");
+});
+
+test("a fraction read as a number before a single cup or spoon is pointed out", () => {
+  const r = readRecipe("Cake\n14 cup sugar\n2 cups flour\n3 teaspoon salt\n2 tsp vanilla\nMix it.");
+  assert.deepEqual(r.check, ["14 cup sugar", "3 teaspoon salt"]);
+});
+
+test("a photo is cleaned to black ink on white: ruled lines, tinted paper and shading go", async () => {
+  const { binarize } = await import("../public/recipes/ocr.js");
+  const W = 400, H = 200, data = new Uint8ClampedArray(W * H * 4);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const i = (y * W + x) * 4, shade = Math.round(x / W * 60);       // darker to the right, like a shadow
+    let px = [250 - shade, 245 - shade, 225 - shade];                  // cream paper
+    if (y % 25 === 0) px = [200 - shade, 210 - shade, 240 - shade];   // pale blue ruled lines
+    if (y >= 90 && y < 100 && x >= 50 && x < 350) px = [40, 50, 130];  // blue ink
+    data.set([...px, 255], i);
+  }
+  const out = binarize({ width: W, height: H, data });
+  const at = (x, y) => out.data[(y * W + x) * 4];
+  assert.equal(at(60, 95), 0);
+  assert.equal(at(340, 95), 0, "ink in the shadow is still ink");
+  assert.equal(at(200, 50), 255, "paper is white");
+  assert.equal(at(200, 25), 255, "a ruled line is gone");
+  assert.equal(at(380, 175), 255, "shaded paper is white");
+});

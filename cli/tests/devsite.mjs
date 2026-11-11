@@ -92,8 +92,13 @@ const WORDS = { "Tortilla española": "Spanish omelette", "La de mi abuela, la m
   "Batir los huevos y mezclar.": "Beat the eggs and mix them in.", "Cuajar 3 minutos por cada lado.": "Set for 3 minutes on each side.",
   "Mejor tibia.": "Best served warm.", "Cena con la abuela": "Dinner with grandma",
   "Llevar el vino y el postre. Ella vive en la calle Mayor 12.": "Bring the wine and dessert. She lives at Calle Mayor 12." };
+// And Recipe box's photos without a Claude key (src/recipe_photo.js): any picture is this card.
 const AI = {
   async run(model, input) {
+    if (Array.isArray(input.messages.at(-1).content)) return { response: {
+      found: true, title: "Nana's Shortbread", servings: 0, yield: "makes 24", time: "45 min",
+      ingredients: ["2 cups flour", "1 cup butter, softened", "½ cup sugar", "pinch of salt"],
+      steps: ["Cream butter & sugar till pale.", "Press in a 9x13 pan.", "Bake 325° 30-35 min."], notes: "Don't let them brown!" } };
     const fields = JSON.parse(input.messages.at(-1).content);
     const tr = v => Array.isArray(v) ? v.map(tr) : WORDS[v] ?? v;
     const out = Object.fromEntries(Object.entries(fields).map(([k, v]) => [k, tr(v)]));

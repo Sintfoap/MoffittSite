@@ -787,16 +787,47 @@ JPEG = bytes([0xff, 0xd8, 0xff, 0xe0, 0, 16, 74, 70, 73, 70, 0, 1])
 OCR_PAGE = json.loads((Path(__file__).parent.parent.parent / "tests" / "recipe-ocr-page.json").read_text())
 
 
-def test_recipe_box_reads_a_photo_here_without_a_key(real_site, tmp_path, monkeypatch):
+def ai_down(monkeypatch):
+    """The site's AI can't be reached, so photos are read here by tesseract."""
+    def down(paths):
+        raise site.SiteError("the site said: Cloudflare's AI couldn't read that photo right now.")
+    monkeypatch.setattr(site, "read_recipe_photo", down)
+
+
+def test_recipe_box_reads_a_photo_with_the_sites_ai_without_a_key(real_site, tmp_path, monkeypatch):
+    card = tmp_path / "card.jpg"
+    card.write_bytes(JPEG)
+    monkeypatch.setattr(site, "ocr_page", lambda path: pytest.fail("tesseract isn't needed"))
+
+    async def recipes(app, pilot):
+        page = app.screen
+        assert page.data["photo"] == {"ready": False, "ai": True, "sealing": True, "key": None}
+        await pilot.press("p")
+        await settle(pilot)
+        assert "The site's AI reads it" in app.screen._hint
+        app.screen.query_one("#answer").value = str(card)
+        await pilot.press("enter")
+        await settle(pilot, 0.8)
+        dialog = app.screen
+        assert type(dialog).__name__ == "RecipeDialog"
+        assert dialog.query_one("#title").value == "Nana's Shortbread"
+        assert dialog.query_one("#ingredients").text.splitlines()[2] == "½ cup sugar"
+        assert "Read from your photo by the site's AI" in str(dialog.query_one("#hint").render())
+        assert site.recipes()["recipes"] == []
+    run_app("recipes", recipes)
+
+
+def test_recipe_box_reads_a_photo_here_when_the_sites_ai_cant(real_site, tmp_path, monkeypatch):
     page_jpg = tmp_path / "banana-bread.jpg"
     page_jpg.write_bytes(JPEG)
     # What tesseract reads off a two-column cookbook page (it needn't be installed for the test).
     seen = []
     monkeypatch.setattr(site, "ocr_page", lambda path: seen.append(path) or OCR_PAGE)
+    ai_down(monkeypatch)
 
     async def recipes(app, pilot):
         page = app.screen
-        assert page.data["photo"] == {"ready": False, "sealing": True, "key": None}
+        assert page.data["photo"] == {"ready": False, "ai": True, "sealing": True, "key": None}
         # p asks for the picture straight away: no key needed.
         await pilot.press("p")
         await settle(pilot)
@@ -810,6 +841,7 @@ def test_recipe_box_reads_a_photo_here_without_a_key(real_site, tmp_path, monkey
         assert dialog.query_one("#title").value == "Classic Banana Bread"
         assert dialog.query_one("#ingredients").text.splitlines()[0] == "3 ripe bananas, mashed"
         assert dialog.query_one("#steps").text.splitlines()[0].startswith("Preheat the oven")
+        assert "The site's AI couldn't read it" in str(dialog.query_one("#hint").render())
         assert site.recipes()["recipes"] == []
         await pilot.press("ctrl+s")
         await settle(pilot, 0.6)
@@ -827,6 +859,7 @@ def test_recipe_box_keeps_the_dishs_photo_from_the_page_as_the_recipes_picture(r
     page_jpg = tmp_path / "banana-bread.jpg"
     im.save(page_jpg, "JPEG", quality=90)
     monkeypatch.setattr(site, "ocr_page", lambda path: OCR_PAGE)
+    ai_down(monkeypatch)
     sent, keep = [], site.set_recipe_photo
     monkeypatch.setattr(site, "set_recipe_photo", lambda rid, raw: sent.append(raw) or keep(rid, raw))
 
@@ -847,7 +880,7 @@ def test_recipe_box_keeps_the_dishs_photo_from_the_page_as_the_recipes_picture(r
     run_app("recipes", recipes)
 
 
-def test_recipe_box_reads_a_photo_here_when_the_saved_key_was_revoked(real_site, tmp_path, monkeypatch):
+def test_recipe_box_reads_a_photo_with_the_sites_ai_when_the_saved_key_was_revoked(real_site, tmp_path, monkeypatch):
     page_jpg = tmp_path / "banana-bread.jpg"
     page_jpg.write_bytes(JPEG)
     monkeypatch.setattr(site, "ocr_page", lambda path: OCR_PAGE)
@@ -860,8 +893,8 @@ def test_recipe_box_reads_a_photo_here_when_the_saved_key_was_revoked(real_site,
         await settle(pilot, 0.8)
         dialog = app.screen
         assert type(dialog).__name__ == "RecipeDialog"
-        assert dialog.query_one("#title").value == "Classic Banana Bread"
-        assert "Claude couldn't read it (Anthropic didn't accept your API key)" in str(dialog.query_one("#hint").render())
+        assert dialog.query_one("#title").value == "Nana's Shortbread"
+        assert "Claude couldn't read it (Anthropic didn't accept your API key), so the site's AI read it instead" in str(dialog.query_one("#hint").render())
         assert not page.data["photo"]["ready"]
     run_app("recipes", recipes)
 

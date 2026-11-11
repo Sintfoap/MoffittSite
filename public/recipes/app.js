@@ -7,6 +7,7 @@ import { splitPages, batches, photoOf, fileKey } from "./split.js";
 import { unzip } from "./unzip.js";
 import { readRecipe } from "./read.js";
 import { arrange } from "./columns.js";
+import { sized, blackAndWhite, fixFractions } from "./ocr.js";
 import { findPicture } from "./picture.js";
 import { openSuggestions } from "./suggest.js";
 import { ingredientTerms, ingredientHits } from "./ingredients.js";
@@ -380,9 +381,10 @@ async function sendToList(r, list) {
 
 // `draft` is a recipe read from a photo, to check before it's saved: the
 // editor opens as a new recipe with its fields filled and the pictures above.
-// `how` says what read the draft: "claude", "ocr" (text recognition here) or "text" (pasted).
+// `how` says what read the draft: "claude", "ai" (Workers AI, the site's own), "ocr" (text recognition here) or "text" (pasted).
 const HINTS = {
   claude: "Read by Claude from your photo. Check it against the picture, fix anything it misread, then save.",
+  ai: "Read from your photo by the site's AI (Cloudflare's, no key needed). Check it against the picture, the amounts especially, then save.",
   ocr: "Read from your photo by text recognition on this device. Check it against the picture: fix any misread words, and move lines between the boxes if one landed in the wrong place.",
   text: "Read from the text you pasted. Check that each line landed in the right box, then save.",
 };
@@ -395,10 +397,10 @@ function openEditor(r, draft = null, shots = [], how = "claude", why = "", pictu
   $("#edit-title").textContent = r ? "Edit recipe" : draft ? "Check the recipe" : "New recipe";
   $("#edit-hint").hidden = !draft;
   const check = draft?.check?.length ? ` Look twice at the amounts in ${draft.check.map(l => `“${l}”`).join(", ")}: fractions like ½ and ¾ are easy to misread.` : "";
-  const fell = why ? `Claude couldn't read it (${why}), so text recognition read it instead. ` : "";
+  const fell = why ? `${why}, so ${how === "ai" ? "the site's AI" : "text recognition"} read it instead. ` : "";
   const pic = picture ? (picture.whole ? " Its picture is the whole photo" : " Its picture is the dish's photo from the page") + "; change it or take it off below." : "";
   $("#edit-hint-text").textContent = fell + (HINTS[how] || "") + check + pic;
-  $("#with-claude").hidden = !draft || how !== "ocr" || !data.photo?.sealing;
+  $("#with-claude").hidden = !draft || !["ocr", "ai"].includes(how) || !data.photo?.sealing;
   const pics = $("#edit-photos");
   pics.hidden = !shots.length;
   pics.replaceChildren(...shots.map(src => {
@@ -670,10 +672,10 @@ $("#keyer").addEventListener("close", () => {
   });
 });
 
-// A photo is read on this device by text recognition (Tesseract, in
-// vendor/tesseract: no AI, no key), or by Claude when you've added an
-// Anthropic key, which also reads handwriting. Either way it opens in the
-// editor to check first.
+// A photo is read by Claude when you've added an Anthropic key, otherwise by
+// the site's own AI (Workers AI: no key), and only when neither can, on this
+// device by text recognition (Tesseract, in vendor/tesseract: no AI). Either
+// way it opens in the editor to check first.
 function pickPhoto() {
   if (data) $("#photo-file").click();
 }
@@ -690,17 +692,11 @@ function loadTesseract() {
   return tesseract;
 }
 
-// A photo at a size text recognition reads well: at most 2400 across, the right way up.
+// A photo at a size text recognition reads well, the right way up (./ocr.js).
 async function forReading(file) {
   const bmp = await createImageBitmap(file, { imageOrientation: "from-image" }).catch(() => null);
   if (!bmp) throw new Error(`${file.name} isn't a picture this browser can read`);
-  const k = Math.min(1, 2400 / Math.max(bmp.width, bmp.height));
-  const canvas = Object.assign(document.createElement("canvas"), { width: Math.round(bmp.width * k), height: Math.round(bmp.height * k) });
-  const ctx = canvas.getContext("2d");
-  ctx.fillStyle = "#fff";
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-  ctx.drawImage(bmp, 0, 0, canvas.width, canvas.height);
-  return canvas;
+  return sized(bmp);
 }
 
 // The text in the pictures, read here: page after page.
@@ -721,9 +717,12 @@ async function recognize(files) {
     let title = "", picture = null;
     for (const f of files) {
       page++;
-      const canvas = await forReading(f);
-      const { data: d } = await worker.recognize(canvas, {}, { text: true, blocks: true });
+      // Read in clean black and white (ruled lines, coloured ink and shadows gone);
+      // the dish's picture is looked for in the colour photo.
+      const canvas = await forReading(f), ink = blackAndWhite(canvas);
+      const { data: d } = await worker.recognize(ink, {}, { text: true, blocks: true });
       const lines = (d.blocks || []).flatMap(b => (b.paragraphs || []).flatMap(p => p.lines || []));
+      fixFractions(ink, lines);
       const got = lines.length ? arrange(lines) : { text: d.text, title: "" };
       texts.push(got.text);
       if (page === 1) { title = got.title; picture = pictureIn(canvas, lines); }
@@ -766,7 +765,8 @@ async function cutPicture(file, box) {
 }
 
 let lastPhotos = [];  // what the open draft was read from, to read again with Claude
-async function fromPhotos(files, { claude = !!data.photo?.ready } = {}) {
+// `claude`: read by the site (Claude with a key, or its AI without), not here.
+async function fromPhotos(files, { claude = !!(data.photo?.ready || data.photo?.ai) } = {}) {
   const btn = $("#photo");
   btn.disabled = true;
   // The button is in the closed menu, so the page says it's reading.
@@ -777,24 +777,30 @@ async function fromPhotos(files, { claude = !!data.photo?.ready } = {}) {
     const shots = await Promise.all(files.map(async f => "data:image/jpeg;base64," + await base64(await shrinkPhoto(f))));
     let recipe, how = "ocr", why = "", box = null;
     if (claude) {
-      say("done", `Reading ${files.length === 1 ? "the photo" : `${files.length} photos`} with Claude… this takes a few seconds.`);
+      const who = data.photo?.ready ? "with Claude" : "with the site's AI";
+      say("done", `Reading ${files.length === 1 ? "the photo" : `${files.length} photos`} ${who}… this takes a few seconds.`);
       try {
-        ({ recipe } = await api("POST", "photo", { images: shots.map(s => ({ data: s.slice(s.indexOf(",") + 1) })) }));
-        how = "claude";
+        const out = await api("POST", "photo", { images: shots.map(s => ({ data: s.slice(s.indexOf(",") + 1) })) });
+        ({ recipe } = out);
+        how = out.by === "ai" ? "ai" : "claude";
+        if (out.why) {
+          if (/didn't accept your API key/i.test(out.why)) data.photo = { ...data.photo, ready: false };
+          why = `Claude couldn't read it (${out.why.split(/\.\s/)[0].replace(/\.$/, "")})`;
+        }
       } catch (e) {
-        // A key that was revoked or ran out, Claude busy, no connection: read it here instead.
+        // A key that was revoked or ran out, the AI busy, no connection: read it here instead.
         if (/didn't accept your API key/i.test(e.message)) data.photo = { ...data.photo, ready: false };
-        if (/couldn't find a recipe/i.test(e.message)) throw e;  // Claude read it and found none: text recognition won't do better
-        why = e.message.split(/\.\s/)[0].replace(/\.$/, "");
+        if (/couldn't find a recipe/i.test(e.message)) throw e;  // it read it and found none: text recognition won't do better
+        why = `${data.photo?.ready ? "Claude" : "The site's AI"} couldn't read it (${e.message.split(/\.\s/)[0].replace(/\.$/, "")})`;
       }
     }
     if (how === "ocr") {
       const { text, title, picture } = await recognize(files);
       recipe = readRecipe(text, { title });
       box = picture;
-      if (!recipe) throw new Error(`${why ? `Claude couldn't read it (${why}), and text recognition ` : ""}couldn't find a recipe in that photo. A sharper, straighter photo helps; or add it with Paste text`);
+      if (!recipe) throw new Error(`${why ? `${why}, and text recognition ` : ""}couldn't find a recipe in that photo. A sharper, straighter photo helps; or add it with Paste text`);
     }
-    if (how === "claude") box = recipe.picture;
+    if (how !== "ocr") box = recipe.picture || null;
     delete recipe.picture;
     say("done", "");
     const blob = await cutPicture(files[0], box);

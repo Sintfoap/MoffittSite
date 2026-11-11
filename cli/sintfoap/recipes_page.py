@@ -974,17 +974,20 @@ class RecipesPage(Page):
 
     # ── reading one from a photo ──────────────────────────────────────────
 
-    # A photo is read on this computer by tesseract (no AI, no key), or by
-    # Claude when you've added an Anthropic key (k), which also reads handwriting.
+    # A photo is read by Claude when you've added an Anthropic key (k), which
+    # also reads handwriting; otherwise by the site's own AI (Workers AI, no
+    # key); and only when neither can, on this computer by tesseract.
     def action_photo(self) -> None:
         async def answer(paths: str | None) -> None:
             if paths and paths.strip():
                 await self.from_photo([x.strip() for x in paths.split(",") if x.strip()])
-        claude = ((self.data or {}).get("photo") or {}).get("ready")
+        photo = (self.data or {}).get("photo") or {}
+        who = ("Claude reads it, with your key. " if photo.get("ready") else
+               "The site's AI reads it (Cloudflare's, no key needed). " if photo.get("ai") else
+               "It's read on this computer by tesseract, no AI. ")
         self.app.push_screen(Ask("Read a recipe from a photo",
-                                 "A picture of a cookbook page or a screenshot (a recipe over several pages: up to 4 files, "
-                                 "separated by commas). " + ("Claude reads it, with your key. " if claude else
-                                 "It's read on this computer by tesseract, no AI. ") + "You check it before it's saved.",
+                                 "A picture of a cookbook page, a recipe card or a screenshot (a recipe over several pages: up to 4 files, "
+                                 "separated by commas). " + who + "You check it before it's saved.",
                                  placeholder="~/Pictures/banana-bread.jpg", ok="Read it"), answer)
 
     def action_key(self) -> None:
@@ -996,7 +999,7 @@ class RecipesPage(Page):
             if key and key.strip():
                 await self.save_key(key.strip())
         self.app.push_screen(Ask("Read photos with Claude",
-                                 "Without a key, photos are read by tesseract on this computer, which is good with printed pages. "
+                                 "Without a key, photos are read by the site's AI (Cloudflare's), or by tesseract on this computer when that can't. "
                                  "Claude reads them better, handwriting too, with your own Anthropic API key "
                                  "(console.anthropic.com/settings/keys), so nobody else is billed for yours. "
                                  "It's kept sealed on the site; Sweep uses the same one.",
@@ -1008,31 +1011,42 @@ class RecipesPage(Page):
         self.app.notify("Key saved: photos are read by Claude now.", timeout=3)
 
     async def from_photo(self, paths: list[str]) -> None:
-        claude = ((self.data or {}).get("photo") or {}).get("ready")
+        photo = (self.data or {}).get("photo") or {}
+        claude, ai = photo.get("ready"), photo.get("ai")
         self.app.notify(f"Reading {'the photo' if len(paths) == 1 else f'{len(paths)} photos'}…", timeout=8)
+
+        def short(msg: str) -> str:
+            return re.split(r"\.\s", msg)[0].rstrip(".")
 
         def read() -> dict:
             out = None
-            if claude:
+            if claude or ai:
                 try:
-                    out = {**site.read_recipe_photo(paths), "by_claude": True}
+                    out = site.read_recipe_photo(paths)
+                    out["by_claude"] = out.get("by", "claude") == "claude"
+                    if out.get("why"):
+                        # Claude couldn't (a spent key, busy), and the site's AI read it instead.
+                        if "didn't accept your API key" in out["why"]:
+                            self.data["photo"] = {**self.data.get("photo", {}), "ready": False}
+                        out["fell_back"] = f"Claude couldn't read it ({short(out['why'])}), so the site's AI read it instead."
                 except site.SignedOut:
                     raise
                 except site.SiteError as e:
-                    # A revoked or spent key, Claude busy, no connection: read it here instead.
+                    # A revoked or spent key, the AI busy, no connection: read it here instead.
                     msg = str(e).removeprefix("the site said: ")
                     if "couldn't find a recipe" in msg:
                         raise
                     if "didn't accept your API key" in msg:
                         self.data["photo"] = {**self.data.get("photo", {}), "ready": False}
-                    why = re.split(r"\.\s", msg)[0].rstrip(".")
+                    why = f"{'Claude' if claude else 'The site' + chr(39) + 's AI'} couldn't read it ({short(msg)}), so it was read here by text recognition."
             if out is None:
                 out = site.read_photo_here(paths)
-                if claude:
+                if claude or ai:
                     out["fell_back"] = why
-            # The recipe's picture: the dish's photo cut from the page, or the whole photo.
+            # The recipe's picture: the dish's photo cut from the page (Claude's box, or looked for
+            # around tesseract's lines), or the whole photo.
             box = out["recipe"].pop("picture", None)
-            out["dish"] = site.dish_picture(paths[0], box, None if out.get("by_claude") else out.get("text", []))
+            out["dish"] = site.dish_picture(paths[0], box, out.get("text"))
             return out
 
         await self.review(read, hint="Check it against the picture, fix any misread words, "
@@ -1062,7 +1076,9 @@ class RecipesPage(Page):
             return False
         r = out["recipe"]
         if "fell_back" in out:
-            hint = f"Claude couldn't read it ({out['fell_back']}), so it was read here by text recognition. " + hint
+            hint = out["fell_back"] + " " + hint
+        elif out.get("by") == "ai":
+            hint = "Read from your photo by the site's AI (Cloudflare's, no key needed). " + hint
         elif out.get("by_claude"):
             hint = "Read from your photo by Claude. " + hint
         elif "dish" in out:
