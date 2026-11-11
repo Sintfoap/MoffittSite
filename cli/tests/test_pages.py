@@ -951,7 +951,8 @@ def test_g_r_opens_the_terminal_recipe_box(real_site):
 
 def test_meal_plan_fills_the_week_around_drift_and_shops_for_it(real_site):
     import datetime as dt
-    monday = dt.date.today() - dt.timedelta(days=dt.date.today().weekday())
+    # Next week, so no night is already past (those are left alone, and not shopped for).
+    monday = dt.date.today() - dt.timedelta(days=dt.date.today().weekday()) + dt.timedelta(days=7)
     tuesday = (monday + dt.timedelta(days=1)).isoformat()
     tacos = site.add_recipe({"title": "Tacos", "time": "20 min", "servings": 4, "ingredients": "1 lb beef\n8 tortillas"})
     site.add_recipe({"title": "Stew", "time": "2 hr", "servings": 4, "ingredients": "2 lb chuck\n3 carrots"})
@@ -961,6 +962,8 @@ def test_meal_plan_fills_the_week_around_drift_and_shops_for_it(real_site):
     async def meals(app, pilot):
         page = app.screen
         assert type(page).__name__ == "MealsPage"
+        await pilot.press("right_square_bracket")
+        await settle(pilot, 0.5)
         assert page.data["start"] == monday.isoformat()
         assert page.data["days"][1]["busy"] and page.data["days"][1]["why"] == "Soccer at 6 pm"
         # f fills the week: the busy Tuesday gets the quick recipe.
@@ -988,11 +991,11 @@ def test_meal_plan_fills_the_week_around_drift_and_shops_for_it(real_site):
         await pilot.press("plus")
         await settle(pilot, 0.5)
         assert page.data["days"][1]["servings"] == 5
-        # Untick the first line and send the rest.
+        # Untick the first line and send the rest (the first row is its aisle's heading).
         lines = [s["line"] for s in page.data["shopping"]]
         lst = page.query_one("#shopping")
         lst.focus()
-        lst.highlighted = 0
+        lst.highlighted = 1
         await pilot.press("space")
         await settle(pilot)
         assert page.skip == {lines[0]}
@@ -1065,10 +1068,14 @@ def test_sweep_picks_a_room_sweeps_it_and_accepts_into_drift(real_site):
     assert item["meta"]["event"]["start"] == "2030-01-04T19:00"
 
 
-def test_g_w_opens_the_terminal_sweep(real_site):
+def test_ctrl_t_in_chat_opens_the_terminal_sweep(real_site):
+    # Sweep is a tab of Chat, as on the website, not a place of its own in the menu.
     async def go(app, pilot):
         await settle(pilot, 0.5)
-        app.go("w")
+        assert "w" not in [n["key"] for n in app.data["nav"]]
+        app.go("c")
+        await settle(pilot, 0.5)
+        await pilot.press("ctrl+t")
         await settle(pilot, 0.5)
         assert type(app.screen).__name__ == "SweepPage"
     run_app("dashboard", go)
@@ -1618,18 +1625,17 @@ def test_recipe_board_follows_a_label_key_saves_a_post_and_shares_one(real_site)
         await pilot.press("f")
         await settle(pilot, 0.6)
         assert page.cat("course")["following"]
-        assert [p["title"] for p in page.posts] == ["Shortbread"]
+        # sam's shortbread is ryan's recipe of the day (it's the only one that isn't his), on top and open,
+        # so the feed under it doesn't list it a second time.
+        assert page.posts == []
         assert "Course: Dessert" in str(page.query_one("#post-meta").render())
-        # sam's shortbread is ryan's recipe of the day too (it's the only one that isn't his), on top and open.
         assert page.board["featured"]["title"] == "Shortbread" and page.open == "featured"
         assert "Recipe of the day" in str(page.query_one("#post-title").render())
-        # Posted before ryan last read his feed, so it isn't new to him.
-        assert not page.posts[0]["new"]
         assert "Three ingredients!" in str(page.query_one("#note").render())
         # s: into ryan's Recipe box.
         await pilot.press("s")
         await settle(pilot, 0.6)
-        assert page.posts[0]["saved"]
+        assert page.board["featured"]["saved"]
         assert "Shortbread" in [r["title"] for r in site.recipes()["recipes"]]
         # n: share one of his own, from his Recipe box: its labels come ticked, and he adds Season: Fall.
         await pilot.press("n")

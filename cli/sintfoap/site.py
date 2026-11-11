@@ -917,6 +917,11 @@ def recipe_key(key: str) -> dict:
 # ────────────────────────────── meal plan ───────────────────────────────────
 # /meals/api/ (src/meals.js)
 
+def recipe_uses(rid: str) -> dict:
+    """Where a recipe turns up: {planned: [{day, name, week}], club: [{id, month, title}], board: {post, yours} | None}."""
+    return _get(f"/recipes/api/recipes/{_q(rid)}/uses")
+
+
 def meal_week(start: str) -> dict:
     """The week holding `start` (YYYY-MM-DD): {start, prev, next, days, recipes, shopping, shopped, lists, drift, recipe_box}."""
     return _get(f"/meals/api/week?start={_q(start)}")

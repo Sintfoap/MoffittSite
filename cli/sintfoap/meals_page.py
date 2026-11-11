@@ -19,7 +19,7 @@ from textual.widgets.option_list import Option
 from textual.widgets.selection_list import Selection
 
 from . import site
-from .look import BAD, FAINT, GOLD, GOOD, INK, MUTED, Page, attempt, plural
+from .look import BAD, FAINT, GOLD, GOLD_DIM, GOOD, INK, MUTED, Page, attempt, plural
 
 WARN = "#e0b25a"
 
@@ -63,12 +63,15 @@ class PickRecipe(ModalScreen[str | None]):
             if n.get("busy"):
                 yield Static(Text(f"Busy: {n['why']}. Quick recipes are marked.", style=WARN))
             options = [Option(Text("Nothing planned", style=FAINT), id="")]
+            # Dinners first, as filling the week picks from them.
             for r in self.recipes:
                 line = Text(r["title"], style=f"bold {INK}" if r["id"] == n.get("recipe") else INK)
                 if r.get("time"):
                     line.append(f"  {r['time']}", style=FAINT)
                 if r.get("quick"):
                     line.append("  quick", style=GOOD)
+                if r.get("dinner"):
+                    line.append("  dinner", style=GOLD_DIM)
                 options.append(Option(line, id=r["id"]))
             yield OptionList(*options, id="pick")
             yield Static(Text("enter picks, esc cancels", style=FAINT))
@@ -114,6 +117,8 @@ class MealsPage(Page):
         Binding("left_square_bracket", "week(-1)", "Last week"),
         Binding("right_square_bracket", "week(1)", "Next week"),
         Binding("t", "week(0)", "This week"),
+        Binding("v", "view_recipe", "Open recipe"),
+        Binding("c", "club", "Food club pick", show=False),
     ]
 
     def __init__(self):
@@ -121,6 +126,7 @@ class MealsPage(Page):
         self.data: dict | None = None
         self.at = 0                     # the open night, 0 for Monday
         self.skip: set[str] = set()     # shopping lines (by text) not to send
+        self.kept: set[str] = set()     # staples (salt, oil…) ticked to send after all: they start unticked
 
     def compose(self) -> ComposeResult:
         yield from self.top()
@@ -180,9 +186,10 @@ class MealsPage(Page):
                 head = Text.assemble((f"{n['name']} {nice_day(n['day'])}", f"bold {GOLD}" if n["day"] == today else f"bold {INK}"))
                 if n["locked"] and not n["out"]:
                     head.append("  locked", style=FAINT)
-                if n["busy"]:
+                if n["busy"] and not n.get("past"):
                     head.append("  busy", style=WARN)
-                dish = Text("Out tonight", style=MUTED) if n["out"] else Text(r["title"], style=INK) if r else Text("Nothing planned", style=FAINT)
+                dish = Text(f"Away: {n['away']}", style=MUTED) if n.get("away") else Text("Out tonight", style=MUTED) if n["out"] \
+                    else Text(r["title"], style=FAINT if n.get("past") else INK) if r else Text("Nothing planned", style=FAINT)
                 if r and not n["out"]:
                     if r.get("quick"):
                         dish.append("  quick", style=GOOD)
@@ -205,6 +212,12 @@ class MealsPage(Page):
             ev.append(e["title"], style=MUTED)
         if n["busy"]:
             ev.append(f"\nBusy night: {n['why']}", style=WARN)
+        if n.get("away"):
+            ev.append(f"\nAway: {n['away']} (Trip planner)", style=MUTED)
+        club = self.data.get("club")
+        if club and not club.get("planned") and not club.get("made"):
+            ev.append(f"\nFood club this month: {club['title']}", style=GOLD)
+            ev.append("   c plans it tonight" if club.get("recipe") else "   save it to your Recipe box from Food club to plan it", style=FAINT)
         self.query_one("#events", Static).update(ev)
         r = self.recipe(n["recipe"])
         dish = Text()
@@ -223,7 +236,7 @@ class MealsPage(Page):
             dish.append("   locked: filling the week keeps it" if n["locked"] else "   l locks it", style=FAINT)
             if n.get("slow"):
                 dish.append(f"\nThis takes {r['time']} on a busy night.", style=BAD)
-            dish.append("\nenter picks another, o marks it a night out", style=FAINT)
+            dish.append("\nenter picks another, v opens it in Recipe box, o marks it a night out", style=FAINT)
         else:
             dish.append("Nothing planned", style=MUTED)
             hint = "enter picks a recipe, f fills the week" if self.data["recipes"] else \
@@ -238,8 +251,14 @@ class MealsPage(Page):
         at = lst.highlighted
         with self.prevent(SelectionList.SelectedChanged):
             lst.clear_options()
+            # Filed by aisle, as on the website, with the staples last and unticked.
+            aisle = None
             for i, s in enumerate(items):
-                lst.add_option(Selection(Text.assemble((s["line"], INK), (f"   {', '.join(s['for'])}", FAINT)), i, s["line"] not in self.skip))
+                head = "Probably have" if s.get("staple") else s.get("aisle")
+                if head and head != aisle:
+                    aisle = head
+                    lst.add_option(Selection(Text(head.upper(), style=FAINT), f"aisle:{i}", False, disabled=True))
+                lst.add_option(Selection(Text.assemble((s["line"], INK), (f"   {', '.join(s['for'])}", FAINT)), i, self.ticked(s)))
         if at is not None and items:
             lst.highlighted = min(at, len(items) - 1)
         lst.display = bool(items)
@@ -257,8 +276,11 @@ class MealsPage(Page):
         if items and drift:
             self.show_send()
 
+    def ticked(self, s: dict) -> bool:
+        return s["line"] in self.kept if s.get("staple") else s["line"] not in self.skip
+
     def show_send(self) -> None:
-        n = sum(1 for s in self.data["shopping"] if s["line"] not in self.skip)
+        n = sum(1 for s in self.data["shopping"] if self.ticked(s))
         btn = self.query_one("#send-btn", Button)
         btn.label = f"Send {n} to"
         btn.disabled = not n
@@ -284,10 +306,28 @@ class MealsPage(Page):
             self.action_choose()
 
     def on_selection_list_selected_changed(self, e: SelectionList.SelectedChanged) -> None:
-        on = set(e.selection_list.selected)
-        self.skip = {s["line"] for i, s in enumerate(self.data["shopping"]) if i not in on}
+        on = {v for v in e.selection_list.selected if isinstance(v, int)}
+        items = self.data["shopping"]
+        self.skip = {s["line"] for i, s in enumerate(items) if i not in on and not s.get("staple")}
+        self.kept = {s["line"] for i, s in enumerate(items) if i in on and s.get("staple")}
         if self.data["drift"]:
             self.show_send()
+
+    def action_view_recipe(self) -> None:
+        """v: the open night's recipe, in Recipe box."""
+        r = self.data and self.recipe(self.night()["recipe"])
+        if r:
+            from .recipes_page import RecipesPage
+            self.app.push_screen(RecipesPage(open=r["id"]))
+
+    @attempt
+    async def action_club(self) -> None:
+        """c: this month's Food club pick for the open night."""
+        club = (self.data or {}).get("club")
+        if not club or not club.get("recipe"):
+            return
+        n = self.night()
+        self.show(await self.fetch(site.set_meal, self.data["start"], n["day"], {"recipe": club["recipe"]}))
 
     async def action_week(self, step: int) -> None:
         if not self.data:
@@ -353,7 +393,7 @@ class MealsPage(Page):
     async def action_send(self) -> None:
         if not self.data or not self.data["shopping"] or not self.data["drift"]:
             return
-        lines = [i for i, s in enumerate(self.data["shopping"]) if s["line"] not in self.skip]
+        lines = [i for i, s in enumerate(self.data["shopping"]) if self.ticked(s)]
         if not lines:
             self.app.notify("Tick at least one thing to buy.", severity="error", timeout=3)
             return

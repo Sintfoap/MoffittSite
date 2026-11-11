@@ -440,6 +440,7 @@ class ChatPage(Page):
         Binding("ctrl+r", "react_pick", "React"),
         Binding("f5", "reload", "Refresh"),
         Binding("backslash", "fold", "Rooms"),
+        Binding("ctrl+t", "sweep_tab", "Sweep tab"),
     ]
 
     def __init__(self, api=site, room: str | None = None):
@@ -475,7 +476,21 @@ class ChatPage(Page):
         yield Static(id="status")
         yield Footer()
 
+    def has_sweep(self) -> bool:
+        return any(p.get("id") == "sweep" for p in ((self.app.data or {}).get("parts") or []))
+
+    def action_sweep_tab(self) -> None:
+        """ctrl+t: the Sweep tab, which reads chosen rooms for Drift suggestions (as on the website)."""
+        if not self.has_sweep():
+            self.app.notify("Sweep isn't turned on for your account.", timeout=3)
+            return
+        from .sweep_page import SweepPage
+        self.app.push_screen(SweepPage())
+
     async def on_mount(self) -> None:
+        # The tabs, as on the website: Rooms here, and Sweep for whoever has it.
+        if self.has_sweep():
+            self.query_one("#side-title", Static).update(Text.assemble(("C H A T", f"bold {GOLD}"), ("  ·  sweep (ctrl+t)", FAINT)))
         await self.load_rooms()
         if self.rooms:
             want = (self.want or "").lstrip("#").lower()

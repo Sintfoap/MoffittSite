@@ -1,6 +1,7 @@
 // Tests for Sweep: picking rooms, sweeping them with Claude (a stand-in
 // here), and accepting or turning down what it suggests.
 // Run with:  node --no-warnings --test tests/*.test.mjs
+import { chatTabs } from "../src/pages.js";
 import { test, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { Browser, makeEnv, grantApps, sql, sqlOne, run } from "./helpers.mjs";
@@ -47,7 +48,7 @@ async function setup(extra = KEY) {
   return { env, ryan, sam, room };
 }
 
-test("Sweep is its own app, off until an admin turns it on, with its page and rail entry", async () => {
+test("Sweep has its own toggle, off until an admin turns it on, and is a tab of Chat rather than a menu entry", async () => {
   const env = makeEnv(KEY), josh = new Browser(env);
   await josh.signup("josh");
   assert.equal((await josh.get("/sweep/")).status, 403);
@@ -57,7 +58,11 @@ test("Sweep is its own app, off until an admin turns it on, with its page and ra
   assert.equal(page.status, 200);
   assert.match(page.headers.get("Content-Security-Policy"), /script-src 'self'/);
   assert.equal((await josh.get("/sweep")).status, 308);
-  assert.match((await josh.get("/dashboard")).text, /href="\/sweep\/"/);
+  assert.doesNotMatch((await josh.get("/dashboard")).text, /href="\/sweep\/"/, "not on the menu or the dashboard");
+  assert.match(chatTabs({ areas: new Set(["chat", "sweep"]) }, "sweep"), /<nav class="app-tabs" aria-label="Chat">.*href="\/sweep\/" aria-current="page"/s);
+  assert.equal(chatTabs({ areas: new Set(["sweep"]) }, "sweep"), "", "no tabs without Chat");
+  // Its waiting suggestions show on Drift's Today instead.
+  assert.deepEqual((await josh.get("/todo/api/today?day=2030-01-07")).json, { dinner: null, sweep: 0 });
   assert.equal((await new Browser(env).get("/sweep/api/state")).status, 401);
 });
 

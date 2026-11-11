@@ -25,7 +25,7 @@ import { tonight } from "./meals.js";
 import { glance } from "./glance.js";
 import { db, now } from "./db.js";
 import { randomBytes, randomToken, sha256 } from "./crypto.js";
-import { createSession, currentSession, clientIp, getUser, recoveryCodesLeft, endUserSessions, cleanDisplayName, AuthError, PLACES } from "./auth.js";
+import { createSession, currentSession, clientIp, getUser, recoveryCodesLeft, endUserSessions, cleanDisplayName, AuthError, PLACES, APPS } from "./auth.js";
 import { mailReady } from "./mail.js";
 import { sameOrigin } from "./account.js";
 import { agenda, visitorNow } from "./drift.js";
@@ -164,6 +164,8 @@ async function dashboard(request, env) {
     // The site's menu, the same one the web rail shows (src/nav.js): what the
     // terminal offers and which "g" letters work, in order.
     nav: siteNav(user).map(n => ({ id: n.id, label: n.label, url: origin + n.href, key: n.key, group: n.group })),
+    // Apps that are a part of another (Sweep in Chat, Recipe labels in Recipe box): reached from there, not the menu.
+    parts: setup ? [] : APPS.filter(a => a.parent && user.areas.has(a.area)).map(a => ({ id: a.id, parent: a.parent, name: a.name, url: origin + a.href })),
     account: {
       two_factor: !!user.totp_secret, sessions, recovery_codes_left: await recoveryCodesLeft(env, user.id),
       email: user.email || null, email_confirmed: !!user.email_verified, setup_needed: setup, url: origin + "/account",

@@ -143,7 +143,8 @@ class SweepPage(Page):
     def compose(self) -> ComposeResult:
         yield from self.top()
         with Vertical(id="body"):
-            yield Static("S W E E P", classes="kicker")
+            # A tab of Chat, as on the website (esc goes back to the rooms).
+            yield Static(Text.assemble(("C H A T", "bold"), ("     SWEEP", "bold"), ("  ·  rooms (esc)", "dim")), classes="kicker")
             yield Static(Text("Suggestions from your chats", style=f"bold {INK}"), classes="h1")
             yield Static(Text("Sweep reads the rooms you tick and suggests events, tasks and list items for Drift. "
                               "Nothing is added until you accept it.", style=MUTED), classes="sub")

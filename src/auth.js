@@ -39,7 +39,8 @@ export const APPS = [
     blurb: "Bring your Matrix rooms into Chat." },
   { id: "recipes", area: "recipes", name: "Recipe box", href: "/recipes/", icon: "recipes", key: "r", group: "kitchen", blurb: "Save recipes from any link, scale them, and shop for them in Drift." },
   { id: "meals", area: "meals", name: "Meal plan", href: "/meals/", icon: "meals", key: "m", group: "kitchen", blurb: "Plans the week's dinners from your recipes around your Drift calendar." },
-  { id: "sweep", area: "sweep", name: "Sweep", href: "/sweep/", icon: "sweep", key: "w", blurb: "Suggests Drift events, tasks and list items from your chat rooms." },
+  // Sweep is a tab of Chat (src/pages.js chatTabs); its suggestions also show on Drift's Today.
+  { id: "sweep", area: "sweep", parent: "chat", name: "Sweep", href: "/sweep/", icon: "sweep", key: "w", blurb: "Suggests Drift events, tasks and list items from your chat rooms." },
   { id: "trips", area: "trips", name: "Trip planner", href: "/trips/", icon: "trips", key: "t", blurb: "Plan a trip together: the days, the places, and a packing list for Drift." },
   { id: "board", area: "board", name: "Recipe board", href: "/board/", icon: "board", key: "b", group: "kitchen", blurb: "Share recipes, follow the label categories you like, and save what turns up in your feed." },
   { id: "labels", area: "labels", parent: "recipes", name: "Recipe labels", href: "/labels/", icon: "labels", key: "l", group: "kitchen", blurb: "Keep the one list of labels, like Season: Fall, that recipes and the Recipe board's categories use." },

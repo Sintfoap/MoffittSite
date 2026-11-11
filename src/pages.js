@@ -331,14 +331,24 @@ export function rail(user, here) {
 // colour names so it follows the page's theme toggle too.
 // Recipe box and Recipe labels as two tabs of one place, for someone with
 // both: Recipes | Labels, under each page's heading (its <!--kitchen-tabs--> marker).
+// A row of tabs above an app's page, for apps that are parts of another (Recipe
+// box: Recipes and Labels; Chat: Rooms and Sweep).
+function appTabs(label, tabs, here) {
+  const tab = ([id, href, name]) => `<a href="${href}"${here === id ? ` aria-current="page"` : ""}>${name}</a>`;
+  return `<nav class="app-tabs" aria-label="${label}">${tabs.map(tab).join("")}</nav>
+<style>.app-tabs { display: flex; gap: 2px; margin: 0 0 18px; border-bottom: 1px solid var(--line); }
+.app-tabs a { padding: 7px 14px; color: var(--muted); text-decoration: none; border-bottom: 2px solid transparent; margin-bottom: -1px; font-size: 14px; }
+.app-tabs a:hover { color: var(--ink); }
+.app-tabs a[aria-current="page"] { color: var(--ink); font-weight: 700; border-bottom-color: var(--gold); }</style>`;
+}
 export function kitchenTabs(user, here) {
   if (!(user.areas.has("recipes") && user.areas.has("labels"))) return "";
-  const tab = (id, href, label) => `<a href="${href}"${here === id ? ` aria-current="page"` : ""}>${label}</a>`;
-  return `<nav class="kitchen-tabs" aria-label="Recipe box">${tab("recipes", "/recipes/", "Recipes")}${tab("labels", "/labels/", "Labels")}</nav>
-<style>.kitchen-tabs { display: flex; gap: 2px; margin: 0 0 18px; border-bottom: 1px solid var(--line); }
-.kitchen-tabs a { padding: 7px 14px; color: var(--muted); text-decoration: none; border-bottom: 2px solid transparent; margin-bottom: -1px; font-size: 14px; }
-.kitchen-tabs a:hover { color: var(--ink); }
-.kitchen-tabs a[aria-current="page"] { color: var(--ink); font-weight: 700; border-bottom-color: var(--gold); }</style>`;
+  return appTabs("Recipe box", [["recipes", "/recipes/", "Recipes"], ["labels", "/labels/", "Labels"]], here);
+}
+// Chat's tabs: its rooms, and Sweep (which reads them for Drift), for accounts with both.
+export function chatTabs(user, here) {
+  if (!(user.areas.has("chat") && user.areas.has("sweep"))) return "";
+  return appTabs("Chat", [["chat", "/chat/", "Rooms"], ["sweep", "/sweep/", "Sweep"]], here);
 }
 
 export async function withRail(res, user, here) {
@@ -349,8 +359,10 @@ export async function withRail(res, user, here) {
   headers.set("Cache-Control", "no-store");
   const style = `<style>.rail { --rail: var(--surface); --gold: var(--accent); --gold-soft: var(--accent-soft); --mono: var(--sans); }${RAIL_CSS}</style>`;
   // Recipe labels is a tab of Recipe box, so the rail marks Recipe box there.
-  const page = here === "labels" ? "recipes" : here;
-  return new Response(text.replace("<!--site-rail-->", style + rail(user, page)).replace("<!--kitchen-tabs-->", kitchenTabs(user, here)), { status: res.status, headers });
+  // Sweep is a tab of Chat, so the rail marks Chat there.
+  const page = here === "labels" ? "recipes" : here === "sweep" ? "chat" : here;
+  return new Response(text.replace("<!--site-rail-->", style + rail(user, page)).replace("<!--kitchen-tabs-->", kitchenTabs(user, here))
+    .replace("<!--chat-tabs-->", chatTabs(user, here)), { status: res.status, headers });
 }
 
 export function page(title, body, { user, wide = false, here = "" } = {}) {

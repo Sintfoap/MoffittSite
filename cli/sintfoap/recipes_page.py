@@ -14,6 +14,7 @@ on it in Recipe labels), to untick any that don't fit before they're added."""
 from __future__ import annotations
 
 import asyncio
+import datetime as dt
 import re
 import zipfile
 from pathlib import Path
@@ -412,10 +413,11 @@ class RecipesPage(Page):
         Binding("ctrl+l", "labels_tab", "Labels tab"),
     ]
 
-    def __init__(self):
+    def __init__(self, open: str | None = None):
         super().__init__()
         self.data: dict | None = None
-        self.open: str | None = None
+        self.open: str | None = open    # a recipe to open first (Meal plan's v, say)
+        self.uses: dict[str, dict | None] = {}   # recipe id → where it's used (Meal plan, Food club, the board)
         self.scale: dict[str, dict] = {}       # recipe id → {servings} or {factor}
         self.skip: dict[str, set[int]] = {}    # recipe id → ingredient indexes not to send
         self.pending_picture: bytes | None = None   # a photo draft's picture, kept once it's saved if ticked
@@ -562,7 +564,8 @@ class RecipesPage(Page):
         bits = [b for b in (r.get("time"), r.get("yield") if r.get("yield") and not r["yield"].replace(".", "").isdigit() else "", host(r.get("source", ""))) if b]
         if r.get("image"):
             bits.append("has a picture (c changes it)")
-        self.query_one("#facts", Static).update(" · ".join(bits))
+        used = self.uses_text(r["id"])
+        self.query_one("#facts", Static).update(Text.assemble(" · ".join(bits), ("\n" if bits and used else "", ""), (used, GOLD_DIM)))
         tags = Text()
         for i, lb in enumerate(r.get("labels", [])):
             tags.append(("" if i == 0 else "   ") + lb["key"], style=f"bold {GOLD}")
@@ -879,6 +882,33 @@ class RecipesPage(Page):
             self.open = shown[0]["id"] if shown else None
         self.show_shelf()
         self.show_recipe()
+
+    def uses_text(self, rid: str) -> str:
+        """"Planned Wed · Food club, Nov 2026 · On the board", fetched once per recipe while the page is open."""
+        if rid not in self.uses:
+            self.uses[rid] = None
+            self.run_worker(self.load_uses(rid), group="uses")
+            return ""
+        u = self.uses[rid]
+        if not u:
+            return ""
+        this = (dt.date.today() - dt.timedelta(days=dt.date.today().weekday())).isoformat()
+        bits = []
+        if u.get("planned"):
+            bits.append("Planned " + ", ".join(p["name"] if p["week"] == this else f"next {p['name']}" for p in u["planned"]))
+        for c in u.get("club", [])[:2]:
+            bits.append(f"Food club, {dt.date.fromisoformat(c['month'] + '-01').strftime('%b %Y')}")
+        if u.get("board"):
+            bits.append("On the board" if u["board"]["yours"] else "Saved from the board")
+        return " · ".join(bits)
+
+    async def load_uses(self, rid: str) -> None:
+        try:
+            self.uses[rid] = await asyncio.to_thread(site.recipe_uses, rid)
+        except Exception:
+            return
+        if self.current() and self.current()["id"] == rid:
+            self.show_recipe()
 
     def action_labels_tab(self) -> None:
         """ctrl+l: the Labels tab, the one label list (Recipe labels) recipes pick from."""

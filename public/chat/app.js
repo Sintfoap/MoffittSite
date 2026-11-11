@@ -1251,6 +1251,7 @@ async function route() {
   // The dashboard and admin page link here for connections.
   if (id === "connections") { history.replaceState(null, "", location.pathname); if (bridges.allowed) showConnections(); return; }
   if (!id) { if (open) closeRoom(); return; }
+  try { localStorage.setItem("chat:last", id); } catch {}
   if (open?.id === id) return;
   try { await openRoom(id); } catch (e) { toast(e.message); closeRoom(); }
 }
@@ -1260,4 +1261,15 @@ setInterval(pollRoom, ROOM_EVERY);
 setInterval(() => { if (!document.hidden) loadRooms().catch(() => {}); }, LIST_EVERY);
 document.addEventListener("visibilitychange", () => { if (!document.hidden) { pollRoom(); loadRooms().catch(() => {}); } });
 
-loadRooms().then(route).catch(e => toast(e.message));
+// With no room in the address, open the one you were last in (or the busiest
+// you've joined) instead of an empty pane; on a phone the room list stays first.
+function lastRoom() {
+  if (location.hash || !matchMedia("(min-width: 821px)").matches) return;
+  let last = null;
+  try { last = localStorage.getItem("chat:last"); } catch {}
+  const joined = rooms.filter(r => r.joined);
+  const pick = joined.find(r => r.id === last) || [...joined].sort((a, b) => String(b.last_at || "").localeCompare(String(a.last_at || "")))[0];
+  if (pick) history.replaceState(null, "", "#" + pick.id);
+}
+
+loadRooms().then(() => { lastRoom(); return route(); }).catch(e => toast(e.message));
