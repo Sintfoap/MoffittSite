@@ -105,15 +105,20 @@ label.field input, label.field textarea, label.field select { width: 100%; font-
   .add { grid-template-columns: 1fr; }
   .key .head .tools { margin-left: 0; width: 100%; }
 }
+details.about { margin: -8px 0 18px; font-size: 13px; color: var(--muted); max-width: 70ch; }
+details.about summary { cursor: pointer; color: var(--gold); width: max-content; }
+details.about p { margin: 8px 0 0; }
 </style>
 </head>
 <body>
 <div class="shell">
 <!--site-rail-->
 <main>
-  <div class="kicker">Recipe labels</div>
-  <h1>The label list</h1>
-  <p class="lede">The one list of labels everyone picks from in Recipe box, like <b>Season: Fall</b> or <b>Cuisine: Irish</b>, so nobody ends up with Fall and Autumn. Each key, like Season, is also a category on the Recipe board. Renaming a label renames it on every recipe; removing one takes it off them all.</p>
+  <div class="kicker">Recipe box</div>
+  <h1>Labels</h1>
+  <!--kitchen-tabs-->
+  <p class="lede">The one list of labels, like <b>Season: Fall</b>, that every recipe picks from.</p>
+  <details class="about"><summary>How it works</summary><p>Keeping one list means nobody ends up with Fall and Autumn. Each key, like Season, is also a category on the Recipe board. Renaming a label renames it on every recipe; removing one takes it off them all.</p></details>
   <div id="error" class="msg bad" role="alert" hidden></div>
   <div id="done" class="msg good" role="status" hidden></div>
 

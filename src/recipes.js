@@ -5,7 +5,7 @@
 // almost every recipe site publishes for search engines), falling back to
 // microdata. Scaling is public/recipes/scale.js, shared with the page.
 //
-// /recipes/api/recipes             GET → {recipes, label_list, lists, drift, board (has Recipe board), photo}; POST {url} or {title, ...} → a new recipe
+// /recipes/api/recipes             GET → {recipes, label_list, lists, drift, board (has Recipe board), labels (keeps Recipe labels), photo}; POST {url} or {title, ...} → a new recipe
 // /recipes/api/recipes/import      POST {pages: [html, ...]} → {added, skipped}: many at once, from an export file
 // /recipes/api/recipes/<id>/photo  POST {data (base64)} → the recipe, with that as its picture (kept here); DELETE → without a picture
 // /recipes/api/photos/<photo>      GET → a picture kept here
@@ -706,7 +706,7 @@ export async function recipes(request, env, user, pathname) {
     if (!id) {
       if (method === "GET") {
         const drift = user.areas.has("todo");
-        return json({ recipes: await list(env, user), label_list: await labelList(await db(env)), drift, board: user.areas.has("board"), lists: drift ? await writableCollections(env, user) : [], photo: await photoState(env, user) });
+        return json({ recipes: await list(env, user), label_list: await labelList(await db(env)), drift, board: user.areas.has("board"), labels: user.areas.has("labels"), lists: drift ? await writableCollections(env, user) : [], photo: await photoState(env, user) });
       }
       if (method !== "POST") return notAllowed();
       const body = await readJson(request);

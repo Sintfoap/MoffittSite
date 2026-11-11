@@ -394,25 +394,49 @@ def test_recipe_labels_keeps_the_list_in_the_terminal(real_site):
 
 
 def test_admins_switch_apps_on_and_off_in_the_terminal(admin_site):
+    from sintfoap.admin_page import grouped
     async def access(app, pilot):
         page = app.screen
         assert type(page).__name__ == "AdminPage"
         apps = [a["id"] for a in page.data["apps"]]
         assert apps == ["drift", "admin", "plugins", "chat", "chat-bridges", "recipes", "meals", "sweep", "trips", "board", "labels", "food", "notifications"]
+        # Grouped as the menu is, with Chat connections under Chat.
+        assert [(t, [a["id"] for a in xs]) for t, xs in grouped(page.data["apps"])] == [
+            ("APPS", ["drift", "plugins", "chat", "chat-bridges", "sweep", "trips"]),
+            ("KITCHEN", ["recipes", "labels", "meals", "board", "food"]),
+            ("ACCOUNT", ["admin", "notifications"])]
         # A switch for every app on every account; your own admin one can't be turned off.
         assert len(page.boxes) == len(apps) * len(page.data["users"])
         me = next(i for i, u in enumerate(page.data["users"]) if u["you"])
         assert page.query_one(f"#u{me}-admin").disabled
         sam = next(i for i, u in enumerate(page.data["users"]) if u["username"] == "sam")
+        # Several switches change, and nothing is sent until ctrl+s.
+        page.query_one(f"#person-{sam}").collapsed = False
+        await settle(pilot)
         page.query_one(f"#u{sam}-chat").focus()
         await pilot.press("space")
-        await settle(pilot, 0.5)
-        assert "chat" not in next(u for u in site.admin_access()["users"] if u["username"] == "sam")["apps"]
-        assert not page.query_one(f"#u{sam}-chat").value
-        assert app.focused.id == f"u{sam}-chat"
+        page.query_one(f"#u{sam}-recipes").focus()
         await pilot.press("space")
-        await settle(pilot, 0.5)
-        assert "chat" in next(u for u in site.admin_access()["users"] if u["username"] == "sam")["apps"]
+        await settle(pilot)
+        before = next(u for u in site.admin_access()["users"] if u["username"] == "sam")["apps"]
+        assert "chat" in before and "recipes" not in before
+        assert "unsaved" in str(page.query_one(f"#person-{sam}").title)
+        await pilot.press("ctrl+s")
+        await settle(pilot, 0.6)
+        after = next(u for u in site.admin_access()["users"] if u["username"] == "sam")["apps"]
+        assert "chat" not in after and "recipes" in after
+        assert not page.query_one(f"#person-{sam}").collapsed, "the saved account stays open"
+        # a turns them all on, x all off, for the account the focus is in.
+        page.query_one(f"#u{sam}-chat").focus()
+        await pilot.press("a")
+        await pilot.press("ctrl+s")
+        await settle(pilot, 0.6)
+        assert len(next(u for u in site.admin_access()["users"] if u["username"] == "sam")["apps"]) == len(apps)
+        page.query_one(f"#u{sam}-chat").focus()
+        await pilot.press("x")
+        await pilot.press("ctrl+s")
+        await settle(pilot, 0.6)
+        assert next(u for u in site.admin_access()["users"] if u["username"] == "sam")["apps"] == []
     run_app("admin", access)
 
 
@@ -1726,13 +1750,34 @@ def test_food_club_picks_a_month_marks_it_made_and_keeps_photos(real_site, tmp_p
     run_app("food", food)
 
 
-def test_g_l_opens_the_terminal_recipe_labels(real_site):
+def test_recipe_labels_is_the_recipe_box_labels_tab(real_site):
     async def go(app, pilot):
         await settle(pilot, 0.5)
-        assert any(n["key"] == "l" for n in app.data["nav"])
-        app.go("l")
+        # Not a place of its own in the menu any more, as on the website...
+        assert not any(n["id"] == "labels" for n in app.data["nav"])
+        # ...but ctrl+l in Recipe box opens it, and esc comes back.
+        app.go("r")
+        await settle(pilot, 0.6)
+        assert type(app.screen).__name__ == "RecipesPage"
+        assert "labels (ctrl+l)" in str(app.screen.query_one("#kicker").render())
+        await pilot.press("ctrl+l")
         await settle(pilot, 0.5)
         assert type(app.screen).__name__ == "LabelsPage"
+        await pilot.press("escape")
+        await settle(pilot, 0.3)
+        assert type(app.screen).__name__ == "RecipesPage"
+    run_app("dashboard", go)
+
+
+def test_dashboard_cards_say_whats_new_and_group_the_kitchen(real_site):
+    async def go(app, pilot):
+        await settle(pilot, 0.5)
+        page = app.screen
+        recipes = next(a for a in app.data["apps"] if a["id"] == "recipes")
+        assert recipes["group"] == "kitchen" and recipes["now"] in ("No recipes yet",) or recipes["now"].endswith("saved")
+        assert page.query_one("#kitchen-head").display
+        kitchen = [c._title for c in page.query_one("#kitchen").query("Card")]
+        assert "Recipe box" in kitchen and "Drift" not in kitchen
     run_app("dashboard", go)
 
 

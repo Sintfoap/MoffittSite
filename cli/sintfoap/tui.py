@@ -73,6 +73,15 @@ def page_for(url: str) -> str | None:
     return None
 
 
+def app_body(app: dict) -> Text:
+    """A dashboard card's words: what's new (`now`), then what the app is for."""
+    t = Text()
+    if app.get("now"):
+        t.append(app["now"] + "\n", style=f"bold {GOLD}")
+    t.append(app["blurb"], style=MUTED if not app.get("now") else FAINT)
+    return t
+
+
 class Card(Static, can_focus=True):
     """A dashboard card. Enter or a click opens its page: here if the terminal has it, else in the browser."""
 
@@ -110,7 +119,7 @@ class DashboardPage(Page):
     DashboardPage #welcome {{ color: {INK}; text-style: bold; padding: 1 0 1 0; }}
     DashboardPage #notice {{ display: none; border: round {BAD}; color: {BAD}; padding: 0 1; margin-bottom: 1; }}
     DashboardPage #notice.on {{ display: block; }}
-    DashboardPage #apps {{ grid-size: 2; grid-gutter: 1 2; height: auto; margin-bottom: 1; }}
+    DashboardPage #apps, DashboardPage #kitchen {{ grid-size: 2; grid-gutter: 1 2; height: auto; margin-bottom: 1; }}
     Card {{ background: #121a12; border: round #4a4430; padding: 1 2; height: auto; }}
     Card:focus {{ border: round {GOLD}; }}
     Card:hover {{ border: round {GOLD_DIM}; }}
@@ -139,6 +148,8 @@ class DashboardPage(Page):
                 yield Card("Today", "", "", "Open Drift →", page="drift", id="today")
                 yield Card("Your account", "", "", "Account settings →", page="settings", id="account")
             yield Grid(id="apps")
+            yield Static("KITCHEN", classes="kicker", id="kitchen-head")
+            yield Grid(id="kitchen")
             yield Static(id="status")
         yield Footer()
 
@@ -179,13 +190,23 @@ class DashboardPage(Page):
         if a.get("setup_needed"):
             notice.update(f"Finish setting up your account first: {a['setup_needed']}. Press s for account settings.")
 
-        grid = self.query_one("#apps", Grid)
+        # Each card says what's new in its app (`now`, from src/glance.js) above
+        # what the app is for; the food apps go under Kitchen, as in the menu.
+        grid, kitchen = self.query_one("#apps", Grid), self.query_one("#kitchen", Grid)
         await grid.remove_children()
-        cards = [Card(app["name"], app["blurb"], app["url"], page=page_for(app["url"]), id=f"app-{i}")
+        await kitchen.remove_children()
+        cards = [Card(app["name"], app_body(app), app["url"], page=page_for(app["url"]), id=f"app-{i}")
                  for i, app in enumerate(data["apps"])]
-        if cards:
-            await grid.mount_all(cards)
-        elif not a.get("setup_needed"):
+        mine = [c for c, app in zip(cards, data["apps"]) if app.get("group") != "kitchen"]
+        food = [c for c, app in zip(cards, data["apps"]) if app.get("group") == "kitchen"]
+        if mine:
+            await grid.mount_all(mine)
+        if food:
+            await kitchen.mount_all(food)
+        self.query_one("#kitchen-head").display = bool(food)
+        kitchen.display = bool(food)
+        cards = mine + food
+        if not cards and not a.get("setup_needed"):
             await grid.mount(Static(Text("Your account doesn't have any apps yet. Ask the site's admin for access.", style=MUTED)))
 
         acct = self.query_one("#account", Card)

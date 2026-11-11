@@ -40,6 +40,8 @@ const ICON = {
   bell: `<path d="M6 16V11a6 6 0 0 1 12 0v5l2 2H4z"/><path d="M10 20.5a2 2 0 0 0 4 0"/>`,
   out: `<path d="M15 4h4v16h-4M10 8l-4 4 4 4M6 12h10"/>`,
   fold: `<rect x="3" y="4" width="18" height="16" rx="1"/><path d="M9 4v16M16 9l-3 3 3 3"/>`,
+  menu: `<path d="M4 7h16M4 12h16M4 17h16"/>`,
+  moon: `<path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/>`,
 };
 const icon = name => `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON[name]}</svg>`;
 
@@ -59,9 +61,10 @@ const RAIL_CSS = `
   .rail .go:hover { background: var(--gold-soft); color: var(--ink); }
   .rail .go[aria-current="page"] { background: var(--gold-soft); border-left-color: var(--gold); color: var(--ink); font-weight: 700; }
   .rail .go[aria-current="page"] svg { color: var(--gold); }
-  .rail button.go { width: 100%; margin: auto 0 0; background: none; border: 0; border-left: 2px solid transparent; cursor: pointer;
+  .rail button.go { width: 100%; margin: 0; background: none; border: 0; border-left: 2px solid transparent; cursor: pointer;
           color: var(--muted); font: 400 14px var(--mono); letter-spacing: 0; text-transform: none; text-align: left; filter: none; }
   .rail button.go::before, .rail button.go::after { content: none; }
+  .rail button.go.theme { margin-top: auto; }
   .rail .me { padding: 14px 10px 0; border-top: 1px solid var(--line); font-size: 12.5px; color: var(--muted); display: grid; gap: 2px; }
   .rail .me b, .rail .me .mono { color: var(--ink); font-weight: 700; overflow-wrap: anywhere; }
   .rail .me a { color: var(--gold); text-decoration: none; justify-self: start; margin-top: 6px; }
@@ -73,22 +76,34 @@ const RAIL_CSS = `
     .rail-min .rail h3 { height: 1px; margin: 12px 6px; overflow: hidden; color: transparent; background: var(--line); }
     .rail-min .rail .go { justify-content: center; padding: 8px 0; }
     .rail-min .rail .go svg { width: 18px; height: 18px; }
-    .rail-min .rail button.go svg { transform: scaleX(-1); }
+    .rail-min .rail button.go.fold svg { transform: scaleX(-1); }
     .rail-min .rail .me { padding: 12px 0 0; justify-items: center; }
     .rail-min .rail .me a { margin: 0; padding: 4px; }
     .rail-min .rail .me a svg { display: block; }
   }
+  .rail .here, .rail .menu-btn { display: none; }
+  /* On a phone the rail is a bar: the crest, where you are, and a Menu button
+     that opens the whole menu, labelled, under it (html.rail-open, /rail.js). */
   @media (max-width: 820px) {
-    .rail { width: auto; position: static; height: auto; flex-direction: row; align-items: center; gap: 2px; padding: 8px 10px; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--line); }
-    .rail .brand { padding: 0 8px 0 4px; }
-    .rail .brand span, .rail h3, .rail .me b, .rail .me span, .rail .go kbd, .rail .go span { display: none; }
-    .rail .go[aria-current="page"] span { display: inline; }
-    .rail .go { white-space: nowrap; padding: 6px 9px; border-left: 0; border-bottom: 2px solid transparent; }
-    .rail .go[aria-current="page"] { border-bottom-color: var(--gold); }
-    .rail button.go { display: none; }
-    .rail .me { margin: 0 0 0 auto; padding: 0; border: 0; }
-    .rail .me a { margin: 0; white-space: nowrap; }
-    .rail .me a span { display: inline; }
+    .rail { width: auto; position: static; height: auto; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 0; padding: 8px 12px; overflow: visible; border-right: 0; border-bottom: 1px solid var(--line); }
+    .rail .brand { padding: 0 10px 0 2px; }
+    .rail .brand span { display: none; }
+    .rail .here { display: block; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 700; color: var(--ink); }
+    .rail .menu-btn { display: flex; align-items: center; gap: 8px; margin: 0; padding: 7px 12px; border: 1px solid var(--line-2); background: none; color: var(--gold);
+            font: 700 12px var(--mono); letter-spacing: 1.5px; text-transform: uppercase; cursor: pointer; filter: none; }
+    .rail .menu-btn::before, .rail .menu-btn::after { content: none; }
+    .rail .menu-btn svg { width: 16px; height: 16px; }
+    .rail-open .rail .menu-btn { background: var(--gold-soft); }
+    .rail .go, .rail h3, .rail .me, .rail button.go { display: none; }
+    .rail-open .rail .go { display: flex; flex-basis: 100%; padding: 11px 10px; }
+    .rail-open .rail .go kbd { display: none; }
+    .rail-open .rail h3 { display: block; flex-basis: 100%; margin: 14px 10px 4px; }
+    .rail-open .rail h3:first-of-type { margin-top: 10px; }
+    .rail-open .rail .me { display: flex; flex-basis: 100%; align-items: baseline; gap: 10px; margin-top: 8px; padding: 12px 10px 4px; }
+    .rail-open .rail .me .mono { display: none; }
+    .rail-open .rail .me a { margin: 0 0 0 auto; }
+    .rail-open .rail button.go.theme { display: flex; }
+    .rail-open .rail button.go.fold { display: none; }
   }
 `;
 
@@ -214,7 +229,12 @@ ${SHELL_CSS}
   a.app .name { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 15px; }
   a.app .name svg { color: var(--gold); width: 16px; height: 16px; }
   a.app p { margin: 0; font-size: 13.5px; }
+  a.app .now { font-size: 13.5px; font-weight: 700; color: var(--gold); }
+  a.app .now + p { color: var(--muted); font-size: 12.5px; }
   a.app .open { margin-top: 8px; font-size: 12px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; color: var(--gold); }
+  .phone-app { display: none; margin-top: 16px; }
+  .phone-app .row-links { display: flex; gap: 18px; flex-wrap: wrap; }
+  @media (max-width: 820px) { .phone-app { display: block; } }
   .section-title { font-size: 11px; letter-spacing: 3px; text-transform: uppercase; color: var(--faint); margin: 26px 0 0; }
 
   /* settings: sections with their own sub-nav */
@@ -227,18 +247,43 @@ ${SHELL_CSS}
   .settings .group { font-size: 11px; letter-spacing: 3px; text-transform: uppercase; color: var(--faint); margin: 8px 0 10px; }
   @media (max-width: 820px) { .settings { grid-template-columns: 1fr; gap: 12px; } .subnav { position: static; display: flex; flex-wrap: wrap; gap: 6px; }
     .subnav a { border: 1px solid var(--line); padding: 3px 10px; } }
-  /* admin: one switch per app per account */
-  .toggles { display: grid; gap: 4px; min-width: 170px; }
-  .toggles form { margin: 0; }
-  button.toggle { margin: 0; padding: 2px 8px 2px 4px; display: flex; align-items: center; gap: 8px; width: 100%; background: transparent; border: 0;
-          color: var(--muted); font: 400 13px var(--mono); letter-spacing: 0; text-transform: none; text-align: left; white-space: nowrap; }
-  button.toggle::before { content: ""; flex: none; width: 26px; height: 14px; border: 1px solid var(--line-2); border-radius: 8px;
-          background: radial-gradient(circle at 6px 50%, var(--faint) 4px, transparent 5px); }
-  button.toggle::after { content: "off"; margin-left: auto; font-size: 11px; color: var(--faint); }
-  button.toggle[aria-pressed="true"] { color: var(--ink); }
-  button.toggle[aria-pressed="true"]::before { border-color: var(--gold); background: var(--gold-soft) radial-gradient(circle at 18px 50%, var(--gold) 4px, transparent 5px); }
-  button.toggle[aria-pressed="true"]::after { content: "on"; color: var(--gold); }
-  button.toggle:disabled { cursor: default; filter: none; opacity: .7; }
+  /* admin: each account folds open to its apps, grouped as in the menu, saved together */
+  .people-tools { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
+  .people-tools input { flex: 1 1 220px; margin: 0; padding: 7px 10px; font: 14px var(--mono); color: var(--ink); background: var(--field); border: 1px solid var(--line-2); }
+  .people-tools button { margin: 0; }
+  .people { display: grid; gap: 8px; margin-bottom: 24px; }
+  details.person { background: var(--panel); border: 1px solid var(--line); scroll-margin-top: 16px; }
+  details.person[open] { border-color: var(--line-2); }
+  details.person > summary { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; padding: 12px 16px; cursor: pointer; list-style: none; }
+  details.person > summary::-webkit-details-marker { display: none; }
+  details.person > summary::before { content: "▸"; color: var(--gold); width: 1ch; }
+  details.person[open] > summary::before { content: "▾"; }
+  details.person > summary:hover { background: var(--gold-soft); }
+  details.person .who { min-width: 180px; }
+  details.person .count { color: var(--muted); font-size: 13px; }
+  details.person .tags { margin-left: auto; }
+  details.person .tags .tag { margin: 0 0 0 4px; }
+  .person-body { padding: 4px 16px 16px 40px; border-top: 1px dashed var(--line); }
+  .app-groups { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 6px 24px; margin: 10px 0 4px; }
+  .app-groups fieldset { border: 0; margin: 0; padding: 0; display: grid; gap: 2px; align-content: start; }
+  .app-groups legend { padding: 0; margin-bottom: 4px; font-size: 11px; letter-spacing: 3px; text-transform: uppercase; color: var(--faint); }
+  label.switch { display: flex; align-items: center; gap: 10px; padding: 3px 0; margin: 0; font: 400 13.5px var(--mono); letter-spacing: 0; text-transform: none; color: var(--muted); cursor: pointer; }
+  label.switch.part { padding-left: 22px; }
+  label.switch input { appearance: none; -webkit-appearance: none; margin: 0; flex: none; width: 28px; height: 16px; padding: 0; border: 1px solid var(--line-2); border-radius: 9px;
+          background: radial-gradient(circle at 7px 50%, var(--faint) 4px, transparent 5px); cursor: pointer; }
+  label.switch input:checked { border-color: var(--gold); background: var(--gold-soft) radial-gradient(circle at 19px 50%, var(--gold) 4px, transparent 5px); }
+  label.switch input:checked + span { color: var(--ink); }
+  label.switch input:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+  label.switch input:disabled { opacity: .7; cursor: default; }
+  .person .row { align-items: center; justify-content: flex-start; gap: 8px; }
+  .person .row > * { flex: 0 0 auto; min-width: 0; }
+  .save-row { margin-top: 10px; }
+  .save-row button, .person .actions button { margin: 0; white-space: nowrap; }
+  .save-row button.small { padding: 5px 10px; }
+  .person .actions { margin-top: 6px; }
+  .person .actions form { margin: 0; display: flex; align-items: center; }
+  [data-unsaved] { color: var(--warn); }
+  @media (max-width: 820px) { .person-body { padding-left: 16px; } details.person .tags { margin-left: 0; } }
   .admin-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 12px; margin-bottom: 18px; }
 `;
 
@@ -253,21 +298,38 @@ const FONTS = `<link rel="preconnect" href="https://fonts.googleapis.com"><link 
 // "notifications", "account", "admin").
 export function rail(user, here) {
   const nav = siteNav(user);
+  const at = nav.find(n => n.id === here);
   const link = n => `<a class="go" href="${esc(n.href)}" data-key="${n.key}" aria-label="${esc(n.label)}" title="${esc(n.label)}"${here === n.id ? ` aria-current="page"` : ""}>${icon(n.icon)}<span>${esc(n.label)}</span><kbd aria-hidden="true">g ${n.key}</kbd></a>`;
   // /rail.js runs before the rail is drawn, so a folded rail never flashes open.
   return `<script src="/rail.js"></script><nav class="rail" aria-label="Site">
     <a class="brand" href="/" aria-label="sintfoap.xyz home">${CREST}<span>sintfoap</span></a>
+    <span class="here">${esc(at ? at.label : "sintfoap")}</span>
+    <button type="button" class="menu-btn" data-rail-menu aria-expanded="false" aria-label="Menu">${icon("menu")}<span>Menu</span></button>
     ${nav.filter(n => n.group === "site").map(link).join("")}
+    ${nav.some(n => n.group === "kitchen") ? `<h3>Kitchen</h3>${nav.filter(n => n.group === "kitchen").map(link).join("")}` : ""}
     <h3>Account</h3>
     ${nav.filter(n => n.group === "account").map(link).join("")}
-    <button type="button" class="go" data-rail-fold aria-label="Collapse sidebar" title="Collapse sidebar">${icon("fold")}<span>Collapse</span><kbd aria-hidden="true">\\</kbd></button>
-    <div class="me"><b>${esc(user.display_name)}</b><span class="mono">${esc(user.username)}</span><a href="/logout" title="Sign out">${icon("out")}<span>Sign out</span></a></div>
+    <button type="button" class="go theme" data-theme-toggle aria-label="Dark mode" title="Dark mode">${icon("moon")}<span>Dark mode</span></button>
+    <button type="button" class="go fold" data-rail-fold aria-label="Collapse sidebar" title="Collapse sidebar">${icon("fold")}<span>Collapse</span><kbd aria-hidden="true">\\</kbd></button>
+    <div class="me"><b>${esc(user.display_name)}</b>${user.display_name.toLowerCase() === user.username ? "" : `<span class="mono">${esc(user.username)}</span>`}<a href="/logout" title="Sign out">${icon("out")}<span>Sign out</span></a></div>
   </nav>`;
 }
 
 // Puts the rail into a static page (Drift, the plugin store, chat) at its
 // <!--site-rail--> marker, with the rail's styles mapped onto that page's own
 // colour names so it follows the page's theme toggle too.
+// Recipe box and Recipe labels as two tabs of one place, for someone with
+// both: Recipes | Labels, under each page's heading (its <!--kitchen-tabs--> marker).
+export function kitchenTabs(user, here) {
+  if (!(user.areas.has("recipes") && user.areas.has("labels"))) return "";
+  const tab = (id, href, label) => `<a href="${href}"${here === id ? ` aria-current="page"` : ""}>${label}</a>`;
+  return `<nav class="kitchen-tabs" aria-label="Recipe box">${tab("recipes", "/recipes/", "Recipes")}${tab("labels", "/labels/", "Labels")}</nav>
+<style>.kitchen-tabs { display: flex; gap: 2px; margin: 0 0 18px; border-bottom: 1px solid var(--line); }
+.kitchen-tabs a { padding: 7px 14px; color: var(--muted); text-decoration: none; border-bottom: 2px solid transparent; margin-bottom: -1px; font-size: 14px; }
+.kitchen-tabs a:hover { color: var(--ink); }
+.kitchen-tabs a[aria-current="page"] { color: var(--ink); font-weight: 700; border-bottom-color: var(--gold); }</style>`;
+}
+
 export async function withRail(res, user, here) {
   if (!(res.headers.get("Content-Type") || "").startsWith("text/html")) return res;
   const text = await res.text();
@@ -275,7 +337,9 @@ export async function withRail(res, user, here) {
   for (const h of ["Content-Length", "ETag", "Last-Modified"]) headers.delete(h);
   headers.set("Cache-Control", "no-store");
   const style = `<style>.rail { --rail: var(--surface); --gold: var(--accent); --gold-soft: var(--accent-soft); --mono: var(--sans); }${RAIL_CSS}</style>`;
-  return new Response(text.replace("<!--site-rail-->", style + rail(user, here)), { status: res.status, headers });
+  // Recipe labels is a tab of Recipe box, so the rail marks Recipe box there.
+  const page = here === "labels" ? "recipes" : here;
+  return new Response(text.replace("<!--site-rail-->", style + rail(user, page)).replace("<!--kitchen-tabs-->", kitchenTabs(user, here)), { status: res.status, headers });
 }
 
 export function page(title, body, { user, wide = false, here = "" } = {}) {
@@ -392,10 +456,12 @@ const plural = (n, one, many = one + "s") => `${n} ${n === 1 ? one : many}`;
 
 // Home for a signed-in account: what's due in Drift, how the account is set
 // up, and every app it can open. `agenda` is null for accounts without Drift.
-export function dashboardPage({ user, apps, sessionCount, recoveryLeft, agenda, installs, mail, greeting, dateLabel }) {
+export function dashboardPage({ user, apps, glances = {}, sessionCount, recoveryLeft, agenda, installs, mail, greeting, dateLabel }) {
   const first = String(user.display_name).split(/\s+/)[0];
+  const card = a => `<a class="app" href="${esc(a.href)}"><span class="name">${icon(a.icon)}${esc(a.name)}</span>${glances[a.id] ? `<span class="now">${esc(glances[a.id])}</span>` : ""}<p>${esc(a.blurb)}</p><span class="open">Open →</span></a>`;
+  const kitchen = apps.filter(a => a.group === "kitchen"), rest = apps.filter(a => a.group !== "kitchen");
   const appCards = apps.length
-    ? `<div class="apps">${apps.map(a => `<a class="app" href="${esc(a.href)}"><span class="name">${icon(a.icon)}${esc(a.name)}</span><p>${esc(a.blurb)}</p><span class="open">Open →</span></a>`).join("")}</div>`
+    ? `${rest.length ? `<div class="apps">${rest.map(card).join("")}</div>` : ""}${kitchen.length ? `<div class="section-title">Kitchen</div><div class="apps">${kitchen.map(card).join("")}</div>` : ""}`
     : `<section class="card"><p>Your account doesn't have any apps yet. Ask the site's admin for access.</p></section>`;
 
   let summary = "", today = "";
@@ -428,6 +494,9 @@ export function dashboardPage({ user, apps, sessionCount, recoveryLeft, agenda, 
     <div class="kicker">${esc(dateLabel)}</div><h1>${esc(greeting)}, ${esc(first)}</h1>
     ${summary ? `<p class="lede">${summary}</p>` : ""}
     <div class="home">${today || `<div>${appCards}</div>`}${account}</div>
+    <section class="card phone-app"><div class="card-head"><h2>On your phone</h2></div>
+      <p>The phone app has Home, Drift and Chat made for a small screen, and can sit on your home screen like any other app.</p>
+      <p class="row-links"><a href="/m/">Open the phone app</a><a href="/app">Install it on Android</a></p></section>
     ${today ? `<div class="section-title">Apps</div>${appCards}` : ""}`, { user, wide: true, here: "home" });
 }
 
@@ -536,25 +605,46 @@ export function accountPage({ user, error, notice, recoveryLeft, sessionCount, s
 
 const date = t => new Date(t * 1000).toISOString().slice(0, 10);
 
-export function adminPage({ user, users, orphans, apps, books = [], bookVotes = [], error, notice, tempPassword }) {
+export function adminPage({ user, users, orphans, apps, books = [], bookVotes = [], error, notice, tempPassword, open = "" }) {
   const post = (action, label, fields, cls = "quiet small", confirm = "") =>
     `<form method="post" action="/admin/${action}">${Object.entries(fields).map(([k, v]) => `<input type="hidden" name="${k}" value="${esc(v)}">`).join("")}${confirm}<button class="${cls}" type="submit">${label}</button></form>`;
-  const rows = users.map(u => {
-    const self = u.id === user.id;
-    return `<tr><td><strong>${esc(u.display_name)}</strong><br><span class="mono">${esc(u.username)}</span><br><span class="hint">since ${date(u.created_at)}</span></td>
-      <td><div class="toggles">${apps.map(a => {
-        const on = u.areas.includes(a.area), locked = self && a.area === "admin";
-        return `<form method="post" action="/admin/access"><input type="hidden" name="user_id" value="${esc(u.id)}"><input type="hidden" name="app" value="${esc(a.id)}"><input type="hidden" name="on" value="${on ? 0 : 1}">` +
-          `<button class="toggle" type="submit" aria-pressed="${on}"${locked ? ` disabled title="You can't remove your own admin access."` : ""} aria-label="${esc(a.name)} for ${esc(u.username)}">${esc(a.name)}</button></form>`;
-      }).join("")}</div></td>
-      <td>${u.disabled ? `<span class="tag off">disabled</span>` : ""}${u.totp ? `<span class="tag on">2FA</span>` : ""}${u.must_change_pw ? `<span class="tag warn">must change pw</span>` : ""}<br><span class="hint">${u.sessions} session${u.sessions === 1 ? "" : "s"} · ${u.tasks} Drift item${u.tasks === 1 ? "" : "s"}</span></td>
-      <td>${self ? `<span class="tag">you</span>` : [
-        post(u.disabled ? "enable" : "disable", u.disabled ? "Enable" : "Disable", { user_id: u.id }, u.disabled ? "quiet small" : "danger small"),
-        post("reset-password", "Reset password", { user_id: u.id }),
-        u.totp ? post("reset-2fa", "Reset 2FA", { user_id: u.id }) : "",
-        u.sessions ? post("signout", "Sign out", { user_id: u.id }) : "",
-        post("delete", "Delete", { user_id: u.id }, "danger small", `<input type="text" name="confirm" placeholder="type ${esc(u.username)}" aria-label="Type the username to confirm" style="width:150px;padding:5px 8px;font-size:14px;margin-right:6px">`),
-      ].join("")}</td></tr>`;
+  // The apps by the menu's groups, each part of an app (Chat connections) under it.
+  const GROUPS = [["site", "Apps"], ["kitchen", "Kitchen"], ["account", "Account"]];
+  const top = apps.filter(a => !a.parent);
+  const grouped = GROUPS.map(([g, title]) => [title, top.filter(a => (a.group || "site") === g)
+    .flatMap(a => [a, ...apps.filter(c => c.parent === a.id)])]).filter(([, list]) => list.length);
+  const people = users.map(u => {
+    const self = u.id === user.id, has = apps.filter(a => u.areas.includes(a.area)).length;
+    const box = a => {
+      const on = u.areas.includes(a.area), locked = self && a.area === "admin";
+      // Your own admin access can't be switched off; a disabled box isn't sent, so a hidden one is.
+      return `<label class="switch${a.parent ? " part" : ""}"${locked ? ` title="You can't remove your own admin access."` : ""}>` +
+        `<input type="checkbox" name="apps" value="${esc(a.id)}"${on ? " checked" : ""}${locked ? " disabled" : ""} aria-label="${esc(a.name)} for ${esc(u.username)}"><span>${esc(a.name)}</span></label>` +
+        (locked ? `<input type="hidden" name="apps" value="${esc(a.id)}">` : "");
+    };
+    const tags = `${u.disabled ? `<span class="tag off">disabled</span>` : ""}${u.totp ? `<span class="tag on">2FA</span>` : ""}${u.must_change_pw ? `<span class="tag warn">must change pw</span>` : ""}${self ? `<span class="tag">you</span>` : ""}`;
+    return `<details class="person" id="u-${esc(u.id)}" data-who="${esc(`${u.display_name} ${u.username}`.toLowerCase())}"${open === u.id ? " open" : ""}>
+      <summary><span class="who"><strong>${esc(u.display_name)}</strong>${u.display_name.toLowerCase() === u.username ? "" : ` <span class="mono">${esc(u.username)}</span>`}</span>
+        <span class="count" data-count>${has} of ${apps.length} apps</span><span class="tags">${tags}</span></summary>
+      <div class="person-body">
+        ${open === u.id ? msg(error) + msg(notice, "good") : ""}
+        <form method="post" action="/admin/access-set" class="access" data-access>
+          <input type="hidden" name="user_id" value="${esc(u.id)}">
+          <div class="app-groups">${grouped.map(([title, list]) => `<fieldset><legend>${title}</legend>${list.map(box).join("")}</fieldset>`).join("")}</div>
+          <div class="row save-row"><button type="submit" class="small">Save ${esc(u.username)}'s apps</button>
+            <button type="button" class="quiet small" data-all="on">All on</button><button type="button" class="quiet small" data-all="off">All off</button>
+            <span class="hint" data-unsaved hidden>Unsaved changes</span></div>
+        </form>
+        <p class="hint">Since ${date(u.created_at)} · ${u.sessions} session${u.sessions === 1 ? "" : "s"} · ${u.tasks} Drift item${u.tasks === 1 ? "" : "s"}</p>
+        ${self ? "" : `<div class="row actions">${[
+          post(u.disabled ? "enable" : "disable", u.disabled ? "Enable" : "Disable", { user_id: u.id }, u.disabled ? "quiet small" : "danger small"),
+          post("reset-password", "Reset password", { user_id: u.id }),
+          u.totp ? post("reset-2fa", "Reset 2FA", { user_id: u.id }) : "",
+          u.sessions ? post("signout", "Sign out", { user_id: u.id }) : "",
+          post("delete", "Delete", { user_id: u.id }, "danger small", `<input type="text" name="confirm" placeholder="type ${esc(u.username)}" aria-label="Type the username to confirm" style="width:150px;padding:5px 8px;font-size:14px;margin-right:6px">`),
+        ].join("")}</div>`}
+      </div>
+    </details>`;
   }).join("");
   const orphanRows = orphans.length ? `<section class="card"><h2>Tasks with no account</h2>
     <p>These todo lists belong to an owner that isn't an account, such as lists made before this login existed. Move them to an account to give them back.</p>
@@ -577,7 +667,7 @@ export function adminPage({ user, users, orphans, apps, books = [], bookVotes = 
   </section>`;
   return page("Admin", `
     <div class="kicker">Admin</div><h1>Accounts</h1>
-    ${msg(error)}${msg(notice, "good")}
+    ${open && users.some(u => u.id === open) ? "" : msg(error) + msg(notice, "good")}
     <div class="admin-stats">
       <div class="stat"><b>${users.length}</b><span>${users.length === 1 ? "account" : "accounts"}</span></div>
       <div class="stat"><b>${users.filter(u => u.totp).length}</b><span>with two-factor</span></div>
@@ -585,7 +675,10 @@ export function adminPage({ user, users, orphans, apps, books = [], bookVotes = 
       <div class="stat"><b>${users.filter(u => u.disabled).length}</b><span>disabled</span></div>
     </div>
     ${tempPassword ? `<div class="msg good">Temporary password for <strong>${esc(tempPassword.username)}</strong>: <span class="mono">${esc(tempPassword.password)}</span><br>Send it to them privately. They'll have to change it when they sign in, and it won't be shown again.</div>` : ""}
-    <section class="card scroll"><table><tr><th>Account</th><th>Apps</th><th>Status</th><th>Actions</th></tr>${rows}</table></section>
+    <div class="people-tools"><input type="search" placeholder="Find an account" aria-label="Find an account" data-find-person>
+      <button type="button" class="quiet small" data-expand="open">Expand all</button><button type="button" class="quiet small" data-expand="close">Collapse all</button></div>
+    <section class="people">${people}</section>
+    <script src="/admin.js" defer></script>
     ${orphanRows}
     ${bookRows}`, { user, wide: true, here: "admin" });
 }

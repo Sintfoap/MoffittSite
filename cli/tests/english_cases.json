@@ -1,0 +1,114 @@
+[
+ {
+  "recipe": {
+   "title": "Weeknight chili",
+   "ingredients": [
+    "1 lb ground beef",
+    "2 cans beans",
+    "1 onion"
+   ],
+   "steps": [
+    "Brown the beef in a large pan",
+    "Add the beans and simmer for 20 minutes"
+   ]
+  },
+  "english": true
+ },
+ {
+  "recipe": {
+   "title": "Caesar salad",
+   "ingredients": [
+    "romaine",
+    "parmesan"
+   ],
+   "steps": [
+    "Toss"
+   ]
+  },
+  "english": true
+ },
+ {
+  "recipe": {
+   "title": "Banana bread",
+   "ingredients": [
+    "3 ripe bananas, mashed",
+    "1/3 cup melted butter",
+    "3/4 cup sugar",
+    "1 egg, beaten",
+    "1 1/2 cups all-purpose flour"
+   ],
+   "steps": [
+    "Preheat the oven to 350°F.",
+    "Mix the butter into the bananas, then the sugar and egg.",
+    "Bake for an hour, until golden."
+   ]
+  },
+  "english": true
+ },
+ {
+  "recipe": {
+   "title": "Tortilla española",
+   "ingredients": [
+    "6 huevos",
+    "4 patatas",
+    "1 cebolla",
+    "aceite de oliva",
+    "sal"
+   ],
+   "steps": [
+    "Pelar y cortar las patatas en rodajas finas",
+    "Freír las patatas en abundante aceite"
+   ]
+  },
+  "english": false
+ },
+ {
+  "recipe": {
+   "title": "Coq au vin",
+   "ingredients": [
+    "1 poulet",
+    "200 g de lardons",
+    "1 bouteille de vin rouge",
+    "2 oignons"
+   ],
+   "steps": [
+    "Faire revenir les lardons dans une cocotte",
+    "Ajouter le poulet et le vin, laisser mijoter deux heures"
+   ]
+  },
+  "english": false
+ },
+ {
+  "recipe": {
+   "title": "Pfannkuchen",
+   "ingredients": [
+    "250 g Mehl",
+    "3 Eier",
+    "500 ml Milch",
+    "1 Prise Salz"
+   ],
+   "steps": [
+    "Alles zu einem glatten Teig verrühren",
+    "In einer Pfanne mit etwas Butter goldbraun backen"
+   ]
+  },
+  "english": false
+ },
+ {
+  "recipe": {
+   "title": "餃子",
+   "ingredients": [
+    "豚ひき肉 200g",
+    "キャベツ",
+    "にんにく",
+    "しょうが",
+    "醤油"
+   ],
+   "steps": [
+    "具を混ぜる",
+    "皮で包んで焼く"
+   ]
+  },
+  "english": false
+ }
+]

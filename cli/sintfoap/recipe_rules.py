@@ -266,3 +266,34 @@ def ingredient_hits(recipe: dict, terms: list[dict]) -> list[int] | None:
         if not t["without"]:
             hits.update(at)
     return sorted(hits)
+
+
+# ── whether a recipe reads as English (public/recipes/english.js) ─────────
+# "Translate to English" (E) is offered in the footer only for recipes that
+# don't; E still works on any. tests/english_cases.json is shared with the
+# site's tests, so the two agree.
+_ENGLISH = set("""a an and or the of to in on with for into over from until about at by as is it its
+  then than this that these your you be are can if not until while when each per few more less
+  cup cups tbsp tsp tablespoon tablespoons teaspoon teaspoons oz ounce ounces lb lbs pound pounds g gram grams kg ml liter litre
+  pinch dash clove cloves can cans package stick sticks slice slices piece pieces large medium small whole half quarter
+  chopped diced minced sliced grated melted softened beaten fresh dried ground frozen optional taste divided peeled
+  salt pepper oil butter sugar flour egg eggs water milk cream cheese onion onions garlic lemon juice sauce rice chicken beef pork
+  add mix stir bake cook heat boil simmer serve place combine whisk pour cover remove let set aside preheat oven pan bowl
+  minutes minute hour hours degrees until golden brown top bottom side sides together well into large""".split())
+_WORD = re.compile(r"[^\W\d_]+")
+
+
+def recipe_words(r: dict) -> list[str]:
+    text = " ".join(x for x in [r.get("title"), *(r.get("ingredients") or []), *(r.get("steps") or []), r.get("notes")] if x)
+    return _WORD.findall(text.lower())
+
+
+def looks_english(r: dict) -> bool:
+    words = recipe_words(r)
+    if len(words) < 6:
+        return True
+    foreign = sum(1 for w in words if re.search(r"[^a-z]", w))
+    if foreign / len(words) > 0.2:
+        return False
+    known = sum(1 for w in words if w in _ENGLISH)
+    return known / len(words) >= 0.2

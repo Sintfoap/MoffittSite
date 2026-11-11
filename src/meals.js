@@ -139,6 +139,17 @@ async function loadNights(d, owner, monday) {
   };
 }
 
+// Tonight's dinner, for the dashboard: {title} from Recipe box, {out: true}, or null when nothing's planned.
+export async function tonight(env, user, day) {
+  const d = await db(env);
+  const n = (await loadNights(d, user.id, mondayOf(day))).nights[day];
+  if (!n) return null;
+  if (n.out) return { out: true };
+  if (!n.recipe) return null;
+  const row = await d.prepare("SELECT data FROM recipes WHERE owner = ? AND id = ?").bind(user.id, n.recipe).first();
+  return row ? { title: JSON.parse(row.data).title } : null;
+}
+
 async function saveNights(d, owner, monday, plan) {
   await d.prepare(`INSERT INTO meal_plans (owner, week, data, updated) VALUES (?, ?, ?, ?)
     ON CONFLICT (owner, week) DO UPDATE SET data = excluded.data, updated = excluded.updated`)

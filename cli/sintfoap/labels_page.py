@@ -48,7 +48,8 @@ class LabelsPage(Page):
     def compose(self) -> ComposeResult:
         yield from self.top()
         with VerticalScroll(id="body"):
-            yield Static("R E C I P E   L A B E L S", classes="kicker")
+            # Recipe box's Labels tab, as on the website; esc goes back to Recipes.
+            yield Static(Text.assemble(("R E C I P E   B O X", f"bold {GOLD}"), ("     recipes (esc)  ·  ", FAINT), ("LABELS", f"bold {INK}")), classes="kicker")
             yield Static(Text("The label list", style=f"bold {INK}"), classes="h1")
             yield Static(Text("The one list everyone picks from in Recipe box, like Season: Fall, so nobody ends up with Fall and Autumn. "
                               "Each key is also a category on the Recipe board. n adds labels (Season: Fall, Winter), a adds more under the "

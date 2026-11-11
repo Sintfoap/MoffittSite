@@ -549,8 +549,13 @@ def remove_book_vote(voter: str) -> dict:
 # /admin/api/access (src/account.js); admins only.
 
 def admin_access() -> dict:
-    """{apps: [{id, name}], users: [{id, username, display_name, disabled, you, apps}]}."""
+    """{apps: [{id, name, group, parent?}], users: [{id, username, display_name, disabled, you, apps}]}."""
     return _get("/admin/api/access")
+
+
+def set_access_all(user_id: str, apps: list[str]) -> dict:
+    """Sets exactly which apps an account has (your own admin access stays on); the same as admin_access() after."""
+    return api("POST", "/admin/api/access", {"user_id": user_id, "apps": list(apps)})
 
 
 def set_access(user_id: str, app: str, on: bool) -> dict:

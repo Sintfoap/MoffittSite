@@ -24,7 +24,8 @@ const TOUCH_EVERY = 5 * 60;              // how often last_seen is written
 // on or off per account. A new app is off for everyone until an admin turns it
 // on; only apps marked `onForNew` are given to new accounts.
 // `key` is the letter for its "g" shortcut; `icon` names a drawing in src/pages.js;
-// `group: "account"` lists it with settings in the menu instead of with the apps.
+// `group: "account"` lists it with settings in the menu instead of with the apps;
+// `group: "kitchen"` puts it under the menu's Kitchen heading, with the other food apps.
 // (Drift's area is "todo", the name it had before it was called Drift.)
 export const APPS = [
   { id: "drift", area: "todo", name: "Drift", href: "/todo/", icon: "todo", key: "d", blurb: "Your items as checklists, calendars and lists.", onForNew: true },
@@ -32,16 +33,17 @@ export const APPS = [
   { id: "plugins", area: "plugins", name: "Plugin store", href: "/plugins/", icon: "plugins", key: "p", blurb: "Find, write and share plugins for Drift." },
   { id: "chat", area: "chat", name: "Chat", href: "/chat/", icon: "chat", key: "c", blurb: "Rooms to talk in with everyone else here." },
   // A part of another app: it has its own toggle on the admin page, but no
-  // place of its own in the menu or on the dashboard (see `parent`).
+  // place of its own in the menu or on the dashboard (see `parent`). Recipe
+  // labels is one too: a Labels tab beside Recipe box's own (src/pages.js kitchenTabs).
   { id: "chat-bridges", area: "chat-bridges", parent: "chat", name: "Chat connections", href: "/chat/#connections", icon: "chat",
     blurb: "Bring your Matrix rooms into Chat." },
-  { id: "recipes", area: "recipes", name: "Recipe box", href: "/recipes/", icon: "recipes", key: "r", blurb: "Save recipes from any link, scale them, and shop for them in Drift." },
-  { id: "meals", area: "meals", name: "Meal plan", href: "/meals/", icon: "meals", key: "m", blurb: "Plans the week's dinners from your recipes around your Drift calendar." },
+  { id: "recipes", area: "recipes", name: "Recipe box", href: "/recipes/", icon: "recipes", key: "r", group: "kitchen", blurb: "Save recipes from any link, scale them, and shop for them in Drift." },
+  { id: "meals", area: "meals", name: "Meal plan", href: "/meals/", icon: "meals", key: "m", group: "kitchen", blurb: "Plans the week's dinners from your recipes around your Drift calendar." },
   { id: "sweep", area: "sweep", name: "Sweep", href: "/sweep/", icon: "sweep", key: "w", blurb: "Suggests Drift events, tasks and list items from your chat rooms." },
   { id: "trips", area: "trips", name: "Trip planner", href: "/trips/", icon: "trips", key: "t", blurb: "Plan a trip together: the days, the places, and a packing list for Drift." },
-  { id: "board", area: "board", name: "Recipe board", href: "/board/", icon: "board", key: "b", blurb: "Share recipes, follow the label categories you like, and save what turns up in your feed." },
-  { id: "labels", area: "labels", name: "Recipe labels", href: "/labels/", icon: "labels", key: "l", blurb: "Keep the one list of labels, like Season: Fall, that recipes and the Recipe board's categories use." },
-  { id: "food", area: "food", name: "Food club", href: "/food/", icon: "food", key: "f", blurb: "A food a month, picked by one of us and made by everyone: recipes, favorites and photos." },
+  { id: "board", area: "board", name: "Recipe board", href: "/board/", icon: "board", key: "b", group: "kitchen", blurb: "Share recipes, follow the label categories you like, and save what turns up in your feed." },
+  { id: "labels", area: "labels", parent: "recipes", name: "Recipe labels", href: "/labels/", icon: "labels", key: "l", group: "kitchen", blurb: "Keep the one list of labels, like Season: Fall, that recipes and the Recipe board's categories use." },
+  { id: "food", area: "food", name: "Food club", href: "/food/", icon: "food", key: "f", group: "kitchen", blurb: "A food a month, picked by one of us and made by everyone: recipes, favorites and photos." },
   { id: "notifications", area: "notifications", name: "Notifications", href: "/notifications/", icon: "bell", key: "n", blurb: "Alerts on your phone or computer for Chat and Drift.", group: "account" },
 ];
 // The apps that are places of their own: the menu, the dashboard's cards.

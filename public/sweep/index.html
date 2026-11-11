@@ -124,6 +124,9 @@ details.card[open] summary { margin-bottom: 10px; }
   main { padding-top: 26px; }
   .keybar { display: none; }
 }
+details.about { margin: -8px 0 18px; font-size: 13px; color: var(--muted); max-width: 70ch; }
+details.about summary { cursor: pointer; color: var(--gold); width: max-content; }
+details.about p { margin: 8px 0 0; }
 </style>
 </head>
 <body>
@@ -132,7 +135,8 @@ details.card[open] summary { margin-bottom: 10px; }
 <main>
   <div class="kicker">Sweep</div>
   <h1>Suggestions from your chats</h1>
-  <p class="lede">Sweep reads the rooms you pick and suggests events, tasks and list items for Drift. Nothing is added until you accept it, and what you accept or turn down shapes what it suggests next.</p>
+  <p class="lede">Drift suggestions read out of the chat rooms you pick, to accept or turn down.</p>
+  <details class="about"><summary>How it works</summary><p>Sweep reads the rooms you pick and suggests events, tasks and list items for Drift. Nothing is added until you accept it, and what you accept or turn down shapes what it suggests next.</p></details>
   <div id="error" class="msg bad" role="alert" hidden></div>
   <div id="unready" class="msg warn" hidden>Add your Anthropic API key below to start sweeping.</div>
   <div id="nodrift" class="msg warn" hidden>You need Drift to accept suggestions. Ask the site's admin to turn it on for you.</div>

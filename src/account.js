@@ -2,6 +2,7 @@
 //   /login, /login/2fa, /login/forgot, /login/reset, /login/verify-email, /signup, /logout, /dashboard, /account/*, /admin/*
 // plus protect(), which guards every signed-in area of the site.
 
+import { glance } from "./glance.js";
 import { db, now } from "./db.js";
 import { randomToken, safeEqual } from "./crypto.js";
 import { renderSVG } from "./vendor/uqr.mjs";
@@ -263,8 +264,9 @@ async function dashboard(request, env) {
     try { agendaData = await agenda(env, user, day); }
     catch (e) { console.error("dashboard agenda failed:", e); }
   }
+  const apps = PLACES.filter(a => user.areas.has(a.area));
   return html(dashboardPage({
-    user, apps: PLACES.filter(a => user.areas.has(a.area)), sessionCount, recoveryLeft: await recoveryCodesLeft(env, user.id),
+    user, apps, glances: await glance(env, user, apps, { day, agenda: agendaData }), sessionCount, recoveryLeft: await recoveryCodesLeft(env, user.id),
     agenda: agendaData, installs: drift ? (await installed(env, user.id)).length : null, mail: mailReady(env),
     greeting: hour < 5 ? "Good evening" : hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening",
     dateLabel: label,
@@ -424,15 +426,31 @@ async function setAccess(d, me, target, app, on) {
   else await d.prepare("DELETE FROM user_areas WHERE user_id = ? AND area = ?").bind(target.id, app.area).run();
 }
 
-// GET  /admin/api/access → {apps: [{id, name}], users: [{id, username, display_name, disabled, you, apps: [id]}]}
+// Sets which apps an account has, all at once: the ones in `ids` on, the rest
+// off (your own admin access stays on). Returns {on: [names], off: [names]}, what changed.
+async function setAccessAll(d, me, target, ids) {
+  const want = new Set(ids.map(String));
+  if (target.id === me.id) want.add("admin");
+  const changed = { on: [], off: [] };
+  for (const app of APPS) {
+    const on = want.has(app.id);
+    if (on === target.areas.has(app.area)) continue;
+    await setAccess(d, me, target, app, on);
+    changed[on ? "on" : "off"].push(app.name);
+  }
+  return changed;
+}
+
+// GET  /admin/api/access → {apps: [{id, name, group, parent}], users: [{id, username, display_name, disabled, you, apps: [id]}]}
 // POST /admin/api/access {user_id, app, on} → the same, after the change
+// POST /admin/api/access {user_id, apps: [id]} → the same, with exactly those apps on
 async function adminAccessApi(request, env, d, me, method) {
   const list = async () => {
     const { results } = await d.prepare(`
       SELECT u.id, u.username, u.display_name, u.disabled, (SELECT group_concat(area) FROM user_areas a WHERE a.user_id = u.id) AS areas
       FROM users u ORDER BY u.created_at`).all();
     return json({
-      apps: APPS.map(a => ({ id: a.id, name: a.name })),
+      apps: APPS.map(a => ({ id: a.id, name: a.name, group: a.group || "site", ...(a.parent ? { parent: a.parent } : {}) })),
       users: results.map(u => {
         const areas = new Set(u.areas ? u.areas.split(",") : []);
         return { id: u.id, username: u.username, display_name: u.display_name, disabled: !!u.disabled, you: u.id === me.id,
@@ -446,6 +464,11 @@ async function adminAccessApi(request, env, d, me, method) {
   try { body = await request.json(); } catch { return json({ error: "send JSON" }, 400); }
   const target = await getUser(env, { id: String(body?.user_id ?? "") });
   if (!target) return json({ error: "that account doesn't exist" }, 404);
+  if (Array.isArray(body.apps)) {
+    if (body.apps.some(id => !APPS.some(a => a.id === String(id)))) return json({ error: "unknown app" }, 400);
+    await setAccessAll(d, me, target, body.apps);
+    return list();
+  }
   const app = APPS.find(a => a.id === String(body.app));
   if (!app) return json({ error: "unknown app" }, 400);
   try { await setAccess(d, me, target, app, body.on === true); }
@@ -484,7 +507,38 @@ async function admin(request, env, me, pathname, method) {
       users: users.map(u => ({ ...u, areas: u.areas ? u.areas.split(",") : [] })), ...extra,
     }), { status });
   };
-  if (method !== "POST") return pathname === "/admin" ? show() : redirect("/admin");
+  if (method !== "POST") {
+    if (pathname !== "/admin") return redirect("/admin");
+    // After saving an account's apps: that account stays open, with what changed.
+    const q = new URL(request.url).searchParams, saved = q.get("saved");
+    const who = saved && await getUser(env, { id: saved });
+    if (!who) return show();
+    const on = q.get("on") ? q.get("on").split(",").filter(id => APPS.some(a => a.id === id)) : [];
+    const off = q.get("off") ? q.get("off").split(",").filter(id => APPS.some(a => a.id === id)) : [];
+    const names = ids => ids.map(id => APPS.find(a => a.id === id).name).join(", ");
+    const notice = on.length || off.length
+      ? `Saved ${who.username}'s apps.${on.length ? ` On: ${names(on)}.` : ""}${off.length ? ` Off: ${names(off)}.` : ""}`
+      : `Nothing changed for ${who.username}.`;
+    return show({ notice, open: who.id });
+  }
+
+  // Several apps for one account at once, from its checkboxes: back to the
+  // page with that account still open, where it was (#u-<id>).
+  if (pathname === "/admin/access-set") {
+    let fd;
+    try { fd = await request.formData(); } catch { return show({ error: "Couldn't read the form." }, 400); }
+    const target = await getUser(env, { id: String(fd.get("user_id") ?? "") });
+    if (!target) return show({ error: "That account doesn't exist." }, 404);
+    const ids = fd.getAll("apps").map(String).filter(id => APPS.some(a => a.id === id));
+    let changed;
+    try { changed = await setAccessAll(d, me, target, ids); }
+    catch (e) { if (e instanceof AuthError) return show({ error: e.message, open: target.id }, e.status); throw e; }
+    const idsOf = names => names.map(n => APPS.find(a => a.name === n).id).join(",");
+    const q = new URLSearchParams({ saved: target.id });
+    if (changed.on.length) q.set("on", idsOf(changed.on));
+    if (changed.off.length) q.set("off", idsOf(changed.off));
+    return redirect(`/admin?${q}#u-${target.id}`);
+  }
 
   const f = await form(request);
   const target = f.user_id ? await getUser(env, { id: String(f.user_id) }) : null;
@@ -503,7 +557,7 @@ async function admin(request, env, me, pathname, method) {
         if (!app) throw new AuthError("Unknown app.");
         const on = pathname === "/admin/access" ? f.on === "1" : f.op === "grant";
         await setAccess(d, me, target, app, on);
-        return show({ notice: `${app.name} is ${on ? "on" : "off"} for ${target.username}.` });
+        return show({ notice: `${app.name} is ${on ? "on" : "off"} for ${target.username}.`, open: target.id });
       }
       case "/admin/disable":
         needTarget();

@@ -163,6 +163,9 @@ dialog .three { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
   .post .thumb { width: 72px; height: 56px; }
   dialog .three { grid-template-columns: 1fr; }
 }
+details.about { margin: -8px 0 18px; font-size: 13px; color: var(--muted); max-width: 70ch; }
+details.about summary { cursor: pointer; color: var(--gold); width: max-content; }
+details.about p { margin: 8px 0 0; }
 </style>
 </head>
 <body>
@@ -171,7 +174,8 @@ dialog .three { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
 <main>
   <div class="kicker">Recipe board</div>
   <h1>Shared recipes</h1>
-  <p class="lede">Recipes everyone shares. Each one is filed under the keys of its labels, like Season or Cuisine, so a recipe can be in several categories. Star the ones you like and anything new in them shows up in your feed. Save any of them to your Recipe box. Each day you get a recipe of the day from someone else's posts.</p>
+  <p class="lede">Recipes everyone shares, filed under their labels' categories. Follow the ones you like.</p>
+  <details class="about"><summary>How it works</summary><p>Each recipe is filed under the keys of its labels, like Season or Cuisine, so a recipe can be in several categories. Star a category, or one of its values, and anything new in it shows up in your feed. Save any of them to your Recipe box. Each day you get a recipe of the day from someone else's posts.</p></details>
   <div id="error" class="msg bad" role="alert" hidden></div>
   <div id="done" class="msg good" role="status" hidden></div>
 

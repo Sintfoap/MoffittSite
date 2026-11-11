@@ -21,6 +21,7 @@
 // Anything that needs the password (two-factor, recovery codes, email, the
 // password itself) stays on /account, so the terminal never handles it.
 
+import { glance } from "./glance.js";
 import { db, now } from "./db.js";
 import { randomBytes, randomToken, sha256 } from "./crypto.js";
 import { createSession, currentSession, clientIp, getUser, recoveryCodesLeft, endUserSessions, cleanDisplayName, AuthError, PLACES } from "./auth.js";
@@ -152,10 +153,13 @@ async function dashboard(request, env) {
       today = { late: a.late.map(out), due: a.due.map(out), url: origin + "/todo/" };
     } catch (e) { console.error("dashboard agenda failed:", e); }
   }
+  const places = setup ? [] : PLACES.filter(a => user.areas.has(a.area));
+  // The web dashboard's live line on each card (src/glance.js), as `now`.
+  const now = await glance(env, user, places, { day: clock.day, agenda: today && { late: today.late, due: today.due } });
   return json({
     site: origin,
     user: { username: user.username, display_name: user.display_name, admin: user.areas.has("admin") },
-    apps: setup ? [] : PLACES.filter(a => user.areas.has(a.area)).map(a => ({ name: a.name, blurb: a.blurb, url: origin + a.href })),
+    apps: places.map(a => ({ id: a.id, name: a.name, blurb: a.blurb, url: origin + a.href, group: a.group || "site", ...(now[a.id] ? { now: now[a.id] } : {}) })),
     // The site's menu, the same one the web rail shows (src/nav.js): what the
     // terminal offers and which "g" letters work, in order.
     nav: siteNav(user).map(n => ({ id: n.id, label: n.label, url: origin + n.href, key: n.key, group: n.group })),

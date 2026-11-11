@@ -116,6 +116,9 @@ label.field input, label.field textarea { width: 100%; color: var(--ink); font-s
   .week { grid-template-columns: 1fr; }
   .top .weekname { min-width: 0; flex: 1 1 auto; }
 }
+details.about { margin: -8px 0 18px; font-size: 13px; color: var(--muted); max-width: 70ch; }
+details.about summary { cursor: pointer; color: var(--gold); width: max-content; }
+details.about p { margin: 8px 0 0; }
 </style>
 </head>
 <body>
@@ -124,7 +127,8 @@ label.field input, label.field textarea { width: 100%; color: var(--ink); font-s
 <main>
   <div class="kicker">Meal plan</div>
   <h1>This week's dinners</h1>
-  <p class="lede">Dinners from your Recipe box, fitted around your Drift calendar: a night with something on in the evening gets a quick recipe. Pick any night yourself, then send the week's shopping to a Drift list.</p>
+  <p class="lede">This week's dinners from your Recipe box, fitted around your Drift calendar.</p>
+  <details class="about"><summary>How it works</summary><p>A night with something on in the evening gets a quick recipe. Pick any night yourself, lock the ones you want to keep, then send the week's shopping to a Drift list.</p></details>
   <div id="error" class="msg bad" role="alert" hidden></div>
   <div id="done" class="msg good" role="status" hidden></div>
 

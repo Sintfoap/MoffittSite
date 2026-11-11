@@ -97,6 +97,11 @@ def test_the_dishs_photo_is_found_on_the_page_as_on_the_website():
     assert R.find_picture(*_page(photo={"x0": 90, "y0": 10, "x1": 106, "y1": 24})) is None  # a small spot
 
 
+def test_whether_a_recipe_reads_as_english_matches_the_website():
+    for case in json.loads(Path(__file__).with_name("english_cases.json").read_text()):
+        assert R.looks_english(case["recipe"]) == case["english"], case["recipe"]["title"]
+
+
 def test_finding_by_ingredient_matches_the_website():
     cases = json.loads(Path(__file__).with_name("ingredient_cases.json").read_text())
     for text, lines, want in cases:
