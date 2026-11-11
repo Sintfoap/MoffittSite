@@ -1,0 +1,402 @@
+// Pantry: the food each person has, in real amounts, kept in step with the
+// shelf. One pantry per person, like Recipe box.
+//
+// Every item is one of three kinds, which decides how it's counted and used up:
+//   staple   flour, sugar, oil: an exact measure (grams or millilitres underneath,
+//            shown in the unit you typed), with a low point you set
+//   counted  cans, eggs, boxes: whole units. Using any of one uses all of it
+//            (an egg white is still an egg; half a can is still the can)
+//   gauged   spices, vanilla: a level from Full to Empty that you slide down yourself
+// A staple or counted item holds lots: one per purchase, each with its own
+// amount and expiry date, used oldest-expiry first. Units, plurals and the
+// first guess at an item's kind are public/pantry/units.js, shared with the page.
+//
+// This is the pantry itself. Filling it from receipts and barcodes, and taking
+// from it for recipes on a shopping list, come next (the Pantry plan doc).
+//
+// /pantry/api/items                  GET ?day=YYYY-MM-DD → {items, places, counts, limits}
+//                                    POST {name, kind?, place?, amount?, expires?, low?, unit?, size?, level?, per_cup?, words?} → the new item
+//                                      (kind, place, unit and grams per cup are guessed from the name when left out)
+// /pantry/api/items/<id>             PATCH {name?, place?, words?, low?, per_cup?, unit?, size?, shows?, level?, expires?, kind?, amount?} → the item
+//                                      (changing kind needs the amount you have now, in the new kind's terms); DELETE → gone
+// /pantry/api/items/<id>/lots        POST {amount, expires?} → the item, with another purchase of it
+// /pantry/api/items/<id>/lots/<lot>  PATCH {amount?, expires?} → the item; DELETE → the item without that lot
+// /pantry/api/items/<id>/use         POST {amount} (staple: "1 cup"; counted: how many) or {all: true}, and {tossed?: true};
+//                                      or {level} for a gauged item → the item, with that taken out
+
+import { db } from "./db.js";
+import { sameOrigin } from "./account.js";
+import { withRail } from "./pages.js";
+import { readJson, BadRequest } from "./drift.js";
+import { UNITS, ML_PER_CUP, LEVELS, readAmount, inUnit, unitsOf, plural, singular, counted, guess } from "../public/pantry/units.js";
+
+const fail = msg => { throw new BadRequest(msg); };
+export const LIMITS = { items: 500, lots: 50, name: 80, place: 30, words: 200, unit: 20, size: 40, count: 10000, base: 1e8 };
+export const KINDS = ["staple", "counted", "gauged"];
+export const PLACES = ["Fridge", "Freezer", "Cupboard", "Spice rack"];
+const SOON_DAYS = 5;
+const ID = /^i_[0-9a-f]{10}$/;
+const ROUTE = /^\/pantry\/api\/items(?:\/(i_[0-9a-f]{10})(?:\/(use|lots)(?:\/(t_[0-9a-f]{8}))?)?)?\/?$/;
+const isObj = v => v && typeof v === "object" && !Array.isArray(v);
+const today = () => new Date().toISOString().slice(0, 10);
+const stamp = () => new Date().toISOString().slice(0, 19);
+const hex = n => [...crypto.getRandomValues(new Uint8Array(n))].map(x => x.toString(16).padStart(2, "0")).join("");
+const round = n => Math.round(n * 1000) / 1000;
+
+// ── cleaning ───────────────────────────────────────────────────────────────
+
+function text(f, v, max) {
+  const s = String(v ?? "").replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim();
+  if (s.length > max) fail(`${f} can be at most ${max} characters`);
+  return s;
+}
+function cleanName(v) {
+  const s = text("the name", v, LIMITS.name);
+  if (!s) fail("give it a name, like Whole wheat flour");
+  return s;
+}
+function cleanKind(v) {
+  if (!KINDS.includes(v)) fail("kind is staple, counted or gauged");
+  return v;
+}
+function cleanPlace(v) {
+  const s = text("where it's kept", v, LIMITS.place);
+  return PLACES.find(p => p.toLowerCase() === s.toLowerCase()) || s || "Cupboard";
+}
+function cleanDate(v) {
+  if (v === null || v === undefined || v === "") return "";
+  const s = String(v).trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s) || Number.isNaN(Date.parse(s + "T00:00:00Z"))) fail("an expiry date is YYYY-MM-DD");
+  return s;
+}
+function cleanLevel(v) {
+  const i = typeof v === "number" ? v : LEVELS.findIndex(l => l.toLowerCase() === String(v ?? "").trim().toLowerCase());
+  if (!Number.isInteger(i) || i < 0 || i >= LEVELS.length) fail(`a level is 0 (empty) to 5 (full), or one of ${LEVELS.join(", ")}`);
+  return i;
+}
+function cleanPerCup(v) {
+  if (v === null || v === undefined || v === "") return null;
+  const n = Number(v);
+  if (!(n > 0 && n <= 2000)) fail("grams per cup is a number, like 120 for flour");
+  return round(n);
+}
+
+// A staple's amount, typed ("10 lb", "2 cups"), in the item's base unit.
+// Weight and volume cross over by its grams per cup.
+function baseOf(item, raw, what = "the amount") {
+  if (typeof raw === "number") raw = String(raw);
+  const a = readAmount(raw);
+  if (!a) fail(`${what} needs a number and a unit, like 10 lb or 2 cups`);
+  if (!a.unit) fail(`${what} needs a unit, like ${item.measure === "volume" ? "2 cups or 500 ml" : "10 lb or 500 g"}`);
+  const u = UNITS[a.unit];
+  let base = a.n * u.base;
+  if (u.measure !== item.measure) {
+    if (!item.perCup) fail(`${item.name} is measured by ${item.measure}. Give it in ${item.measure === "weight" ? "lb, oz, g or kg" : "cups, ml or L"}, or say how many grams a cup of it weighs`);
+    base = item.measure === "weight" ? base / ML_PER_CUP * item.perCup : base / item.perCup * ML_PER_CUP;
+  }
+  if (base > LIMITS.base) fail(`${what} is more than this can keep track of`);
+  return round(base);
+}
+// A counted item's amount: "3", or "3 cans".
+function countOf(item, raw, what = "how many") {
+  const a = typeof raw === "number" ? { n: raw, unit: null } : readAmount(raw);
+  if (!a || a.unit) fail(`${what} is a number of ${plural(item.unit || "item")}, like 3`);
+  if (a.n > LIMITS.count) fail(`${what} is more than this can keep track of`);
+  return a.n;
+}
+const amountOf = (item, raw, what) => item.kind === "staple" ? baseOf(item, raw, what) : countOf(item, raw, what);
+
+// ── reading out ────────────────────────────────────────────────────────────
+
+const shown = (item, n) => item.kind === "staple" ? inUnit(n, item.shows) : counted(n, item.unit || "item");
+const left = item => item.kind === "gauged" ? null : round((item.lots || []).reduce((s, l) => s + l.amount, 0));
+// Oldest expiry first; lots without a date after them, oldest bought first.
+const order = lots => [...lots].sort((a, b) => (a.expires || "9999") < (b.expires || "9999") ? -1 : (a.expires || "9999") > (b.expires || "9999") ? 1 : a.added < b.added ? -1 : 1);
+const addDays = (day, n) => new Date(Date.parse(day + "T00:00:00Z") + n * 864e5).toISOString().slice(0, 10);
+
+// What the page and the terminal show for an item; `day` is the viewer's own date.
+export function view(item, day = today()) {
+  const have = left(item);
+  const lots = item.kind === "gauged" ? [] : order(item.lots || []).map(l => ({ ...l, text: shown(item, l.amount) }));
+  const expires = item.kind === "gauged" ? item.expires || "" : lots.find(l => l.expires && l.amount > 0)?.expires || "";
+  const out = item.kind === "gauged" ? item.level === 0 : have <= 0;
+  const low = !out && (item.kind === "staple" ? item.low !== null && have <= item.low : item.kind === "gauged" ? item.level <= 1 : false);
+  return {
+    id: item.id, name: item.name, kind: item.kind, place: item.place, words: item.words || "",
+    measure: item.measure || null, shows: item.shows || null, per_cup: item.perCup ?? null, units: item.kind === "staple" ? unitsOf(item.measure) : [],
+    unit: item.unit || "", size: item.size || "",
+    low: item.kind === "staple" ? item.low : null, low_text: item.kind === "staple" && item.low !== null ? shown(item, item.low) : "",
+    level: item.kind === "gauged" ? item.level : null,
+    left: have, text: item.kind === "gauged" ? LEVELS[item.level] : shown(item, have),
+    lots, expires, expired: !!expires && expires < day, soon: !!expires && expires <= addDays(day, SOON_DAYS),
+    is_low: low, is_out: out, updated: item.updated,
+  };
+}
+
+// The places in use, the usual ones first in their order, then the rest by name.
+function placesOf(items) {
+  const used = new Set(items.map(i => i.place));
+  return [...PLACES.filter(p => used.has(p)), ...[...used].filter(p => !PLACES.includes(p)).sort((a, b) => a.localeCompare(b))];
+}
+
+// ── storage ────────────────────────────────────────────────────────────────
+
+async function load(d, owner) {
+  const { results } = await d.prepare("SELECT id, data, updated FROM pantry_items WHERE owner = ?").bind(owner).all();
+  return results.map(r => ({ ...JSON.parse(r.data), id: r.id, updated: r.updated }));
+}
+async function loadOne(d, owner, id) {
+  const r = await d.prepare("SELECT id, data, updated FROM pantry_items WHERE owner = ? AND id = ?").bind(owner, id).first();
+  return r ? { ...JSON.parse(r.data), id: r.id, updated: r.updated } : null;
+}
+async function save(d, owner, item) {
+  const { id, updated, ...data } = item;
+  item.updated = stamp();
+  await d.prepare("INSERT INTO pantry_items (owner, id, data, updated) VALUES (?, ?, ?, ?) ON CONFLICT (owner, id) DO UPDATE SET data = excluded.data, updated = excluded.updated")
+    .bind(owner, id, JSON.stringify(data), item.updated).run();
+}
+async function nameTaken(d, owner, name, except = "") {
+  const all = await load(d, owner);
+  return all.some(i => i.id !== except && i.name.toLowerCase() === name.toLowerCase());
+}
+
+export async function listItems(env, user, day = today()) {
+  const items = (await load(await db(env), user.id)).sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" })).map(i => view(i, day));
+  return {
+    items, places: placesOf(items), kinds: KINDS, levels: LEVELS, usual_places: PLACES,
+    counts: { all: items.length, soon: items.filter(i => i.soon).length, low: items.filter(i => i.is_low || i.is_out).length },
+    limits: LIMITS,
+  };
+}
+
+// The kind's own fields, from what was sent (or guessed), onto a fresh item.
+function setKind(item, kind, body, hint) {
+  item.kind = kind;
+  for (const k of ["measure", "shows", "perCup", "low", "unit", "size", "level", "expires"]) delete item[k];
+  if (kind === "gauged") {
+    item.level = "level" in body ? cleanLevel(body.level) : 5;
+    item.expires = cleanDate(body.expires);
+    item.lots = [];
+    return;
+  }
+  if (kind === "counted") {
+    item.unit = singular(text("the unit", body.unit ?? hint.unit ?? "", LIMITS.unit).toLowerCase()) || "item";
+    item.size = text("the size of one", body.size, LIMITS.size);
+    return;
+  }
+  // A staple is measured by weight or volume: whichever the amount (or the low point) was typed in.
+  const said = [body.amount, body.low].map(v => readAmount(v ?? "")).find(a => a?.unit);
+  if (!said) fail(`say how much ${item.name} you have, with a unit, like 10 lb or 2 cups`);
+  item.measure = UNITS[said.unit].measure;
+  item.shows = said.unit;
+  item.perCup = "per_cup" in body ? cleanPerCup(body.per_cup) : hint.perCup ?? null;
+  if (body.low === undefined || body.low === null || String(body.low).trim() === "") fail(`say when ${item.name} is running low, like 2 lb (a staple goes on your shopping list once it's that low)`);
+  item.low = baseOf(item, body.low, "the low point");
+}
+
+export async function addItem(env, user, body) {
+  if (!isObj(body)) fail("body must be a JSON object");
+  const d = await db(env);
+  const name = cleanName(body.name);
+  const all = await load(d, user.id);
+  if (all.length >= LIMITS.items) fail(`a pantry holds at most ${LIMITS.items} things`);
+  if (all.some(i => i.name.toLowerCase() === name.toLowerCase())) fail(`${name} is already in your pantry. Add more to it instead`);
+  const hint = guess(name);
+  const item = { id: "i_" + hex(5), name, place: cleanPlace(body.place ?? hint.place), words: text("other names", body.words, LIMITS.words), lots: [], created: stamp() };
+  setKind(item, body.kind === undefined || body.kind === null || body.kind === "" ? hint.kind : cleanKind(body.kind), body, hint);
+  const amount = body.amount;
+  if (item.kind !== "gauged" && amount !== undefined && amount !== null && String(amount).trim() !== "") {
+    const n = amountOf(item, amount);
+    if (n > 0) item.lots.push({ id: "t_" + hex(4), amount: n, expires: cleanDate(body.expires), added: today() });
+  }
+  await save(d, user.id, item);
+  return view(item);
+}
+
+export async function editItem(env, user, id, body) {
+  if (!isObj(body)) fail("body must be a JSON object");
+  const d = await db(env);
+  const item = await loadOne(d, user.id, id);
+  if (!item) return null;
+  if ("name" in body) {
+    const name = cleanName(body.name);
+    if (await nameTaken(d, user.id, name, id)) fail(`${name} is already in your pantry`);
+    item.name = name;
+  }
+  if ("place" in body) item.place = cleanPlace(body.place);
+  if ("words" in body) item.words = text("other names", body.words, LIMITS.words);
+  if ("kind" in body && body.kind !== item.kind) {
+    // A new kind counts differently, so it starts again from what you have now, keeping the soonest expiry.
+    const kind = cleanKind(body.kind);
+    const soonest = view(item).expires;
+    const was = item.kind;
+    const keep = { ...(item.perCup ? { per_cup: item.perCup } : {}), ...(item.unit ? { unit: item.unit } : {}), ...(item.size ? { size: item.size } : {}) };
+    if (kind !== "gauged" && (body.amount === undefined || String(body.amount ?? "").trim() === "")) {
+      fail(kind === "staple" ? `say how much ${item.name} you have now, like 10 lb` : `say how many ${item.name} you have now, like 3`);
+    }
+    if (kind === "gauged" && !("level" in body)) body = { ...body, level: was === "gauged" ? item.level : left(item) > 0 ? 5 : 0 };
+    setKind(item, kind, { ...keep, expires: soonest, ...body }, guess(item.name));
+    item.lots = [];
+    if (kind !== "gauged") {
+      const n = amountOf(item, body.amount);
+      if (n > 0) item.lots.push({ id: "t_" + hex(4), amount: n, expires: "expires" in body ? cleanDate(body.expires) : soonest, added: today() });
+    }
+  } else {
+    if ("per_cup" in body && item.kind === "staple") item.perCup = cleanPerCup(body.per_cup);
+    if ("low" in body && item.kind === "staple") {
+      if (body.low === null || String(body.low).trim() === "") fail("a staple needs a low point, like 2 lb");
+      item.low = baseOf(item, body.low, "the low point");
+    }
+    if ("shows" in body && item.kind === "staple") {
+      if (!unitsOf(item.measure).includes(body.shows)) fail(`show it in one of ${unitsOf(item.measure).join(", ")}`);
+      item.shows = body.shows;
+    }
+    if ("unit" in body && item.kind === "counted") item.unit = singular(text("the unit", body.unit, LIMITS.unit).toLowerCase()) || "item";
+    if ("size" in body && item.kind === "counted") item.size = text("the size of one", body.size, LIMITS.size);
+    if ("level" in body && item.kind === "gauged") item.level = cleanLevel(body.level);
+    if ("expires" in body && item.kind === "gauged") item.expires = cleanDate(body.expires);
+  }
+  await save(d, user.id, item);
+  return view(item);
+}
+
+export async function deleteItem(env, user, id) {
+  const r = await (await db(env)).prepare("DELETE FROM pantry_items WHERE owner = ? AND id = ?").bind(user.id, id).run();
+  return r.meta.changes ? { removed: true } : null;
+}
+
+// Another purchase of something already in the pantry.
+export async function addLot(env, user, id, body) {
+  if (!isObj(body)) fail("body must be a JSON object");
+  const d = await db(env);
+  const item = await loadOne(d, user.id, id);
+  if (!item) return null;
+  if (item.kind === "gauged") fail(`${item.name} goes by how full it is. Set it to Full instead`);
+  if (item.lots.length >= LIMITS.lots) fail(`${item.name} can have at most ${LIMITS.lots} purchases kept apart`);
+  const n = amountOf(item, body.amount);
+  if (!(n > 0)) fail("say how much you bought");
+  item.lots.push({ id: "t_" + hex(4), amount: n, expires: cleanDate(body.expires), added: today() });
+  await save(d, user.id, item);
+  return view(item);
+}
+
+export async function editLot(env, user, id, lotId, body, remove = false) {
+  if (!remove && !isObj(body)) fail("body must be a JSON object");
+  const d = await db(env);
+  const item = await loadOne(d, user.id, id);
+  const lot = item?.lots?.find(l => l.id === lotId);
+  if (!lot) return null;
+  if (remove) item.lots = item.lots.filter(l => l !== lot);
+  else {
+    if ("amount" in body) lot.amount = amountOf(item, body.amount);
+    if ("expires" in body) lot.expires = cleanDate(body.expires);
+    if (!(lot.amount > 0)) item.lots = item.lots.filter(l => l !== lot);
+  }
+  await save(d, user.id, item);
+  return view(item);
+}
+
+// Taking some out: from the soonest-expiring lot first. A counted item goes by
+// whole units, so using part of one uses it all.
+export function take(item, n) {
+  let need = item.kind === "counted" ? Math.ceil(n - 1e-9) : n;
+  for (const lot of order(item.lots)) {
+    if (need <= 0) break;
+    const off = Math.min(lot.amount, need);
+    lot.amount = round(lot.amount - off);
+    need = round(need - off);
+  }
+  item.lots = item.lots.filter(l => l.amount > 0);
+  return need;
+}
+
+export async function useItem(env, user, id, body) {
+  if (!isObj(body)) fail("body must be a JSON object");
+  const d = await db(env);
+  const item = await loadOne(d, user.id, id);
+  if (!item) return null;
+  if (item.kind === "gauged") {
+    if (body.all || body.tossed) item.level = 0;
+    else if ("level" in body) item.level = cleanLevel(body.level);
+    else fail(`${item.name} goes by how full it is: send the level it's at now`);
+  } else if (body.all || (body.tossed && (body.amount === undefined || body.amount === ""))) {
+    item.lots = [];
+  } else {
+    const n = amountOf(item, body.amount, "how much you used");
+    if (!(n > 0)) fail("say how much you used");
+    const have = left(item);
+    if (n > have + 1e-6) fail(`there's only ${shown(item, have)} of ${item.name} in your pantry. Use it all instead?`);
+    take(item, n);
+  }
+  await save(d, user.id, item);
+  return view(item);
+}
+
+// For the dashboard's card: what needs looking at first.
+export async function pantryLine(env, user, day) {
+  const { counts } = await listItems(env, user, day);
+  if (!counts.all) return "Nothing in your pantry yet";
+  if (counts.soon) return `${counts.soon} ${counts.soon === 1 ? "thing" : "things"} to use soon`;
+  if (counts.low) return `${counts.low} running low`;
+  return `${counts.all} ${counts.all === 1 ? "thing" : "things"} in your pantry`;
+}
+
+// ── the page and its API ───────────────────────────────────────────────────
+
+const PAGE_CSP = [
+  "default-src 'none'", "script-src 'self'", "connect-src 'self'", "manifest-src 'self'",
+  "style-src 'unsafe-inline' https://fonts.googleapis.com", "font-src https://fonts.gstatic.com", "img-src 'self' data:",
+  "form-action 'self'", "frame-ancestors 'none'", "base-uri 'none'",
+].join("; ");
+
+const json = (obj, status = 200) => new Response(JSON.stringify(obj), { status, headers: { "Content-Type": "application/json", "Cache-Control": "no-store" } });
+
+export async function pantry(request, env, user, pathname) {
+  if (!pathname.startsWith("/pantry/api/")) {
+    const asset = await withRail(await env.ASSETS.fetch(request), user, "pantry");
+    const res = new Response(asset.body, asset);
+    if ((res.headers.get("Content-Type") || "").startsWith("text/html")) {
+      res.headers.set("Content-Security-Policy", PAGE_CSP);
+      res.headers.set("X-Content-Type-Options", "nosniff");
+      res.headers.set("Referrer-Policy", "no-referrer");
+    }
+    return res;
+  }
+  const method = request.method;
+  try {
+    const m = pathname.match(ROUTE);
+    if (!m) return json({ error: "not found" }, 404);
+    if (method !== "GET" && !sameOrigin(request)) return json({ error: "cross-origin request refused" }, 403);
+    const notAllowed = () => json({ error: "method not allowed" }, 405);
+    const [, id, sub, lot] = m;
+    let out;
+    if (!id) {
+      if (method === "GET") {
+        const day = new URL(request.url).searchParams.get("day");
+        return json(await listItems(env, user, /^\d{4}-\d{2}-\d{2}$/.test(day || "") ? day : today()));
+      }
+      if (method === "POST") return json(await addItem(env, user, await readJson(request)), 201);
+      return notAllowed();
+    }
+    if (!ID.test(id)) return json({ error: "not found" }, 404);
+    if (sub === "use") {
+      if (method !== "POST") return notAllowed();
+      out = await useItem(env, user, id, await readJson(request));
+    } else if (sub === "lots" && !lot) {
+      if (method !== "POST") return notAllowed();
+      out = await addLot(env, user, id, await readJson(request));
+      if (out) return json(out, 201);
+    } else if (sub === "lots") {
+      if (method === "PATCH") out = await editLot(env, user, id, lot, await readJson(request));
+      else if (method === "DELETE") out = await editLot(env, user, id, lot, null, true);
+      else return notAllowed();
+    } else if (method === "PATCH") out = await editItem(env, user, id, await readJson(request));
+    else if (method === "DELETE") out = await deleteItem(env, user, id);
+    else return notAllowed();
+    return out ? json(out) : json({ error: "not found" }, 404);
+  } catch (e) {
+    if (e instanceof BadRequest) return json({ error: e.message }, 400);
+    console.error("pantry error:", e);
+    return json({ error: "server error" }, 500);
+  }
+}

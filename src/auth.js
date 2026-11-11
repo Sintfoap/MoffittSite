@@ -39,6 +39,7 @@ export const APPS = [
     blurb: "Bring your Matrix rooms into Chat." },
   { id: "recipes", area: "recipes", name: "Recipe box", href: "/recipes/", icon: "recipes", key: "r", group: "kitchen", blurb: "Save recipes from any link, scale them, and shop for them in Drift." },
   { id: "meals", area: "meals", name: "Meal plan", href: "/meals/", icon: "meals", key: "m", group: "kitchen", blurb: "Plans the week's dinners from your recipes around your Drift calendar." },
+  { id: "pantry", area: "pantry", name: "Pantry", href: "/pantry/", icon: "pantry", key: "y", group: "kitchen", blurb: "What food you have, how much is left, and what to use soon." },
   { id: "sweep", area: "sweep", name: "Sweep", href: "/sweep/", icon: "sweep", key: "w", blurb: "Suggests Drift events, tasks and list items from your chat rooms." },
   { id: "trips", area: "trips", name: "Trip planner", href: "/trips/", icon: "trips", key: "t", blurb: "Plan a trip together: the days, the places, and a packing list for Drift." },
   { id: "board", area: "board", name: "Recipe board", href: "/board/", icon: "board", key: "b", group: "kitchen", blurb: "Share recipes, follow the label categories you like, and save what turns up in your feed." },

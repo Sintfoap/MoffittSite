@@ -399,11 +399,11 @@ def test_admins_switch_apps_on_and_off_in_the_terminal(admin_site):
         page = app.screen
         assert type(page).__name__ == "AdminPage"
         apps = [a["id"] for a in page.data["apps"]]
-        assert apps == ["drift", "admin", "plugins", "chat", "chat-bridges", "recipes", "meals", "sweep", "trips", "board", "labels", "food", "notifications"]
+        assert apps == ["drift", "admin", "plugins", "chat", "chat-bridges", "recipes", "meals", "pantry", "sweep", "trips", "board", "labels", "food", "notifications"]
         # Grouped as the menu is, with Chat connections under Chat.
         assert [(t, [a["id"] for a in xs]) for t, xs in grouped(page.data["apps"])] == [
             ("APPS", ["drift", "plugins", "chat", "chat-bridges", "sweep", "trips"]),
-            ("KITCHEN", ["recipes", "labels", "meals", "board", "food"]),
+            ("KITCHEN", ["recipes", "labels", "meals", "pantry", "board", "food"]),
             ("ACCOUNT", ["admin", "notifications"])]
         # A switch for every app on every account; your own admin one can't be turned off.
         assert len(page.boxes) == len(apps) * len(page.data["users"])
@@ -2005,3 +2005,90 @@ def test_board_post_translates_for_anyone_and_drift_item_shows_english_under_it(
         it = next(x for x in site.drift_state()["items"] if x["id"] == item["id"])
         assert it["title"] == "Dinner with grandma" and it["notes"].startswith("Bring the wine")
     run_app("drift", drift)
+
+
+# ── pantry ─────────────────────────────────────────────────────────────────
+
+def test_pantry_in_the_terminal(real_site):
+    from sintfoap.pantry_page import shown
+
+    async def pantry(app, pilot):
+        page = app.screen
+        assert type(page).__name__ == "PantryPage"
+        # By where it's kept (tests/devsite.mjs): the cupboard, then the spice rack.
+        assert [i and i["name"] for i in page.rows] == [None, "Tomato soup", "Whole wheat flour", None, "Ground cumin"]
+        lst = page.query_one("#list")
+        assert page.current()["name"] == "Tomato soup"
+        # n adds food; its kind and place are guessed from the name.
+        await pilot.press("n")
+        await settle(pilot)
+        dialog = app.screen
+        dialog.query_one("#name").value = "Eggs"
+        dialog.query_one("#amount").value = "12"
+        await pilot.press("ctrl+s")
+        await settle(pilot, 0.6)
+        eggs = next(i for i in site.pantry()["items"] if i["name"] == "Eggs")
+        assert (eggs["kind"], eggs["place"], eggs["text"]) == ("counted", "Fridge", "12 eggs")
+        assert page.current()["name"] == "Eggs"
+        # u uses some: part of an egg is the whole egg.
+        await pilot.press("u")
+        await settle(pilot)
+        app.screen.query_one("#amount").value = "0.5"
+        await pilot.press("enter")
+        await settle(pilot, 0.6)
+        assert page.current()["text"] == "11 eggs"
+        # Cups come off flour weighed in pounds.
+        lst.highlighted = next(n for n, i in enumerate(page.rows) if i and i["name"] == "Whole wheat flour")
+        await pilot.press("u")
+        await settle(pilot)
+        app.screen.query_one("#amount").value = "3 cups"
+        await pilot.press("enter")
+        await settle(pilot, 0.6)
+        assert page.current()["text"] == "9.21 lb"
+        # m adds a purchase, with its expiry date; p corrects it.
+        await pilot.press("m")
+        await settle(pilot)
+        app.screen.query_one("#amount").value = "5 lb"
+        app.screen.query_one("#expires").value = "2030-01-01"
+        await pilot.press("enter")
+        await settle(pilot, 0.6)
+        flour = page.current()
+        assert flour["text"] == "14.21 lb" and len(flour["lots"]) == 2
+        await pilot.press("p")
+        await settle(pilot)
+        # The soonest to expire is first: the 5 lb just bought.
+        await pilot.press("enter")
+        await settle(pilot)
+        app.screen.query_one("#amount").value = "4 lb"
+        await pilot.press("enter")
+        await settle(pilot, 0.6)
+        assert page.current()["text"] == "13.21 lb"
+        # A gauged thing is set to how full it is; m refills it.
+        lst.highlighted = next(n for n, i in enumerate(page.rows) if i and i["name"] == "Ground cumin")
+        assert page.current()["is_low"] is False
+        await pilot.press("u")
+        await settle(pilot)
+        app.screen.query_one("#level").value = 1
+        await pilot.click("#level-set")
+        await settle(pilot, 0.6)
+        assert page.current()["text"] == "Almost out" and page.current()["is_low"]
+        # f shows only what's running low.
+        await pilot.press("f", "f")
+        await settle(pilot)
+        assert page.filt == "low" and [i["name"] for i in page.rows if i] == ["Ground cumin"]
+        await pilot.press("f")
+        await pilot.press("m")
+        await settle(pilot, 0.6)
+        assert page.current()["text"] == "Full"
+        # x removes it, after asking.
+        await pilot.press("x")
+        await settle(pilot)
+        await pilot.press("y")
+        await settle(pilot, 0.6)
+        assert "Ground cumin" not in [i["name"] for i in site.pantry()["items"]]
+    run_app("pantry", pantry)
+    items = [{"name": "Flour", "words": "", "soon": False, "is_low": True, "is_out": False},
+             {"name": "Milk", "words": "", "soon": True, "is_low": False, "is_out": False}]
+    assert [i["name"] for i in shown(items, "soon")] == ["Milk"]
+    assert [i["name"] for i in shown(items, "low")] == ["Flour"]
+    assert [i["name"] for i in shown(items, "all", "mil")] == ["Milk"]

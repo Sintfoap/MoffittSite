@@ -12,7 +12,7 @@
 // one browser to send to, and answers every push as delivered.
 // ryan has Recipe box; https://recipes.test/pancakes is a recipe page to save
 // (serves 4), and any other page there has no recipe on it.
-// ryan has Meal plan too (his Recipe box starts empty).
+// ryan has Meal plan too (his Recipe box starts empty), and Pantry, with flour, soup and cumin in it.
 // ryan has Sweep, and he and sam are in a room "Plans" where sam asked about
 // dinner. The stand-in for Claude suggests that dinner from the first message
 // it's shown, and reads every photo of a recipe as Nana's Shortbread (but turns
@@ -110,7 +110,7 @@ const ryan = new Browser(env), sam = new Browser(env);
 await ryan.signup("ryan", undefined, "Ryan M");
 await sam.signup("sam", undefined, "Sam");
 for (const who of ["ryan", "sam"]) grantApps(env, who, "plugins", "chat");
-grantApps(env, "ryan", "chat-bridges", "recipes", "meals", "sweep");
+grantApps(env, "ryan", "chat-bridges", "recipes", "meals", "pantry", "sweep");
 for (const who of ["ryan", "sam"]) grantApps(env, who, "trips", "board", "food");
 // The label list (Recipe labels, which ryan keeps): Season (Fall, Summer), Cuisine (Irish, Spanish)
 // and Course (Breakfast, Dessert). Its keys are the Recipe board's categories.
@@ -126,6 +126,9 @@ grantApps(env, "ryan", "labels");
   const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - 1);
   await sam.req("POST", "/food/api/picks", { json: { month: d.toLocaleDateString("sv").slice(0, 7), title: "Pavlova", kind: "dessert",
     blurb: "Crisp outside, marshmallow inside.", recipe: { ingredients: ["4 egg whites", "1 cup sugar"], steps: ["Whisk", "Bake low and slow"] } } });
+}
+for (const item of [{ name: "Whole wheat flour", amount: "10 lb", low: "2 lb" }, { name: "Tomato soup", amount: 2, size: "16 oz" }, { name: "Ground cumin", level: 2 }]) {
+  await ryan.req("POST", "/pantry/api/items", { json: item });
 }
 {
   const plans = (await ryan.req("POST", "/chat/api/rooms", { json: { name: "Plans" } })).json.id;
