@@ -12,6 +12,8 @@
 // /recipes/api/recipes/<id>        PATCH → change the fields sent; DELETE → remove it
 //   A recipe's labels come from the site's list (see labelList): sent as ids, read back as [{id, key, value}].
 //   GET also sends label_list, the whole list to pick from.
+// /recipes/api/recipes/suggest-labels  GET → labels each recipe's words point to, to check before adding (src/autolabel.js)
+// /recipes/api/recipes/add-labels      POST {add: [{id, labels: [label ids]}], at most 200} → {recipes, labels, full}: added to the ones they have
 // /recipes/api/recipes/<id>/shop   POST {servings | factor, lines?, list?} → its ingredients onto a Drift list
 // /recipes/api/photo, /recipes/api/key   a recipe read from a photo, and the API key it's read with (src/recipe_photo.js)
 
@@ -23,13 +25,14 @@ import { imageType } from "./food.js";
 import { scaleLine, servingsOf, factorFor, format } from "../public/recipes/scale.js";
 import { photoState, readPhoto, readPhotoBody, saveKey, forgetKey, readText } from "./recipe_photo.js";
 import { SweepError } from "./sweep.js";
+import { suggestFor, termsOf } from "./autolabel.js";
 
 const fail = msg => { throw new BadRequest(msg); };
 export class NotARecipe extends Error {}
 
 const LIMITS = { labels: 20, recipes: 1000, importPages: 10, importBody: 4 * 1024 * 1024, title: 200, url: 2000, yield: 100, time: 50, lines: 100, ingredient: 300, step: 3000, notes: 5000, page: 3 * 1024 * 1024 };
 const ID = /^r_[0-9a-f]{10}$/;
-const ROUTE = /^\/recipes\/api\/recipes(?:\/(import)|\/(r_[0-9a-f]{10})(?:\/(shop|photo))?)?\/?$/;
+const ROUTE = /^\/recipes\/api\/recipes(?:\/(import|suggest-labels|add-labels)|\/(r_[0-9a-f]{10})(?:\/(shop|photo))?)?\/?$/;
 const PHOTO = /^\/recipes\/api\/photos\/(p_[0-9a-f]{10})$/;
 // A picture kept here (an imported recipe's own photo) instead of a link to a site's.
 const OWN_PHOTO = /^\/recipes\/api\/photos\/p_[0-9a-f]{10}$/;
@@ -171,6 +174,60 @@ export async function update(env, user, id, changes) {
   const res = await d.prepare("UPDATE recipes SET data = json_patch(data, ?), updated = ? WHERE owner = ? AND id = ?")
     .bind(JSON.stringify(patch), new Date().toISOString(), user.id, id).run();
   return res.meta.changes ? get(d, user.id, id) : null;
+}
+
+// ── suggested labels ───────────────────────────────────────────────────────
+
+// Every recipe in the box that its words say should have labels it hasn't got,
+// by title: {suggestions: [{id, title, labels: [{id, key, value, word, where}]}], checked, labels}.
+// A recipe with its 20 labels already gets none; one near it, only as many as fit.
+export async function suggestLabels(env, user) {
+  const d = await db(env);
+  const kw = new Map((await d.prepare("SELECT id, keywords FROM recipe_labels").all()).results.map(r => [r.id, r.keywords]));
+  const labels = (await labelList(d)).map(l => ({ ...l, keywords: kw.get(l.id) || "" }));
+  const terms = new Map(labels.map(l => [l.id, termsOf(l)]));
+  const box = await list(env, user);
+  const suggestions = [];
+  for (const r of box) {
+    const room = LIMITS.labels - r.labels.length;
+    const found = room > 0 ? suggestFor(r, labels, terms).slice(0, room) : [];
+    if (found.length) suggestions.push({ id: r.id, title: r.title, labels: found });
+  }
+  return { suggestions, checked: box.length, labels: labels.length };
+}
+
+// Clients send a big box in batches of this many (a request's body is capped at 64 KB).
+export const ADD_BATCH = 200;
+
+// Adds labels to many recipes at once, keeping the ones they have:
+// {recipes: how many changed, labels: how many added, full: recipes that had no room for them all}.
+export async function addLabels(env, user, body) {
+  if (!isObj(body) || !Array.isArray(body.add)) fail("send {add: [{id, labels: [label ids]}]}");
+  if (body.add.length > ADD_BATCH) fail(`send at most ${ADD_BATCH} recipes at a time`);
+  const want = new Map();
+  for (const a of body.add) {
+    if (!isObj(a) || !ID.test(String(a.id ?? ""))) fail("each one needs a recipe's id");
+    want.set(a.id, [...new Set([...(want.get(a.id) || []), ...cleanLabels(a.labels ?? [])])]);
+  }
+  const d = await db(env);
+  await checkLabels(d, [...new Set([...want.values()].flat())]);
+  const { results } = await d.prepare("SELECT id, json_extract(data, '$.labels') AS labels FROM recipes WHERE owner = ?").bind(user.id).all();
+  const mine = new Map(results.map(r => [r.id, JSON.parse(r.labels || "[]")]));
+  const t = new Date().toISOString(), writes = [];
+  let added = 0, full = 0;
+  for (const [id, ids] of want) {
+    const have = mine.get(id);
+    if (!have) continue;
+    const fresh = ids.filter(x => !have.includes(x));
+    const fits = fresh.slice(0, Math.max(0, LIMITS.labels - have.length));
+    if (fits.length < fresh.length) full++;
+    if (!fits.length) continue;
+    added += fits.length;
+    writes.push(d.prepare("UPDATE recipes SET data = json_set(data, '$.labels', json(?)), updated = ? WHERE owner = ? AND id = ?")
+      .bind(JSON.stringify([...have, ...fits]), t, user.id, id));
+  }
+  for (let i = 0; i < writes.length; i += 100) await d.batch(writes.slice(i, i + 100));
+  return { recipes: writes.length, labels: added, full };
 }
 
 export async function remove(env, user, id) {
@@ -596,6 +653,8 @@ export async function recipes(request, env, user, pathname) {
     const m = pathname.match(ROUTE);
     if (!m) return json({ error: "not found" }, 404);
     const [, bulk, id, sub] = m;
+    if (bulk === "suggest-labels") return method === "GET" ? json(await suggestLabels(env, user)) : notAllowed();
+    if (bulk === "add-labels") return method === "POST" ? json(await addLabels(env, user, await readJson(request))) : notAllowed();
     if (bulk) return method === "POST" ? json(await importPages(env, user, await readImport(request))) : notAllowed();
     if (!id) {
       if (method === "GET") {

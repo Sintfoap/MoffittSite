@@ -527,6 +527,52 @@ def test_recipe_box_saves_from_a_link_scales_and_sends_to_drift(real_site):
     run_app("recipes", recipes)
 
 
+def test_recipe_box_suggests_labels_from_keywords(real_site):
+    from sintfoap.recipes_page import by_label
+    fall, irish, spanish = "l_0000000001", "l_0000000003", "l_0000000004"   # tests/devsite.mjs
+    pie = site.add_recipe({"title": "Pumpkin pie", "ingredients": "1 can pumpkin\n1 crust"})["id"]
+    site.add_recipe({"title": "Irish stew", "ingredients": "2 lb lamb\n1 butternut squash", "labels": [irish]})
+    tapas = site.add_recipe({"title": "Spanish tortilla", "steps": "Fry until it falls apart"})["id"]
+    site.add_recipe({"title": "Toast"})
+
+    async def keywords(app, pilot):
+        # k on the Recipe labels page sets a value's keywords.
+        page = app.screen
+        page.query_one("#list").highlighted = next(i for i, (kind, x) in enumerate(page.rows) if kind == "label" and x["id"] == fall)
+        await pilot.press("k")
+        await settle(pilot)
+        app.screen.query_one("#answer").value = "pumpkin, squash, -fall apart"
+        await pilot.press("enter")
+        await settle(pilot, 0.6)
+        assert next(lb for lb in page.data["labels"] if lb["id"] == fall)["keywords"] == "pumpkin, squash, -fall apart"
+    run_app("labels", keywords)
+
+    async def suggest(app, pilot):
+        page = app.screen
+        await pilot.press("L")
+        await settle(pilot, 0.6)
+        dialog = app.screen
+        assert type(dialog).__name__ == "SuggestLabels"
+        assert [(lb["value"], [r["title"] for r in rs]) for lb, rs in dialog.groups] == [
+            ("Spanish", ["Spanish tortilla"]), ("Fall", ["Irish stew", "Pumpkin pie"])]
+        assert by_label([]) == []
+        # Untick Irish stew (squash), keep the rest.
+        box = dialog.query_one("#suggestions")
+        box.deselect(dialog.rows.index((next(r["id"] for r in page.data["recipes"] if r["title"] == "Irish stew"), fall)))
+        await pilot.press("enter")
+        await settle(pilot, 0.8)
+        labels = {r["title"]: [lb["value"] for lb in r["labels"]] for r in site.recipes()["recipes"]}
+        assert labels == {"Irish stew": ["Irish"], "Pumpkin pie": ["Fall"], "Spanish tortilla": ["Spanish"], "Toast": []}
+        assert next(r for r in page.data["recipes"] if r["id"] == pie)["labels"][0]["id"] == fall
+        assert next(r for r in page.data["recipes"] if r["id"] == tapas)["labels"][0]["id"] == spanish
+        # Asked again, only what was unticked is left.
+        await pilot.press("L")
+        await settle(pilot, 0.6)
+        assert [(lb["value"], [r["title"] for r in rs]) for lb, rs in app.screen.groups] == [("Fall", ["Irish stew"])]
+        await pilot.press("escape")
+    run_app("recipes", suggest)
+
+
 def test_recipe_box_finds_recipes_by_ingredient(real_site):
     fall = "l_0000000001"   # tests/devsite.mjs: Season: Fall
     site.add_recipe({"title": "Frittata", "ingredients": ["6 eggs", "1 bag spinach", "1/2 cup feta"], "labels": [fall]})
