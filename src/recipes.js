@@ -125,7 +125,7 @@ export function clean(changes) {
         out.servings = Math.round(n * 100) / 100;
         break;
       }
-      case "time": out.time = str(f, v, LIMITS.time); break;
+      case "time": out.time = timeText(str(f, v, LIMITS.time)); break;
       case "ingredients": out.ingredients = lines(f, v, LIMITS.ingredient); break;
       case "steps": out.steps = lines(f, v, LIMITS.step); break;
       case "notes": out.notes = str(f, v, LIMITS.notes); break;
@@ -136,11 +136,15 @@ export function clean(changes) {
   return out;
 }
 
+// A time typed as a bare number ("55") is minutes: kept as "55 min", so every
+// page shows its unit and Meal plan can tell how long it takes.
+export const timeText = t => /^\d+(?:\.\d+)?$/.test(String(t ?? "").trim()) ? `${String(t).trim()} min` : String(t ?? "");
+
 // ── storage ────────────────────────────────────────────────────────────────
 
 const toRecipe = (row, labels = []) => {
   const data = JSON.parse(row.data);
-  return { ...RECIPE, ...data, labels: withLabels(labels, data.labels), id: row.id, updated: row.updated };
+  return { ...RECIPE, ...data, time: timeText(data.time), labels: withLabels(labels, data.labels), id: row.id, updated: row.updated };
 };
 
 export async function list(env, user) {

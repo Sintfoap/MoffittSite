@@ -4,7 +4,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Browser, makeEnv, grantApps, sqlOne, run } from "./helpers.mjs";
-import { minutesOf, mondayOf, nightsOut, fillWeek, shoppingFor } from "../src/meals.js";
+import { minutesOf, mondayOf, nightsOut, fillWeek, shoppingFor, dinnersOf } from "../src/meals.js";
+import { mergeLines, aisleOf, isStaple } from "../src/shopping.js";
 
 const WEEK = ["2030-01-07", "2030-01-08", "2030-01-09", "2030-01-10", "2030-01-11", "2030-01-12", "2030-01-13"];
 const ev = (title, start, end = null, done = false) => ({ title, meta: { event: { start, end }, ...(done ? { checklist: { done: true } } : {}) } });
@@ -17,6 +18,7 @@ test("how long a recipe takes, from what Recipe box keeps", () => {
   assert.equal(minutesOf("20m"), 20);
   assert.equal(minutesOf(""), null);
   assert.equal(minutesOf("overnight"), null);
+  assert.equal(minutesOf("55"), 55, "a bare number is minutes");
 });
 
 test("weeks start on Monday", () => {
@@ -82,10 +84,35 @@ test("the week's shopping is scaled to each night, with lines shared between rec
   nights["2030-01-08"] = { recipe: "s", servings: 2, out: false, locked: false };
   nights["2030-01-09"] = { recipe: "s", servings: 2, out: true, locked: false };
   assert.deepEqual(shoppingFor(nights, WEEK, byId), [
-    { line: "4 cups flour", for: ["p (Mon)"] },
-    { line: "salt to taste", for: ["p (Mon)", "s (Tue)"] },
-    { line: "1 onion", for: ["s (Tue)"] },
+    { line: "1 onion", for: ["s (Tue)"], aisle: "Produce", staple: false },
+    { line: "4 cups flour", for: ["p (Mon)"], aisle: "Pantry", staple: false },
+    { line: "salt to taste", for: ["p (Mon)", "s (Tue)"], aisle: "Pantry", staple: true },
   ]);
+  // Nights already past are left out.
+  assert.deepEqual(shoppingFor(nights, WEEK, byId, "2030-01-08").map(s => s.line), ["1 onion", "Salt to taste"]);
+});
+
+test("the same ingredient is added up, and every line is filed by aisle", () => {
+  const lines = (...l) => l.map(line => ({ line, for: [line] }));
+  assert.deepEqual(mergeLines(lines("1 egg", "2 eggs", "6 eggs", "2 cups flour", "1 cup flour", "1 tsp flour", "3 cloves garlic", "1 clove garlic", "2-3 carrots", "2-3 carrots"))
+    .map(x => x.line), ["9 eggs", "3 cups flour", "1 tsp flour", "4 cloves garlic", "2-3 carrots"]);
+  assert.deepEqual(mergeLines(lines("1 onion", "1 onion"))[0], { line: "2 onions", for: ["1 onion"] });
+  assert.equal(aisleOf("2 cups chicken stock"), "Pantry");
+  assert.equal(aisleOf("1 can coconut milk"), "Pantry");
+  assert.equal(aisleOf("1 lb chicken thighs"), "Meat & fish");
+  assert.equal(aisleOf("1/2 cup parmesan"), "Dairy & eggs");
+  assert.equal(aisleOf("12 tortillas"), "Bakery");
+  assert.equal(aisleOf("1 red pepper"), "Produce");
+  assert.equal(isStaple("1 tsp salt"), true);
+  assert.equal(isStaple("2 tbsp olive oil"), true);
+  assert.equal(isStaple("1 red pepper"), false);
+});
+
+test("filling a week picks from the dinners, when any recipe is labeled one", () => {
+  const lab = value => [{ id: "l_x", key: "Course", value }];
+  const recipes = [{ id: "d", labels: lab("Dinner") }, { id: "m", labels: lab("Main") }, { id: "b", labels: lab("Dessert") }, { id: "n", labels: [] }];
+  assert.deepEqual(dinnersOf(recipes).map(r => r.id), ["d", "m"]);
+  assert.deepEqual(dinnersOf([{ id: "b", labels: lab("Dessert") }]).map(r => r.id), ["b"], "nothing labeled: everything");
 });
 
 // ── the API ────────────────────────────────────────────────────────────────
@@ -146,7 +173,7 @@ test("planning a week around the calendar, changing a night, and shopping for it
   w = (await api(ryan, "PUT", "week/2030-01-07/2030-01-08", { recipe: stew.id })).json;
   assert.equal(w.days[1].slow, true);
   w = (await api(ryan, "PUT", "week/2030-01-07/2030-01-08", { recipe: tacos.id, servings: 2 })).json;
-  assert.deepEqual(w.shopping.map(s => s.line), ["4 lb beef chuck", "6 carrots", "½ lb beef", "4 tortillas"]);
+  assert.deepEqual(w.shopping.map(s => s.line), ["6 carrots", "4 lb beef chuck", "½ lb beef", "4 tortillas"]);
 
   // Bad requests.
   assert.equal((await api(ryan, "PUT", "week/2030-01-08/2030-01-08", { out: true })).status, 400, "not a Monday");
@@ -156,7 +183,7 @@ test("planning a week around the calendar, changing a night, and shopping for it
   assert.equal((await ryan.req("PUT", "/meals/api/week/2030-01-07/2030-01-08", { json: { out: true }, origin: "https://evil.test" })).status, 403);
 
   // Shopping: skip the carrots; the rest go to a new Shopping list, noting which dinners they're for.
-  const sent = await api(ryan, "POST", "week/2030-01-07/shop", { lines: [0, 2, 3] });
+  const sent = await api(ryan, "POST", "week/2030-01-07/shop", { lines: [1, 2, 3] });
   assert.equal(sent.status, 200, sent.text);
   assert.equal(sent.json.added, 3);
   assert.equal(sent.json.list.name, "Shopping list");

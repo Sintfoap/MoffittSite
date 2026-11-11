@@ -11,13 +11,23 @@
 // /meals/api/week/<monday>/<day>            PUT {recipe?, servings?, out?, locked?} → the week
 // /meals/api/week/<monday>/fill             POST {redo?} → recipes for the empty nights (redo: every unlocked night)
 // /meals/api/week/<monday>/shop             POST {lines?, list?} → the week's ingredients onto a Drift list
+// /meals/api/tonight                        GET → tonight's dinner {id, title, time, out} or {} (Drift's Today shows it)
+//
+// Only recipes labeled as dinners (a label value like Dinner or Main) are
+// planned, when any are; nights on a Trip planner trip are left out as away;
+// the week's Food club pick is offered for a night; and the shopping leaves
+// out nights already past, adds the same ingredient up into one line and files
+// each line under its part of the shop (src/shopping.js).
 
 import { db } from "./db.js";
 import { sameOrigin } from "./account.js";
 import { withRail } from "./pages.js";
 import { readJson, BadRequest, state, visitorNow, writableCollections, addToList } from "./drift.js";
-import { list as allRecipes } from "./recipes.js";
+import { list as allRecipes, timeText } from "./recipes.js";
 import { scaleLine, factorFor } from "../public/recipes/scale.js";
+import { arrange } from "./shopping.js";
+import { listPicks } from "./food.js";
+import { listTrips } from "./trips.js";
 
 const fail = msg => { throw new BadRequest(msg); };
 const isObj = v => v && typeof v === "object" && !Array.isArray(v);
@@ -49,8 +59,9 @@ const weekDays = monday => NAMES.map((_, i) => addDays(monday, i));
 
 // ── how long a recipe takes, and how busy a night is ───────────────────────
 
-// "1 hr 5 min", "45 mins", "1½ hours", "PT20M" → minutes, or null when it doesn't say.
+// "1 hr 5 min", "45 mins", "1½ hours", "PT20M", "45" → minutes, or null when it doesn't say.
 export function minutesOf(time) {
+  if (/^\s*\d+(?:\.\d+)?\s*$/.test(String(time ?? ""))) return Math.round(Number(time)) || null;   // a bare number is minutes
   const s = String(time ?? "").toLowerCase().replace(/½/g, ".5").replace(/¼/g, ".25").replace(/¾/g, ".75");
   const iso = s.trim().match(/^p(?:(\d+)d)?(?:t(?:(\d+)h)?(?:(\d+)m)?)?$/);
   if (iso) return ((+iso[1] || 0) * 24 + (+iso[2] || 0)) * 60 + (+iso[3] || 0) || null;
@@ -95,6 +106,15 @@ export function nightsOut(items, days) {
 
 // ── picking recipes ────────────────────────────────────────────────────────
 
+// A recipe is a dinner when one of its labels says so (Course: Dinner, Meal: Main…).
+const DINNER = /^(?:dinners?|suppers?|mains?|main (?:course|dish)e?s?|entr[ée]es?)$/i;
+export const isDinner = r => (r.labels || []).some(l => DINNER.test(String(l.value || "").trim()) || (!l.value && DINNER.test(String(l.key || "").trim())));
+// What filling the week picks from: the dinners, or every recipe when none is labeled one.
+export function dinnersOf(recipes) {
+  const d = recipes.filter(isDinner);
+  return d.length ? d : recipes;
+}
+
 const pickOne = list => list[crypto.getRandomValues(new Uint32Array(1))[0] % list.length];
 
 // Fills the nights that need a recipe. Busy nights get a quick one (the
@@ -103,7 +123,7 @@ const pickOne = list => list[crypto.getRandomValues(new Uint32Array(1))[0] % lis
 export function fillWeek(nights, days, busy, recipes, lastWeek = new Set(), redo = false) {
   const out = structuredClone(nights);
   const ids = new Set(recipes.map(r => r.id));
-  const needs = d => !out[d].out && !out[d].locked && (redo || !ids.has(out[d].recipe));
+  const needs = d => !out[d].out && !out[d].locked && !busy[d]?.away && (redo || !ids.has(out[d].recipe));
   const used = new Set(days.filter(d => !needs(d) && out[d].recipe).map(d => out[d].recipe));
   // Busy nights first, so the quick recipes go to them.
   for (const d of [...days.filter(d => busy[d]?.busy), ...days.filter(d => !busy[d]?.busy)]) {
@@ -139,7 +159,8 @@ async function loadNights(d, owner, monday) {
   };
 }
 
-// Tonight's dinner, for the dashboard: {title} from Recipe box, {out: true}, or null when nothing's planned.
+// Tonight's dinner, for the dashboard and Drift's Today: {id, title, time} from
+// Recipe box, {out: true}, or null when nothing's planned.
 export async function tonight(env, user, day) {
   const d = await db(env);
   const n = (await loadNights(d, user.id, mondayOf(day))).nights[day];
@@ -147,7 +168,9 @@ export async function tonight(env, user, day) {
   if (n.out) return { out: true };
   if (!n.recipe) return null;
   const row = await d.prepare("SELECT data FROM recipes WHERE owner = ? AND id = ?").bind(user.id, n.recipe).first();
-  return row ? { title: JSON.parse(row.data).title } : null;
+  if (!row) return null;
+  const r = JSON.parse(row.data);
+  return { id: n.recipe, title: r.title, time: timeText(r.time) };
 }
 
 async function saveNights(d, owner, monday, plan) {
@@ -159,17 +182,28 @@ async function saveNights(d, owner, monday, plan) {
 }
 
 async function calendar(env, user, days) {
-  if (!user.areas.has("todo")) return null;
-  return nightsOut((await state(env, user)).items, days);
+  const cal = user.areas.has("todo") ? nightsOut((await state(env, user)).items, days) : null;
+  if (!user.areas.has("trips")) return cal;
+  // A night on a trip is away: nothing to cook at home.
+  const trips = (await listTrips(env, user)).filter(t => t.start && t.start <= days[6] && (t.end || t.start) >= days[0]);
+  if (!trips.length) return cal;
+  const out = cal || Object.fromEntries(days.map(d => [d, { busy: false, why: "", events: [] }]));
+  for (const d of days) {
+    const t = trips.find(t => t.start <= d && (t.end || t.start) >= d);
+    if (t) out[d].away = t.title;
+  }
+  return out;
 }
 
 // The week's shopping: every planned recipe's ingredients, scaled to that
-// night's servings. The same line from two recipes is listed once.
-export function shoppingFor(nights, days, byId) {
+// night's servings, from `today` on (nights already past are bought for). The
+// same ingredient from two recipes is added up into one line, and the lines
+// come filed by aisle (src/shopping.js): [{line, for, aisle, staple}].
+export function shoppingFor(nights, days, byId, today = "") {
   const lines = new Map();
   for (const [i, d] of days.entries()) {
     const n = nights[d], r = byId.get(n.recipe);
-    if (!r || n.out) continue;
+    if (!r || n.out || d < today) continue;
     const f = factorFor(r, { servings: n.servings });
     for (const raw of r.ingredients) {
       const line = scaleLine(raw, f).slice(0, 500);
@@ -179,11 +213,22 @@ export function shoppingFor(nights, days, byId) {
       if (!lines.get(key).for.includes(tag)) lines.get(key).for.push(tag);
     }
   }
-  return [...lines.values()];
+  return arrange([...lines.values()]);
+}
+
+// The Food club pick for the month a week is in, when there is one: {id, title,
+// month, recipe (your Recipe box's copy, matched by title, or null), made, planned}.
+async function clubPick(env, user, month, nights) {
+  if (!user.areas.has("food")) return null;
+  const pick = (await listPicks(env, user)).find(p => p.month === month);
+  if (!pick) return null;
+  const mine = (await allRecipes(env, user)).find(r => r.title.trim().toLowerCase() === pick.title.trim().toLowerCase());
+  return { id: pick.id, title: pick.title, month: pick.month, recipe: mine?.id || null, made: pick.mine.made,
+    planned: Boolean(mine && Object.values(nights).some(n => n.recipe === mine.id && !n.out)) };
 }
 
 // Everything the page shows for a week.
-async function week(env, user, monday, plan) {
+async function week(env, user, monday, plan, today = "") {
   const d = await db(env);
   plan ??= await loadNights(d, user.id, monday);
   const days = weekDays(monday);
@@ -201,10 +246,13 @@ async function week(env, user, monday, plan) {
         recipe: r ? r.id : null, servings: r ? n.servings ?? r.servings ?? null : null, out: n.out, locked: n.locked,
         // A busy night with a recipe that isn't quick: worth a second look.
         slow: Boolean(r && cal?.[day]?.busy && !n.out && !isQuick(r)),
+        away: cal?.[day]?.away || "", past: Boolean(today && day < today),
       };
     }),
-    recipes: recipes.map(r => ({ id: r.id, title: r.title, time: r.time, minutes: minutesOf(r.time), quick: isQuick(r), servings: r.servings })),
-    shopping: shoppingFor(plan.nights, days, byId),
+    recipes: recipes.map(r => ({ id: r.id, title: r.title, time: r.time, minutes: minutesOf(r.time), quick: isQuick(r), servings: r.servings, dinner: isDinner(r) })),
+    shopping: shoppingFor(plan.nights, days, byId, today),
+    today,
+    club: await clubPick(env, user, (today && days.includes(today) ? today : monday).slice(0, 7), plan.nights).catch(() => null),
     shopped: plan.shopped,
     quick: QUICK,
     drift,
@@ -239,7 +287,7 @@ function cleanNight(body, recipes) {
   return out;
 }
 
-export async function setNight(env, user, monday, day, body) {
+export async function setNight(env, user, monday, day, body, today = "") {
   if (!weekDays(monday).includes(day)) fail("that day isn't in this week");
   const d = await db(env);
   const plan = await loadNights(d, user.id, monday);
@@ -248,10 +296,10 @@ export async function setNight(env, user, monday, day, body) {
   // Choosing a recipe yourself keeps it when the week is filled again.
   if (change.recipe) plan.nights[day].locked = body.locked ?? true;
   await saveNights(d, user.id, monday, plan);
-  return week(env, user, monday, plan);
+  return week(env, user, monday, plan, today);
 }
 
-export async function fill(env, user, monday, body) {
+export async function fill(env, user, monday, body, today = "") {
   if (!isObj(body)) fail("body must be a JSON object");
   const d = await db(env);
   const plan = await loadNights(d, user.id, monday);
@@ -260,20 +308,22 @@ export async function fill(env, user, monday, body) {
   const days = weekDays(monday);
   const last = await loadNights(d, user.id, addDays(monday, -7));
   const lastWeek = new Set(Object.values(last.nights).map(n => n.recipe).filter(Boolean));
-  plan.nights = fillWeek(plan.nights, days, (await calendar(env, user, days)) || {}, recipes, lastWeek, Boolean(body.redo));
+  // Nights already past are left as they were.
+  const ahead = days.filter(day => !today || day >= today);
+  plan.nights = fillWeek(plan.nights, ahead.length ? ahead : days, (await calendar(env, user, days)) || {}, dinnersOf(recipes), lastWeek, Boolean(body.redo));
   await saveNights(d, user.id, monday, plan);
-  return week(env, user, monday, plan);
+  return week(env, user, monday, plan, today);
 }
 
 // The week's ingredients onto a Drift list. `lines` picks which (by their
 // place in the week's shopping); without it, all of them.
-export async function shop(env, user, monday, body) {
+export async function shop(env, user, monday, body, today = "") {
   if (!user.areas.has("todo")) fail("you need Drift to make a shopping list");
   if (!isObj(body)) fail("body must be a JSON object");
   const d = await db(env);
   const plan = await loadNights(d, user.id, monday);
   const recipes = await allRecipes(env, user);
-  const all = shoppingFor(plan.nights, weekDays(monday), new Map(recipes.map(r => [r.id, r])));
+  const all = shoppingFor(plan.nights, weekDays(monday), new Map(recipes.map(r => [r.id, r])), today);
   if (!all.length) fail("plan some dinners first");
   const pick = Array.isArray(body.lines) ? new Set(body.lines.map(Number)) : null;
   const chosen = all.filter((_, i) => !pick || pick.has(i));
@@ -308,6 +358,11 @@ export async function meals(request, env, user, pathname) {
   const method = request.method;
   try {
     if (method !== "GET" && !sameOrigin(request)) return json({ error: "cross-origin request refused" }, 403);
+    const today = visitorNow(request).day;
+    if (/^\/meals\/api\/tonight\/?$/.test(pathname)) {
+      if (method !== "GET") return json({ error: "method not allowed" }, 405);
+      return json((await tonight(env, user, new URL(request.url).searchParams.get("day") || today)) || {});
+    }
     const m = pathname.match(ROUTE);
     if (!m) return json({ error: "not found" }, 404);
     const [, start, sub] = m;
@@ -315,14 +370,14 @@ export async function meals(request, env, user, pathname) {
     if (!start) {
       if (method !== "GET") return notAllowed();
       const asked = new URL(request.url).searchParams.get("start");
-      return json(await week(env, user, mondayOf(asked || visitorNow(request).day)));
+      return json(await week(env, user, mondayOf(asked || today), undefined, today));
     }
     if (mondayOf(start) !== start) fail("a week starts on a Monday");
-    if (!sub) return method === "GET" ? json(await week(env, user, start)) : notAllowed();
-    if (sub === "fill") return method === "POST" ? json(await fill(env, user, start, await readJson(request))) : notAllowed();
-    if (sub === "shop") return method === "POST" ? json(await shop(env, user, start, await readJson(request))) : notAllowed();
+    if (!sub) return method === "GET" ? json(await week(env, user, start, undefined, today)) : notAllowed();
+    if (sub === "fill") return method === "POST" ? json(await fill(env, user, start, await readJson(request), today)) : notAllowed();
+    if (sub === "shop") return method === "POST" ? json(await shop(env, user, start, await readJson(request), today)) : notAllowed();
     if (!realDay(sub)) return json({ error: "not found" }, 404);
-    return method === "PUT" ? json(await setNight(env, user, start, sub, await readJson(request))) : notAllowed();
+    return method === "PUT" ? json(await setNight(env, user, start, sub, await readJson(request), today)) : notAllowed();
   } catch (e) {
     if (e instanceof BadRequest) return json({ error: e.message }, 400);
     console.error("meals error:", e);
