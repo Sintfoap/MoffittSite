@@ -1284,3 +1284,57 @@ def remove_food_photo(pick_id: str, photo_id: str) -> dict:
 def save_food_recipe(pick_id: str) -> dict:
     """The pick's recipe, copied into your Recipe box: {recipe}."""
     return api("POST", f"/food/api/picks/{_q(pick_id)}/save")
+
+
+# ──────────────────────────────── feedback ──────────────────────────────────
+# /feedback/api/ (src/feedback.js)
+
+def feedback() -> dict:
+    """{mine, inbox (admins; else None), owner, kinds, statuses, sources, photos_each, links_each}."""
+    return _get("/feedback/api/feedback")
+
+
+def feedback_linkable(app: str, q: str = "") -> list:
+    """Up to 30 things in one app (a source id from feedback()["sources"]) whose name has q in it: [{app, id, title, sub}]."""
+    return _get(f"/feedback/api/linkable?app={_q(app)}&q={_q(q)}")["items"]
+
+
+def feedback_note(note_id: str) -> dict:
+    """The whole note (opening it marks it read): {kind, subject, message, status, links, photos, replies, can_*}."""
+    return _get(f"/feedback/api/items/{_q(note_id)}")
+
+
+def send_feedback(fields: dict) -> dict:
+    """{kind, subject, message, links: [{app, id} | {app: "url", url}]} → the new note."""
+    return api("POST", "/feedback/api/items", fields)
+
+
+def update_feedback(note_id: str, changes: dict) -> dict:
+    """{kind?, subject?, message?, links?} for your own note, or {status} for admins."""
+    return api("PATCH", f"/feedback/api/items/{_q(note_id)}", changes)
+
+
+def delete_feedback(note_id: str) -> dict:
+    return api("DELETE", f"/feedback/api/items/{_q(note_id)}")
+
+
+def reply_feedback(note_id: str, text: str) -> dict:
+    return api("POST", f"/feedback/api/items/{_q(note_id)}/replies", {"text": text})
+
+
+def add_feedback_photo(note_id: str, path: str, caption: str = "") -> dict:
+    """Sends a picture file (JPEG, PNG, WebP or GIF, at most PHOTO_BYTES) with your note; the note back."""
+    import base64
+    p = Path(path).expanduser()
+    try:
+        raw = p.read_bytes()
+    except OSError as e:
+        raise SiteError(f"couldn't read {p}: {e.strerror or e}") from None
+    if len(raw) > PHOTO_BYTES:
+        raise SiteError(f"that photo is {len(raw) // 1024} KB; the most the site keeps is {PHOTO_BYTES // 1024} KB, "
+                        "so make it smaller first (or add it from the website, which shrinks it for you)")
+    return api("POST", f"/feedback/api/items/{_q(note_id)}/photos", {"data": base64.b64encode(raw).decode(), "caption": caption})
+
+
+def remove_feedback_photo(note_id: str, photo_id: str) -> dict:
+    return api("DELETE", f"/feedback/api/items/{_q(note_id)}/photos/{_q(photo_id)}")

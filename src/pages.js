@@ -38,6 +38,7 @@ const ICON = {
   labels: `<path d="M3 12V4h8l10 10-8 8z"/><circle cx="7.5" cy="8.5" r="1.5"/>`,
   board: `<rect x="3" y="4" width="18" height="16" rx="1"/><path d="M7 8h4v4H7zM13 8h4M13 11h4M7 15h10"/>`,
   food: `<path d="M3 12h18a9 9 0 0 1-18 0z"/><path d="M9 8c0-1.5 1-2 1-3.5M14 8c0-1.5 1-2 1-3.5"/>`,
+  feedback: `<path d="M4 5h16v11H9l-5 4z"/><path d="M8 9h8M8 12h5"/>`,
   bell: `<path d="M6 16V11a6 6 0 0 1 12 0v5l2 2H4z"/><path d="M10 20.5a2 2 0 0 0 4 0"/>`,
   out: `<path d="M15 4h4v16h-4M10 8l-4 4 4 4M6 12h10"/>`,
   fold: `<rect x="3" y="4" width="18" height="16" rx="1"/><path d="M9 4v16M16 9l-3 3 3 3"/>`,
@@ -606,7 +607,7 @@ export function accountPage({ user, error, notice, recoveryLeft, sessionCount, s
 
 const date = t => new Date(t * 1000).toISOString().slice(0, 10);
 
-export function adminPage({ user, users, orphans, apps, books = [], bookVotes = [], error, notice, tempPassword, open = "" }) {
+export function adminPage({ user, users, orphans, apps, books = [], bookVotes = [], feedback = null, error, notice, tempPassword, open = "" }) {
   const post = (action, label, fields, cls = "quiet small", confirm = "") =>
     `<form method="post" action="/admin/${action}">${Object.entries(fields).map(([k, v]) => `<input type="hidden" name="${k}" value="${esc(v)}">`).join("")}${confirm}<button class="${cls}" type="submit">${label}</button></form>`;
   // The apps by the menu's groups, each part of an app (Chat connections) under it.
@@ -675,6 +676,7 @@ export function adminPage({ user, users, orphans, apps, books = [], bookVotes = 
       <div class="stat"><b>${users.reduce((n, u) => n + u.sessions, 0)}</b><span>signed-in devices</span></div>
       <div class="stat"><b>${users.filter(u => u.disabled).length}</b><span>disabled</span></div>
     </div>
+    ${feedback ? `<p class="feedback-line" id="feedback-inbox"><a href="/feedback/#inbox"><b>Feedback inbox</b></a> · ${feedback.total ? `${feedback.total} note${feedback.total === 1 ? "" : "s"}, <b>${feedback.unread} unread</b>, ${feedback.open} still open` : "nothing sent yet"}. People need Feedback turned on below to send it; admins can always read it.</p>` : ""}
     ${tempPassword ? `<div class="msg good">Temporary password for <strong>${esc(tempPassword.username)}</strong>: <span class="mono">${esc(tempPassword.password)}</span><br>Send it to them privately. They'll have to change it when they sign in, and it won't be shown again.</div>` : ""}
     <div class="people-tools"><input type="search" placeholder="Find an account" aria-label="Find an account" data-find-person>
       <button type="button" class="quiet small" data-expand="open">Expand all</button><button type="button" class="quiet small" data-expand="close">Collapse all</button></div>

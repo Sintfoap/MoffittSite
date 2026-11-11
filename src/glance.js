@@ -8,6 +8,7 @@ import { db } from "./db.js";
 import { listRooms } from "./chat.js";
 import { unread as boardUnread } from "./board.js";
 import { listPicks } from "./food.js";
+import { waiting as feedbackWaiting } from "./feedback.js";
 import { listTrips } from "./trips.js";
 import { tonight } from "./meals.js";
 import { pantryLine } from "./pantry.js";
@@ -48,6 +49,10 @@ const LINES = {
   food: async (env, user, { day }) => {
     const pick = (await listPicks(env, user)).find(p => p.month === day.slice(0, 7));
     return pick ? `This month: ${pick.title}` : "Nobody's picked this month yet";
+  },
+  feedback: async (env, user) => {
+    const n = await feedbackWaiting(env, user);
+    return n ? (user.areas.has("admin") ? `${plural(n, "note")} to read` : `${plural(n, "reply", "replies")} to read`) : null;
   },
   trips: async (env, user, { day }) => {
     const next = (await listTrips(env, user)).find(t => t.start && (t.end || t.start) >= day);

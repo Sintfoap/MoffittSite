@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Feedback · sintfoap.xyz</title>
+<meta name="robots" content="noindex">
+<meta name="theme-color" content="#0b0f0a">
+<link rel="icon" href="/favicon.ico" sizes="32x32"><link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="manifest" href="/site.webmanifest">
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+/* The Console look (src/pages.js): monospace, square double-ruled panels,
+   gold on green-black, the shared rail and the key bar. */
+:root { color-scheme: light;
+  --bg:#f2f0e6; --rail:#ebe8dc; --panel:#fbfaf4; --field:#ffffff; --line:#cfc9b0; --line-2:#a9a283;
+  --gold:#8a6510; --gold-soft:#e9e1c2; --on-gold:#fbf7ea; --ink:#1c1d16; --muted:#4d4c3f; --faint:#7a7764;
+  --bad:#b4412f; --good:#2f7a52; --warn:#946c0c; --mono:'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace;
+  --surface:var(--rail); --accent:var(--gold); --accent-soft:var(--gold-soft); --sans:var(--mono); }
+@media (prefers-color-scheme: dark) { :root { color-scheme: dark;
+  --bg:#0b0f0a; --rail:#0e140e; --panel:#121a12; --field:#0e140e; --line:#4a4430; --line-2:#6a6243;
+  --gold:#d6ae5e; --gold-soft:#24251a; --on-gold:#1a1206; --ink:#f4efe6; --muted:#c6bcab; --faint:#8a8270;
+  --bad:#e47a62; --good:#7fcf98; --warn:#e0b25a; } }
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { min-height: 100vh; background: var(--bg); color: var(--ink); font: 400 14px/1.6 var(--mono); -webkit-font-smoothing: antialiased; }
+button, input, select, textarea { font: inherit; color: inherit; }
+a { color: var(--gold); }
+:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+::selection { background: var(--gold); color: var(--on-gold); }
+[hidden] { display: none !important; }
+
+.shell { display: grid; grid-template-columns: auto minmax(0, 1fr); min-height: 100vh; padding-bottom: 38px; }
+kbd { font: 700 11px var(--mono); color: var(--gold); }
+.keybar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 5; height: 38px; display: flex; align-items: center; gap: 22px; overflow-x: auto;
+  padding: 0 max(16px, env(safe-area-inset-right, 0px)) 0 max(16px, env(safe-area-inset-left, 0px)); white-space: nowrap;
+  background: var(--rail); border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; scrollbar-width: none; }
+.keybar a { color: var(--muted); text-decoration: none; }
+.keybar a:hover { color: var(--ink); }
+.keybar kbd { font-size: 13px; margin-right: 6px; }
+.keybar .end { margin-left: auto; }
+
+main { min-width: 0; padding: 34px clamp(16px, 4vw, 48px) 56px; }
+.kicker { font: 700 13px var(--mono); letter-spacing: .55em; color: var(--gold); text-transform: uppercase; }
+h1 { font: 700 clamp(22px, 4vw, 30px)/1.25 var(--mono); margin: 10px 0 18px; }
+h2 { font: 700 15px/1.4 var(--mono); margin: 0 0 10px; }
+h3 { font: 400 11px var(--mono); letter-spacing: 3px; text-transform: uppercase; color: var(--faint); margin: 22px 0 8px; }
+p { color: var(--muted); margin: 0 0 12px; }
+.lede { margin: -6px 0 22px; max-width: 680px; }
+.card { position: relative; background: var(--panel); border: 1px solid var(--line); padding: 22px 24px; margin-bottom: 18px; }
+.card::before { content: ""; position: absolute; inset: 4px; border: 1px solid var(--line); pointer-events: none; }
+.card > * { position: relative; }
+.card > :last-child { margin-bottom: 0; }
+.msg { padding: 10px 14px; margin-bottom: 18px; border-left: 3px solid; max-width: 680px; }
+.msg.bad { background: color-mix(in oklch, var(--bad) 10%, transparent); border-color: var(--bad); color: var(--bad); }
+.msg.good { background: color-mix(in oklch, var(--good) 10%, transparent); border-color: var(--good); color: var(--ink); }
+
+button.btn { display: inline-block; margin: 6px 8px 0 0; padding: 8px 16px; font: 700 12.5px var(--mono); letter-spacing: 1.5px; text-transform: uppercase;
+  color: var(--on-gold); background: var(--gold); border: 1px solid var(--gold); border-radius: 0; cursor: pointer; }
+button.btn::before { content: "[ "; } button.btn::after { content: " ]"; }
+button.btn.quiet { background: transparent; color: var(--gold); border-color: var(--line-2); }
+button.btn.on { background: var(--gold-soft); color: var(--ink); border-color: var(--gold); }
+button.btn.danger { background: transparent; color: var(--bad); border-color: color-mix(in oklch, var(--bad) 50%, transparent); }
+button.btn.small { padding: 5px 10px; font-size: 11.5px; }
+button.btn:disabled { opacity: .45; cursor: default; }
+input[type=text], input[type=url], input[type=search], textarea, select {
+  padding: 8px 10px; background: var(--field); border: 1px solid var(--line-2); border-radius: 0; min-width: 0; color: var(--ink); }
+textarea { width: 100%; resize: vertical; line-height: 1.5; }
+label.field { display: grid; gap: 4px; margin-bottom: 14px; color: var(--muted); font-size: 13px; }
+label.field input, label.field textarea, label.field select { width: 100%; color: var(--ink); font-size: 14px; }
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.empty { color: var(--faint); }
+.hint { color: var(--faint); font-size: 12.5px; }
+
+/* the tabs and the list */
+.tabs { display: flex; gap: 0; margin-bottom: 18px; border: 1px solid var(--line-2); width: max-content; max-width: 100%; }
+.tabs button { padding: 7px 16px; background: none; border: 0; border-right: 1px solid var(--line-2); color: var(--muted); cursor: pointer; font-size: 13px; white-space: nowrap; }
+.tabs button:last-child { border-right: 0; }
+.tabs button[aria-pressed="true"] { background: var(--gold); color: var(--on-gold); font-weight: 700; }
+.tabs .dot { display: inline-block; min-width: 18px; padding: 0 5px; margin-left: 6px; font-size: 11px; line-height: 18px; text-align: center; background: var(--bad); color: #fff; }
+.box { display: grid; grid-template-columns: minmax(240px, 320px) minmax(0, 1fr); gap: 24px; align-items: start; }
+.shelf { position: sticky; top: 16px; }
+.shelf .filters { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.shelf .filters button { padding: 3px 9px; font-size: 12px; background: none; border: 1px solid var(--line-2); color: var(--muted); cursor: pointer; }
+.shelf .filters button[aria-pressed="true"] { border-color: var(--gold); color: var(--ink); background: var(--gold-soft); }
+.notes { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--line); max-height: calc(100vh - 220px); overflow-y: auto; }
+.notes button { display: block; width: 100%; text-align: left; padding: 9px 10px; background: none; border: 0; border-bottom: 1px dashed var(--line);
+  border-left: 2px solid transparent; cursor: pointer; color: var(--muted); }
+.notes b { display: block; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.notes small { display: block; color: var(--faint); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.notes button:hover { background: var(--gold-soft); color: var(--ink); }
+.notes button[aria-current="true"] { background: var(--gold-soft); border-left-color: var(--gold); color: var(--ink); }
+.notes .unread b::before { content: "● "; color: var(--bad); }
+.tag { display: inline-block; padding: 0 6px; margin-right: 6px; font-size: 11px; letter-spacing: 1px; text-transform: uppercase; border: 1px solid var(--line-2); color: var(--muted); }
+.tag.s-new { border-color: var(--gold); color: var(--gold); }
+.tag.s-planned { border-color: var(--warn); color: var(--warn); }
+.tag.s-done { border-color: var(--good); color: var(--good); }
+.tag.s-closed { color: var(--faint); }
+
+/* writing a note */
+.kinds { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
+.kinds label { cursor: pointer; }
+.kinds input { position: absolute; opacity: 0; pointer-events: none; }
+.kinds span { display: inline-block; padding: 6px 12px; border: 1px solid var(--line-2); color: var(--muted); font-size: 13px; }
+.kinds input:checked + span { background: var(--gold); color: var(--on-gold); border-color: var(--gold); font-weight: 700; }
+.kinds input:focus-visible + span { outline: 2px solid var(--gold); outline-offset: 2px; }
+.drop { border: 1px dashed var(--line-2); padding: 14px; text-align: center; color: var(--faint); font-size: 13px; cursor: pointer; background: var(--rail); }
+.drop.over { border-color: var(--gold); color: var(--ink); background: var(--gold-soft); }
+.drop b { color: var(--gold); }
+.thumbs { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 10px; margin-top: 10px; }
+.thumbs figure { margin: 0; border: 1px solid var(--line); background: var(--rail); position: relative; }
+.thumbs img { display: block; width: 100%; aspect-ratio: 1; object-fit: cover; }
+.thumbs input { width: 100%; border: 0; border-top: 1px solid var(--line); padding: 5px 7px; font-size: 12px; background: var(--field); }
+.thumbs .x { position: absolute; top: 4px; right: 4px; width: 24px; height: 24px; border: 0; background: rgb(0 0 0 / .6); color: #fff; cursor: pointer; font-size: 14px; line-height: 1; }
+.links { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.links li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: start; padding: 9px 12px; border: 1px solid var(--line); border-left: 3px solid var(--gold); background: var(--rail); }
+.links .what { font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: var(--gold); }
+.links b { display: block; color: var(--ink); overflow-wrap: anywhere; }
+.links small { display: block; color: var(--faint); font-size: 12px; overflow-wrap: anywhere; }
+.links .excerpt { color: var(--muted); font-size: 12.5px; margin-top: 4px; overflow-wrap: anywhere; }
+.links .x { background: none; border: 0; color: var(--bad); cursor: pointer; font-size: 12px; padding: 0; }
+.add-links { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; align-items: center; }
+.add-links input { flex: 1 1 240px; }
+.add-links button.btn { margin: 0; }
+
+/* reading one */
+.note .when { font-size: 12px; letter-spacing: 2px; text-transform: uppercase; color: var(--gold); margin-bottom: 6px; }
+.note h2 { font-size: clamp(19px, 3vw, 25px); margin-bottom: 4px; overflow-wrap: anywhere; }
+.note .by { color: var(--faint); font-size: 13px; margin-bottom: 14px; }
+.note .body { color: var(--ink); white-space: pre-wrap; max-width: 75ch; overflow-wrap: anywhere; }
+.photos { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
+.photos figure { margin: 0; border: 1px solid var(--line); background: var(--rail); }
+.photos button.view { display: block; width: 100%; padding: 0; border: 0; background: none; cursor: zoom-in; }
+.photos img { display: block; width: 100%; aspect-ratio: 1; object-fit: cover; }
+.photos figcaption { padding: 6px 8px; font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+.photos figcaption button { float: right; background: none; border: 0; color: var(--bad); cursor: pointer; font-size: 12px; padding: 0; }
+.statuses { display: flex; flex-wrap: wrap; gap: 0; border: 1px solid var(--line-2); width: max-content; max-width: 100%; }
+.statuses button { padding: 6px 14px; background: none; border: 0; border-right: 1px solid var(--line-2); color: var(--muted); cursor: pointer; font-size: 12.5px; }
+.statuses button:last-child { border-right: 0; }
+.statuses button[aria-pressed="true"] { background: var(--gold); color: var(--on-gold); font-weight: 700; }
+.thread { list-style: none; margin: 0 0 12px; padding: 0; display: grid; gap: 10px; }
+.thread li { padding: 10px 14px; border: 1px solid var(--line); background: var(--rail); max-width: 75ch; }
+.thread li.owner { border-left: 3px solid var(--gold); }
+.thread .who { font-size: 12px; color: var(--faint); margin-bottom: 4px; }
+.thread .who b { color: var(--ink); }
+.thread .text { white-space: pre-wrap; color: var(--ink); overflow-wrap: anywhere; }
+.actions { margin-top: 18px; padding-top: 12px; border-top: 1px dashed var(--line); }
+
+dialog { width: min(680px, calc(100vw - 32px)); max-height: calc(100vh - 32px); background: var(--panel); color: var(--ink); border: 1px solid var(--gold); padding: 22px 24px; }
+dialog::backdrop { background: rgb(0 0 0 / .55); }
+#picker .sources { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+#picker .sources button { padding: 4px 10px; font-size: 12.5px; background: none; border: 1px solid var(--line-2); color: var(--muted); cursor: pointer; }
+#picker .sources button[aria-pressed="true"] { background: var(--gold); color: var(--on-gold); border-color: var(--gold); font-weight: 700; }
+#picker input[type=search] { width: 100%; margin-bottom: 10px; }
+#found { list-style: none; margin: 0 0 12px; padding: 0; max-height: 46vh; overflow-y: auto; border-top: 1px solid var(--line); }
+#found button { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; width: 100%; text-align: left; padding: 8px 10px; background: none; border: 0; border-bottom: 1px dashed var(--line); cursor: pointer; color: var(--muted); }
+#found button:hover, #found button:focus-visible { background: var(--gold-soft); color: var(--ink); }
+#found b { display: block; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#found small { color: var(--faint); font-size: 12px; }
+#found .added { color: var(--good); font-size: 12px; }
+#viewer { width: min(1000px, calc(100vw - 32px)); padding: 12px; }
+#viewer img { display: block; max-width: 100%; max-height: calc(100vh - 140px); margin: 0 auto; }
+#viewer p { margin: 8px 0 0; text-align: center; }
+
+@media (max-width: 820px) {
+  .shell { grid-template-columns: 1fr; padding-bottom: 0; }
+  main { padding-top: 26px; }
+  .keybar { display: none; }
+  .box { grid-template-columns: 1fr; }
+  .shelf { position: static; }
+  .notes { max-height: 34vh; }
+  .photos, .thumbs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .card { padding: 18px 16px; }
+}
+</style>
+</head>
+<body>
+<div class="shell">
+<!--site-rail-->
+<main>
+  <div class="kicker">Feedback</div>
+  <h1 id="headline">Tell the site's owner what you think</h1>
+  <p class="lede">Ideas, bugs, praise or questions go straight to the site's owner, and only to them. Add as many photos as you like and link the exact recipe, Drift item, post or trip it's about.</p>
+  <div id="error" class="msg bad" role="alert" hidden></div>
+  <div id="done" class="msg good" role="status" hidden></div>
+
+  <div class="tabs" role="group" aria-label="Show" id="tabs">
+    <button type="button" data-tab="new" aria-pressed="true">Write</button>
+    <button type="button" data-tab="mine" aria-pressed="false">Sent</button>
+    <button type="button" data-tab="inbox" aria-pressed="false" hidden>Inbox</button>
+  </div>
+
+  <section id="compose" class="card" aria-labelledby="compose-title">
+    <h2 id="compose-title">Write a note</h2>
+    <form id="note-form">
+      <div class="kinds" role="radiogroup" aria-label="What kind" id="kinds"></div>
+      <label class="field">Subject<input type="text" name="subject" maxlength="200" placeholder="In a few words"></label>
+      <label class="field">What's on your mind<textarea name="message" rows="7" maxlength="8000" placeholder="What happened, what you'd like, or what you loved"></textarea></label>
+
+      <h3>Photos <span class="hint" id="photo-count"></span></h3>
+      <div class="drop" id="drop" tabindex="0" role="button" aria-label="Add photos"><b>Add photos</b>: choose them, drop them here, or paste a screenshot.</div>
+      <input type="file" id="files" accept="image/*" multiple hidden>
+      <div class="thumbs" id="thumbs"></div>
+
+      <h3>About something on the site <span class="hint" id="link-count"></span></h3>
+      <ul class="links" id="draft-links"></ul>
+      <div class="add-links">
+        <button class="btn quiet small" type="button" id="link-btn">Link something</button>
+        <input type="url" id="url" placeholder="or paste any link: https://…" maxlength="2000" aria-label="A web link">
+        <button class="btn quiet small" type="button" id="url-add">Add link</button>
+      </div>
+
+      <div class="row" style="margin-top:18px"><button class="btn" type="submit" id="send">Send</button><span class="hint" id="progress"></span></div>
+    </form>
+  </section>
+
+  <div class="box" id="lists" hidden>
+    <aside class="shelf">
+      <div class="filters" role="group" aria-label="Status" id="filters"></div>
+      <ul class="notes" id="notes"></ul>
+    </aside>
+    <section id="detail"><p class="empty">Pick a note from the list.</p></section>
+  </div>
+</main>
+</div>
+
+<dialog id="picker" aria-labelledby="picker-title">
+  <h2 id="picker-title">Link something</h2>
+  <div class="sources" id="sources" role="group" aria-label="From"></div>
+  <input type="search" id="find" placeholder="Search by name" aria-label="Search">
+  <ul id="found"></ul>
+  <div class="row"><button class="btn quiet" type="button" id="picker-close">Done</button></div>
+</dialog>
+
+<dialog id="viewer"><form method="dialog"><img id="big" alt=""><p id="big-caption"></p><div class="row" style="justify-content:center"><button class="btn quiet">Close</button></div></form></dialog>
+<input type="file" id="more-files" accept="image/*" multiple hidden>
+
+<footer class="keybar" aria-label="Keyboard shortcuts"><span><kbd>n</kbd>write a note</span><span><kbd>v</kbd>sent, inbox</span><span><kbd>j k</kbd>next, previous</span><span><kbd>l</kbd>link something</span><span><kbd>p</kbd>add photos</span><span><kbd>r</kbd>reply</span><span><kbd>g</kbd>then a key from the menu to jump</span><span><kbd>\</kbd>Sidebar</span><a class="end" href="/logout" data-key="o"><kbd>g o</kbd>Sign out</a></footer>
+<script src="/keys.js" defer></script>
+<script type="module" src="/feedback/app.js"></script>
+</body>
+</html>

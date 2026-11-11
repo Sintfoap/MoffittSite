@@ -22,6 +22,7 @@
 // rain tomorrow and the day after the clear one; ryan is near London.
 // ryan and sam have Trip planner, Recipe board, where sam shared Shortbread (Course: Dessert),
 // and Food club, where sam picked last month (Pavlova).
+// ryan and sam have Feedback; sam sent the admins "Pavlova cracked", linking that pick.
 // Workers AI (the stand-in) translates the Spanish in WORDS below into English, line for line.
 import http from "node:http";
 import worker from "../../src/worker.js";
@@ -136,6 +137,13 @@ grantApps(env, "ryan", "labels");
   const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - 1);
   await sam.req("POST", "/food/api/picks", { json: { month: d.toLocaleDateString("sv").slice(0, 7), title: "Pavlova", kind: "dessert",
     blurb: "Crisp outside, marshmallow inside.", recipe: { ingredients: ["4 egg whites", "1 cup sugar"], steps: ["Whisk", "Bake low and slow"] } } });
+}
+{
+  grantApps(env, "ryan", "feedback");
+  grantApps(env, "sam", "feedback");
+  const pick = sqlOne(env, "SELECT id FROM food_picks").id;
+  await sam.req("POST", "/feedback/api/items", { json: { kind: "question", subject: "Pavlova cracked", message: "Mine cracked all over. Is that the oven?",
+    links: [{ app: "food", id: pick }] } });
 }
 for (const item of [{ name: "Whole wheat flour", amount: "10 lb", low: "2 lb" }, { name: "Tomato soup", amount: 2, size: "16 oz" }, { name: "Ground cumin", level: 2 }]) {
   await ryan.req("POST", "/pantry/api/items", { json: item });

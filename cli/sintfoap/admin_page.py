@@ -72,6 +72,7 @@ class AdminPage(Page):
             yield Static(Text("Enter opens an account. Space flips a switch, a turns them all on and x all off; ctrl+s saves "
                               "that account's changes together. New apps start off for everyone. Passwords, two-factor and "
                               "disabling or deleting accounts are on the website: press w.", style=MUTED), classes="sub")
+            yield Static(id="feedback-line", classes="sub")
             yield Vertical(id="people", classes="card")
         yield Footer()
 
@@ -95,6 +96,13 @@ class AdminPage(Page):
 
     async def show(self, data: dict) -> None:
         self.data = data
+        fb = data.get("feedback")
+        line = self.query_one("#feedback-line", Static)
+        line.display = bool(fb)
+        if fb:
+            line.update(Text.assemble(("Feedback inbox  ", f"bold {GOLD}"),
+                                      (f"{plural(fb['total'], 'note')}, {fb['unread']} unread, {fb['open']} still open" if fb["total"] else "nothing sent yet", INK),
+                                      ("   g k opens it", FAINT)))
         focused = self.focused.id if isinstance(self.focused, Checkbox) else None
         people = self.query_one("#people", Vertical)
         await people.remove_children()

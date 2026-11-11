@@ -28,6 +28,7 @@ public/          the website, served as static files
   board/           Recipe board: recipes shared under their labels' keys, a feed of the keys (or single values, like Season: Fall) you follow, and saving any into Recipe box
   labels/          Recipe labels: the one list of labels (Season: Fall) recipes pick from, kept by whoever has the app
   trips/           Trip planner: a trip's days, places and packing list, planned with whoever's going
+  feedback/        Feedback: notes to the site's owner with photos and links to the exact recipe, item or post, and the admins' inbox
   food/            Food club: a food a month, picked by one member and made by all, with favorites and photos of everyone's attempts
   sw.js            the service worker that shows push notifications
   site.webmanifest, icons/   so the site can be added to a phone's home screen
@@ -66,11 +67,12 @@ src/             the Worker: runs only for the paths in run_worker_first
   labels.js        Recipe labels: the label list (add many values at once, rename or remove a value or a whole key), its page and API
   trips.js         Trip planner: shared trips, their itinerary, pinned places, and packing lists sent to Drift
   food.js          Food club: the month's pick and its recipe (from a link or Recipe box), who made and loved it, and photos kept in D1
+  feedback.js      Feedback: notes to the admins, photos kept in D1, links to things the sender can see (kept as a snapshot), statuses and replies
   books.js         the book club pick's list and votes (/books/api), and who voted for admins
   bridges.js       chat connections: other platforms' rooms in chat, with sealed credentials
   matrix.js        the Matrix provider for those
   vendor/uqr.mjs   QR codes for two-factor setup (MIT)
-cli/             the `sintfoap` command: sign in from a terminal; dashboard, Drift, plugin store, chat, Recipe box, Recipe board, Recipe labels, Meal plan, Sweep, Trip planner, Food club and settings as a terminal UI
+cli/             the `sintfoap` command: sign in from a terminal; dashboard, Drift, plugin store, chat, Recipe box, Recipe board, Recipe labels, Meal plan, Sweep, Trip planner, Food club, Feedback and settings as a terminal UI
 apps/todo-esque/ the original Drift app (Python engine, terminal UI, CLI)
 tests/           node --no-warnings --test tests/*.test.mjs  (the CLI's: cd cli && python -m pytest tests)
 wrangler.jsonc   Worker configuration (name, static files, variables, database)
@@ -123,6 +125,8 @@ The site has its own login. There's no Cloudflare Access.
 - sign someone out everywhere,
 - turn each app on or off for each account: there's a toggle per app in `APPS`, so a new app shows up there by itself, off for everyone (the terminal's admin page, `g a`, has the same toggles),
 - delete an account and its tasks.
+
+The admin page also shows the **Feedback inbox**: how many notes people have sent, how many are unread and how many are still open, with a link to `/feedback/#inbox`. Admins can always open Feedback, toggle or not (`admins: true` on its entry in `APPS`), so the owner never misses a note; everyone else needs Feedback turned on, and it starts off.
 
 It also lists todo tasks whose owner isn't an account, such as lists from the old Access login, and can move them to an account.
 

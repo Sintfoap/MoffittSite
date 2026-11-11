@@ -516,6 +516,36 @@ const SCHEMA = [
      created TEXT NOT NULL
    )`,
   `CREATE INDEX IF NOT EXISTS food_photos_pick ON food_photos (pick, created)`,
+  // Feedback (src/feedback.js): notes to the site's admins, their photos, and the replies back and forth.
+  `CREATE TABLE IF NOT EXISTS feedback (
+     id          TEXT PRIMARY KEY,                 -- "fb_" + random hex
+     author      TEXT NOT NULL,                    -- user id of whoever sent it
+     data        TEXT NOT NULL,                    -- JSON {kind, subject, message, links: [{app, id, title, sub, detail, href} | {app: "url", url, title}]}
+     status      TEXT NOT NULL DEFAULT 'new',      -- new, planned, done or closed (set by admins)
+     created     TEXT NOT NULL,
+     updated     TEXT NOT NULL,
+     last_at     TEXT NOT NULL,                    -- when it was sent or last replied to, for sorting and unread
+     author_seen TEXT,                             -- when the sender last opened it
+     owner_seen  TEXT                              -- when an admin last opened it
+   )`,
+  `CREATE INDEX IF NOT EXISTS feedback_author ON feedback (author, last_at)`,
+  `CREATE TABLE IF NOT EXISTS feedback_photos (
+     id      TEXT PRIMARY KEY,                     -- "fp_" + random hex
+     item    TEXT NOT NULL,
+     type    TEXT NOT NULL,                        -- image/jpeg, image/png, image/webp or image/gif
+     data    TEXT NOT NULL,                        -- the picture, base64
+     caption TEXT NOT NULL DEFAULT '',
+     created TEXT NOT NULL
+   )`,
+  `CREATE INDEX IF NOT EXISTS feedback_photos_item ON feedback_photos (item, created)`,
+  `CREATE TABLE IF NOT EXISTS feedback_replies (
+     id      TEXT PRIMARY KEY,                     -- "fr_" + random hex
+     item    TEXT NOT NULL,
+     user_id TEXT NOT NULL,                        -- the sender, or an admin
+     text    TEXT NOT NULL,
+     created TEXT NOT NULL
+   )`,
+  `CREATE INDEX IF NOT EXISTS feedback_replies_item ON feedback_replies (item, created)`,
   // Recipe box (src/recipes.js): pictures kept here, one per recipe (an export's photos).
   `CREATE TABLE IF NOT EXISTS recipe_photos (
      id      TEXT PRIMARY KEY,                     -- "p_" + random hex
