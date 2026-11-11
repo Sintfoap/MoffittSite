@@ -18,8 +18,6 @@
 // is where Matrix homeservers tell the site about new messages for
 // notifications (src/notify.js). scheduled() is the cron trigger in
 // wrangler.jsonc: Drift's reminders, and syncing chat connections.
-// /books/api is the public book suggestions page's votes (src/books.js); anyone
-// can use it, signed in or not.
 import { plugins, installed, install, uninstall, PLUGIN_ID, SANDBOX_CSP } from "./store.js";
 import { hasPlaces, searchPlaces, nameOf } from "./places.js";
 import { forecast } from "./weather.js";
@@ -31,7 +29,6 @@ import { handlePhone, PHONE_PATHS } from "./phone.js";
 import { withRail } from "./pages.js";
 import { chat } from "./chat.js";
 import { recipes } from "./recipes.js";
-import { books } from "./books.js";
 import { sweepApp } from "./sweep.js";
 import { meals } from "./meals.js";
 import { pantry, pantryScanner } from "./pantry.js";
@@ -43,6 +40,7 @@ import { feedback } from "./feedback.js";
 import { notifications, driftReminders, pushGateway, bridgeUpkeep } from "./notify.js";
 import { state, version, createItem, updateItem, createCollection, updateCollection, setBases, shareCollection, unshareCollection, readJson, BadRequest, ID, getItem } from "./drift.js";
 import { planDay } from "./routing.js";
+import { movePhotos } from "./photos.js";
 import { translate, TranslateError } from "./translate.js";
 
 // /todo/api/state, /todo/api/version, /todo/api/items[/<id>[/translate]],
@@ -150,8 +148,6 @@ export default {
     if (pathname.startsWith("/sweep/")) {
       return protect(request, env, areaOf("sweep"), user => sweepApp(request, env, user, pathname));
     }
-    // Book suggestions: public, so no sign-in (src/books.js). The page itself is public/books/.
-    if (pathname === "/books/api" || pathname.startsWith("/books/api/")) return books(request, env);
     // The frame store plugins run in. It holds no data and needs no sign-in.
     if (pathname.startsWith("/sandbox/")) return sandbox(request, env);
     if (pathname === "/_matrix/push/v1/notify") return pushGateway(request, env, ctx ? p => ctx.waitUntil(p) : undefined);
@@ -166,6 +162,8 @@ export default {
   async scheduled(controller, env, ctx) {
     ctx.waitUntil(driftReminders(env, controller.scheduledTime).catch(e => console.error("drift reminders failed:", e)));
     ctx.waitUntil(bridgeUpkeep(env).catch(e => console.error("connection upkeep failed:", e)));
+    // Pictures from before the PHOTOS bucket, a few at a time from D1 into R2 (src/photos.js).
+    ctx.waitUntil(movePhotos(env).catch(e => console.error("moving photos failed:", e)));
   },
 };
 

@@ -4,6 +4,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Browser, makeEnv, sqlOne, run } from "./helpers.mjs";
 import { bytes, ago } from "../src/pages.js";
+import { PHOTOS } from "../src/stats.js";
+import { PHOTO_TABLES } from "../src/photos.js";
 
 async function admin(env, name = "ryan") {
   const b = new Browser(env);
@@ -67,6 +69,10 @@ test("R2 sizes come from the bucket's listing when it's bound", async () => {
   assert.equal(s.users[0].photos.r2_bytes, 900000);
   assert.equal(s.storage.d1.limit_bytes, 10240 * 1024 * 1024);
   assert.match((await ryan.get("/admin/stats")).text, /879 KB<\/b> in R2 across 1 picture/);
+});
+
+test("stats count pictures from every table photos.js keeps them in", () => {
+  assert.deepEqual(PHOTOS.map(p => p.table), PHOTO_TABLES);
 });
 
 test("only admins see stats", async () => {

@@ -492,59 +492,6 @@ def chat_gif_favorite(gif: dict, on: bool = True) -> dict:
     return api("POST", "/chat/api/gifs/favorites", {"gif": keep, "on": bool(on)})
 
 
-# ──────────────────────────────── books ─────────────────────────────────────
-# /books/api (src/books.js): the public book suggestions page. No sign-in
-# needed; a vote is tied to this terminal's own voter id, as a browser's is to
-# its cookie. Signed in, the vote also records the account.
-
-def voter_id() -> str:
-    """This terminal's random voter id, made the first time and kept next to the login."""
-    p = config_path().with_name("books.json")
-    try:
-        vid = json.loads(p.read_text()).get("voter", "")
-        if len(vid) == 32 and all(c in "0123456789abcdef" for c in vid):
-            return vid
-    except (OSError, ValueError, AttributeError):
-        pass
-    vid = os.urandom(16).hex()
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps({"voter": vid}))
-    return vid
-
-
-def _books(method: str, path: str, body: Any = None) -> dict:
-    info = load_login()
-    where = info["site"] if info else clean_site(None)
-    status, data = call(where, method, path, body, token=info["token"] if info else None,
-                        cookies={"__Host-bv": voter_id()})
-    if not 200 <= status < 300 or not isinstance(data, dict):
-        raise _error(status, data)
-    return data
-
-
-def books() -> dict:
-    """{books: [{id, title, series?, author, year, blurb, links: [{label, url}], votes}], total, mine, name}."""
-    return _books("GET", "/books/api")
-
-
-def book_vote(book: str, name: str = "") -> dict:
-    """Votes for a book (or moves this terminal's vote to it); the same as books() after."""
-    return _books("POST", "/books/api/vote", {"book": book, "name": name})
-
-
-def book_unvote() -> dict:
-    return _books("DELETE", "/books/api/vote")
-
-
-def admin_books() -> dict:
-    """Who voted for what (admins): {books: [{id, title, votes}], votes: [{voter, title, name, username, ip, device, place, updated_at}]}."""
-    return _get("/admin/api/books")
-
-
-def remove_book_vote(voter: str) -> dict:
-    return api("POST", "/admin/api/books", {"voter": voter})
-
-
 # ──────────────────────────────── admin ─────────────────────────────────────
 # /admin/api/access (src/account.js); admins only.
 

@@ -345,9 +345,6 @@ class SiteApp(App):
         elif name == "sweep":
             from .sweep_page import SweepPage
             self.push_screen(SweepPage())
-        elif name == "books":
-            from .books_page import BooksPage
-            self.push_screen(BooksPage())
         elif name == "chat":
             from .chat_page import ChatPage
             # The room named on the command line, the first time only.

@@ -17,7 +17,7 @@ import { createKey, listKeys, revokeKey } from "./apikeys.js";
 import { mailReady, sendMail, MailError } from "./mail.js";
 import { agenda, visitorNow } from "./drift.js";
 import { installed } from "./store.js";
-import { BOOKS, bookVotes, removeBookVote } from "./books.js";
+import { photosOf, dropPhotos } from "./photos.js";
 import { userStats } from "./stats.js";
 import {
   html, loginPage, signupPage, mfaPage, forgotPage, forgotDonePage, forgotEmailSentPage, resetPage, dashboardPage, accountPage, changePasswordRequiredPage, adminPage, adminStatsPage, adminClaimPage, messagePage,
@@ -485,23 +485,9 @@ async function adminAccessApi(request, env, d, me, method) {
   return list();
 }
 
-// Who voted for what on the public /books page (src/books.js), for the terminal.
-// GET  /admin/api/books          → {books: [{id, title, votes}], votes: [{voter, book, title, name, username, ip, device, place, ...}]}
-// POST /admin/api/books {voter}  → removes that vote, then answers like GET
-async function adminBooksApi(request, env, d, method) {
-  if (method === "POST") {
-    let body;
-    try { body = await request.json(); } catch { return json({ error: "send JSON" }, 400); }
-    await removeBookVote(d, String(body?.voter ?? ""));
-  } else if (method !== "GET") return json({ error: "method not allowed" }, 405);
-  const votes = await bookVotes(d);
-  return json({ books: BOOKS.map(b => ({ id: b.id, title: b.title, votes: votes.filter(v => v.book === b.id).length })), votes });
-}
-
 async function admin(request, env, me, pathname, method) {
   const d = await db(env);
   if (pathname === "/admin/api/access") return adminAccessApi(request, env, d, me, method);
-  if (pathname === "/admin/api/books") return adminBooksApi(request, env, d, method);
   // Accounts against MAX_USERS, who's active, and what each person keeps (src/stats.js).
   if (pathname === "/admin/api/stats" || pathname === "/admin/stats") {
     if (method !== "GET") return json({ error: "method not allowed" }, 405);
@@ -518,7 +504,7 @@ async function admin(request, env, me, pathname, method) {
     const { results: orphans } = await d.prepare(`
       SELECT owner, COUNT(*) AS n FROM todo_tasks WHERE owner NOT IN (SELECT id FROM users) GROUP BY owner`).all();
     return html(adminPage({
-      user: me, apps: APPS, orphans, books: BOOKS, bookVotes: await bookVotes(d), feedback: await feedbackCounts(d),
+      user: me, apps: APPS, orphans, feedback: await feedbackCounts(d),
       users: users.map(u => ({ ...u, areas: u.areas ? u.areas.split(",") : [] })), ...extra,
     }), { status });
   };
@@ -604,6 +590,7 @@ async function admin(request, env, me, pathname, method) {
       case "/admin/delete":
         needTarget();
         if (String(f.confirm ?? "").trim().toLowerCase() !== target.username) throw new AuthError(`Type ${target.username} in the box to delete that account.`);
+        const photos = await photosOf(d, target.id);
         await d.batch([
           d.prepare("DELETE FROM sessions WHERE user_id = ?").bind(target.id),
           d.prepare("DELETE FROM store_versions WHERE plugin_id IN (SELECT id FROM store_plugins WHERE owner = ?)").bind(target.id),
@@ -655,10 +642,8 @@ async function admin(request, env, me, pathname, method) {
           ...["sweep_rooms", "sweep_suggestions", "sweep_runs", "sweep_keys"].map(t => d.prepare(`DELETE FROM ${t} WHERE user_id = ?`).bind(target.id)),
           d.prepare("DELETE FROM users WHERE id = ?").bind(target.id),
         ]);
+        for (const [table, ids] of Object.entries(photos)) await dropPhotos(env, table, ids);
         return show({ notice: `${target.username} and their tasks are deleted.` });
-      case "/admin/books/remove":
-        await removeBookVote(d, f.voter);
-        return show({ notice: "That book vote is removed." });
       case "/admin/move-tasks": {
         const to = await getUser(env, { id: String(f.to) });
         if (!to) throw new AuthError("Pick an account to move the tasks to.");
