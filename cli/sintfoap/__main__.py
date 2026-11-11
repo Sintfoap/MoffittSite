@@ -17,6 +17,7 @@ sintfoap — sintfoap.xyz from the terminal.
   sintfoap board              Recipe board: recipes shared by their labels, and a feed of the keys you follow
   sintfoap labels             Recipe labels: the one list of labels recipes pick from
   sintfoap food               Food club: the month's food, its recipe, favorites and everyone's photos
+  sintfoap feedback           Feedback: notes to the site's owner, with photos and links (admins: the inbox)
   sintfoap admin              which apps each account can use (admins)
   sintfoap app                the Android app: a QR code to scan, and the download
   sintfoap books [--plain]    the book club pick: read about the books and vote (no sign-in needed)
@@ -103,6 +104,7 @@ def main(argv=None):
                        ("board", "Recipe board: recipes shared by their labels, and a feed of the keys you follow"),
                        ("labels", "Recipe labels: the one list of labels recipes pick from"),
                        ("food", "Food club: the month's food, its recipe, favorites and everyone's photos"),
+                       ("feedback", "Feedback: notes to the site's owner, with photos and links (admins: the inbox)"),
                        ("admin", "which apps each account can use (admins)")):
         sub.add_parser(page, help=what)
     bk = sub.add_parser("books", help="the book club pick: read about the books and vote (no sign-in needed)")
