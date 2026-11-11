@@ -371,7 +371,7 @@ export function page(title, body, { user, wide = false, here = "" } = {}) {
 <style>${STYLE}</style></head><body>`;
   if (!user) return `${head}<div class="solo"><a class="crest" href="/" aria-label="sintfoap.xyz home">${CREST}<span>SINTFOAP.XYZ</span></a><main>${body}</main></div></body></html>`;
   return `${head}<div class="shell">${rail(user, here)}<main class="page${wide ? " wide" : ""}">${body}</main></div>
-<footer class="keybar" aria-label="Keyboard shortcuts"><span><kbd>g</kbd>then a key from the menu to jump</span><span><kbd>\\</kbd>sidebar</span><span><kbd>tab</kbd>move</span><span><kbd>↵</kbd>open</span><a class="end" href="/logout" data-key="o"><kbd>g o</kbd>Sign out</a></footer>
+<footer class="keybar" aria-label="Keyboard shortcuts"><span><kbd>g</kbd>jump to an app</span><span><kbd>\\</kbd>sidebar</span><span><kbd>tab</kbd>move</span><span><kbd>↵</kbd>open</span><a class="end" href="/logout" data-key="o"><kbd>g o</kbd>Sign out</a></footer>
 <script src="/keys.js" defer></script></body></html>`;
 }
 

@@ -4,7 +4,8 @@
 // own single-key shortcuts. Any link with data-key="<letter>" is a target.
 //
 // When a page's key bar is wider than the window, it starts with "? all keys",
-// and ? lists every shortcut in the bar (pages with their own list, like
+// keys from the end of the bar fold away until the rest fit, and ? lists every
+// shortcut in the bar, folded ones too (pages with their own list, like
 // Drift's, keep theirs).
 (() => {
   let armed = 0;
@@ -64,8 +65,16 @@
       more.addEventListener("click", e => { e.preventDefault(); showAll(); });
       bar.prepend(more);
     }
-    more.hidden = false;
+    const keys = [...bar.querySelectorAll(":scope > span")];
+    for (const k of keys) k.style.display = "";
     more.hidden = bar.scrollWidth <= bar.clientWidth + 1;
+    if (more.hidden) return;
+    // Fold keys away from the end (the site-wide ones first, then the page's
+    // least-used) until the bar fits; Sign out, at the far end, stays.
+    for (const k of keys.reverse()) {
+      if (bar.scrollWidth <= bar.clientWidth + 1) break;
+      if (!k.hidden) k.style.display = "none";
+    }
   }
   addEventListener("load", fit);
   addEventListener("resize", fit);

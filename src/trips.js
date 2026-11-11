@@ -19,7 +19,7 @@
 import { db } from "./db.js";
 import { sameOrigin } from "./account.js";
 import { withRail } from "./pages.js";
-import { readJson, BadRequest, writableCollections, addToList, placedItems } from "./drift.js";
+import { readJson, BadRequest, writableCollections, addToList, placedItems, state } from "./drift.js";
 import { hasPlaces, searchPlaces } from "./places.js";
 
 const fail = msg => { throw new BadRequest(msg); };
@@ -162,7 +162,25 @@ export async function getTrip(env, user, id) {
     id, ...acc.data, updated: acc.row.updated, owned: acc.owner, you: user.id,
     days: daysOf(acc.data.start, acc.data.end), members: await people(d, id),
     plans: of("plan").sort(byPlan), places: of("place").sort((a, b) => a.created.localeCompare(b.created)), packing: pack,
+    drift_days: await driftDays(env, user, daysOf(acc.data.start, acc.data.end)),
   };
+}
+
+// What's already on your Drift calendar on each of the trip's days, so the plan
+// shows it beside the stops: {day: [{title, time}]}, only days that have some.
+async function driftDays(env, user, days) {
+  if (!days.length || !user.areas.has("todo")) return {};
+  const out = {};
+  try {
+    for (const it of (await state(env, user)).items) {
+      const ev = it.meta?.event;
+      if (!ev?.start || it.deleted) continue;
+      const first = ev.start.slice(0, 10), last = (ev.end || ev.start).slice(0, 10);
+      for (const d of days) if (d >= first && d <= last) (out[d] ||= []).push({ title: it.title, time: ev.start.includes("T") && first === d ? ev.start.slice(11, 16) : "" });
+    }
+  } catch (e) { console.error("trip's Drift days failed:", e); }
+  for (const d of Object.keys(out)) out[d].sort((a, b) => a.time.localeCompare(b.time));
+  return out;
 }
 
 // Your trips, soonest first (ones without dates last): summaries for the list.

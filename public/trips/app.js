@@ -124,14 +124,18 @@ function renderDetail() {
   }
   card.append(people);
   if (trip.owned) {
-    const f = el("form", { className: "inline" });
+    // Adding someone opens from a "+ Person" button beside who's going.
+    const plus = el("button", { type: "button", className: "linkish", textContent: "+ Person" });
+    people.append(plus);
+    const f = el("form", { className: "inline", hidden: !addingPerson });
+    plus.addEventListener("click", () => { addingPerson = true; f.hidden = false; f.querySelector("input").focus(); });
     const who = el("input", { type: "text", placeholder: "Add someone by username", maxLength: 40, id: "who" });
     who.setAttribute("aria-label", "Username");
     f.append(who, el("button", { className: "btn quiet", textContent: "Add" }));
     f.addEventListener("submit", e => {
       e.preventDefault();
       if (!who.value.trim()) return;
-      run(async () => { took(await api("POST", `trips/${trip.id}/members`, { username: who.value })); say("done", "They're on the trip."); });
+      run(async () => { took(await api("POST", `trips/${trip.id}/members`, { username: who.value })); addingPerson = false; say("done", "They're on the trip."); });
     });
     card.append(f);
   }
@@ -167,6 +171,8 @@ function renderDetail() {
 
 // ── days ───────────────────────────────────────────────────────────────────
 
+let addingPerson = false;    // the add-someone box is open
+
 function renderDays(pane) {
   const days = [...trip.days];
   const others = [...new Set(trip.plans.map(p => p.day).filter(d => d && !days.includes(d)))].sort();
@@ -174,7 +180,10 @@ function renderDays(pane) {
   for (const d of [...days, ...others, ""]) {
     const stops = trip.plans.filter(p => p.day === d);
     if (d && others.includes(d) && !stops.length) continue;
-    const sec = el("section", { className: "day" + (adding === d ? " adding" : "") });
+    // A day with nothing planned (and nothing on in Drift) is one line: its name and "+ Add a stop".
+    const onDrift = (trip.drift_days?.[d] || []);
+    const bare = !stops.length && !onDrift.length && adding !== d;
+    const sec = el("section", { className: "day" + (adding === d ? " adding" : "") + (bare ? " bare" : "") });
     const n = days.indexOf(d);
     sec.append(el("h3", { textContent: d ? `${n >= 0 ? `Day ${n + 1} · ` : ""}${niceDay(d)}${n < 0 ? " (outside the trip)" : ""}` : "Any day" }));
     const ul = el("ul", { className: "stops" });
@@ -187,8 +196,8 @@ function renderDays(pane) {
       x.addEventListener("click", () => run(async () => took(await api("DELETE", `trips/${trip.id}/plans/${p.id}`))));
       ul.append(el("li", {}, el("span", { className: "when", textContent: p.time || "·" }), what, x));
     }
-    if (!stops.length) ul.append(el("li", { className: "empty", textContent: "Nothing planned yet." }));
-    sec.append(ul);
+    for (const e of onDrift) ul.append(el("li", { className: "drift", title: "On your Drift calendar" }, el("span", { className: "when", textContent: e.time || "·" }), el("span", { className: "what", textContent: e.title, }, el("small", { textContent: "in Drift" }))));
+    if (stops.length || onDrift.length) sec.append(ul);
 
     const open = el("button", { className: "linkish", type: "button", textContent: "+ Add a stop" });
     open.addEventListener("click", () => { adding = d; renderDetail(); $(".day.adding input[type=text]")?.focus(); });

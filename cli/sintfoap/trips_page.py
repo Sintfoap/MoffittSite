@@ -404,15 +404,17 @@ class TripsPage(Page):
                 continue
             n = days.index(d) if d in days else -1
             head = (f"DAY {n + 1} · " if n >= 0 else "") + nice_day(d).upper() + ("  (outside the trip)" if n < 0 else "") if d else "ANY DAY"
-            box.add_option(Option(Text(head, style=f"bold {GOLD}"), id="day:" + d))
+            on_drift = (t.get("drift_days") or {}).get(d, []) if d else []
+            # A day with nothing planned is just its heading line, as on the website.
+            box.add_option(Option(Text(head, style=f"bold {GOLD}" if stops or on_drift else FAINT), id="day:" + d))
+            for e in on_drift:
+                box.add_option(Option(Text.assemble(("  " + (e["time"] or "·").ljust(6), FAINT), (e["title"], MUTED), ("  in Drift", FAINT)), disabled=True))
             for p in stops:
                 line = Text.assemble(("  " + (p["time"] or "·").ljust(6), f"bold {GOLD}"), (p["title"], INK))
                 if p["place"] in place_at:
                     i = place_at[p["place"]]
                     line.append(f"  📍 {i + 1}. {t['places'][i]['place']}", style=FAINT)
                 box.add_option(Option(line, id=p["id"]))
-            if not stops:
-                box.add_option(Option(Text("  Nothing planned yet.", style=FAINT), disabled=True))
         if at is not None and box.option_count:
             box.highlighted = min(at, box.option_count - 1)
         self.query_one("#days-hint", Static).update(Text(

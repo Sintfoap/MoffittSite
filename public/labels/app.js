@@ -54,6 +54,8 @@ async function add(key, values) {
   await load();
 }
 
+const editing = new Set(), adding = new Set();   // keys being edited, and with their add box open
+
 function render() {
   $("#key-list").replaceChildren(...data.keys.map(k => el("option", { value: k.key })));
   const box = $("#keys");
@@ -92,14 +94,21 @@ function render() {
       });
       return el("li", {}, el("span", {}, l.value || el("i", { className: "empty", textContent: "no value" }), el("small", { textContent: l.recipes || "", title: used(l) || "not used yet" })), kw, ren, x);
     }));
-    const more = el("form", { className: "more-values" },
+    // Adding values opens from a "+" at the end of the list; the per-value
+    // controls and the key's Rename and Remove show only while editing it.
+    const more = el("form", { className: "more-values", hidden: !adding.has(k.key) },
       el("input", { type: "text", name: "values", maxLength: 2000, placeholder: `More under ${k.key}, separated by commas`, ariaLabel: `More values under ${k.key}`, required: true }),
       el("button", { className: "btn quiet", textContent: "Add" }));
-    more.addEventListener("submit", e => { e.preventDefault(); run(() => add(k.key, more.values.value)); });
-    return el("section", { className: "card key" },
+    more.addEventListener("submit", e => { e.preventDefault(); run(async () => { await add(k.key, more.values.value); adding.delete(k.key); }); });
+    const plus = el("button", { type: "button", className: "plus", textContent: "+", title: `Add values under ${k.key}`, ariaLabel: `Add values under ${k.key}` });
+    plus.addEventListener("click", () => { adding.add(k.key); more.hidden = false; more.values.focus(); });
+    list.append(el("li", { className: "add" }, plus));
+    const edit = el("button", { type: "button", className: "btn quiet", textContent: editing.has(k.key) ? "Done" : "Edit" });
+    edit.addEventListener("click", () => { editing.has(k.key) ? editing.delete(k.key) : editing.add(k.key); render(); });
+    return el("section", { className: "card key" + (editing.has(k.key) ? " editing" : "") },
       el("div", { className: "head" }, el("h2", { textContent: k.key }),
         el("span", { className: "count", textContent: [plural(k.values, "value"), used(k)].filter(Boolean).join(" · ") }),
-        el("span", { className: "tools" }, renameKey, removeKey)),
+        el("span", { className: "tools" }, renameKey, removeKey, edit)),
       list, more);
   }));
 }

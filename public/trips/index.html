@@ -111,6 +111,10 @@ input[type=date], input[type=time] { padding: 8px 10px; background: var(--field)
 
 .day { margin-bottom: 16px; }
 .day h3 { margin: 0 0 6px; color: var(--gold); }
+.day.bare { display: flex; gap: 14px; align-items: baseline; margin-bottom: 6px; }
+.day.bare h3 { margin: 0; color: var(--faint); }
+.stops li.drift { color: var(--muted); }
+.stops li.drift .when { color: var(--faint); }
 .stops, .places, .packing { list-style: none; margin: 0; padding: 0; }
 .stops li, .places li, .packing li { display: flex; gap: 10px; align-items: baseline; padding: 6px 0; border-bottom: 1px dashed var(--line); }
 .stops .when { min-width: 5ch; color: var(--gold); font-weight: 700; }
@@ -189,7 +193,7 @@ dialog input[type=date] { width: 100%; }
   </form>
 </dialog>
 
-<footer class="keybar" aria-label="Keyboard shortcuts"><span><kbd>n</kbd>new trip</span><span><kbd>j k</kbd>next, previous</span><span><kbd>1 2 3</kbd>days, places, packing</span><span><kbd>a</kbd>add to this tab</span><span><kbd>s</kbd>packing to Drift</span><span><kbd>e</kbd>edit</span><span><kbd>g</kbd>then a key from the menu to jump</span><span><kbd>\</kbd>Sidebar</span><a class="end" href="/logout" data-key="o"><kbd>g o</kbd>Sign out</a></footer>
+<footer class="keybar" aria-label="Keyboard shortcuts"><span><kbd>n</kbd>new trip</span><span><kbd>j k</kbd>next, previous</span><span><kbd>1 2 3</kbd>days, places, packing</span><span><kbd>a</kbd>add to this tab</span><span><kbd>s</kbd>packing to Drift</span><span><kbd>e</kbd>edit</span><span><kbd>g</kbd>jump to an app</span><span><kbd>\</kbd>Sidebar</span><a class="end" href="/logout" data-key="o"><kbd>g o</kbd>Sign out</a></footer>
 <script src="/keys.js" defer></script>
 <script type="module" src="/trips/app.js"></script>
 </body>

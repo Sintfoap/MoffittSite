@@ -93,6 +93,9 @@ label.field input, label.field textarea, label.field select { width: 100%; font-
 .values button:hover { color: var(--gold); background: var(--gold-soft); }
 .values button.x:hover { color: var(--bad); }
 .values button.kw { max-width: 28ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.key:not(.editing) .values li > button:not(.plus), .key:not(.editing) .tools .btn:not(:last-child) { display: none; }
+.values li.add { border-style: dashed; background: none; }
+.values li.add button { border: 0; color: var(--gold); padding: 0 12px; font-weight: 700; }
 .more-values { display: flex; gap: 6px; }
 .more-values input { flex: 1; }
 .more-values .btn { margin: 0; padding: 6px 12px; }
@@ -132,7 +135,7 @@ details.about p { margin: 8px 0 0; }
 </main>
 </div>
 
-<footer class="keybar" aria-label="Keyboard shortcuts"><span><kbd>n</kbd>add labels</span><span><kbd>g</kbd>then a key from the menu to jump</span><span><kbd>\</kbd>Sidebar</span><a class="end" href="/logout" data-key="o"><kbd>g o</kbd>Sign out</a></footer>
+<footer class="keybar" aria-label="Keyboard shortcuts"><span><kbd>n</kbd>add labels</span><span><kbd>g</kbd>jump to an app</span><span><kbd>\</kbd>Sidebar</span><a class="end" href="/logout" data-key="o"><kbd>g o</kbd>Sign out</a></footer>
 <script src="/keys.js" defer></script>
 <script type="module" src="/labels/app.js"></script>
 </body>
