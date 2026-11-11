@@ -53,8 +53,8 @@ function when(i) {
 function reads(text, kind, unit) {
   if (!text.trim()) return { ok: true, text: "" };
   const a = readAmount(text);
-  if (!a) return { ok: false, text: kind === "staple" ? "Needs a number and a unit, like 10 lb or 2 cups" : "Needs a number, like 3" };
-  if (kind === "staple") {
+  if (!a) return { ok: false, text: kind === "measured" ? "Needs a number and a unit, like 10 lb or 2 cups" : "Needs a number, like 3" };
+  if (kind === "measured") {
     if (!a.unit) return { ok: false, text: a.word ? `Not a unit this knows: ${a.word}. Try lb, oz, g, kg, cups, tbsp, tsp, ml or L` : "Needs a unit, like lb or cups" };
     const u = UNITS[a.unit];
     return { ok: true, text: `Reads as ${a.n} ${a.n === 1 ? u.one : u.many} (by ${u.measure})` };
@@ -88,8 +88,8 @@ function row(i) {
   const low = i.is_out ? " out" : i.is_low ? " low" : "";
   const have = el("span", { className: "have" + low },
     i.kind === "gauged" ? gauge(i.level) : null, i.text,
-    i.kind === "staple" && i.low_text ? el("small", { textContent: i.is_out ? "Out" : i.is_low ? `Low (at ${i.low_text})` : `Low at ${i.low_text}` }) : null,
-    i.kind !== "staple" && i.is_out ? el("small", { textContent: "Out" }) : null);
+    i.staple && i.low_text ? el("small", { textContent: i.is_out ? "Out" : i.is_low ? `Low (at ${i.low_text})` : `Low at ${i.low_text}` }) : null,
+    !i.staple && i.is_out ? el("small", { textContent: "Out" }) : null);
   const use = el("button", { type: "button", className: "btn", textContent: "Use", ariaLabel: `Use ${i.name}` });
   use.addEventListener("click", () => useDialog(i));
   const more = el("button", { type: "button", className: "btn quiet", textContent: i.kind === "gauged" ? "Refill" : "+ More", ariaLabel: `Bought more ${i.name}` });
@@ -98,7 +98,7 @@ function row(i) {
   edit.addEventListener("click", () => itemDialog(i));
   const li = el("li", { className: "item" },
     el("div", { className: "line" },
-      el("span", { className: "name" }, name, el("span", { className: "kind", textContent: i.kind }), extra ? el("small", { textContent: extra }) : null),
+      el("span", { className: "name" }, name, el("span", { className: "kind", textContent: i.kind }), i.staple ? el("span", { className: "kind staple", textContent: "staple" }) : null, extra ? el("small", { textContent: extra }) : null),
       have, when(i), el("span", { className: "acts" }, use, more, edit)));
   if (open.has(i.id) && i.kind !== "gauged") li.append(lots(i));
   return li;
@@ -161,7 +161,11 @@ function showKind() {
   $("#amount-label").textContent = editing ? "How much you have now" : k === "counted" ? "How many you have" : "How much you have";
   itemForm.amount.placeholder = k === "counted" ? "2" : "10 lb";
   showReads($("#amount-reads"), itemForm.amount.value, k, itemForm.unit.value);
-  showReads($("#low-reads"), itemForm.low.value, "staple");
+  // A staple's low point is in the kind's terms: an amount, a count, or a mark on the gauge.
+  $("#low-box").hidden = !itemForm.staple.checked;
+  for (const box of itemForm.querySelectorAll("[data-low]")) box.hidden = !box.dataset.low.split(" ").includes(k);
+  itemForm.low.placeholder = k === "counted" ? "2" : "2 lb";
+  showReads($("#low-reads"), k === "gauged" ? "" : itemForm.low.value, k, itemForm.unit.value);
 }
 
 function itemDialog(item = null) {
@@ -170,12 +174,16 @@ function itemDialog(item = null) {
   itemForm.reset();
   $("#item-title").textContent = item ? `Edit ${item.name}` : "Add food";
   itemForm.level.replaceChildren(...LEVELS.map((l, n) => el("option", { value: n, textContent: l })).reverse());
+  itemForm.low_level.replaceChildren(...LEVELS.map((l, n) => el("option", { value: n, textContent: l })).reverse().slice(1));
+  itemForm.low_level.value = "1";
   if (item) {
     itemForm.name.value = item.name;
     itemForm.kind.value = item.kind;
     itemForm.place.value = item.place;
     itemForm.words.value = item.words;
-    itemForm.low.value = item.low_text;
+    itemForm.staple.checked = item.staple;
+    itemForm.low.value = item.kind === "gauged" ? "" : item.low_text;
+    if (item.kind === "gauged" && item.low != null) itemForm.low_level.value = item.low;
     itemForm.per_cup.value = item.per_cup ?? "";
     itemForm.shows.replaceChildren(...item.units.map(u => el("option", { value: u, textContent: UNITS[u].many, selected: u === item.shows })));
     itemForm.unit.value = item.unit;
@@ -202,6 +210,7 @@ itemForm.name.addEventListener("input", () => {
 for (const r of itemForm.querySelectorAll("[name=kind]")) r.addEventListener("change", () => { kindTouched = true; showKind(); });
 itemForm.amount.addEventListener("input", showKind);
 itemForm.low.addEventListener("input", showKind);
+itemForm.staple.addEventListener("change", showKind);
 itemForm.unit.addEventListener("input", showKind);
 
 function itemBody() {
@@ -209,8 +218,9 @@ function itemBody() {
   const body = { name: v("name"), kind: k, place: v("place") || f.place.placeholder || g.place, words: v("words") };
   const changing = editing && editing.kind !== k;
   if (k !== "gauged" && (!editing || changing)) { body.amount = v("amount"); body.expires = f.expires.value; }
-  if (k === "staple") {
-    body.low = v("low");
+  body.staple = f.staple.checked;
+  if (body.staple) body.low = k === "gauged" ? Number(f.low_level.value) : v("low");
+  if (k === "measured") {
     if (v("per_cup") || editing) body.per_cup = v("per_cup") ? Number(v("per_cup")) : null;
     if (editing && !changing && f.shows.value) body.shows = f.shows.value;
   }
@@ -393,15 +403,25 @@ function receiptRow(l) {
   if (l.target === "new") {
     const name = el("input", { type: "text", value: l.name, maxLength: 80, ariaLabel: "Name" });
     name.addEventListener("input", () => { l.name = name.value; });
-    const kind = el("select", { ariaLabel: "Kind" }, ...[["staple", "Staple"], ["counted", "Counted"], ["gauged", "Gauged"]].map(([v, t]) => el("option", { value: v, textContent: t })));
-    kind.value = l.kind;
-    kind.addEventListener("change", () => { l.kind = kind.value; li.replaceWith(receiptRow(l)); });
+    const kind = el("select", { ariaLabel: "Kind" }, ...[["measured", "Measured"], ["counted", "Counted"], ["gauged", "Gauged"]].map(([v, t]) => el("option", { value: v, textContent: t })));
+    kind.value = l.kind === "staple" ? "measured" : l.kind;
+    kind.addEventListener("change", () => { l.kind = kind.value; l.low = ""; li.replaceWith(receiptRow(l)); });
     const place = el("input", { type: "text", value: l.place, maxLength: 30, ariaLabel: "Where it's kept", placeholder: "Cupboard" });
     place.setAttribute("list", "place-list");
     place.addEventListener("input", () => { l.place = place.value; });
     what.append(name, el("div", { className: "extra" }, kind, place));
-    if (l.kind === "staple") {
-      const low = el("input", { type: "text", value: l.low || "", maxLength: 40, placeholder: "Low at, like 2 lb", ariaLabel: "Running low at" });
+    // A staple: kept stocked, with the point it's running low at (in the kind's terms).
+    const staple = el("label", { className: "check" }, el("input", { type: "checkbox", checked: !!l.staple }), el("span", { textContent: "Staple" }));
+    staple.firstChild.addEventListener("change", e => { l.staple = e.target.checked; li.replaceWith(receiptRow(l)); });
+    what.append(staple);
+    if (l.staple && l.kind === "gauged") {
+      const low = el("select", { ariaLabel: "Running low at" }, ...LEVELS.map((name, n) => el("option", { value: n, textContent: `Low at ${name}` })).reverse().slice(1));
+      low.value = String(l.low === "" || l.low == null ? 1 : l.low);
+      l.low = Number(low.value);
+      low.addEventListener("change", () => { l.low = Number(low.value); });
+      what.append(low);
+    } else if (l.staple) {
+      const low = el("input", { type: "text", value: l.low || "", maxLength: 40, placeholder: l.kind === "counted" ? "Low at, like 2" : "Low at, like 2 lb", ariaLabel: "Running low at" });
       low.addEventListener("input", () => { l.low = low.value; });
       what.append(low);
     }
@@ -414,7 +434,7 @@ function receiptRow(l) {
   const k = kindOf(l);
   const amount = k === "gauged" ? el("select", { className: "amt", ariaLabel: "How full" },
       ...LEVELS.map((name, n) => el("option", { value: n, textContent: name, selected: n === (l.level ?? 5) })).reverse())
-    : el("input", { type: "text", value: l.amount, maxLength: 40, placeholder: k === "staple" ? "10 lb" : "how many", ariaLabel: "How much", className: "amt" });
+    : el("input", { type: "text", value: l.amount, maxLength: 40, placeholder: k === "measured" ? "10 lb" : "how many", ariaLabel: "How much", className: "amt" });
   if (k !== "gauged") amount.addEventListener("input", () => { l.amount = amount.value; });
   else amount.addEventListener("change", () => { l.level = Number(amount.value); });
   const expires = el("div", { className: "exp" });
@@ -445,7 +465,7 @@ $("#receipt-form").addEventListener("submit", e => {
   const lines = receipt.lines.filter(l => l.on).map(l => {
     const lot = { printed: l.printed, amount: l.amount, expires: l.expires || "", expires_by: l.expires_by, ...(kindOf(l) === "gauged" ? { level: l.level ?? 5 } : {}) };
     if (l.target !== "new") return { ...lot, item: l.target };
-    return { ...lot, name: l.name, kind: l.kind, place: l.place, unit: l.unit, size: l.size, low: l.low };
+    return { ...lot, name: l.name, kind: l.kind, place: l.place, unit: l.unit, size: l.size, staple: !!l.staple, ...(l.staple ? { low: l.low } : {}) };
   });
   const btn = $("#receipt-add");
   btn.disabled = true;

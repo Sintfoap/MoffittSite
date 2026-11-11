@@ -35,12 +35,12 @@ class ScreensTest {
         val s = scanner()
         s.screen = Screen.Home
         s.who = "Ryan M"
-        s.items = listOf(Item("i_0000000001", "Whole wheat flour", "staple", "2 lb", "Cupboard"),
+        s.items = listOf(Item("i_0000000001", "Whole wheat flour", "measured", "2 lb", "Cupboard"),
             Item("i_0000000002", "Eggs", "counted", "3 eggs", "Fridge"), Item("i_0000000003", "Ground cumin", "gauged", "Almost out", "Spice rack"))
         s.said = "Read 5 lines from the Walmart receipt (by Claude). New ones are marked; scan a barcode or check the name."
         s.lines.addAll(listOf(
             Line(store = "Walmart", printed = "GV WW FLR 10LB", name = "Whole wheat flour", target = "i_0000000001", how = "remembered", amount = "10 lb", expires = "2027-02-09", expiresBy = "estimated"),
-            Line(store = "Walmart", printed = "GV WHL MLK GAL", name = "Whole milk", kind = "staple", place = "Fridge", amount = "1 gallon", expires = "2026-11-18", expiresBy = "estimated"),
+            Line(store = "Walmart", printed = "GV WHL MLK GAL", name = "Whole milk", kind = "measured", staple = true, low = "1 quart", place = "Fridge", amount = "1 gallon", expires = "2026-11-18", expiresBy = "estimated"),
             Line(store = "Walmart", printed = "MCCORM CUMIN", name = "Ground cumin", target = "i_0000000003", how = "name", level = 4),
             Line(store = "Walmart", printed = "BAG FEE", name = "Bag", on = false, skip = true),
             Line(barcode = "0000000000017", amount = "1", error = "give it a name, like Whole wheat flour"),
@@ -56,10 +56,11 @@ class ScreensTest {
         s.items = listOf(Item("i_0000000003", "Ground cumin", "gauged", "Almost out", "Spice rack"))
         s.lines.addAll(listOf(
             Line(barcode = "0052100004211", name = "Ground cumin", target = "i_0000000003", how = "barcode", level = 3),
-            Line(barcode = "0052100004212", name = "Vanilla extract", kind = "gauged", place = "Spice rack"),
+            Line(barcode = "0052100004212", name = "Vanilla extract", kind = "gauged", place = "Spice rack", staple = true, lowLevel = 2),
         ))
         compose.setContent { App(s) }
-        compose.onAllNodesWithText("½ left").assertCountEquals(2)
+        compose.onAllNodesWithText("½ left").assertCountEquals(3)   // two how-fulls, and the staple's low mark
+        compose.onNodeWithText("Running low at").assertExists()
         compose.onRoot().captureRoboImage("screens/gauged.png")
     }
 

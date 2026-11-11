@@ -1,9 +1,9 @@
-// Tests for Pantry: each person's food in real amounts, as staples (measured),
-// counted things (whole units) and gauged ones (Full to Empty).
+// Tests for Pantry: each person's food in real amounts, as measured things,
+// counted things (whole units) and gauged ones (Full to Empty), any of them a staple.
 // Run with:  node --no-warnings --test tests/*.test.mjs
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { Browser, makeEnv, grantApps } from "./helpers.mjs";
+import { Browser, makeEnv, grantApps, sqlOne, run } from "./helpers.mjs";
 import { readAmount, inUnit, guess, plural, singular } from "../public/pantry/units.js";
 
 async function member(env, name, ...apps) {
@@ -47,7 +47,7 @@ test("amounts are read with their units, and written back as a cook would", () =
 });
 
 test("a new item's kind, place and grams per cup are guessed from its name", () => {
-  assert.deepEqual(guess("Whole wheat flour"), { kind: "staple", place: "Cupboard", perCup: 120 });
+  assert.deepEqual(guess("Whole wheat flour"), { kind: "measured", place: "Cupboard", perCup: 120 });
   assert.deepEqual(guess("Tomato soup"), { kind: "counted", place: "Cupboard", unit: "can" });
   assert.deepEqual(guess("Eggs"), { kind: "counted", place: "Fridge", unit: "egg" });
   assert.equal(guess("Ground cumin").kind, "gauged");
@@ -55,14 +55,15 @@ test("a new item's kind, place and grams per cup are guessed from its name", () 
   assert.equal(guess("Jar of honey").kind, "counted", "a container makes it counted");
 });
 
-test("a staple keeps an exact amount, in the unit it was typed in, and needs a low point", async () => {
+test("a measured thing keeps an exact amount, in the unit it was typed in; a staple needs a low point", async () => {
   const env = makeEnv(), kim = await member(env, "kim", "pantry");
-  const noLow = await api(kim, "POST", "items", { name: "Whole wheat flour", amount: "10 lb" });
+  const noLow = await api(kim, "POST", "items", { name: "Whole wheat flour", staple: true, amount: "10 lb" });
   assert.equal(noLow.status, 400);
   assert.match(noLow.json.error, /running low/);
-  assert.match((await api(kim, "POST", "items", { name: "Flour", kind: "staple", amount: "some", low: "2 lb" })).json.error, /number and a unit/);
-  const flour = await add(kim, { name: "Whole wheat flour", amount: "10 lb", low: "2 lb", expires: "2027-05-10" });
-  assert.equal(flour.kind, "staple");
+  assert.match((await api(kim, "POST", "items", { name: "Flour", kind: "measured", amount: "some", low: "2 lb" })).json.error, /number and a unit/);
+  const flour = await add(kim, { name: "Whole wheat flour", staple: true, amount: "10 lb", low: "2 lb", expires: "2027-05-10" });
+  assert.equal(flour.kind, "measured");
+  assert.equal(flour.staple, true);
   assert.equal(flour.measure, "weight");
   assert.equal(flour.text, "10 lb");
   assert.equal(flour.low_text, "2 lb");
@@ -143,7 +144,13 @@ test("gauged things slide from Full to Empty, and recipes never take from them",
   assert.equal(cumin.text, "Full");
   assert.equal(cumin.place, "Spice rack");
   assert.equal((await api(kim, "POST", `items/${cumin.id}/use`, { level: "½ left" })).json.text, "½ left");
-  assert.equal((await api(kim, "POST", `items/${cumin.id}/use`, { level: 1 })).json.is_low, true);
+  assert.equal((await api(kim, "POST", `items/${cumin.id}/use`, { level: 1 })).json.is_low, false, "only a staple runs low");
+  // A gauged staple runs low at the mark you pick.
+  const staple = (await api(kim, "PATCH", `items/${cumin.id}`, { staple: true, low: "½ left" })).json;
+  assert.equal(staple.staple, true);
+  assert.equal(staple.low_text, "½ left");
+  assert.equal(staple.is_low, true);
+  assert.match((await api(kim, "PATCH", `items/${cumin.id}`, { low: "a bit" })).json.error, /level/);
   assert.match((await api(kim, "POST", `items/${cumin.id}/use`, { amount: "1 tsp" })).json.error, /how full/);
   assert.match((await api(kim, "POST", `items/${cumin.id}/lots`, { amount: "1" })).json.error, /how full/);
   assert.equal((await api(kim, "PATCH", `items/${cumin.id}`, { level: 5 })).json.text, "Full");
@@ -154,15 +161,56 @@ test("an item can change kind, starting again from what you have now", async () 
   const env = makeEnv(), kim = await member(env, "kim", "pantry");
   const rice = await add(kim, { name: "Rice", amount: "5 lb", low: "1 lb", expires: "2028-01-01" });
   assert.match((await api(kim, "PATCH", `items/${rice.id}`, { kind: "counted" })).json.error, /how many/);
-  const bags = (await api(kim, "PATCH", `items/${rice.id}`, { kind: "counted", amount: 2, unit: "bags", size: "2 lb" })).json;
+  // A staple's low point is in its kind's terms, so a new kind needs a new one.
+  assert.match((await api(kim, "PATCH", `items/${rice.id}`, { kind: "counted", amount: 2, unit: "bags" })).json.error, /running low/);
+  const bags = (await api(kim, "PATCH", `items/${rice.id}`, { kind: "counted", amount: 2, unit: "bags", size: "2 lb", low: 1 })).json;
+  assert.equal(bags.low_text, "1 bag");
   assert.equal(bags.text, "2 bags");
   assert.equal(bags.size, "2 lb");
   assert.equal(bags.expires, "2028-01-01", "the soonest expiry carries over");
   const back = (await api(kim, "PATCH", `items/${rice.id}`, { kind: "staple", amount: "4 lb", low: "1 lb" })).json;
   assert.equal(back.text, "4 lb");
   assert.equal(back.per_cup, 198);
-  const gauged = (await api(kim, "PATCH", `items/${rice.id}`, { kind: "gauged" })).json;
+  const gauged = (await api(kim, "PATCH", `items/${rice.id}`, { kind: "gauged", low: "Almost out" })).json;
   assert.equal(gauged.text, "Full");
+});
+
+test("staple is a tag on any kind: it adds a low point, in that kind's terms", async () => {
+  const env = makeEnv(), kim = await member(env, "kim", "pantry");
+  // Not a staple: no low point, and never low, only out.
+  const sugar = await add(kim, { name: "Sugar", amount: "2 lb" });
+  assert.equal(sugar.staple, false);
+  assert.equal(sugar.low, null);
+  assert.equal(sugar.low_text, "");
+  // Counted: low at a number of them.
+  const soup = await add(kim, { name: "Tomato soup", staple: true, amount: 3, low: 2 });
+  assert.equal(soup.low_text, "2 cans");
+  assert.equal(soup.is_low, false);
+  assert.equal((await api(kim, "POST", `items/${soup.id}/use`, { amount: 1 })).json.is_low, true);
+  assert.match((await api(kim, "PATCH", `items/${soup.id}`, { low: "2 lb" })).json.error, /number of cans/);
+  assert.equal((await api(kim, "PATCH", `items/${soup.id}`, { staple: true, low: "2 cans" })).json.low_text, "2 cans", "its own text is taken back");
+  // Gauged: low at a mark, by name or by number.
+  const vanilla = await add(kim, { name: "Vanilla extract", staple: true, low: "¾ left" });
+  assert.equal(vanilla.low, 4);
+  assert.equal(vanilla.is_low, false);
+  assert.equal((await api(kim, "POST", `items/${vanilla.id}/use`, { level: 4 })).json.is_low, true);
+  // Turned on later, it asks for the low point; turned off, it's gone.
+  assert.match((await api(kim, "PATCH", `items/${sugar.id}`, { staple: true })).json.error, /running low/);
+  const on = (await api(kim, "PATCH", `items/${sugar.id}`, { staple: true, low: "2 lb" })).json;
+  assert.equal(on.is_low, true, "at the low point counts as low");
+  const off = (await api(kim, "PATCH", `items/${sugar.id}`, { staple: false })).json;
+  assert.equal(off.staple, false);
+  assert.equal(off.low_text, "");
+  assert.equal(off.is_low, false);
+  // An item saved when staple was a kind reads as a measured staple, and "staple" is still taken as a kind.
+  const old = JSON.parse(sqlOne(env, "SELECT data FROM pantry_items WHERE id = ?", on.id).data);
+  run(env, "UPDATE pantry_items SET data = ? WHERE id = ?", JSON.stringify({ ...old, kind: "staple", staple: undefined, low: 453.592 }), on.id);
+  const was = (await api(kim, "GET", "items")).json.items.find(i => i.id === on.id);
+  assert.equal(was.kind, "measured");
+  assert.equal(was.staple, true);
+  assert.equal(was.low_text, "1 lb");
+  const flour = await add(kim, { name: "Flour", kind: "staple", amount: "5 lb", low: "1 lb" });
+  assert.deepEqual([flour.kind, flour.staple], ["measured", true]);
 });
 
 test("purchases can be corrected or taken off, and items renamed, moved or removed", async () => {

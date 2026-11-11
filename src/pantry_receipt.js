@@ -9,7 +9,7 @@
 // an item, that store's line always means that item.
 //
 // /pantry/api/receipt      POST {images: [{data (base64)}, ...]} → {store, date, by, lines: [...]}: what to add, to check
-// /pantry/api/receipt/add  POST {store, lines: [{key?, printed, barcode?, item? (an id) | name, kind?, place?, unit?, size?, low?, amount, level? (gauged, 0-5; full when left out), expires?, expires_by?}]}
+// /pantry/api/receipt/add  POST {store, lines: [{key?, printed, barcode?, item? (an id) | name, kind?, staple?, place?, unit?, size?, low?, amount, level? (gauged, 0-5; full when left out), expires?, expires_by?}]}
 //                          → {added: [{key?, printed, id, name, text}], failed: [{key?, printed, error}], ticked: [{id, title, list}], items}
 //   (also /pantry/api/add, for lines that aren't from a receipt: the scanner app's barcodes). A line with a barcode
 //   remembers it as that item (src/pantry_scanner.js); and whatever comes in is ticked off your Drift shopping list.
@@ -113,9 +113,9 @@ export function proposal(line, items, aliases, day) {
   }
   const size = readAmount(line.size);
   const kind = item ? item.kind : guess(out.name).kind;
-  // A staple's amount is how many times the size; counted things are how many.
+  // A measured thing's amount is how many times the size; counted things are how many.
   let amount = "";
-  if (kind === "staple") amount = size?.unit ? `${Math.round(size.n * line.count * 1000) / 1000} ${size.unit === "floz" ? "fl oz" : UNITS[size.unit].one}` : "";
+  if (kind === "measured" || kind === "staple") amount = size?.unit ? `${Math.round(size.n * line.count * 1000) / 1000} ${size.unit === "floz" ? "fl oz" : UNITS[size.unit].one}` : "";
   else if (kind === "counted") {
     // "12 ct" (or a dozen) is that many of them in each one bought.
     const each = /^(ct|cnt|count|pk|pack|pc|pcs|piece|pieces)$/.test(size?.word || "") ? size.n : size?.word === "dozen" ? size.n * 12 : 1;
@@ -173,7 +173,7 @@ export async function addReceipt(env, user, body) {
         if (!out) fail("that's no longer in your pantry");
       } else {
         const { item, ...rest } = line;
-        out = await addItem(env, user, { name: rest.name, kind: rest.kind, place: rest.place, unit: rest.unit, size: rest.size, low: rest.low, words: rest.words, ...(rest.level != null ? { level: rest.level } : {}), ...lot });
+        out = await addItem(env, user, { name: rest.name, kind: rest.kind, place: rest.place, unit: rest.unit, size: rest.size, low: rest.low, words: rest.words, ...(rest.level != null ? { level: rest.level } : {}), ...(rest.staple != null ? { staple: rest.staple } : {}), ...lot });
         kinds.set(out.id, out.kind);
       }
       added.push({ ...(key !== undefined ? { key } : {}), printed, id: out.id, name: out.name, text: out.text });
