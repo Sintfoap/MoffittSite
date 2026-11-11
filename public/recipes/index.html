@@ -124,6 +124,8 @@ label.field input, label.field textarea { width: 100%; color: var(--ink); font-s
 .ingredients label { display: flex; gap: 10px; align-items: baseline; padding: 4px 0; cursor: pointer; }
 .ingredients input { accent-color: var(--gold); width: 15px; height: 15px; flex: none; transform: translateY(2px); }
 .ingredients .changed { color: var(--gold); font-weight: 700; }
+.ingredients .hit { background: var(--gold-soft); box-shadow: inset 2px 0 var(--gold); padding-left: 8px; margin-left: -8px; }
+.recipes button small.found { color: var(--gold); }
 .send { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 12px; padding-top: 12px; border-top: 1px dashed var(--line); }
 .send button.btn { margin: 0; }
 ol.steps { margin: 0; padding-left: 22px; }
@@ -191,6 +193,7 @@ dialog .two { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
   <div class="box">
     <aside class="shelf">
       <input type="search" id="find" placeholder="Find a recipe" aria-label="Find a recipe">
+      <input type="search" id="ingredient" placeholder="With ingredients: eggs, spinach, -nuts" aria-label="Find recipes with these ingredients, separated by commas; a minus leaves one out" title="Find by ingredient (f). Commas for more than one; -nuts leaves out recipes with nuts">
       <div class="filters">
         <select id="label-filter" aria-label="Filter by a label"></select>
         <select id="sort" aria-label="Sort by"></select>
@@ -253,7 +256,7 @@ dialog .two { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
   </form>
 </dialog>
 
-<footer class="keybar" aria-label="Keyboard shortcuts"><span><kbd>n</kbd>new from a link</span><span><kbd>/</kbd>find</span><span><kbd>l</kbd>filter by label</span><span><kbd>j k</kbd>next, previous</span><span><kbd>[ ]</kbd>page</span><span><kbd>+ -</kbd>servings</span><span><kbd>s</kbd>send to list</span><span><kbd>e</kbd>edit</span><span><kbd>p</kbd>from a photo</span><span><kbd>t</kbd>paste text</span><span><kbd>i</kbd>import a file</span><span><kbd>L</kbd>suggest labels</span><span><kbd>g</kbd>then a key from the menu to jump</span><span><kbd>\</kbd>Sidebar</span><a class="end" href="/logout" data-key="o"><kbd>g o</kbd>Sign out</a></footer>
+<footer class="keybar" aria-label="Keyboard shortcuts"><span><kbd>n</kbd>new from a link</span><span><kbd>/</kbd>find</span><span><kbd>f</kbd>by ingredient</span><span><kbd>l</kbd>filter by label</span><span><kbd>j k</kbd>next, previous</span><span><kbd>[ ]</kbd>page</span><span><kbd>+ -</kbd>servings</span><span><kbd>s</kbd>send to list</span><span><kbd>e</kbd>edit</span><span><kbd>p</kbd>from a photo</span><span><kbd>t</kbd>paste text</span><span><kbd>i</kbd>import a file</span><span><kbd>L</kbd>suggest labels</span><span><kbd>g</kbd>then a key from the menu to jump</span><span><kbd>\</kbd>Sidebar</span><a class="end" href="/logout" data-key="o"><kbd>g o</kbd>Sign out</a></footer>
 <script src="/keys.js" defer></script>
 <script type="module" src="/recipes/app.js"></script>
 </body>

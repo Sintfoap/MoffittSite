@@ -210,3 +210,59 @@ def find_picture(width: int, height: int, pixels: bytes, text: list[dict] | None
     if count < n * 0.04 or w < cols * 0.15 or h < rows * 0.1 or count < w * h * 0.45:
         return None
     return {"x0": round(c0 / cols, 3), "y0": round(r0 / rows, 3), "x1": round((c1 + 1) / cols, 3), "y1": round((r1 + 1) / rows, 3)}
+
+
+# ── finding recipes by ingredient, as public/recipes/ingredients.js does ──
+# "eggs, spinach" finds recipes with both, "-nuts" leaves out any with nuts. A
+# word matches where a word in a line starts ("oil" finds "olive oil", not
+# "boil"; one to leave out matches anywhere, so "-nuts" leaves out walnuts), singular and plural find each other, and case and accents don't
+# matter. tests/ingredient_cases.json is shared with the site's tests.
+
+def _plain(s: str) -> str:
+    import unicodedata
+    return "".join(c for c in unicodedata.normalize("NFD", s or "") if not unicodedata.category(c).startswith("M")).lower()
+
+
+def stem(word: str) -> str:
+    """The part of a word both its forms start with: tomatoes → tomato, berries → berr, eggs → egg."""
+    if len(word) <= 3:
+        return word
+    if word.endswith("ies"):
+        return word[:-3]
+    if re.search(r"[^aeiou]y$", word):
+        return word[:-1]
+    if re.search(r"(?:o|s|x|z|ch|sh)es$", word):
+        return word[:-2]
+    if re.search(r"[^s]s$", word):
+        return word[:-1]
+    return word
+
+
+def ingredient_terms(text: str) -> list[dict]:
+    """"Eggs, -nuts" → [{text: "eggs", without: False, re}, {text: "nuts", without: True, re}]."""
+    out = []
+    for piece in re.split(r"[,;]", text or ""):
+        t = re.sub(r"\s+", " ", _plain(piece)).strip()
+        without = bool(re.match(r"^(?:-|no |without )", t))
+        if without:
+            t = re.sub(r"^(?:-|no |without )\s*", "", t)
+        if not t:
+            continue
+        words = t.split(" ")
+        words[-1] = stem(words[-1])
+        out.append({"text": t, "without": without,
+                    "re": re.compile(("" if without else r"(?<![^\W_])") + r"\s+".join(re.escape(w) for w in words))})
+    return out
+
+
+def ingredient_hits(recipe: dict, terms: list[dict]) -> list[int] | None:
+    """The indexes of the lines a term looks for, or None if the recipe lacks one (or has one it's to be without)."""
+    lines = [_plain(x) for x in recipe.get("ingredients") or []]
+    hits: set[int] = set()
+    for t in terms:
+        at = [i for i, line in enumerate(lines) if t["re"].search(line)]
+        if (bool(at) if t["without"] else not at):
+            return None
+        if not t["without"]:
+            hits.update(at)
+    return sorted(hits)

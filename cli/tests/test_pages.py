@@ -573,6 +573,67 @@ def test_recipe_box_suggests_labels_from_keywords(real_site):
     run_app("recipes", suggest)
 
 
+def test_recipe_box_finds_recipes_by_ingredient(real_site):
+    fall = "l_0000000001"   # tests/devsite.mjs: Season: Fall
+    site.add_recipe({"title": "Frittata", "ingredients": ["6 eggs", "1 bag spinach", "1/2 cup feta"], "labels": [fall]})
+    site.add_recipe({"title": "Pesto", "ingredients": ["2 cups basil", "1/3 cup pine nuts", "1 cup spinach"]})
+    site.add_recipe({"title": "Omelette", "ingredients": ["3 Eggs", "1 tbsp butter"]})
+
+    async def find(app, pilot):
+        page = app.screen
+        shelf = page.query_one("#shelf")
+        ids = lambda: [shelf.get_option_at_index(i).id for i in range(shelf.option_count)]  # noqa: E731
+        title = {r["id"]: r["title"] for r in page.data["recipes"]}
+        # f: the recipes with an egg in them, singular or plural.
+        await pilot.press("f")
+        await settle(pilot)
+        assert type(app.screen).__name__ == "Ask"
+        app.screen.query_one("#answer").value = "egg"
+        await pilot.press("enter")
+        await settle(pilot)
+        assert [title[i] for i in ids()] == ["Frittata", "Omelette"]
+        assert "INGREDIENTS  egg" in str(page.query_one("#filters").render())
+        assert "6 eggs" in str(shelf.get_option_at_index(0).prompt)
+        # Several at once: every one of them; a minus leaves recipes out.
+        page.ingredients = "spinach"
+        page.reshelve()
+        assert [title[i] for i in ids()] == ["Frittata", "Pesto"]
+        page.ingredients = "spinach, -nuts"
+        page.reshelve()
+        assert [title[i] for i in ids()] == ["Frittata"]
+        # The open recipe's lines it found are lit up.
+        page.open = ids()[0]
+        page.show_recipe()
+        lines = page.query_one("#ingredients")
+        assert ["background" in repr(lines.get_option_at_index(i).prompt) for i in range(3)] == [False, True, False]
+        # With the label filter too.
+        page.ingredients = "eggs"
+        page.filters = [next(lb for lb in page.data["label_list"] if lb["id"] == fall)]
+        page.reshelve()
+        assert [title[i] for i in ids()] == ["Frittata"]
+        page.ingredients = "kale"
+        page.reshelve()
+        if SHOTS:
+            page.filters = []
+            page.ingredients = "spinach, -nuts"
+            page.reshelve()
+            await settle(pilot)
+            app.save_screenshot("terminal-ingredients.svg", SHOTS)
+            page.filters = [next(lb for lb in page.data["label_list"] if lb["id"] == fall)]
+            page.ingredients = "kale"
+            page.reshelve()
+        assert "Nothing matches. l or f changes the filter." in str(shelf.get_option_at_index(0).prompt)
+        # Empty clears it.
+        page.filters = []
+        await pilot.press("f")
+        await settle(pilot)
+        app.screen.query_one("#answer").value = ""
+        await pilot.press("enter")
+        await settle(pilot)
+        assert len(ids()) == 3 and page.query_one("#filters").display is False
+    run_app("recipes", find)
+
+
 def test_recipe_box_labels_filter_and_sort_the_shelf(real_site):
     fall, summer, irish, spanish, breakfast = (f"l_000000000{n}" for n in range(1, 6))   # tests/devsite.mjs
     site.add_recipe({"title": "Stew", "labels": [fall, irish]})

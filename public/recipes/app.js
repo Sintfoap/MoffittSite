@@ -9,6 +9,7 @@ import { readRecipe } from "./read.js";
 import { arrange } from "./columns.js";
 import { findPicture } from "./picture.js";
 import { openSuggestions } from "./suggest.js";
+import { ingredientTerms, ingredientHits } from "./ingredients.js";
 
 const $ = s => document.querySelector(s);
 const el = (tag, props = {}, ...kids) => {
@@ -24,6 +25,7 @@ let editing = null;       // the recipe in the editor, or {} for a new one
 const scale = new Map();  // recipe id → {servings} or {factor}, while the page is open
 const skip = new Map();   // recipe id → ingredient indexes not to send
 let filters = [];         // [{key, value}] labels a recipe must have: any value of the same key, every key
+let hits = new Map();     // recipe id → its ingredient lines the ingredient search found, while there is one
 let sortKey = "";
 // The shelf shows a page of recipes at a time; it turns to the open one's page.
 const PAGE = 20;
@@ -153,9 +155,18 @@ $("#sort").addEventListener("change", e => {
 
 function renderList() {
   const q = $("#find").value.trim().toLowerCase();
+  const terms = ingredientTerms($("#ingredient").value);
   const by = (a, b) => a.localeCompare(b, undefined, { sensitivity: "base", numeric: true });
-  let match = data.recipes.filter(r => passes(r) && (!q || r.title.toLowerCase().includes(q) || r.ingredients.some(i => i.toLowerCase().includes(q))
-    || labelsOf(r).some(l => low(labelText(l)).includes(q))));
+  hits = new Map();
+  let match = data.recipes.filter(r => {
+    if (!passes(r)) return false;
+    if (q && !(r.title.toLowerCase().includes(q) || r.ingredients.some(i => i.toLowerCase().includes(q))
+      || labelsOf(r).some(l => low(labelText(l)).includes(q)))) return false;
+    if (!terms.length) return true;
+    const at = ingredientHits(r, terms);
+    if (at) hits.set(r.id, at);
+    return !!at;
+  });
   // By a label: its value, then the title; recipes without it go last.
   if (sortKey) match = [...match].sort((a, b) => {
     const x = valueOf(a, sortKey), y = valueOf(b, sortKey);
@@ -174,7 +185,9 @@ function renderList() {
   for (const r of match.slice(page * PAGE, page * PAGE + PAGE)) {
     const sorted = sortKey && valueOf(r, sortKey);
     const tags = labelsOf(r).map(labelText).join(" · ");
+    const found = (hits.get(r.id) || []).map(i => r.ingredients[i]).join(" · ");
     const b = el("button", { type: "button" }, r.title, el("small", { textContent: [sorted, r.time, hostOf(r.source)].filter(Boolean).join(" · ") || `${r.ingredients.length} ingredients` }),
+      found ? el("small", { className: "found", textContent: found }) : null,
       tags ? el("span", { className: "tagline", textContent: tags }) : null);
     b.setAttribute("aria-current", String(r.id === open));
     b.addEventListener("click", () => pick(r.id));
@@ -263,7 +276,9 @@ function renderDetail() {
       skip.set(r.id, s);
       renderDetail();
     });
-    ul.append(el("li", {}, el("label", {}, box, el("span", { className: scaled !== line ? "changed" : "", textContent: scaled }))));
+    const li = el("li", {}, el("label", {}, box, el("span", { className: scaled !== line ? "changed" : "", textContent: scaled })));
+    if (hits.get(r.id)?.includes(i)) { li.className = "hit"; li.title = "What you searched for"; }
+    ul.append(li);
   });
   if (!r.ingredients.length) ul.append(el("li", { className: "empty", textContent: "No ingredients. Edit the recipe to add them." }));
   card.append(ul);
@@ -781,11 +796,12 @@ const suggest = () => run(() => openSuggestions({ api, say, done: reload }));
 document.addEventListener("click", e => { if (e.target.closest("[data-suggest-labels]")) suggest(); });
 $("#photo-file").addEventListener("change", e => e.target.files.length && fromPhotos([...e.target.files]));
 $("#find").addEventListener("input", () => { page = 0; follow = false; renderList(); });
+$("#ingredient").addEventListener("input", () => { page = 0; follow = false; renderList(); renderDetail(); });
 
 document.addEventListener("keydown", e => {
   const t = e.target;
   if (e.metaKey || e.ctrlKey || e.altKey || t.isContentEditable || t.matches?.("input, textarea, select") || $("#editor").open || $("#keyer").open || $("#paster").open || $("#suggester")?.open) {
-    if (e.key === "Escape" && t === $("#find")) { t.value = ""; renderList(); t.blur(); }
+    if (e.key === "Escape" && (t === $("#find") || t === $("#ingredient"))) { t.value = ""; renderList(); renderDetail(); t.blur(); }
     return;
   }
   const r = current();
@@ -794,6 +810,7 @@ document.addEventListener("keydown", e => {
     n: () => $("#url").focus(),
     l: () => $("#label-filter").disabled || $("#label-filter").focus(),
     "/": () => $("#find").focus(),
+    f: () => $("#ingredient").focus(),
     "[": () => $("#pager button:first-child")?.click(),
     "]": () => $("#pager button:last-child")?.click(),
     j: () => shown.length && pick(shown[Math.min(shown.length - 1, at + 1)]),
