@@ -1591,6 +1591,17 @@ def test_recipe_board_follows_a_label_key_saves_a_post_and_shares_one(real_site)
         assert [p["title"] for p in page.posts] == ["Banana bread", "Shortbread"]
         assert page.current()["title"] == "Banana bread" and page.current()["can_edit"]
         assert page.current()["categories"] == ["Course", "Season"]
+        assert "Kept in step with your Recipe box" in str(page.query_one("#post-meta").render())
+        # Season: Fall, picked while sharing, is on the box recipe too; a tag added there later shows on the board.
+        bread = next(r for r in site.recipes()["recipes"] if r["title"] == "Banana bread")
+        assert "l_0000000001" in [lb["id"] for lb in bread["labels"]]
+        site.update_recipe(bread["id"], {"labels": [lb["id"] for lb in bread["labels"]] + [dessert], "ingredients": "4 bananas\n2 cups flour"})
+        await page.action_refresh()
+        await settle(pilot, 0.6)
+        assert dessert in [lb["id"] for lb in page.current()["recipe"]["labels"]]
+        assert page.current()["recipe"]["ingredients"][0] == "4 bananas"
+        assert "4 bananas" in str(page.query_one("#ingredients").render())
+        site.update_recipe(bread["id"], {"labels": [lb["id"] for lb in bread["labels"]]})
         # Course lists its values; one narrows it.
         assert any(side.get_option_at_index(i).id == "l:" + dessert for i in range(side.option_count))
         await page.go(category="Course", label=dessert)

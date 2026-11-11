@@ -3,6 +3,11 @@
 // Anything on the board can be saved into your Recipe box with one button,
 // and anything in your Recipe box can be posted to the board.
 //
+// A post shared from someone's Recipe box is that recipe, kept in step both
+// ways: a change in the box shows on the board (src/recipes.js, syncBoard), and
+// a change to the post here is made to the box recipe. Deleting the recipe
+// leaves the post as it last was.
+//
 // The categories are the label keys from Recipe labels (src/labels.js):
 // Season, Cuisine, Course... A post shows under every key its recipe's labels
 // use, so nobody picks a category, and one recipe can be in several. Removing
@@ -26,7 +31,7 @@ import { db } from "./db.js";
 import { sameOrigin } from "./account.js";
 import { withRail } from "./pages.js";
 import { BadRequest } from "./drift.js";
-import { clean as cleanRecipe, get as getRecipe, create as createRecipe, importFrom, NotARecipe, labelList, withLabels, cleanLabels, checkLabels } from "./recipes.js";
+import { clean as cleanRecipe, get as getRecipe, create as createRecipe, updateFor as updateRecipe, syncBoard, boardRecipe, BOARD_FIELDS, importFrom, NotARecipe, labelList, withLabels, cleanLabels, checkLabels } from "./recipes.js";
 import { deleteKey } from "./labels.js";
 
 const fail = msg => { throw new BadRequest(msg); };
@@ -37,7 +42,7 @@ const ROUTE_LABEL = /^\/board\/api\/labels\/([^/]+)\/follow\/?$/;
 const ROUTE_CAT = /^\/board\/api\/categories\/([^/]+?)(?:\/(follow))?\/?$/;
 const ROUTE_POST = /^\/board\/api\/posts(?:\/(b_[0-9a-f]{10})(?:\/(save))?)?\/?$/;
 const VIEWS = ["feed", "all", "mine", "saved"];
-const RECIPE_FIELDS = ["source", "image", "yield", "servings", "time", "ingredients", "steps", "notes", "labels"];
+const RECIPE_FIELDS = BOARD_FIELDS;
 const BLANK_RECIPE = { source: "", image: "", yield: "", servings: null, time: "", ingredients: [], steps: [], notes: "", labels: [] };
 const isObj = v => v && typeof v === "object" && !Array.isArray(v);
 const isAdmin = user => user.areas.has("admin");
@@ -89,7 +94,7 @@ async function recipeFrom(d, user, { url, recipe_id }) {
     if (!user.areas.has("recipes")) fail("you need Recipe box to share from it");
     const r = await getRecipe(d, user.id, recipe_id);
     if (!r) fail("that recipe isn't in your Recipe box");
-    return { title: r.title, recipe: recipeFields(Object.fromEntries(RECIPE_FIELDS.map(k => [k, r[k]]))) };
+    return { title: r.title, recipe: recipeFields(Object.fromEntries(RECIPE_FIELDS.map(k => [k, r[k]]))), from: r.id };
   }
   return null;
 }
@@ -180,6 +185,8 @@ function toPost(r, user, seen, labels = []) {
     id: r.id, categories, title: data.title, note: data.note || "",
     recipe: data.recipe ? { ...BLANK_RECIPE, ...data.recipe, labels: mine } : null,
     by: nameOf(r), yours: r.author === user.id, can_edit: r.author === user.id || isAdmin(user),
+    // The Recipe box recipe it's kept in step with (only its author's to open).
+    from_box: !!data.from, ...(data.from && r.author === user.id ? { recipe_id: data.from } : {}),
     created: r.created, updated: r.updated, saves: r.saves, saved: !!r.saved_as,
     ...(seen !== undefined ? { new: r.author !== user.id && (!seen || r.created > seen) } : {}),
   };
@@ -258,13 +265,20 @@ export async function createPost(env, user, fields) {
   // Labels sent with the post are the recipe's (and so its categories).
   if (labels) data.recipe.labels = labels;
   await checkLabels(d, data.recipe.labels);
+  // From your box, it's that recipe: the title and labels given here are made to it there too.
+  if (from?.from) {
+    const r = await updateRecipe(d, user.id, from.from, { title: data.title, labels: data.recipe.labels });
+    data.title = r.title;
+    data.recipe = boardRecipe({ ...r, labels: data.recipe.labels });
+    data.from = from.from;
+  }
   // Each post a moment after the last, so two in the same millisecond still have an order
   // (the feed, its unread count and its pages all go by created).
   const { last } = await d.prepare("SELECT MAX(created) AS last FROM board_posts").first();
   const now = Date.now(), t = new Date(last && Date.parse(last) >= now ? Date.parse(last) + 1 : now).toISOString();
   const id = newId("b");
   await d.prepare("INSERT INTO board_posts (id, author, category, data, created, updated) VALUES (?, ?, '', ?, ?, ?)")
-    .bind(id, user.id, JSON.stringify({ title: data.title, note: data.note || "", recipe: data.recipe }), t, t).run();
+    .bind(id, user.id, JSON.stringify({ title: data.title, note: data.note || "", recipe: data.recipe, ...(data.from ? { from: data.from } : {}) }), t, t).run();
   return getPost(env, user, id);
 }
 
@@ -281,8 +295,17 @@ export async function updatePost(env, user, id, changes) {
   if (!data.recipe) fail("a post needs its recipe");
   if (labels) data.recipe = { ...data.recipe, labels };
   await checkLabels(d, data.recipe.labels);
+  // A recipe from a link replaces it outright; one from your box is kept in step with that one now.
+  if (url) delete data.from;
+  if (from?.from) data.from = from.from;
   await d.prepare("UPDATE board_posts SET data = ?, updated = ? WHERE id = ?")
     .bind(JSON.stringify(data), new Date().toISOString(), id).run();
+  // Kept in step with a box recipe: the change is the recipe's, so it's made there, and from there to
+  // every post of it. (Gone from the box, the post just keeps what it has.)
+  if (data.from && (patch.title || patch.recipe || labels || from)) {
+    const kept = await updateRecipe(d, r.author, data.from, { title: data.title, ...data.recipe });
+    if (!kept) await d.prepare("UPDATE board_posts SET data = json_remove(data, '$.from') WHERE id = ?").bind(id).run();
+  } else if (data.from) await syncBoard(d, r.author, data.from);
   return getPost(env, user, id);
 }
 
