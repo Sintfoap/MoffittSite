@@ -57,6 +57,7 @@ src/             the Worker: runs only for the paths in run_worker_first
   autolabel.js     Recipe box's Suggest labels: labels from the list that a recipe's words point to (a label's value, or keywords set on it), no AI
   recipe_photo.js  Recipe box: a recipe read from a photo (by Claude, with Sweep's API key, or by Workers AI's vision model without one) or from text (pasted, or read off a photo on the device), to check before saving
   pantry.js        Pantry: each person's food as staples (measured, with a low point), counted things (whole units) and gauged ones (Full to Empty), each purchase with its own expiry
+  pantry_scanner.js  Pantry: pairing the scanner app (scanner/) with a QR code, its keys, and barcodes (yours, then Open Food Facts)
   pantry_receipt.js  Pantry: a grocery receipt read from photos (through recipe_photo.js), each line matched to what you have or offered as new, with an estimated expiry; store abbreviations remembered
   meals.js         Meal plan: a week of dinners picked from Recipe box, quick ones on busy Drift nights, and the week's shopping sent to a Drift list
   sweep.js         Sweep: reads chosen chat rooms with Claude and suggests Drift events, tasks and list items
@@ -440,6 +441,9 @@ Push stays off, and the page says so, until the site has a VAPID key pair.
 - **Receipts.** "Scan a receipt" (`r`) reads a photo of one (up to 4 for a long one) the way Recipe box reads recipe photos: by Claude with your Anthropic key (the same sealed key Recipe box and Sweep use, settable here too), or by Workers AI without one. Each line comes back to check, nothing saved yet: matched to something you have (by name, by its other names, or when its name is yours with only words like "whole" or "large" added), or offered as new with its kind guessed. Lines that aren't food start unticked. A staple adds the size times how many; a counted thing adds how many, or the pack's count ("12 ct"); a gauged thing is refilled to Full. A new staple still needs its low point, and a line that can't go in comes back saying why while the rest are added.
 - **Store abbreviations are remembered.** Once "GV WW FLR 10LB" from Walmart is added to an item, that store's line means that item from then on (`pantry_aliases`), whatever the model calls it.
 - **Estimated expiry dates.** A purchase from a receipt gets an expiry date from how long such things usually keep where they're kept (`keepsFor` in `units.js`: milk a week, eggs four weeks, cans two years, anything in the freezer six months), marked "est." until it's corrected. Each purchase says whether its date was typed, estimated or (later, from the scanner) scanned.
+- **The phone scanner** is an Android app in `scanner/` (below). **Phone scanner** (`s`) on the page shows a QR code that pairs it, and lists the paired phones to unpair.
+- **Barcodes.** A barcode is looked up in what you've scanned before, then in [Open Food Facts](https://world.openfoodfacts.org/) for its name and size (the brand taken off the front of the name), and matched to your pantry like a receipt line. Once added, that barcode means that item. One nobody knows, you name once.
+- **Ticking off the shopping list.** Whatever comes in (from a receipt, a barcode or the scanner) ticks off the open lines on your Drift "Shopping list" that are clearly it: "2 lb whole wheat flour" for Whole wheat flour, "Eggs (for Pancakes)" for Eggs, but not "brown sugar" for Sugar.
 - **Use soon and running low** are worked out for your own date: something expiring within 5 days, a staple at or under its low point, or a gauged thing at Almost out.
 - **Terminal:** `sintfoap pantry` (`g y`).
 
@@ -453,7 +457,21 @@ Push stays off, and the page says so, until the site has a VAPID key pair.
 | `POST /pantry/api/items/<id>/use` | `{amount}`, `{all}` or `{all, tossed}`; `{level}` for a gauged thing → the item |
 | `POST /pantry/api/receipt?day=<day>` | `{images: [{data (base64)}, ...]}` → `{store, date, by, lines: [{printed, name, count, size, skip, match, new, amount, expires, expires_by}]}`, to check; nothing is saved |
 | `POST /pantry/api/receipt/add` | `{store, lines: [{printed, item, amount, expires?, expires_by?}` or a new one `{printed, name, kind, place, unit, size, low, amount, ...}]}` → `{added, failed: [{printed, error}], items}` |
+| `POST /pantry/api/add` | the same as `receipt/add`, for lines that aren't from a receipt; a line with a `barcode` remembers it as that item. Both answer `ticked`: the shopping list lines ticked off |
+| `GET /pantry/api/barcode/<digits>?day=` | `{code, product: {name, size, brand, from} \| null, line}`: what that barcode is and what it would add |
+| `POST /pantry/api/scanners` | a code to pair a phone: `{code, link, qr, qr_text, expires_in}`; `GET` lists paired phones, `DELETE /pantry/api/scanners/<id>` unpairs one |
+| `POST /pantry/scanner/pair` | the app's `{code, name}` → `{key, site, username}`. No session: the code is the proof, once, for 10 minutes |
+| `GET /pantry/scanner/latest.json` | the newest scanner app release: `{version, url}` (`version` null before the first) |
 | `PUT /pantry/api/key` | `{key}`: your Anthropic API key for reading receipts (shared with Recipe box and Sweep) → `{photo}`; `DELETE` forgets it |
+
+### Pantry scanner (the Android app)
+
+`scanner/` is a native Android app (Kotlin, Jetpack Compose, CameraX, ML Kit) for filling Pantry while you unpack groceries. It keeps no pantry of its own: everything goes to `/pantry/api/`.
+
+- **Pairing.** Pantry → **Phone scanner** shows a QR code (`sintfoap-scanner://pair?site=…&code=…`). The app scans it (or the phone's camera app opens the app with it, or you type the code), and trades the code for a key of its own (`ps_…`, only its hash is kept). The key is sent as `Authorization: Bearer` and only opens Pantry's API, as you: not the Anthropic key, not pairing, and nothing else on the site. Losing Pantry stops it; unpairing ends it.
+- **Snap the receipt** (up to 4 pictures, top to bottom): read by the site, as on the web page. **Scan barcodes**: each one goes in the list, and the same one again adds one more. **Snap the date** reads the printed expiry date on the phone (ML Kit text recognition and `Dates.kt`: "BEST BY 05/10/27", "EXP 10MAY27", "May 10, 2027"), replacing the estimate. Dates that matter (estimated within a month) ask for it.
+- **Nothing is added until you tap Add**, and lines the site won't take stay with the reason. With no connection, the additions wait on the phone and are sent when there's one again (WorkManager).
+- **Builds.** `.github/workflows/scanner.yml` runs its tests and a test build on every pull request that touches it. Pushing a tag `scanner-v<N>` builds version N, signed with the same key as the phone app, and attaches `pantry-scanner.apk` to a GitHub Release; the Pantry page links the newest, and the app offers updates. `gradle -p scanner testDebugUnitTest` runs its tests (the date reader, lines, and pictures of its screens through Robolectric; `-Proborazzi.test.record=true` saves them to `scanner/app/screens/`).
 
 ## Sweep
 

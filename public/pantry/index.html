@@ -141,6 +141,16 @@ dialog .two { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 
 /* checking a receipt before it goes in */
 #receipt-dialog { width: min(980px, calc(100vw - 32px)); }
+.steps { margin: 0 0 14px 20px; padding: 0; color: var(--ink); line-height: 1.6; }
+.pairing { display: grid; grid-template-columns: 200px 1fr; gap: 18px; align-items: start; margin-bottom: 16px; }
+.pairing .qr { background: #fff; padding: 10px; width: 200px; height: 200px; }
+.pairing .qr svg { width: 100%; height: 100%; display: block; }
+.pairing .code { font: 700 26px var(--mono); letter-spacing: 3px; color: var(--gold); margin: 4px 0; }
+.phones { list-style: none; margin: 6px 0 12px; padding: 0; }
+.phones li { display: flex; gap: 12px; align-items: baseline; padding: 8px 0; border-top: 1px dashed var(--line); }
+.phones li .when { color: var(--faint); font-size: 12.5px; margin-left: auto; }
+.phones li .btn { margin: 0; }
+@media (max-width: 560px) { .pairing { grid-template-columns: 1fr; } }
 .receipt-head { display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; margin-bottom: 8px; }
 .receipt-head h2 { margin: 0; }
 .receipt-head .by { color: var(--faint); font-size: 12.5px; }
@@ -206,7 +216,7 @@ details.about p { margin: 8px 0 0; }
       <button type="button" data-filter="low" aria-pressed="false">Running low<small id="n-low"></small></button>
     </div>
     <input type="search" id="find" placeholder="Find…" aria-label="Find in your pantry" autocomplete="off">
-    <span class="adds"><button class="btn quiet" id="receipt-btn" type="button">Scan a receipt</button><button class="btn" id="add-btn" type="button">Add food</button></span>
+    <span class="adds"><button class="btn quiet" id="scanner-btn" type="button">Phone scanner</button><button class="btn quiet" id="receipt-btn" type="button">Scan a receipt</button><button class="btn" id="add-btn" type="button">Add food</button></span>
     <input type="file" id="receipt-file" accept="image/*" multiple hidden>
   </div>
 
@@ -297,6 +307,25 @@ details.about p { margin: 8px 0 0; }
   </form>
 </dialog>
 
+<dialog id="scanner-dialog">
+  <form method="dialog" id="scanner-form">
+    <h2>Scan with your phone</h2>
+    <p class="hint">The Pantry scanner is an Android app for unpacking groceries: snap the receipt, scan barcodes, and read expiry dates off the packages. It sends everything here.</p>
+    <ol class="steps">
+      <li id="scanner-get">Get the app on your phone.</li>
+      <li>Open it, tap <b>Pair</b>, and point it at this code.</li>
+    </ol>
+    <div class="pairing">
+      <div class="qr" id="pair-qr" aria-label="Pairing code as a QR code"></div>
+      <div><p class="hint">Or type the code in the app:</p><p class="code" id="pair-code"></p><p class="hint" id="pair-left"></p>
+        <button class="btn quiet" type="button" id="pair-new">New code</button></div>
+    </div>
+    <h3>Paired phones</h3>
+    <ul class="phones" id="phones"></ul>
+    <div class="row"><button class="btn quiet" value="close">Close</button></div>
+  </form>
+</dialog>
+
 <dialog id="keyer">
   <form method="dialog" id="key-form">
     <h2>Read receipts with Claude</h2>
@@ -306,7 +335,7 @@ details.about p { margin: 8px 0 0; }
   </form>
 </dialog>
 
-<footer class="keybar" aria-label="Keyboard shortcuts"><span><kbd>n</kbd>add food</span><span><kbd>r</kbd>scan a receipt</span><span><kbd>/</kbd>find</span><span><kbd>g</kbd>then a key from the menu to jump</span><span><kbd>\</kbd>Sidebar</span><a class="end" href="/logout" data-key="o"><kbd>g o</kbd>Sign out</a></footer>
+<footer class="keybar" aria-label="Keyboard shortcuts"><span><kbd>n</kbd>add food</span><span><kbd>r</kbd>scan a receipt</span><span><kbd>s</kbd>phone scanner</span><span><kbd>/</kbd>find</span><span><kbd>g</kbd>then a key from the menu to jump</span><span><kbd>\</kbd>Sidebar</span><a class="end" href="/logout" data-key="o"><kbd>g o</kbd>Sign out</a></footer>
 <script src="/keys.js" defer></script>
 <script type="module" src="/pantry/app.js"></script>
 </body>

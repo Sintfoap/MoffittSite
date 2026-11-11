@@ -457,10 +457,55 @@ $("#receipt-form").addEventListener("submit", e => {
       renderReceipt();
     } else {
       $("#receipt-dialog").close("done");
-      say("done", `Added ${out.added.length} from the receipt: ${out.added.map(a => a.name).join(", ")}.`);
+      say("done", `Added ${out.added.length} from the receipt: ${out.added.map(a => a.name).join(", ")}.` + ticked(out.ticked));
     }
   }).finally(() => updateAdd());
 });
+
+const ticked = t => t?.length ? ` Ticked off your shopping list: ${t.map(x => x.title).join(", ")}.` : "";
+
+// ── pairing the phone scanner (src/pantry_scanner.js) ──────────────────────
+
+let pairTimer = null;
+const ago = s => {
+  if (!s) return "never used";
+  const mins = Math.round((Date.now() - Date.parse(s + "Z")) / 60000);
+  return mins < 2 ? "used just now" : mins < 120 ? `used ${mins} min ago` : mins < 2880 ? `used ${Math.round(mins / 60)} h ago` : `used ${nice(s.slice(0, 10))}`;
+};
+function renderPhones(list) {
+  $("#phones").replaceChildren(...(list.length ? list.map(p => el("li", {},
+    el("b", { textContent: p.name }), el("span", { className: "when", textContent: `paired ${nice(p.created.slice(0, 10))}, ${ago(p.last_used)}` }),
+    Object.assign(el("button", { className: "btn danger", type: "button", textContent: "Unpair" }),
+      { onclick: () => run(async () => renderPhones((await api("DELETE", "scanners/" + p.id)).scanners)) })))
+    : [el("li", { className: "hint", textContent: "None yet." })]));
+}
+async function newPairCode() {
+  const out = await api("POST", "scanners", {});
+  $("#pair-qr").innerHTML = out.qr;           // an SVG the site drew, from its own code
+  $("#pair-code").textContent = out.code;
+  const ends = Date.now() + out.expires_in * 1000;
+  clearInterval(pairTimer);
+  const tick = () => {
+    const left = Math.max(0, Math.round((ends - Date.now()) / 1000));
+    $("#pair-left").textContent = left ? `Works once, for ${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")} more.` : "This code has run out.";
+    if (!left) clearInterval(pairTimer);
+  };
+  tick();
+  pairTimer = setInterval(tick, 1000);
+}
+function scannerDialog() {
+  run(async () => {
+    const [phones, latest] = await Promise.all([api("GET", "scanners"), fetch("/pantry/scanner/latest.json").then(r => r.json()).catch(() => ({}))]);
+    $("#scanner-get").replaceChildren(...(latest.version
+      ? ["Get the app on your phone: ", el("a", { href: latest.url, textContent: `download version ${latest.version}` }), " (Android asks once to allow installing it)."]
+      : ["Get the app on your phone (there's no release to download yet)."]));
+    renderPhones(phones.scanners);
+    await newPairCode();
+    $("#scanner-dialog").showModal();
+  });
+}
+$("#pair-new").addEventListener("click", () => run(newPairCode));
+$("#scanner-dialog").addEventListener("close", () => { clearInterval(pairTimer); run(load); });
 
 // ── the page ───────────────────────────────────────────────────────────────
 
@@ -468,6 +513,7 @@ for (const b of document.querySelectorAll("[data-filter]")) b.addEventListener("
 $("#find").addEventListener("input", () => render());
 $("#add-btn").addEventListener("click", () => itemDialog());
 $("#receipt-btn").addEventListener("click", pickReceipt);
+$("#scanner-btn").addEventListener("click", scannerDialog);
 
 document.addEventListener("keydown", e => {
   const t = e.target;
@@ -475,6 +521,7 @@ document.addEventListener("keydown", e => {
   if (e.key === "n") { e.preventDefault(); itemDialog(); }
   if (e.key === "/") { e.preventDefault(); $("#find").focus(); }
   if (e.key === "r") { e.preventDefault(); pickReceipt(); }
+  if (e.key === "s") { e.preventDefault(); scannerDialog(); }
 });
 
 run(load);

@@ -2094,6 +2094,33 @@ def test_pantry_in_the_terminal(real_site):
     assert [i["name"] for i in shown(items, "all", "mil")] == ["Milk"]
 
 
+def test_pantry_pairs_a_phone_scanner_in_the_terminal(real_site):
+    async def scanner(app, pilot):
+        # s shows a code to pair the phone app with, as a QR code.
+        await pilot.press("s")
+        await settle(pilot, 0.8)
+        d = app.screen
+        assert type(d).__name__ == "ScannerDialog"
+        assert len(d.pairing["code"]) == 9 and "▀" in d.pairing["qr_text"] or "█" in d.pairing["qr_text"]
+        first = d.pairing["code"]
+        # The phone sends it back for its key (what the app does).
+        paired = site.api("POST", "/pantry/scanner/pair", {"code": first, "name": "Pixel 8"})
+        assert paired["key"].startswith("ps_")
+        await pilot.press("n")
+        await settle(pilot, 0.6)
+        assert d.pairing["code"] != first
+        d.phones = site.pantry_scanners()["scanners"]
+        d.show()
+        assert [p["name"] for p in d.phones] == ["Pixel 8"]
+        if SHOTS:
+            app.save_screenshot("pantry-scanner-pair.svg", SHOTS)
+        await pilot.press("x")
+        await settle(pilot, 0.6)
+        assert d.phones == [] and site.pantry_scanners()["scanners"] == []
+        await pilot.press("escape")
+    run_app("pantry", scanner)
+
+
 def test_pantry_reads_a_receipt_in_the_terminal(real_site, tmp_path):
     photo = tmp_path / "receipt.jpg"
     photo.write_bytes(JPEG)

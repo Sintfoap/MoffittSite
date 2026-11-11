@@ -225,3 +225,73 @@ class LineDialog(ModalScreen[dict | None]):
     def on_button_pressed(self, e: Button.Pressed) -> None:
         self.action_save() if e.button.id == "save" else self.dismiss(None)
 
+
+class ScannerDialog(ModalScreen[None]):
+    """Pairing the Pantry scanner app: a QR code for the phone to scan (or its code to type), and
+    the phones already paired, x unpairing the highlighted one. n makes a new code."""
+    BINDINGS = [Binding("escape", "close", "Close"), Binding("x", "unpair", "Unpair"), Binding("n", "new", "New code")]
+
+    def __init__(self, pairing: dict, phones: list[dict]):
+        super().__init__()
+        self.pairing, self.phones = pairing, phones
+
+    def compose(self) -> ComposeResult:
+        with VerticalScroll(classes="dialog"):
+            yield Label(Text("Scan with your phone", style=f"bold {INK}"))
+            yield Static(Text("In the Pantry scanner app (Android), tap Pair and point it at this code, or type the code.", style=MUTED))
+            yield Static(self.qr(), id="qr")
+            yield Static("", id="code")
+            yield Label("Paired phones", classes="lbl")
+            yield OptionList(id="phones")
+            yield Static(Text("n new code · x unpairs the highlighted phone · esc closes", style=FAINT))
+
+    def qr(self) -> Text:
+        # A white margin all round, which cameras need to find the code.
+        rows = self.pairing["qr_text"].rstrip("\n").split("\n")
+        pad = " " * (len(rows[0]) + 4)
+        return Text("\n".join([pad] + [f"  {r}  " for r in rows] + [pad]), style="black on white", no_wrap=True)
+
+    def on_mount(self) -> None:
+        self.query_one(".dialog").styles.width = 70
+        self.show()
+
+    def show(self) -> None:
+        self.query_one("#qr", Static).update(self.qr())
+        self.query_one("#code", Static).update(Text.assemble(("Code  ", MUTED), (self.pairing["code"], f"bold {GOLD}"),
+                                                             ("   works once, for 10 minutes", FAINT)))
+        box = self.query_one("#phones", OptionList)
+        box.clear_options()
+        if not self.phones:
+            box.add_option(Option(Text("None yet.", style=FAINT), disabled=True))
+        for p in self.phones:
+            used = f"last used {_nice(p['last_used'][:10])}" if p.get("last_used") else "never used"
+            box.add_option(Option(Text.assemble((p["name"], f"bold {INK}"), (f"   paired {_nice(p['created'][:10])}, {used}", MUTED))))
+        if self.phones:
+            box.highlighted = 0
+            box.focus()
+
+    async def action_new(self) -> None:
+        from . import site
+        from .look import Failed, fetch
+        try:
+            self.pairing = await fetch(self.app, site.pair_pantry_scanner)
+        except Failed:
+            return
+        self.show()
+
+    async def action_unpair(self) -> None:
+        from . import site
+        from .look import Failed, fetch
+        at = self.query_one("#phones", OptionList).highlighted
+        if at is None or at >= len(self.phones):
+            return
+        p = self.phones[at]
+        try:
+            self.phones = (await fetch(self.app, site.unpair_pantry_scanner, p["id"]))["scanners"]
+        except Failed:
+            return
+        self.app.notify(f"Unpaired {p['name']}.", timeout=3)
+        self.show()
+
+    def action_close(self) -> None:
+        self.dismiss(None)

@@ -22,34 +22,38 @@ const TAG = /^app-v(\d{1,6})$/;
 const ASSET = "sintfoap.apk";
 const KEEP = 10 * 60 * 1000;   // how long one Worker keeps what GitHub said
 
-let held = null;   // { at, release }
+const held = new Map();   // tag pattern → { at, release }
 
 const json = (obj, status = 200, extra = {}) =>
   new Response(JSON.stringify(obj), { status, headers: { "Content-Type": "application/json", "Cache-Control": "public, max-age=300", ...extra } });
 
 // The newest app-v<N> release with its APK attached, or null.
-export async function latestRelease(env, { fresh = false } = {}) {
-  if (!fresh && held && Date.now() - held.at < KEEP) return held.release;
+export const latestRelease = (env, opts) => latestOf(env, TAG, ASSET, opts);
+
+// The newest release whose tag matches `tag` ("app-v3", "scanner-v2") with `asset` attached, or null.
+export async function latestOf(env, tag, asset, { fresh = false } = {}) {
+  const was = held.get(tag.source);
+  if (!fresh && was && Date.now() - was.at < KEEP) return was.release;
   let release = null;
   try {
-    const r = await fetch(`https://api.github.com/repos/${env.APP_RELEASES_REPO || REPO}/releases?per_page=20`, {
+    const r = await fetch(`https://api.github.com/repos/${env.APP_RELEASES_REPO || REPO}/releases?per_page=30`, {
       headers: { "User-Agent": "sintfoap.xyz", Accept: "application/vnd.github+json" },
       cf: { cacheTtl: 600, cacheEverything: true },
     });
     if (!r.ok) throw new Error(`GitHub said ${r.status}`);
     const found = (await r.json())
-      .filter(x => !x.draft && !x.prerelease && TAG.test(x.tag_name) && x.assets?.some(a => a.name === ASSET))
-      .sort((a, b) => +b.tag_name.match(TAG)[1] - +a.tag_name.match(TAG)[1])[0];
+      .filter(x => !x.draft && !x.prerelease && tag.test(x.tag_name) && x.assets?.some(a => a.name === asset))
+      .sort((a, b) => +b.tag_name.match(tag)[1] - +a.tag_name.match(tag)[1])[0];
     if (found) release = {
-      version: +found.tag_name.match(TAG)[1], name: found.name || found.tag_name,
-      url: found.assets.find(a => a.name === ASSET).browser_download_url,
+      version: +found.tag_name.match(tag)[1], name: found.name || found.tag_name,
+      url: found.assets.find(a => a.name === asset).browser_download_url,
       published_at: found.published_at, notes: String(found.body || "").slice(0, 2000),
     };
   } catch (e) {
     console.error("app releases:", e.message);
-    if (held) return held.release;   // GitHub is down or rate-limited: keep saying what it said last
+    if (was) return was.release;   // GitHub is down or rate-limited: keep saying what it said last
   }
-  held = { at: Date.now(), release };
+  held.set(tag.source, { at: Date.now(), release });
   return release;
 }
 

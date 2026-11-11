@@ -356,6 +356,28 @@ const SCHEMA = [
      updated TEXT NOT NULL,
      PRIMARY KEY (owner, store, said)
    )`,
+  // Pantry's scanner app (src/pantry_scanner.js): each paired phone's key (only its SHA-256 is kept),
+  // the short codes that pair one, and what each barcode you've scanned is.
+  `CREATE TABLE IF NOT EXISTS pantry_scanners (
+     id_hash   TEXT PRIMARY KEY,     -- SHA-256 of the key ("ps_…")
+     owner     TEXT NOT NULL,        -- user id
+     name      TEXT NOT NULL,        -- the phone's name, as the app said it
+     prefix    TEXT NOT NULL,        -- the key's first characters, to tell keys apart
+     created   TEXT NOT NULL,
+     last_used TEXT
+   )`,
+  `CREATE TABLE IF NOT EXISTS pantry_pair_codes (
+     code_hash TEXT PRIMARY KEY,     -- SHA-256 of the code shown as a QR code on the Pantry page
+     owner     TEXT NOT NULL,
+     expires   INTEGER NOT NULL      -- unix seconds
+   )`,
+  `CREATE TABLE IF NOT EXISTS pantry_products (
+     owner   TEXT NOT NULL,          -- user id
+     code    TEXT NOT NULL,          -- the barcode's digits
+     data    TEXT NOT NULL,          -- JSON {name, size, brand, item}
+     updated TEXT NOT NULL,
+     PRIMARY KEY (owner, code)
+   )`,
   // Votes on the public book suggestions page (src/books.js). One per browser,
   // by the random id in its __Host-bv cookie; it can be changed or taken back.
   `CREATE TABLE IF NOT EXISTS book_votes (
