@@ -1620,7 +1620,7 @@ def test_recipe_board_follows_a_label_key_saves_a_post_and_shares_one(real_site)
         assert page.cat("course")["following"]
         assert [p["title"] for p in page.posts] == ["Shortbread"]
         assert "Course: Dessert" in str(page.query_one("#post-meta").render())
-        # sam's shortbread is ryan's recipe of the day too (it's the only one that isn't his), on top and open.
+        # sam's shortbread is the recipe of the day (the only post on the board yet), on top and open.
         assert page.board["featured"]["title"] == "Shortbread" and page.open == "featured"
         assert "Recipe of the day" in str(page.query_one("#post-title").render())
         # Posted before ryan last read his feed, so it isn't new to him.

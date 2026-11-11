@@ -272,7 +272,7 @@ function renderFeatured(box) {
   card.append(el("div", {},
     el("div", { className: "kicker", textContent: "Recipe of the day" }),
     el("h2", { textContent: p.title }),
-    el("div", { className: "meta" }, labelChips(p), `${p.recipe.labels.length ? " · " : ""}shared by ${p.by}`),
+    el("div", { className: "meta" }, labelChips(p), `${p.recipe.labels.length ? " · " : ""}shared by ${p.yours ? "you" : p.by}`),
     p.note ? el("p", { className: "note", textContent: p.note }) : null));
   if (p.recipe.image) {
     const img = el("img", { className: "thumb", src: p.recipe.image, alt: "", referrerPolicy: "no-referrer", loading: "lazy" });

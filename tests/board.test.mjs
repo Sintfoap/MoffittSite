@@ -212,25 +212,34 @@ test("cross-origin writes are refused", async () => {
   assert.equal(sql(env, "SELECT * FROM board_posts").length, 0);
 });
 
-test("the recipe of the day is someone else's, the same all day", async () => {
+test("the recipe of the day is the same for everyone, all day", async () => {
   const env = await board(), ryan = await member(env, "ryan"), sam = await member(env, "sam"), kim = await member(env, "kim");
   assert.equal((await api(ryan, "GET", "board")).json.featured, null, "nothing on the board yet");
-  await api(ryan, "POST", "posts", { title: "Ryan's own", recipe: RECIPE });
-  assert.equal((await api(ryan, "GET", "board")).json.featured, null, "never your own");
-  for (const [b, t] of [[sam, "Scones"], [kim, "Flapjacks"], [sam, "Rolls"]]) await api(b, "POST", "posts", { title: t, recipe: RECIPE });
-  const day = d => api(ryan, "GET", `board?day=${d}`);
-  const today = (await day("2026-11-10")).json.featured;
-  assert.ok(["Scones", "Flapjacks", "Rolls"].includes(today.title));
+  for (const [b, t] of [[ryan, "Ryan's own"], [sam, "Scones"], [kim, "Flapjacks"], [sam, "Rolls"]]) await api(b, "POST", "posts", { title: t, recipe: RECIPE });
+  const day = (who, d) => api(who, "GET", `board?day=${d}`);
+  const today = (await day(ryan, "2026-11-10")).json.featured;
+  assert.ok(["Ryan's own", "Scones", "Flapjacks", "Rolls"].includes(today.title));
   assert.equal(today.day, "2026-11-10");
   assert.ok(today.recipe.ingredients.length);
-  assert.equal((await day("2026-11-10")).json.featured.id, today.id);
-  // Over a month, more than one recipe gets a turn.
-  const picks = new Set();
-  for (let i = 1; i <= 30; i++) picks.add((await day(`2026-12-${String(i).padStart(2, "0")}`)).json.featured.title);
-  assert.ok(picks.size > 1, [...picks].join());
-  assert.ok(![...picks].includes("Ryan's own"));
+  // Everyone gets the same one, and it says whether it's yours.
+  for (const who of [sam, kim]) assert.equal((await day(who, "2026-11-10")).json.featured.id, today.id);
+  assert.equal((await day(ryan, "2026-11-10")).json.featured.yours, today.title === "Ryan's own");
+  // Over a month, more than one recipe gets a turn, the same for each person, and your own can be one.
+  const picks = new Map();
+  for (let i = 1; i <= 30; i++) {
+    const d = `2026-12-${String(i).padStart(2, "0")}`, f = (await day(ryan, d)).json.featured;
+    assert.equal((await day(kim, d)).json.featured.id, f.id, d);
+    picks.set(d, f.title);
+  }
+  assert.ok(new Set(picks.values()).size > 1, [...picks.values()].join());
+  assert.ok([...picks.values()].includes("Ryan's own"), [...picks.values()].join());
+  // Today's is drawn from the board as it was when the day began, so a post shared today doesn't change it.
+  run(env, "UPDATE board_posts SET created = '2026-01-01T12:00:00.000Z'");
+  const now = new Date().toISOString().slice(0, 10), before = (await day(ryan, now)).json.featured;
+  await api(kim, "POST", "posts", { title: "Late", recipe: RECIPE });
+  for (const who of [ryan, sam, kim]) assert.equal((await day(who, now)).json.featured.id, before.id);
   // A bad day falls back to today (UTC).
-  assert.equal((await day("tomorrow")).json.featured.day, new Date().toISOString().slice(0, 10));
+  assert.equal((await day(ryan, "tomorrow")).json.featured.day, new Date().toISOString().slice(0, 10));
 });
 
 test("a recipe's labels go to the board and back into Recipe box", async () => {
