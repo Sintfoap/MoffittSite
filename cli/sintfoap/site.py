@@ -642,6 +642,16 @@ def delete_recipe(recipe_id: str) -> dict:
     return api("DELETE", f"/recipes/api/recipes/{_q(recipe_id)}")
 
 
+def share_recipe(recipe_id: str) -> dict:
+    """{share: "/r/<token>"}: a link anyone can read the recipe at without signing in, made the first time (src/recipe_share.js)."""
+    return api("POST", f"/recipes/api/recipes/{_q(recipe_id)}/share")
+
+
+def unshare_recipe(recipe_id: str) -> dict:
+    """{share: None}: turns the recipe's link off; the old address stops working for good."""
+    return api("DELETE", f"/recipes/api/recipes/{_q(recipe_id)}/share")
+
+
 def shop(recipe_id: str, lines: list[int], servings: float | None = None, factor: float | None = None,
          list_id: str | None = None) -> dict:
     """Sends those ingredients (by index), scaled, to a Drift list (your Shopping list without list_id); {list, added}."""

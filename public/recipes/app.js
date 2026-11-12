@@ -495,9 +495,50 @@ function renderDetail() {
   tl?.addEventListener("click", () => translate(base));
   // Sharing it on the Recipe board, for anyone with it.
   const share = data.board ? el("a", { className: "btn quiet", href: `/board/?share=${encodeURIComponent(r.id)}`, textContent: "Share on the board" }) : null;
-  card.append(el("div", { className: "actions" }, edit, tl, share));
+  // A link anyone can open without signing in, for someone who isn't on the site (u).
+  const link = el("button", { className: "btn quiet", type: "button", id: "share-link", textContent: base.share ? "Share link (on)" : "Share link" });
+  link.title = base.share ? "Anyone with the link can read this recipe; copy it or turn it off (u)" : "Make a link anyone can read this recipe at, no account needed (u)";
+  link.addEventListener("click", () => openShare(base));
+  card.append(el("div", { className: "actions" }, edit, tl, share, link));
   box.append(card);
 }
+
+// ── share links ────────────────────────────────────────────────────────────
+
+// The link is made the first time it's asked for; after that it's the same one
+// until it's turned off (src/recipe_share.js). Only the recipe itself is on it.
+let sharing = null;
+const fullLink = path => new URL(path, location.origin).toString();
+function openShare(r) {
+  run(async () => {
+    const out = r.share ? { share: r.share } : await api("POST", `recipes/${r.id}/share`);
+    r.share = out.share;
+    sharing = r;
+    $("#share-text").textContent = `Anyone with this link can read ${r.title}, without an account: its picture, ingredients, steps and notes, as you keep them here. Nothing else of yours is on it. Turn it off any time and the link stops working.`;
+    $("#share-url").value = fullLink(r.share);
+    $("#share-copy").textContent = "Copy link";
+    renderDetail();
+    $("#sharer").showModal();
+    $("#share-url").select();
+  });
+}
+$("#share-copy").addEventListener("click", async () => {
+  const box = $("#share-url");
+  try { await navigator.clipboard.writeText(box.value); }
+  catch { box.select(); document.execCommand?.("copy"); }
+  $("#share-copy").textContent = "Copied";
+});
+$("#share-stop").addEventListener("click", () => {
+  const r = sharing;
+  if (!r) return;
+  $("#sharer").close();
+  run(async () => {
+    await api("DELETE", `recipes/${r.id}/share`);
+    r.share = null;
+    renderDetail();
+    say("done", `The link to ${r.title} is off; it won't open any more.`);
+  });
+});
 
 // ── translating ────────────────────────────────────────────────────────────
 
@@ -1050,7 +1091,7 @@ $("#delete-recipe").addEventListener("click", () => {
 
 document.addEventListener("keydown", e => {
   const t = e.target;
-  if (e.metaKey || e.ctrlKey || e.altKey || t.isContentEditable || t.matches?.("input, textarea, select") || $("#editor").open || $("#keyer").open || $("#paster").open || $("#suggester")?.open) {
+  if (e.metaKey || e.ctrlKey || e.altKey || t.isContentEditable || t.matches?.("input, textarea, select") || $("#editor").open || $("#keyer").open || $("#paster").open || $("#sharer").open || $("#suggester")?.open) {
     if (e.key === "Escape" && t === $("#find")) { t.value = ""; renderList(); renderDetail(); t.blur(); }
     return;
   }
@@ -1074,6 +1115,7 @@ document.addEventListener("keydown", e => {
     p: () => pickPhoto(),
     t: () => $("#paste").click(),
     L: () => suggest(),
+    u: () => r && openShare(r),
     s: () => r && $("#send") && !$("#send").disabled && $("#send").click(),
     // English: translate the open recipe, or flip between it and the original.
     m: () => r && toggleMade(r),
