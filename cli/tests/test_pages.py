@@ -2303,7 +2303,7 @@ def test_pantry_shares_a_household_pantry_in_the_terminal(real_site):
         d.query_one("#username").value = "sam"
         await pilot.press("enter")
         await settle(pilot, 0.6)
-        assert [(p["username"], p["role"]) for p in d.shares] == [("sam", "use")]
+        assert [(p["username"], p["role"]) for p in d.shares] == [("sam", "full")], "full: equal rights, unless picked otherwise"
         d.query_one("#shares").focus()
         await pilot.press("t")
         await settle(pilot, 0.6)
@@ -2329,6 +2329,11 @@ def test_pantry_shares_a_household_pantry_in_the_terminal(real_site):
         await pilot.press("n")
         await settle(pilot)
         assert app.screen is page, "n does nothing in someone else's pantry"
+        # Shared as "full", he could add and edit too, but still not share it or pair phones.
+        page.data["pantry"]["role"] = "full"
+        assert page.check_action("add", ()) and page.check_action("edit", ()) and page.check_action("more", ())
+        assert not page.check_action("share", ()) and not page.check_action("scanner", ())
+        page.data["pantry"]["role"] = "use"
         # And back to his own.
         await pilot.press("v")
         await settle(pilot, 0.6)

@@ -244,10 +244,12 @@ class LineDialog(ModalScreen[dict | None]):
 
 
 class ShareDialog(ModalScreen[None]):
-    """Sharing your pantry with your household: a username and what they can do (use: see it and take
-    things out; stock: also add what's bought). x stops sharing with the highlighted one, t switches their role."""
-    BINDINGS = [Binding("escape", "close", "Close"), Binding("x", "stop", "Stop sharing"), Binding("t", "toggle", "Use / stock")]
-    ROLES = (("Use: see it and take things out", "use"), ("Stock: also add what's bought", "stock"))
+    """Sharing your pantry with your household: a username and what they can do (full: add and change
+    anything, as you do; stock: take things out and add what's bought; use: only take things out).
+    x stops sharing with the highlighted one, t moves them to the next of full, stock and use."""
+    BINDINGS = [Binding("escape", "close", "Close"), Binding("x", "stop", "Stop sharing"), Binding("t", "toggle", "Full / stock / use")]
+    ROLES = (("Full: add and change anything", "full"), ("Stock: take out and add what's bought", "stock"), ("Use: only take things out", "use"))
+    SAYS = {"full": "full: adds and changes anything", "stock": "stock: takes out and adds what's bought", "use": "use: only takes things out"}
 
     def __init__(self, shares: list[dict]):
         super().__init__()
@@ -256,19 +258,19 @@ class ShareDialog(ModalScreen[None]):
     def compose(self) -> ComposeResult:
         with VerticalScroll(classes="dialog"):
             yield Label(Text("Share your pantry", style=f"bold {INK}"))
-            yield Static(Text("For a household: they see your pantry and take things out as they use them. "
-                              "Only you change what's in it, or who it's shared with.", style=MUTED))
+            yield Static(Text("For a household. Full gives them the same say over the food as you; stock lets them "
+                              "take things out and add what they buy; use, only take things out. Only you choose who it's shared with.", style=MUTED))
             with Horizontal(classes="grid"):
                 with Vertical():
                     yield Label("Their username", classes="lbl")
                     yield Input("", id="username", placeholder="sam", max_length=40)
                 with Vertical():
                     yield Label("They can", classes="lbl")
-                    yield Select(list(self.ROLES), value="use", allow_blank=False, id="role")
+                    yield Select(list(self.ROLES), value="full", allow_blank=False, id="role")
             yield Button("Share", id="share")
             yield Label("Shared with", classes="lbl")
             yield OptionList(id="shares")
-            yield Static(Text("enter shares · x stops sharing with the highlighted one · t switches use / stock · esc closes", style=FAINT))
+            yield Static(Text("enter shares · x stops sharing with the highlighted one · t switches full / stock / use · esc closes", style=FAINT))
 
     def on_mount(self) -> None:
         self.query_one(".dialog").styles.width = 74
@@ -282,7 +284,7 @@ class ShareDialog(ModalScreen[None]):
             box.add_option(Option(Text("No one yet.", style=FAINT), disabled=True))
         for p in self.shares:
             box.add_option(Option(Text.assemble((p["name"], f"bold {INK}"), (f"  @{p['username']}", FAINT),
-                                                (f"   {'stock: uses and adds' if p['role'] == 'stock' else 'use: takes things out'}", MUTED))))
+                                                (f"   {self.SAYS.get(p['role'], p['role'])}", MUTED))))
         if self.shares:
             box.highlighted = 0
 
@@ -323,7 +325,8 @@ class ShareDialog(ModalScreen[None]):
     async def action_toggle(self) -> None:
         p = self.highlighted()
         if p:
-            await self.change("share_pantry", p["username"], "use" if p["role"] == "stock" else "stock")
+            order = [r for _, r in self.ROLES]
+            await self.change("share_pantry", p["username"], order[(order.index(p["role"]) + 1) % len(order)] if p["role"] in order else "full")
 
     def action_close(self) -> None:
         self.dismiss(None)

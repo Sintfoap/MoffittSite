@@ -14,8 +14,8 @@ with your key, k, or the site's AI): each line matched to what you have or
 offered as new, with an estimated expiry date, to check before it's added.
 Store abbreviations are remembered once added. s pairs the Pantry scanner
 app on a phone (a QR code to scan), and unpairs phones. h shares your pantry
-with your household, by username: "use" sees it and takes things out, "stock"
-also adds what's bought. v switches to a pantry someone shared with you, and
+with your household, by username: "full" adds and changes anything, as you do;
+"stock" takes things out and adds what's bought; "use" only takes things out. v switches to a pantry someone shared with you, and
 l leaves it."""
 from __future__ import annotations
 
@@ -351,8 +351,10 @@ class PantryPage(Page):
                 Binding("f", "filter", "Show"), Binding("slash", "find", "Find"), Binding("c", "receipt", "Receipt"),
                 Binding("s", "scanner", "Phone scanner"), Binding("h", "share", "Share"), Binding("v", "whose", "Whose pantry"), Binding("l", "leave", "Leave it"),
                 Binding("k", "key", "Claude key", show=False), Binding("r", "refresh", "Refresh")]
-    # What each role may do in a pantry shared with you (the owner may do everything).
-    OWNER_ONLY = {"add", "edit", "lots", "remove", "scanner", "key", "share"}
+    # What each role may do in a pantry shared with you (the owner may do everything): "full" changes
+    # the food too, "stock" adds what's bought, "use" only takes things out.
+    OWNER_ONLY = {"scanner", "key", "share"}
+    FULL = {"add", "edit", "lots", "remove"}
     STOCK = {"more", "receipt"}
 
     def __init__(self):
@@ -373,8 +375,10 @@ class PantryPage(Page):
             return self.role() != "owner"
         if action in self.OWNER_ONLY:
             return self.role() == "owner"
+        if action in self.FULL:
+            return self.role() in ("owner", "full")
         if action in self.STOCK:
-            return self.role() in ("owner", "stock")
+            return self.role() in ("owner", "full", "stock")
         return True
 
     def compose(self) -> ComposeResult:
@@ -403,7 +407,7 @@ class PantryPage(Page):
         self.refresh_bindings()
         whose = data.get("pantry") or {}
         self.query_one(".h1", Static).update(Text.assemble(("Pantry", f"bold {INK}"),
-            (f"   {whose['name']}'s, " + ("you can take things out and add what you buy" if whose["role"] == "stock" else "you can take things out")
+            (f"   {whose['name']}'s, " + {"full": "you can add and change anything", "stock": "you can take things out and add what you buy"}.get(whose["role"], "you can take things out")
              if whose.get("role", "owner") != "owner" else "", MUTED), ("   v switches" if self.shared else "", FAINT)))
         c = data["counts"]
         tabs = []
@@ -419,7 +423,7 @@ class PantryPage(Page):
         items = shown(data["items"], self.filt, self.find)
         if not data["items"]:
             box.add_option(Option(Text("Nothing in your pantry yet. Press n to add food, like Whole wheat flour, 10 lb."
-                                       if self.role() == "owner" else "Nothing in this pantry yet.", style=FAINT), disabled=True))
+                                       if self.role() in ("owner", "full") else "Nothing in this pantry yet.", style=FAINT), disabled=True))
         elif not items:
             box.add_option(Option(Text({"soon": "Nothing to use soon.", "low": "Nothing's running low."}.get(self.filt, "Nothing matches."), style=FAINT), disabled=True))
         for place in data["places"]:
@@ -488,7 +492,7 @@ class PantryPage(Page):
         keys = ["u use"]
         if self.role() != "use":
             keys.append("m " + ("refill" if i["kind"] == "gauged" else "bought more"))
-        if self.role() == "owner":
+        if self.role() in ("owner", "full"):
             keys += ["e edit"] + ([] if i["kind"] == "gauged" else ["p purchases"])
         t.append("\n\n" + " · ".join(keys), FAINT)
         d.update(t)

@@ -30,12 +30,13 @@
 // /pantry/api/items/<id>/use         POST {amount} (measured: "1 cup"; counted: how many) or {all: true}, and {tossed?: true};
 //                                      or {level} for a gauged item → the item, with that taken out
 // /pantry/api/shares                 GET → {shares: who yours is shared with, shared: pantries shared with you};
-//                                      PUT {username, role} shares yours ("use" or "stock") or changes their role
+//                                      PUT {username, role} shares yours ("full", "stock" or "use"; full when left out) or changes their role
 // /pantry/api/shares/<username>      DELETE: stop sharing yours with them → {shares, shared}
 // /pantry/api/shared/<username>      DELETE: leave theirs → {shares, shared}
-//   Any items route takes ?of=<username> to work on a pantry shared with you: "use" can see it and
-//   take things out, "stock" can also add purchases (receipts, barcodes, + More). Only its owner
-//   changes items, their kinds and low points, or who it's shared with.
+//   Any items route takes ?of=<username> to work on a pantry shared with you: "full" can do all its
+//   owner can with the food (add, edit, remove); "stock" takes things out and adds purchases
+//   (receipts, barcodes, + More); "use" only takes things out. Only its owner says who it's shared
+//   with, and pairs phones to it.
 // /pantry/api/key                    PUT {key} → {photo}; DELETE → {photo}: the Anthropic key receipts are read with (Sweep's and Recipe box's too)
 // /pantry/api/receipt                POST {images} → what a receipt adds, to check; /pantry/api/receipt/add POST {store, lines} adds it (src/pantry_receipt.js)
 // /pantry/api/add                    POST {store?, lines}: the same, for lines not from a receipt (the scanner's barcodes)
@@ -402,7 +403,8 @@ export async function useItem(env, user, id, body) {
 // ── a household's pantry ───────────────────────────────────────────────────
 // The owner shares it by username; it stays stored under the owner, whoever adds or takes.
 
-export const SHARE_ROLES = ["use", "stock"];
+// Each can do what the one before it can, and more.
+export const SHARE_ROLES = ["use", "stock", "full"];
 const MAX_SHARES = 20;
 const nameOf = r => r.display_name || r.username;
 
@@ -422,8 +424,8 @@ export async function listShares(env, user) {
 // Shares your pantry with another account that has Pantry, or changes their role.
 export async function sharePantry(env, user, body) {
   if (!isObj(body)) fail("body must be a JSON object");
-  const role = String(body.role ?? "use");
-  if (!SHARE_ROLES.includes(role)) fail("role is use (see it and take things out) or stock (also add what's bought)");
+  const role = String(body.role ?? "full");
+  if (!SHARE_ROLES.includes(role)) fail("role is full (add and change anything, like you), stock (take things out and add what's bought) or use (only take things out)");
   const username = String(body.username ?? "").trim().toLowerCase().replace(/^@/, "");
   const d = await db(env);
   const who = username && await d.prepare(`SELECT u.id, u.username, u.display_name FROM users u
@@ -538,8 +540,11 @@ export async function pantry(request, env, user, pathname, { scanner = false } =
     const access = await pantryOf(env, user, of);
     if (!access) return json({ error: "that pantry isn't shared with you" }, 404);
     const { owner, role } = access;
-    const may = need => role === "owner" || (need === "stock" ? role === "stock" : need === "use");
+    // need: "use" (take out), "stock" (add purchases), "full" (change the food), "owner" (its sharing and phones).
+    const rank = r => r === "owner" ? 9 : SHARE_ROLES.indexOf(r);
+    const may = need => rank(role) >= rank(need);
     const refuse = need => json({ error: need === "owner" ? "only the pantry's owner can do that"
+      : need === "full" ? "the pantry's owner hasn't let you change what's in it, only " + (role === "stock" ? "take things out and add what's bought" : "take things out")
       : "you can take things out of this pantry, but not add to it" }, 403);
     if (role !== "owner" && /^\/pantry\/api\/(key|scanners)(\/|$)/.test(path)) return refuse("owner");
     if (path.startsWith("/pantry/api/scanners")) {
@@ -576,7 +581,7 @@ export async function pantry(request, env, user, pathname, { scanner = false } =
         return json({ ...await listItems(env, owner, dayOf(request)), photo: await photoState(env, user),
           pantry: { owner: owner.username || "", name: role === "owner" ? "" : owner.display_name || owner.username, role } });
       }
-      if (method === "POST") { if (!may("owner")) return refuse("owner"); return json(await addItem(env, owner, await readJson(request)), 201); }
+      if (method === "POST") { if (!may("full")) return refuse("full"); return json(await addItem(env, owner, await readJson(request)), 201); }
       return notAllowed();
     }
     if (!ID.test(id)) return json({ error: "not found" }, 404);
@@ -589,12 +594,12 @@ export async function pantry(request, env, user, pathname, { scanner = false } =
       out = await addLot(env, owner, id, await readJson(request));
       if (out) return json(out, 201);
     } else if (sub === "lots") {
-      if (!may("owner")) return refuse("owner");
+      if (!may("full")) return refuse("full");
       if (method === "PATCH") out = await editLot(env, owner, id, lot, await readJson(request));
       else if (method === "DELETE") out = await editLot(env, owner, id, lot, null, true);
       else return notAllowed();
     } else if (method === "PATCH" || method === "DELETE") {
-      if (!may("owner")) return refuse("owner");
+      if (!may("full")) return refuse("full");
       out = method === "PATCH" ? await editItem(env, owner, id, await readJson(request)) : await deleteItem(env, owner, id);
     }
     else return notAllowed();
