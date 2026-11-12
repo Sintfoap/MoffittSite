@@ -216,7 +216,7 @@ details.about p { margin: 8px 0 0; }
   <details class="about"><summary>How it works</summary>
     <p>Everything is one of three kinds. <b>Measured</b> things (flour, sugar, oil) are kept exactly, by weight or volume. <b>Counted</b> things (cans, eggs, boxes) go by whole units, so using half a can still uses the can. <b>Gauged</b> things (spices, vanilla) go from Full to Empty, and you move them down yourself. Any of them can be a <b>staple</b>, something you keep stocked: you say when it's running low (2 lb, 3 cans, ½ left), and then it shows under Running low.</p>
     <p>Each time you buy something it's kept as its own purchase, with its own expiry date, and the soonest to expire is used first. Scanning receipts and barcodes from your phone, and taking what recipes need, are coming next.</p>
-    <p><b>Share</b> makes it a household's pantry: the people you share it with switch to it here and take things out as they use them (and, if you let them stock it, add what they buy). Only you change items or who it's shared with.</p>
+    <p><b>Share</b> makes it a household's pantry: the people you share it with switch to it here. With <b>Full</b> they add and change anything, as you do; with <b>Stock</b> they take things out and add what they buy; with <b>Use</b> they only take things out. Only you choose who it's shared with.</p>
   </details>
   <div id="error" class="msg bad" role="alert" hidden></div>
   <div id="done" class="msg good" role="status" hidden></div>
@@ -345,12 +345,13 @@ details.about p { margin: 8px 0 0; }
 <dialog id="share-dialog">
   <form method="dialog" id="share-form">
     <h2>Share your pantry</h2>
-    <p class="hint">For a household: the people you share with see your pantry and take things out as they use them. Only you change what's in it, how things are counted, or who it's shared with.</p>
+    <p class="hint">For a household. <b>Full</b> gives them the same say over the food as you: adding, editing and removing. <b>Stock</b> lets them take things out and add what they buy; <b>Use</b> only take things out. Only you choose who it's shared with.</p>
     <div class="two">
       <label class="field">Their username<input type="text" name="username" maxlength="40" placeholder="sam" autocomplete="off" autocapitalize="off"></label>
       <label class="field">They can<select name="role">
-        <option value="use">Use: take things out</option>
-        <option value="stock">Stock: also add to it</option>
+        <option value="full">Full: add and change anything</option>
+        <option value="stock">Stock: take out and add what's bought</option>
+        <option value="use">Use: only take things out</option>
       </select></label>
     </div>
     <div class="row"><button class="btn" type="button" id="share-add">Share</button></div>
