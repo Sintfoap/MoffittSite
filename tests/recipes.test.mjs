@@ -291,6 +291,15 @@ test("ingredients go to a Drift shopping list, scaled, and to a list shared with
   assert.deepEqual([skipped.added, skipped.merged], [0, 1]);
   assert.equal(skipped.summary, "Added 0 items to Shopping list; 1 already there got the amounts added. Left off what Pantry has: eggs.");
   assert.equal((await api(ryan, "POST", `recipes/${id}/shop`, { lines: [] })).status, 400);
+  // The page asks first which lines Pantry has (to show them, unticked) ...
+  const r0 = (await api(ryan, "GET", "recipes")).json;
+  assert.equal(r0.pantry, true);
+  const has = (await api(ryan, "GET", `recipes/${id}/pantry`)).json.have;
+  assert.deepEqual(has.map(h => [h.index, h.pantry, h.text]), [[1, "Eggs", "12 eggs"]]);
+  // ... and then what's ticked goes, Pantry or not.
+  const anyway = (await api(ryan, "POST", `recipes/${id}/shop`, { lines: [1], pantry: false })).json;
+  assert.deepEqual([anyway.added + anyway.merged, anyway.have.length], [1, 0]);
+  assert.equal((await api(ryan, "GET", "recipes/r_0000000000/pantry")).status, 404);
 
   // sam shares a list with ryan to edit; ryan can send to it.
   const sam = new Browser(env);

@@ -292,3 +292,32 @@ test("a pantry can be shared as a household's: use takes things out, stock also 
   assert.equal((await api(joe, "POST", `items/${soup.id}/use?of=kim`, { amount: 1 })).status, 404);
   assert.equal((await api(kim, "DELETE", "shares/joe")).status, 404);
 });
+
+test("what's running low goes on your Drift shopping list, once, from yours or a household's", async () => {
+  const env = makeEnv(), kim = await member(env, "kim", "pantry"), sam = await member(env, "sam", "pantry");
+  await add(kim, { name: "Flour", amount: "1 lb", staple: true, low: "2 lb" });
+  await add(kim, { name: "Black beans", kind: "counted", unit: "can", amount: 5, staple: true, low: 2 });
+  await add(kim, { name: "Milk", amount: "1 gal" });   // not a staple: never goes on
+  const page = (await api(kim, "GET", "items")).json;
+  assert.equal(page.drift, true);
+  assert.equal(page.counts.low, 1);
+  const out = await api(kim, "POST", "shop", {});
+  assert.equal(out.status, 200, out.text);
+  assert.deepEqual([out.json.low, out.json.added, out.json.list.name], [1, 1, "Shopping list"]);
+  assert.equal(out.json.summary, "Added 1 item to Shopping list.");
+  const state = (await kim.get("/todo/api/state")).json;
+  const list = state.collections.find(c => c.name === "Shopping list");
+  const items = state.items.filter(it => it.collection === list.id);
+  assert.deepEqual(items.map(it => [it.title, it.notes]), [["Flour", "1 lb left, says Pantry (low at 2 lb)"]]);
+  // Again: the open line there is the same one, not a second.
+  const again = (await api(kim, "POST", "shop", {})).json;
+  assert.deepEqual([again.added, again.merged, again.summary], [0, 1, "It's already on Shopping list."]);
+  // From a pantry shared with you, onto your own list; nothing low is an answer, not a list.
+  await api(kim, "PUT", "shares", { username: "sam", role: "use" });
+  assert.equal((await api(sam, "POST", "shop?of=kim", {})).json.added, 1);
+  assert.match((await api(sam, "POST", "shop", {})).json.error, /nothing's running low/);
+  // Without Drift there's no list to put it on.
+  run(env, "DELETE FROM user_areas WHERE area = 'todo' AND user_id = (SELECT id FROM users WHERE username = 'kim')");
+  assert.equal((await api(kim, "GET", "items")).json.drift, false);
+  assert.match((await api(kim, "POST", "shop", {})).json.error, /need Drift/);
+});

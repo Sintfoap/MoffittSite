@@ -5,7 +5,8 @@ everyone's: v switches), the open one on the right with its photos, the
 things it links to, and the replies. n writes a note, l links something on
 the site to it (a recipe, Drift item, pantry item, board post, trip, Food
 club month, chat room or Meal plan week), u adds any web link, p adds a
-photo from a file, c replies, and admins set its status with s."""
+photo from a file, c replies, and admins set its status with s. A note closed
+unsent (esc) is kept, and n opens it again as you left it."""
 from __future__ import annotations
 
 from functools import partial
@@ -52,9 +53,15 @@ def link_text(link: dict, sources: dict) -> Text:
     return t
 
 
+# The note being written, kept when the dialog is closed unsent (esc) or sending fails, so
+# it comes back as you left it the next time n is pressed, as the website keeps it.
+DRAFT: dict = {}
+
+
 class WriteDialog(ModalScreen[dict | None]):
-    """A new note: what kind, a subject, and what's on your mind. Dismisses with {kind, subject, message}, or None."""
-    BINDINGS = [Binding("escape", "cancel", "Cancel"), Binding("ctrl+s", "send", "Send", priority=True)]
+    """A new note: what kind, a subject, and what's on your mind. Dismisses with {kind, subject, message}, or None
+    (closed unsent: what's typed stays in DRAFT for next time)."""
+    BINDINGS = [Binding("escape", "cancel", "Close"), Binding("ctrl+s", "send", "Send", priority=True)]
     DEFAULT_CSS = """
     WriteDialog #message { height: 10; }
     """
@@ -69,21 +76,31 @@ class WriteDialog(ModalScreen[dict | None]):
             yield Static(Text("Only the owner (the site's admins) sees it. After it's sent, l links things on the site to it "
                               "and p adds photos.", style=MUTED))
             yield Label("What kind", classes="lbl")
-            yield Select([(KIND.get(k, k), k) for k in self.kinds], value=self.kinds[0], allow_blank=False, id="kind")
+            kind = DRAFT.get("kind") if DRAFT.get("kind") in self.kinds else self.kinds[0]
+            yield Select([(KIND.get(k, k), k) for k in self.kinds], value=kind, allow_blank=False, id="kind")
             yield Label("Subject", classes="lbl")
-            yield Input(id="subject", placeholder="In a few words", max_length=200)
+            yield Input(DRAFT.get("subject", ""), id="subject", placeholder="In a few words", max_length=200)
             yield Label("What's on your mind", classes="lbl")
-            yield TextArea(id="message", soft_wrap=True)
+            yield TextArea(DRAFT.get("message", ""), id="message", soft_wrap=True)
             with Horizontal(classes="buttons"):
                 yield Button("Send", id="send")
-                yield Button("Cancel", id="cancel", classes="quiet")
-            yield Static(Text("ctrl+s sends, esc cancels", style=FAINT))
+                yield Button("Close", id="cancel", classes="quiet")
+            yield Static(Text("ctrl+s sends, esc closes it and keeps what you wrote for next time", style=FAINT))
 
     def on_mount(self) -> None:
-        self.query_one("#subject", Input).focus()
+        self.query_one("#message" if DRAFT.get("subject") else "#subject").focus()
+        if DRAFT.get("subject") or DRAFT.get("message"):
+            self.app.notify("Your unsent note is just as you left it.", timeout=3)
 
     def on_input_submitted(self, e: Input.Submitted) -> None:
         self.query_one("#message", TextArea).focus()
+
+    def keep(self) -> None:
+        subject = self.query_one("#subject", Input).value
+        message = self.query_one("#message", TextArea).text
+        DRAFT.clear()
+        if subject.strip() or message.strip():
+            DRAFT.update(kind=self.query_one("#kind", Select).value, subject=subject, message=message)
 
     def action_send(self) -> None:
         subject = self.query_one("#subject", Input).value.strip()
@@ -91,13 +108,15 @@ class WriteDialog(ModalScreen[dict | None]):
         if not subject and not message:
             self.app.notify("Say what it's about first.", severity="error", timeout=3)
             return
+        self.keep()
         self.dismiss({"kind": self.query_one("#kind", Select).value, "subject": subject, "message": message})
 
     def action_cancel(self) -> None:
+        self.keep()
         self.dismiss(None)
 
     def on_button_pressed(self, e: Button.Pressed) -> None:
-        self.action_send() if e.button.id == "send" else self.dismiss(None)
+        self.action_send() if e.button.id == "send" else self.action_cancel()
 
 
 class LinkDialog(ModalScreen[list | None]):
@@ -517,6 +536,7 @@ class FeedbackPage(Page):
     @attempt
     async def send(self, fields: dict) -> None:
         note = await self.fetch(site.send_feedback, fields)
+        DRAFT.clear()
         self.tab, self.filter = "mine", "open"
         await self.changed(note)
         self.app.notify("Sent. Thank you! l links things to it, p adds photos.", timeout=4)

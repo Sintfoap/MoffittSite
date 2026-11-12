@@ -256,6 +256,7 @@ function renderDraft() {
   $("#photo-count").textContent = draft.photos.length ? `${draft.photos.length} of ${data.photos_each}` : "";
   $("#draft-links").replaceChildren(...draft.links.map((l, i) => linkItem(l, () => { draft.links.splice(i, 1); renderDraft(); })));
   $("#link-count").textContent = draft.links.length ? `${draft.links.length} linked` : "";
+  if (data) keepDraft();
 }
 
 function addFiles(files) {
@@ -357,6 +358,7 @@ $("#note-form").addEventListener("submit", e => {
     for (const p of draft.photos) URL.revokeObjectURL(p.url);
     draft = { photos: [], links: [] };
     f.reset();
+    forgetDraft();
     renderKinds();
     renderDraft();
     await reload();
@@ -365,6 +367,38 @@ $("#note-form").addEventListener("submit", e => {
     say(photosFailed ? "error" : "done", photosFailed ? `Sent, but a photo didn't go: ${photosFailed.message}. Add it from the note.` : "Sent. Thank you!");
   }).finally(() => { $("#send").disabled = false; $("#progress").textContent = ""; });
 });
+
+// ── keeping the note you're writing ───────────────────────────────────────
+// Its words, kind and links stay in this browser until it's sent, so leaving the
+// page (to find the thing it's about) doesn't lose it. Photos can't be kept, so
+// leaving with some attached asks first.
+
+const DRAFT_KEY = "feedback-draft";
+function keepDraft() {
+  const f = $("#note-form");
+  const kept = { kind: f.querySelector("input[name=kind]:checked")?.value || "", subject: f.subject.value, message: f.message.value, links: draft.links };
+  try {
+    if (kept.subject.trim() || kept.message.trim() || kept.links.length) localStorage.setItem(DRAFT_KEY, JSON.stringify(kept));
+    else localStorage.removeItem(DRAFT_KEY);
+  } catch {}
+}
+function forgetDraft() { try { localStorage.removeItem(DRAFT_KEY); } catch {} }
+function restoreDraft() {
+  let kept = null;
+  try { kept = JSON.parse(localStorage.getItem(DRAFT_KEY) || "null"); } catch {}
+  if (!kept || typeof kept !== "object") return false;
+  const f = $("#note-form");
+  f.subject.value = String(kept.subject || "");
+  f.message.value = String(kept.message || "");
+  const k = f.querySelector(`input[name=kind][value="${CSS.escape(String(kept.kind || ""))}"]`);
+  if (k) k.checked = true;
+  if (Array.isArray(kept.links)) draft.links = kept.links.filter(l => l && typeof l === "object").slice(0, data.links_each);
+  renderDraft();
+  return !!(f.subject.value.trim() || f.message.value.trim() || draft.links.length);
+}
+$("#note-form").addEventListener("input", keepDraft);
+$("#note-form").addEventListener("change", keepDraft);
+addEventListener("beforeunload", e => { if (draft.photos.length) e.preventDefault(); });
 
 // ── the link picker ────────────────────────────────────────────────────────
 
@@ -449,8 +483,10 @@ run(async () => {
   data = await api("GET", "feedback");
   renderKinds();
   renderFilters();
+  const restored = restoreDraft();
   renderDraft();
   renderTabs();
+  if (restored) say("done", "Your unsent note is just as you left it.");
   const h = location.hash.slice(1);
   if (/^fb_/.test(h)) {
     const inInbox = data.owner && data.inbox.some(n => n.id === h) && !data.mine.some(n => n.id === h);

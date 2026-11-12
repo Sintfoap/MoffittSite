@@ -628,6 +628,32 @@ def test_recipe_box_saves_from_a_link_scales_and_sends_to_drift(real_site):
     run_app("recipes", recipes)
 
 
+def test_recipe_box_shows_what_pantry_has_and_leaves_it_unticked(real_site):
+    rid = site.add_recipe({"title": "Soup", "ingredients": ["2 cans tomato soup", "1 cup milk"], "steps": ["Heat."]})["id"]
+    assert [h["index"] for h in site.recipe_pantry(rid)["have"]] == [0]   # ryan's pantry has tomato soup (tests/devsite.mjs)
+
+    async def recipes(app, pilot):
+        page = app.screen
+        await settle(pilot, 0.6)
+        assert page.current()["id"] == rid
+        ing = page.query_one("#ingredients")
+        assert "Pantry has 2 cans" in str(ing.get_option_at_index(0).prompt)
+        assert page.skip[rid] == {0} and ing.selected == [1]
+        # s sends only the milk; ticking the soup sends it too, Pantry or not.
+        await pilot.press("s")
+        await settle(pilot, 0.6)
+        ing.focus()
+        ing.highlighted = 0
+        await pilot.press("space")
+        await settle(pilot)
+        await pilot.press("s")
+        await settle(pilot, 0.6)
+        drift = site.drift_state()
+        shopping = next(c for c in drift["collections"] if c["name"] == "Shopping list")
+        assert sorted(it["title"] for it in drift["items"] if it["collection"] == shopping["id"]) == ["Milk", "Tomato soup"]
+    run_app("recipes", recipes)
+
+
 def test_recipe_box_share_link_is_made_copied_and_turned_off(real_site):
     import urllib.error
     import urllib.request
@@ -2187,17 +2213,26 @@ def test_feedback_sends_a_note_with_links_photos_and_a_reply(real_site, tmp_path
         assert page.data["mine"] == [] and page.data["inbox"] is None and page.note is None
         assert {s["id"] for s in page.data["sources"]} >= {"recipes", "pantry", "food", "drift"}
 
-        # n: write a note.
+        # n: write a note. Closing it unsent keeps it for next time.
         await pilot.press("n")
         dialog = app.screen
         assert type(dialog).__name__ == "WriteDialog"
         dialog.query_one("#kind").value = "bug"
         dialog.query_one("#subject").value = "Flour went missing"
+        await pilot.press("escape")
+        await settle(pilot)
+        assert app.screen is page
+        await pilot.press("n")
+        await settle(pilot)
+        dialog = app.screen
+        assert (dialog.query_one("#kind").value, dialog.query_one("#subject").value) == ("bug", "Flour went missing")
         dialog.query_one("#message").text = "My flour isn't on the shopping list."
         await pilot.press("ctrl+s")
         await settle(pilot, 0.6)
         n = page.note
         assert (n["subject"], n["kind"], n["status"], n["yours"]) == ("Flour went missing", "bug", "new", True)
+        from sintfoap.feedback_page import DRAFT
+        assert DRAFT == {}, "a sent note isn't kept"
 
         # l: link the pantry's flour, found by searching.
         await pilot.press("l")
@@ -2483,6 +2518,12 @@ def test_pantry_in_the_terminal(real_site):
         await pilot.press("f", "f")
         await settle(pilot)
         assert page.filt == "low" and [i["name"] for i in page.rows if i] == ["Ground cumin"]
+        # t puts what's running low on the Drift shopping list.
+        await pilot.press("t")
+        await settle(pilot, 0.6)
+        state = site.drift_state()
+        lst_id = next(c["id"] for c in state["collections"] if c["name"] == "Shopping list")
+        assert [it["title"] for it in state["items"] if it["collection"] == lst_id] == ["Ground cumin"]
         await pilot.press("f")
         await pilot.press("m")
         await settle(pilot, 0.6)

@@ -11,7 +11,9 @@
 import { singular } from "../public/pantry/units.js";
 import { listLineIs } from "./pantry_receipt.js";
 import { listItems } from "./pantry.js";
-import { listFor, collectionWithItems, createItem, updateItem } from "./drift.js";
+import { listFor, collectionWithItems, createItem, updateItem, BadRequest } from "./drift.js";
+
+const fail = msg => { throw new BadRequest(msg); };
 
 const G = "¼½¾⅓⅔⅕⅖⅗⅘⅙⅚⅛⅜⅝⅞";
 const NUM = `(?:\\d+\\s*[${G}]|\\d+\\s+\\d+\\/\\d+|\\d+\\/\\d+|\\d+(?:[.,]\\d+)?|[${G}]|(?:an?|one|two|three|four|five|six|half|a few|few|several|some)\\b)`;
@@ -122,6 +124,30 @@ export async function shopFor(env, user, id, foods, { pantry = true } = {}) {
     }
   }
   return { list: { id: list.id, name: list.name }, added, merged, have };
+}
+
+// Pantry's staples that are running low or out (of `owner`'s pantry, yours or one
+// shared with you) onto your list `id` (or your Shopping list), each once: one already
+// open there gets the note added. → {list, added, merged, have: [], low, summary}
+export async function shopLow(env, user, owner, id, day) {
+  if (!user.areas.has("todo")) fail("you need Drift to make a shopping list");
+  const low = (await listItems(env, owner, day)).items.filter(i => i.staple && (i.is_low || i.is_out));
+  if (!low.length) fail("nothing's running low");
+  const foods = low.map(i => ({ name: i.name, for: [], needs: [i.is_out ? "Out, says Pantry" : `${i.text} left, says Pantry (low at ${i.low_text})`] }));
+  const out = await shopFor(env, user, id ? String(id) : null, foods, { pantry: false });
+  const n = (k, w) => `${k} ${w}${k === 1 ? "" : "s"}`;
+  const summary = !out.merged ? `Added ${n(out.added, "item")} to ${out.list.name}.`
+    : !out.added ? `${out.merged === 1 ? "It's" : "They're all"} already on ${out.list.name}.`
+    : `Added ${n(out.added, "item")} to ${out.list.name}; ${out.merged} ${out.merged === 1 ? "was" : "were"} already on it.`;
+  return { ...out, low: low.length, summary };
+}
+
+// Which of a recipe's ingredient lines your pantry already has (in stock, not running
+// low): [{index, text, pantry}], for the page to show and leave unticked.
+export async function haveFor(env, user, lines) {
+  const stock = await pantryItems(env, user);
+  if (!stock.length) return [];
+  return lines.map((line, index) => { const p = inPantry(stock, itemOf(line).name); return p ? { index, text: p.text, pantry: p.name } : null; }).filter(Boolean);
 }
 
 // "Added 3 to Shopping list" + what was merged and left off, for the pages and the terminal.

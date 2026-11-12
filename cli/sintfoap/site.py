@@ -652,10 +652,18 @@ def unshare_recipe(recipe_id: str) -> dict:
     return api("DELETE", f"/recipes/api/recipes/{_q(recipe_id)}/share")
 
 
+def recipe_pantry(recipe_id: str) -> dict:
+    """{have: [{index, text, pantry}]}: the recipe's ingredient lines your pantry already has (in stock, not running low)."""
+    return _get(f"/recipes/api/recipes/{_q(recipe_id)}/pantry")
+
+
 def shop(recipe_id: str, lines: list[int], servings: float | None = None, factor: float | None = None,
-         list_id: str | None = None) -> dict:
-    """Sends those ingredients (by index), scaled, to a Drift list (your Shopping list without list_id); {list, added}."""
+         list_id: str | None = None, pantry: bool = True) -> dict:
+    """Sends those ingredients (by index), scaled, to a Drift list (your Shopping list without list_id); {list, added}.
+    pantry=False sends every line picked, even ones Pantry has (you were shown them and picked anyway)."""
     body: dict[str, Any] = {"lines": lines}
+    if not pantry:
+        body["pantry"] = False
     if servings is not None:
         body["servings"] = servings
     if factor is not None:
@@ -901,6 +909,11 @@ def pantry(day: str = "") -> dict:
     pantry: {owner, name, role}} (role is owner, or use or stock in a pantry shared with you).
     day is your own date (YYYY-MM-DD), for what's expiring soon."""
     return _get(_of("/pantry/api/items" + (f"?day={_q(day)}" if day else "")))
+
+
+def pantry_shop(list_id: str | None = None) -> dict:
+    """Puts the staples running low or out on your Drift list (your Shopping list without list_id); {list, added, merged, low, summary}."""
+    return api("POST", _of("/pantry/api/shop"), {"list": list_id} if list_id else {})
 
 
 def pantry_shares() -> dict:
