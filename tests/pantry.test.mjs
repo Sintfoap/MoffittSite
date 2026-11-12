@@ -235,3 +235,50 @@ test("the dashboard's card says what needs looking at", async () => {
   await add(kim, { name: "Cumin" });
   assert.match(await line(), /1 thing in your pantry/);
 });
+
+test("a pantry can be shared as a household's: use takes things out, stock also adds, only the owner changes it", async () => {
+  const env = makeEnv(), kim = await member(env, "kim", "pantry"), sam = await member(env, "sam", "pantry"), joe = await member(env, "joe", "pantry");
+  await member(env, "nopantry");
+  const flour = await add(kim, { name: "Flour", amount: "10 lb", low: "2 lb" });
+  const soup = await add(kim, { name: "Tomato soup", amount: 3 });
+  // Shared by username, with someone who has Pantry.
+  assert.match((await api(kim, "PUT", "shares", { username: "nopantry" })).json.error, /no one with Pantry/);
+  assert.match((await api(kim, "PUT", "shares", { username: "kim" })).json.error, /that's you/);
+  assert.match((await api(kim, "PUT", "shares", { username: "sam", role: "boss" })).json.error, /role is use/);
+  const shared = (await api(kim, "PUT", "shares", { username: "sam" })).json;
+  assert.deepEqual(shared.shares.map(s => [s.username, s.role]), [["sam", "use"]]);
+  await api(kim, "PUT", "shares", { username: "@Joe", role: "stock" });
+  assert.deepEqual((await api(sam, "GET", "shares")).json.shared.map(s => [s.username, s.role]), [["kim", "use"]]);
+  // sam sees kim's pantry with ?of=, and his own without.
+  const theirs = (await api(sam, "GET", "items?of=kim")).json;
+  assert.deepEqual(theirs.items.map(i => i.name), ["Flour", "Tomato soup"]);
+  assert.deepEqual(theirs.pantry, { owner: "kim", name: "kim", role: "use" });
+  assert.deepEqual((await api(sam, "GET", "items")).json.items, []);
+  assert.equal((await api(joe, "GET", "items?of=sam")).status, 404, "not shared with joe");
+  // "use" takes things out of it, for everyone.
+  assert.equal((await api(sam, "POST", `items/${soup.id}/use?of=kim`, { amount: 1 })).json.text, "2 cans");
+  assert.equal((await api(kim, "GET", "items")).json.items.find(i => i.id === soup.id).text, "2 cans");
+  // ...but can't add, change or share it.
+  assert.equal((await api(sam, "POST", `items/${soup.id}/lots?of=kim`, { amount: 1 })).status, 403);
+  assert.equal((await api(sam, "POST", "add?of=kim", { lines: [{ item: soup.id, amount: "1" }] })).status, 403);
+  assert.match((await api(sam, "PATCH", `items/${soup.id}?of=kim`, { name: "Soup" })).json.error, /only the pantry's owner/);
+  assert.equal((await api(sam, "DELETE", `items/${soup.id}?of=kim`)).status, 403);
+  assert.equal((await api(sam, "POST", "items?of=kim", { name: "Rice", amount: "1 lb" })).status, 403);
+  assert.equal((await api(sam, "GET", "scanners?of=kim")).status, 403);
+  // "stock" can also add what's bought.
+  assert.equal((await api(joe, "POST", `items/${soup.id}/lots?of=kim`, { amount: 2 })).json.text, "4 cans");
+  const added = (await api(joe, "POST", "add?of=kim", { lines: [{ key: "a", item: flour.id, amount: "5 lb" }, { key: "b", name: "Rice", amount: "2 lb" }] })).json;
+  assert.deepEqual(added.failed, [], JSON.stringify(added));
+  assert.deepEqual((await api(kim, "GET", "items")).json.items.map(i => [i.name, i.text]), [["Flour", "15 lb"], ["Rice", "2 lb"], ["Tomato soup", "4 cans"]]);
+  assert.match((await api(joe, "PATCH", `items/${flour.id}?of=kim`, { low: "1 lb" })).json.error, /owner/);
+  // Sharing both ways, stopping one leaves the other.
+  await api(sam, "PUT", "shares", { username: "kim" });
+  assert.deepEqual((await api(kim, "DELETE", "shares/sam")).json.shared.map(p => p.username), ["sam"]);
+  await api(kim, "PUT", "shares", { username: "sam" });
+  // Leaving, or being taken off, ends it.
+  assert.deepEqual((await api(sam, "DELETE", "shared/kim")).json.shared, []);
+  assert.equal((await api(sam, "GET", "items?of=kim")).status, 404);
+  assert.deepEqual((await api(kim, "DELETE", "shares/joe")).json.shares, []);
+  assert.equal((await api(joe, "POST", `items/${soup.id}/use?of=kim`, { amount: 1 })).status, 404);
+  assert.equal((await api(kim, "DELETE", "shares/joe")).status, 404);
+});

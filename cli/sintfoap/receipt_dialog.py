@@ -243,6 +243,92 @@ class LineDialog(ModalScreen[dict | None]):
         self.action_save() if e.button.id == "save" else self.dismiss(None)
 
 
+class ShareDialog(ModalScreen[None]):
+    """Sharing your pantry with your household: a username and what they can do (use: see it and take
+    things out; stock: also add what's bought). x stops sharing with the highlighted one, t switches their role."""
+    BINDINGS = [Binding("escape", "close", "Close"), Binding("x", "stop", "Stop sharing"), Binding("t", "toggle", "Use / stock")]
+    ROLES = (("Use: see it and take things out", "use"), ("Stock: also add what's bought", "stock"))
+
+    def __init__(self, shares: list[dict]):
+        super().__init__()
+        self.shares = shares
+
+    def compose(self) -> ComposeResult:
+        with VerticalScroll(classes="dialog"):
+            yield Label(Text("Share your pantry", style=f"bold {INK}"))
+            yield Static(Text("For a household: they see your pantry and take things out as they use them. "
+                              "Only you change what's in it, or who it's shared with.", style=MUTED))
+            with Horizontal(classes="grid"):
+                with Vertical():
+                    yield Label("Their username", classes="lbl")
+                    yield Input("", id="username", placeholder="sam", max_length=40)
+                with Vertical():
+                    yield Label("They can", classes="lbl")
+                    yield Select(list(self.ROLES), value="use", allow_blank=False, id="role")
+            yield Button("Share", id="share")
+            yield Label("Shared with", classes="lbl")
+            yield OptionList(id="shares")
+            yield Static(Text("enter shares · x stops sharing with the highlighted one · t switches use / stock · esc closes", style=FAINT))
+
+    def on_mount(self) -> None:
+        self.query_one(".dialog").styles.width = 74
+        self.show()
+        self.query_one("#username", Input).focus()
+
+    def show(self) -> None:
+        box = self.query_one("#shares", OptionList)
+        box.clear_options()
+        if not self.shares:
+            box.add_option(Option(Text("No one yet.", style=FAINT), disabled=True))
+        for p in self.shares:
+            box.add_option(Option(Text.assemble((p["name"], f"bold {INK}"), (f"  @{p['username']}", FAINT),
+                                                (f"   {'stock: uses and adds' if p['role'] == 'stock' else 'use: takes things out'}", MUTED))))
+        if self.shares:
+            box.highlighted = 0
+
+    async def change(self, call, *args) -> bool:
+        from . import site
+        from .look import Failed, fetch
+        try:
+            self.shares = (await fetch(self.app, getattr(site, call), *args))["shares"]
+        except Failed:
+            return False
+        self.show()
+        return True
+
+    async def action_share(self) -> None:
+        who = self.query_one("#username", Input).value.strip()
+        if not who:
+            self.app.notify("Say whose username to share with.", severity="error", timeout=3)
+            return
+        if await self.change("share_pantry", who, str(self.query_one("#role", Select).value)):
+            self.query_one("#username", Input).value = ""
+            self.app.notify(f"Shared your pantry with {who}.", timeout=3)
+
+    async def on_input_submitted(self, e: Input.Submitted) -> None:
+        await self.action_share()
+
+    async def on_button_pressed(self, e: Button.Pressed) -> None:
+        await self.action_share()
+
+    def highlighted(self) -> dict | None:
+        at = self.query_one("#shares", OptionList).highlighted
+        return self.shares[at] if at is not None and at < len(self.shares) else None
+
+    async def action_stop(self) -> None:
+        p = self.highlighted()
+        if p and await self.change("unshare_pantry", p["username"]):
+            self.app.notify(f"Stopped sharing with {p['name']}.", timeout=3)
+
+    async def action_toggle(self) -> None:
+        p = self.highlighted()
+        if p:
+            await self.change("share_pantry", p["username"], "use" if p["role"] == "stock" else "stock")
+
+    def action_close(self) -> None:
+        self.dismiss(None)
+
+
 class ScannerDialog(ModalScreen[None]):
     """Pairing the Pantry scanner app: a QR code for the phone to scan (or its code to type), and
     the phones already paired, x unpairing the highlighted one. n makes a new code."""

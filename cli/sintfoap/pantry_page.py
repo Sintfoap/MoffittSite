@@ -13,7 +13,10 @@ soon or running low, / finds. c reads a grocery receipt from a photo (Claude
 with your key, k, or the site's AI): each line matched to what you have or
 offered as new, with an estimated expiry date, to check before it's added.
 Store abbreviations are remembered once added. s pairs the Pantry scanner
-app on a phone (a QR code to scan), and unpairs phones."""
+app on a phone (a QR code to scan), and unpairs phones. h shares your pantry
+with your household, by username: "use" sees it and takes things out, "stock"
+also adds what's bought. v switches to a pantry someone shared with you, and
+l leaves it."""
 from __future__ import annotations
 
 import datetime as dt
@@ -28,7 +31,7 @@ from textual.widgets.option_list import Option
 
 from . import site
 from .look import BAD, FAINT, GOLD, INK, MUTED, Ask, Confirm, Page, attempt, plural
-from .receipt_dialog import ReceiptDialog, ScannerDialog
+from .receipt_dialog import ReceiptDialog, ScannerDialog, ShareDialog
 
 WARN = "#e0b25a"
 FILTERS = (("all", "All"), ("soon", "Use soon"), ("low", "Running low"))
@@ -346,7 +349,11 @@ class PantryPage(Page):
     BINDINGS = [Binding("n", "add", "Add food"), Binding("u", "use", "Use"), Binding("m", "more", "Bought more"),
                 Binding("e", "edit", "Edit"), Binding("p", "lots", "Purchases"), Binding("x", "remove", "Remove"),
                 Binding("f", "filter", "Show"), Binding("slash", "find", "Find"), Binding("c", "receipt", "Receipt"),
-                Binding("s", "scanner", "Phone scanner"), Binding("k", "key", "Claude key", show=False), Binding("r", "refresh", "Refresh")]
+                Binding("s", "scanner", "Phone scanner"), Binding("h", "share", "Share"), Binding("v", "whose", "Whose pantry"), Binding("l", "leave", "Leave it"),
+                Binding("k", "key", "Claude key", show=False), Binding("r", "refresh", "Refresh")]
+    # What each role may do in a pantry shared with you (the owner may do everything).
+    OWNER_ONLY = {"add", "edit", "lots", "remove", "scanner", "key", "share"}
+    STOCK = {"more", "receipt"}
 
     def __init__(self):
         super().__init__()
@@ -354,6 +361,21 @@ class PantryPage(Page):
         self.filt = "all"
         self.find = ""
         self.rows: list[dict | None] = []   # an item per option; None for a place's heading
+        self.shared: list[dict] = []          # pantries shared with you: [{username, name, role}]
+
+    def role(self) -> str:
+        return (self.data.get("pantry") or {}).get("role", "owner")
+
+    def check_action(self, action: str, parameters: tuple) -> bool | None:
+        if action == "whose":
+            return bool(self.shared)
+        if action == "leave":
+            return self.role() != "owner"
+        if action in self.OWNER_ONLY:
+            return self.role() == "owner"
+        if action in self.STOCK:
+            return self.role() in ("owner", "stock")
+        return True
 
     def compose(self) -> ComposeResult:
         yield from self.top()
@@ -371,10 +393,18 @@ class PantryPage(Page):
 
     @attempt
     async def action_refresh(self) -> None:
+        self.shared = (await self.fetch(site.pantry_shares))["shared"]
+        if site.pantry_of and not any(p["username"] == site.pantry_of for p in self.shared):
+            site.set_pantry_of("")
         self.show(await self.fetch(site.pantry, dt.date.today().isoformat()))
 
     def show(self, data: dict, keep: str | None = None) -> None:
         self.data = data
+        self.refresh_bindings()
+        whose = data.get("pantry") or {}
+        self.query_one(".h1", Static).update(Text.assemble(("Pantry", f"bold {INK}"),
+            (f"   {whose['name']}'s, " + ("you can take things out and add what you buy" if whose["role"] == "stock" else "you can take things out")
+             if whose.get("role", "owner") != "owner" else "", MUTED), ("   v switches" if self.shared else "", FAINT)))
         c = data["counts"]
         tabs = []
         for f, name in FILTERS:
@@ -388,7 +418,8 @@ class PantryPage(Page):
         self.rows = []
         items = shown(data["items"], self.filt, self.find)
         if not data["items"]:
-            box.add_option(Option(Text("Nothing in your pantry yet. Press n to add food, like Whole wheat flour, 10 lb.", style=FAINT), disabled=True))
+            box.add_option(Option(Text("Nothing in your pantry yet. Press n to add food, like Whole wheat flour, 10 lb."
+                                       if self.role() == "owner" else "Nothing in this pantry yet.", style=FAINT), disabled=True))
         elif not items:
             box.add_option(Option(Text({"soon": "Nothing to use soon.", "low": "Nothing's running low."}.get(self.filt, "Nothing matches."), style=FAINT), disabled=True))
         for place in data["places"]:
@@ -454,7 +485,12 @@ class PantryPage(Page):
                 t.append(f"{lot['text']}", INK)
                 t.append(f"  bought {nice(lot['added'])}" + (f", expires {nice(lot['expires'])}{est(lot)}" if lot["expires"] else ""), MUTED)
                 t.append("\n")
-        t.append("\n\nu use · m " + ("refill" if i["kind"] == "gauged" else "bought more") + " · e edit" + ("" if i["kind"] == "gauged" else " · p purchases"), FAINT)
+        keys = ["u use"]
+        if self.role() != "use":
+            keys.append("m " + ("refill" if i["kind"] == "gauged" else "bought more"))
+        if self.role() == "owner":
+            keys += ["e edit"] + ([] if i["kind"] == "gauged" else ["p purchases"])
+        t.append("\n\n" + " · ".join(keys), FAINT)
         d.update(t)
 
     # ── actions ────────────────────────────────────────────────────────────
@@ -643,6 +679,40 @@ class PantryPage(Page):
     async def save_key(self, key: str) -> None:
         self.data["photo"] = (await self.fetch(site.pantry_key, key))["photo"]
         self.app.notify("Key saved: receipts are read by Claude now.", timeout=3)
+
+    # ── a household's pantry ───────────────────────────────────────────────
+
+    @attempt
+    async def action_share(self) -> None:
+        shares = (await self.fetch(site.pantry_shares))["shares"]
+        self.app.push_screen(ShareDialog(shares))
+
+    @attempt
+    async def action_whose(self) -> None:
+        """Yours, then each pantry shared with you, in turn."""
+        names = [""] + [p["username"] for p in self.shared]
+        at = names.index(site.pantry_of) if site.pantry_of in names else 0
+        site.set_pantry_of(names[(at + 1) % len(names)])
+        self.show(await self.fetch(site.pantry, dt.date.today().isoformat()))
+        whose = self.data.get("pantry") or {}
+        self.app.notify(f"{whose['name']}'s pantry." if whose.get("name") else "Your pantry.", timeout=3)
+
+    def action_leave(self) -> None:
+        whose = self.data.get("pantry") or {}
+        if whose.get("role", "owner") == "owner":
+            return
+
+        async def sure(yes: bool | None) -> None:
+            if yes:
+                await self.leave(whose)
+        self.app.push_screen(Confirm(f"Leave {whose['name']}'s pantry?", "You'll need them to share it again to get back in.", yes="Leave", danger=True), sure)
+
+    @attempt
+    async def leave(self, whose: dict) -> None:
+        self.shared = (await self.fetch(site.leave_pantry, whose["owner"]))["shared"]
+        site.set_pantry_of("")
+        self.show(await self.fetch(site.pantry, dt.date.today().isoformat()))
+        self.app.notify(f"You left {whose['name']}'s pantry.", timeout=3)
 
     # ── the phone scanner ──────────────────────────────────────────────────
 
