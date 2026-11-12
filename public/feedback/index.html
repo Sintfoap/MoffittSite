@@ -94,6 +94,13 @@ label.field input, label.field textarea, label.field select { width: 100%; color
 .notes button:hover { background: var(--gold-soft); color: var(--ink); }
 .notes button[aria-current="true"] { background: var(--gold-soft); border-left-color: var(--gold); color: var(--ink); }
 .notes .unread b::before { content: "● "; color: var(--bad); }
+.notes .unread b { font-weight: 700; }
+/* what's waiting for you: a note nobody's opened, or a reply since you last looked */
+.new { display: inline-block; margin: 0 6px; padding: 0 5px; font: 700 10px/16px var(--mono, monospace); letter-spacing: 1px; text-transform: uppercase;
+       color: #fff; background: var(--bad); vertical-align: 2px; }
+h2 .new { font-size: 11px; line-height: 18px; vertical-align: 4px; }
+.thread li.unread { border-color: var(--bad); box-shadow: inset 3px 0 0 var(--bad); }
+.thread li.owner.unread { border-left-color: var(--bad); }
 .tag { display: inline-block; padding: 0 6px; margin-right: 6px; font-size: 11px; letter-spacing: 1px; text-transform: uppercase; border: 1px solid var(--line-2); color: var(--muted); }
 .tag.s-new { border-color: var(--gold); color: var(--gold); }
 .tag.s-planned { border-color: var(--warn); color: var(--warn); }

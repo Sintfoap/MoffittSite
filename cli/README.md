@@ -270,6 +270,8 @@ The same club as `/food/`: every month's pick on the left (coming up, this month
 
 The same page as `/feedback/`: the notes you've sent down the left (admins: `v` switches to the inbox of everyone's), the open one on the right with its status, photos, what it links to and the replies. A note goes only to the site's admins.
 
+What's waiting for you is marked as it is on the web: the top line of every page says `● 2 feedback` (and the `g` menu shows `Feedback ●2`) while admins have new notes or replies, or a sender has a reply from the owner. In the list a red dot says UNREAD (a note no admin has opened) or NEW REPLY, and in the open note each reply since you last looked has a red bar and NEW. Opening the note reads it, and the count goes down.
+
 | Key | |
 |---|---|
 | `n` | write a note: what kind (idea, bug, praise, question), a subject and what's on your mind (`ctrl+s` sends) |

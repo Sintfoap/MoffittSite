@@ -271,7 +271,22 @@ class SiteApp(App):
             return Text("")
         u = self.data["user"]
         host = self.data["site"].split("://", 1)[-1]
-        return Text.assemble((u["display_name"], INK), ("   ADMIN" if u["admin"] else "", GOLD_DIM), (f"   {host}", MUTED))
+        # Counts on menu entries, as the web rail shows them: feedback waiting for you.
+        badges = [(n["label"], n["badge"]) for n in self.data.get("nav") or [] if n.get("badge")]
+        waiting = Text.assemble(*((f"● {b} {label.lower()}   ", f"bold {BAD}") for label, b in badges))
+        return Text.assemble(waiting, (u["display_name"], INK), ("   ADMIN" if u["admin"] else "", GOLD_DIM), (f"   {host}", MUTED))
+
+    def set_badge(self, nav_id: str, n: int) -> None:
+        """A page read something: change its menu entry's count and the top line of every page."""
+        for item in (self.data or {}).get("nav") or []:
+            if item["id"] == nav_id:
+                if n:
+                    item["badge"] = n
+                else:
+                    item.pop("badge", None)
+        for screen in self.screen_stack:
+            if isinstance(screen, Page):
+                screen.set_who()
 
     def go(self, where: str | None) -> None:
         """The g chord, as on the website. The letters and where they lead come

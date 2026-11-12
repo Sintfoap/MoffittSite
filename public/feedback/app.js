@@ -70,6 +70,8 @@ function renderTabs() {
   const inbox = document.querySelector("[data-tab=inbox]");
   inbox.hidden = !data.owner;
   if (data.owner) label(inbox, `Inbox (${data.inbox.length})`, unread(data.inbox));
+  // The rail's Feedback count goes down as notes are read (the inbox holds your own notes too).
+  window.sintfoapBadge?.("feedback", unread(data.owner ? data.inbox : data.mine));
   $("#headline").textContent = data.owner && tab === "inbox" ? "What people have sent you" : "Tell the site's owner what you think";
 }
 
@@ -96,7 +98,8 @@ function renderList() {
     const bits = [tab === "inbox" ? n.by : null, KIND[n.kind] || n.kind, when(n.last_at),
       n.photos ? plural(n.photos, "photo") : "", n.links ? plural(n.links, "link") : "", n.replies ? plural(n.replies, "reply", "replies") : ""].filter(Boolean);
     const b = el("button", { type: "button", className: n.unread ? "unread" : "" },
-      el("b", {}, el("span", { className: `tag s-${n.status}`, textContent: STATUS[n.status] || n.status }), n.subject),
+      el("b", {}, el("span", { className: `tag s-${n.status}`, textContent: STATUS[n.status] || n.status }),
+        n.unread ? el("span", { className: "new", textContent: n.why === "note" ? "unread" : "new reply" }) : "", n.subject),
       el("small", { textContent: bits.join(" · ") }));
     b.setAttribute("aria-current", String(n.id === open));
     b.addEventListener("click", () => openNote(n.id));
@@ -155,7 +158,7 @@ function renderDetail() {
   }
   const card = el("article", { className: "card note" });
   card.append(el("div", { className: "when", textContent: [KIND[n.kind] || n.kind, STATUS[n.status] || n.status, when(n.created)].join(" · ") }));
-  card.append(el("h2", { textContent: n.subject || "(no subject)" }));
+  card.append(el("h2", {}, n.subject || "(no subject)", n.new_to_you ? el("span", { className: "new", textContent: "new" }) : ""));
   card.append(el("div", { className: "by", textContent: n.yours ? (n.seen_by_owner ? "From you · the owner has read it" : "From you · not read yet") : `From ${n.by}${n.username ? ` (${n.username})` : ""}` }));
   if (n.message) card.append(el("p", { className: "body", textContent: n.message }));
 
@@ -208,8 +211,9 @@ function renderDetail() {
 
   card.append(el("h3", { textContent: "Replies" }));
   if (n.replies.length) {
-    card.append(el("ul", { className: "thread" }, ...n.replies.map(r => el("li", { className: r.from_owner ? "owner" : "" },
-      el("div", { className: "who" }, el("b", { textContent: r.yours ? "You" : r.by }), r.from_owner && !r.yours ? " · the owner" : "", ` · ${when(r.created)}`),
+    card.append(el("ul", { className: "thread" }, ...n.replies.map(r => el("li", { className: [r.from_owner ? "owner" : "", r.unread ? "unread" : ""].join(" ").trim() },
+      el("div", { className: "who" }, el("b", { textContent: r.yours ? "You" : r.by }), r.from_owner && !r.yours ? " · the owner" : "", ` · ${when(r.created)}`,
+        r.unread ? el("span", { className: "new", textContent: "new" }) : ""),
       el("div", { className: "text", textContent: r.text })))));
   } else card.append(el("p", { className: "empty", textContent: n.yours ? "No reply yet. You'll see the owner's answer here." : "No replies yet." }));
   const form = el("form", { id: "reply-form" });

@@ -1,7 +1,8 @@
 // The site rail's own buttons, on every signed-in page:
 // - Collapse folds the rail down to its icons, and back (or the \ key);
 // - Menu, on a phone, opens the whole menu under the bar (html.rail-open);
-// - Dark mode / Light mode picks the site's look over the system's.
+// - Dark mode / Light mode picks the site's look over the system's;
+// - a count on Feedback when notes or replies wait for you (sintfoapBadge sets it).
 // This browser remembers the fold and the look. Loaded just before the rail,
 // without defer, so a folded rail or a picked look is in place before it's drawn.
 (() => {
@@ -77,6 +78,31 @@
     for (const b of document.querySelectorAll("[data-rail-menu]")) b.setAttribute("aria-expanded", String(open));
   };
   document.addEventListener("DOMContentLoaded", label);
+
+  // ── counts on entries ─────────────────────────────────────────────────
+  // Feedback shows how many notes wait for you: new ones and unread replies for
+  // the admins, the owner's unread replies for whoever sent them. The Feedback
+  // page calls sintfoapBadge("feedback", n) as notes are read, so it clears there.
+  const badge = (id, n) => {
+    for (const a of document.querySelectorAll(`.rail a[data-nav="${id}"]`)) {
+      let b = a.querySelector(".badge");
+      if (!n) { b?.remove(); a.removeAttribute("data-badge"); continue; }
+      if (!b) { b = document.createElement("b"); b.className = "badge"; a.querySelector("span")?.after(b); }
+      b.textContent = n > 99 ? "99+" : String(n);
+      a.dataset.badge = n;
+      const what = `${n} unread`;
+      b.title = what;
+      a.setAttribute("aria-label", `${a.title} (${what})`);
+    }
+    for (const m of document.querySelectorAll("[data-rail-menu]")) m.classList.toggle("has-badge", !!document.querySelector(".rail a[data-badge]"));
+  };
+  let told = false;   // the page set a count itself, so the fetched one is older
+  window.sintfoapBadge = (id, n) => { told = true; badge(id, n); };
+  document.addEventListener("DOMContentLoaded", () => {
+    if (!document.querySelector('.rail a[data-nav="feedback"]')) return;
+    fetch("/feedback/api/unread", { credentials: "same-origin" }).then(r => r.ok ? r.json() : null)
+      .then(d => { if (d && typeof d.unread === "number" && !told) badge("feedback", d.unread); }).catch(() => {});
+  });
   document.addEventListener("click", e => {
     if (e.target.closest?.("[data-rail-fold]")) fold();
     else if (e.target.closest?.("[data-theme-toggle]")) toggle();
