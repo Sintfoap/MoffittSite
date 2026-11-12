@@ -117,3 +117,12 @@ test("deleting the account turns its links off", async () => {
   assert.equal(sqlOne(env, "SELECT COUNT(*) AS n FROM recipe_shares").n, 0);
   assert.equal((await new Browser(env).get(share)).status, 404);
 });
+
+test("the page asks visitors to sign up while the site takes new accounts, and not once it's closed", async () => {
+  const env = makeEnv(), ryan = await cook(env), r = await recipe(ryan);
+  const { share } = (await api(ryan, "POST", `recipes/${r.id}/share`)).json;
+  const open = (await new Browser(env).get(share)).text;
+  assert.match(open, /<a class="cta" href="\/signup">Sign up<\/a>/);
+  env.SIGNUPS = "closed";
+  assert.doesNotMatch((await new Browser(env).get(share)).text, /href="\/signup"/);
+});
