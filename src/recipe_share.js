@@ -116,6 +116,13 @@ ol.steps li { margin-bottom: 10px; }
 ol.steps li::marker { color: var(--gold); font-weight: 700; }
 .notes { white-space: pre-wrap; color: var(--muted); margin: 0; }
 footer { margin-top: 22px; color: var(--faint); font-size: 12.5px; }
+.join { position: relative; margin-top: 22px; padding: 18px clamp(16px, 4vw, 28px); border: 1px dashed var(--line); background: var(--gold-soft);
+  display: flex; flex-wrap: wrap; gap: 12px 20px; align-items: center; justify-content: space-between; }
+.join p { margin: 0; color: var(--ink); max-width: 46ch; }
+.join p b { color: var(--gold); }
+a.cta { display: inline-block; padding: 8px 16px; font: 700 12.5px var(--mono); letter-spacing: 1.5px; text-transform: uppercase; text-decoration: none;
+  color: var(--panel); background: var(--gold); border: 1px solid var(--gold); white-space: nowrap; }
+a.cta::before { content: "[ "; } a.cta::after { content: " ]"; }
 .empty { color: var(--faint); }`;
 
 const FONTS = `<link rel="preconnect" href="https://fonts.googleapis.com"><link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">`;
@@ -126,7 +133,11 @@ const shell = (title, body) => `<!doctype html><html lang="en"><head><meta chars
 
 const hostOf = u => { try { return new URL(u).hostname.replace(/^www\./, ""); } catch { return ""; } };
 
-export function sharePage(r, token) {
+// Under the recipe, while the site takes new accounts (SIGNUPS "open", as /signup goes by): an invitation to make one.
+const JOIN = `<aside class="join" aria-label="Create an account"><p><b>Like this recipe?</b> Make a free account on sintfoap.xyz to keep, scale and share recipes of your own.</p>
+<a class="cta" href="/signup">Sign up</a></aside>`;
+
+export function sharePage(r, token, { signups = false } = {}) {
   const own = OWN_PHOTO.test(r.image);
   const img = own ? `${sharePath(token)}/photo` : /^https:\/\//.test(r.image) ? r.image : "";
   const facts = [r.time, r.servings ? `Serves ${format(r.servings)}` : "", r.yield && !/^\d+(\.\d+)?$/.test(r.yield) ? r.yield : ""].filter(Boolean).map(esc);
@@ -142,6 +153,7 @@ export function sharePage(r, token) {
   ${r.steps.length ? `<h2>Steps</h2><ol class="steps">${r.steps.map(s => `<li>${esc(s)}</li>`).join("")}</ol>` : ""}
   ${r.notes ? `<h2>Notes</h2><p class="notes">${esc(r.notes)}</p>` : ""}
 </article>
+${signups ? JOIN : ""}
 <footer>Shared from a Recipe box on <a href="/">sintfoap.xyz</a>. No account needed to read it.</footer>`;
   return shell(`${r.title} · Recipe`, body);
 }
@@ -168,5 +180,5 @@ export async function sharedPage(request, env, pathname) {
     if (res.ok) res.headers.set("Cache-Control", "no-store");
     return res;
   }
-  return new Response(request.method === "HEAD" ? null : sharePage(found.recipe, m[1]), { headers: HEADERS });
+  return new Response(request.method === "HEAD" ? null : sharePage(found.recipe, m[1], { signups: String(env.SIGNUPS || "").toLowerCase() === "open" }), { headers: HEADERS });
 }
