@@ -54,7 +54,7 @@ export default {
   actions: {
     toggle,
     showDone: (_, ctx) => { ctx.viewState.showDone = !ctx.viewState.showDone; ctx.render(); },
-    // Clears the ticked items the Done group counts (with a search on, just the matches); the toast undoes it.
+    // Clears the ticked items on screen (Done in Checklist, ticked rows in List; with a search on, just the matches); the toast undoes it.
     clearDone: (_, ctx) => {
       const ids = ctx.items.filter(it => it.meta.checklist?.done && !ctx.pending.has(it.id)).map(it => it.id);
       ctx.removeItems?.(ids, n => `Cleared ${n} checked item${n === 1 ? "" : "s"}`);
