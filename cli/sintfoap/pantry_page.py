@@ -12,7 +12,8 @@ edits, p corrects or takes off a purchase, x removes it, f shows all, use
 soon or running low, / finds. c reads a grocery receipt from a photo (Claude
 with your key, k, or the site's AI): each line matched to what you have or
 offered as new, with an estimated expiry date, to check before it's added.
-Store abbreviations are remembered once added. s pairs the Pantry scanner
+Store abbreviations are remembered once added. b takes barcodes (typed,
+or from a USB barcode scanner) and checks them the same way. s pairs the Pantry scanner
 app on a phone (a QR code to scan), and unpairs phones. h shares your pantry
 with your household, by username: "full" adds and changes anything, as you do;
 "stock" takes things out and adds what's bought; "use" only takes things out. v switches to a pantry someone shared with you, and
@@ -20,6 +21,7 @@ l leaves it."""
 from __future__ import annotations
 
 import datetime as dt
+import re
 
 from rich.text import Text
 from textual.app import ComposeResult
@@ -348,7 +350,7 @@ class PantryPage(Page):
     """
     BINDINGS = [Binding("n", "add", "Add food"), Binding("u", "use", "Use"), Binding("m", "more", "Bought more"),
                 Binding("e", "edit", "Edit"), Binding("p", "lots", "Purchases"), Binding("x", "remove", "Remove"),
-                Binding("f", "filter", "Show"), Binding("slash", "find", "Find"), Binding("c", "receipt", "Receipt"),
+                Binding("f", "filter", "Show"), Binding("slash", "find", "Find"), Binding("c", "receipt", "Receipt"), Binding("b", "barcodes", "Barcodes"),
                 Binding("s", "scanner", "Phone scanner"), Binding("h", "share", "Share"), Binding("v", "whose", "Whose pantry"), Binding("l", "leave", "Leave it"),
                 Binding("k", "key", "Claude key", show=False), Binding("r", "refresh", "Refresh")]
     # What each role may do in a pantry shared with you (the owner may do everything): "full" changes
@@ -646,6 +648,29 @@ class PantryPage(Page):
             self.app.notify(f"Claude couldn't read it ({out['why'].split('. ')[0].rstrip('.')}), so the site's AI did.", timeout=6)
         self.check_receipt(out["store"], out["date"], out["by"], ReceiptDialog.rows_from(out["lines"]))
 
+    def action_barcodes(self) -> None:
+        async def answer(text: str | None) -> None:
+            codes = [c for c in re.split(r"[\s,]+", text or "") if c]
+            if codes:
+                await self.look_up_barcodes(codes)
+        self.app.push_screen(Ask("Scan barcodes",
+                                 "Type the barcodes, or scan them with a USB barcode scanner, with spaces between. The same one twice "
+                                 "is two of it. On a phone, the phone app's Pantry tab scans them with the camera.",
+                                 placeholder="012345678905 5000159484695", ok="Look them up"), answer)
+
+    @attempt
+    async def look_up_barcodes(self, codes: list[str]) -> None:
+        counts: dict[str, int] = {}
+        for raw in codes:
+            code = raw[1:] if re.fullmatch(r"0\d{12}", raw) else raw   # a UPC-A as 13 digits: the 12, as phones read it
+            if not re.fullmatch(r"\d{6,14}", code):
+                self.app.notify(f"{raw} isn't a barcode (6 to 14 digits).", severity="error", timeout=5)
+                return
+            counts[code] = counts.get(code, 0) + 1
+        day = dt.date.today().isoformat()
+        found = [(code, n, await self.fetch(site.pantry_barcode, code, day)) for code, n in counts.items()]
+        self.check_receipt("", "", "barcodes", ReceiptDialog.barcode_rows(found))
+
     def check_receipt(self, store: str, date: str, by: str, rows: list[dict]) -> None:
         async def checked(send: list[dict] | None) -> None:
             if send is not None:
@@ -658,11 +683,11 @@ class PantryPage(Page):
         names = ", ".join(a["name"] for a in out["added"])
         self.show(await self.fetch(site.pantry, dt.date.today().isoformat()))
         if not out["failed"]:
-            self.app.notify(f"Added {len(out['added'])} from the receipt" + (f": {names}." if names else "."), timeout=6)
+            self.app.notify(f"Added {len(out['added'])}" + (" from the receipt" if by != "barcodes" else "") + (f": {names}." if names else "."), timeout=6)
             return
         # The ones that couldn't go in stay to fix, each saying why.
-        why = {f["printed"]: f["error"] for f in out["failed"]}
-        left = [{**r, "error": why[r["printed"]]} for r in send if r["printed"] in why]
+        why = {f.get("key") or f["printed"]: f["error"] for f in out["failed"]}
+        left = [{**r, "error": why[r.get("key") or r["printed"]]} for r in send if (r.get("key") or r["printed"]) in why]
         self.app.notify(f"Added {len(out['added'])}. {plural(len(left), 'line')} still need a fix.", severity="warning", timeout=6)
         self.check_receipt(store, date, by, left)
 

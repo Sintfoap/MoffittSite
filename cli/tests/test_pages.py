@@ -2564,6 +2564,44 @@ def test_pantry_pairs_a_phone_scanner_in_the_terminal(real_site):
     run_app("pantry", scanner)
 
 
+def test_pantry_scans_barcodes_in_the_terminal(real_site):
+    async def barcodes(app, pilot):
+        page = app.screen
+        # b takes barcodes, typed or from a USB scanner; the same one twice is two of it.
+        await pilot.press("b")
+        await settle(pilot)
+        app.screen.query_one("#answer").value = "4000000000006 4000000000006"
+        await pilot.press("enter")
+        await settle(pilot, 1.5)
+        check = app.screen
+        assert type(check).__name__ == "ReceiptDialog" and check.by == "barcodes"
+        [row] = check.rows
+        assert (row["barcode"], row["item"], row["amount"], row["name"]) == ("4000000000006", "", "2", "")
+        # Nobody knows it: named once, it's new.
+        await pilot.press("enter")
+        await settle(pilot)
+        app.screen.query_one("#name").value = "Oat milk"
+        await pilot.press("ctrl+s")
+        await settle(pilot)
+        await pilot.press("ctrl+s")
+        await settle(pilot, 1.0)
+        assert app.screen is page
+        milk = next(i for i in site.pantry()["items"] if i["name"] == "Oat milk")
+        # Next time the barcode is known, and adds to it. A UPC-A typed as 13 digits is the same 12.
+        await pilot.press("b")
+        await settle(pilot)
+        app.screen.query_one("#answer").value = "4000000000006 0012345678905"
+        await pilot.press("enter")
+        await settle(pilot, 1.5)
+        rows = {r["barcode"]: r for r in app.screen.rows}
+        assert rows["4000000000006"]["item"] == milk["id"] and rows["4000000000006"]["match"]["how"] == "barcode"
+        assert "012345678905" in rows
+        if SHOTS:
+            app.save_screenshot("pantry-barcodes-check.svg", SHOTS)
+        await pilot.press("escape")
+    run_app("pantry", barcodes)
+
+
 def test_pantry_reads_a_receipt_in_the_terminal(real_site, tmp_path):
     photo = tmp_path / "receipt.jpg"
     photo.write_bytes(JPEG)
