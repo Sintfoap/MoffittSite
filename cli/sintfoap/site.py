@@ -965,6 +965,15 @@ def pair_pantry_scanner() -> dict:
     return api("POST", "/pantry/api/scanners", {})
 
 
+def pantry_scanner_release() -> dict:
+    """Where to get the scanner app: {version, url} (Android's newest APK; version None before the first)
+    and ios (the iPhone app's TestFlight link, or None). No sign-in needed. See src/pantry.js."""
+    status, data = call(site_url(), "GET", "/pantry/scanner/latest.json")
+    if status != 200 or not isinstance(data, dict):
+        raise _error(status, data)
+    return data
+
+
 def unpair_pantry_scanner(scanner_id: str) -> dict:
     """Stops that phone's key working: {scanners} left."""
     return api("DELETE", f"/pantry/api/scanners/{_q(scanner_id)}")

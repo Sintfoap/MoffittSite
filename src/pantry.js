@@ -41,7 +41,7 @@
 // /pantry/api/add                    POST {store?, lines}: the same, for lines not from a receipt (the scanner's barcodes)
 // /pantry/api/barcode/<digits>       GET → what a barcode is, and what it would add
 // /pantry/api/scanners[/<id>]        GET the paired phones, POST a pairing code, DELETE unpairs one (src/pantry_scanner.js)
-// /pantry/scanner/pair, /pantry/scanner/latest.json   the app's pairing (no session), and its newest release
+// /pantry/scanner/pair, /pantry/scanner/latest.json   the app's pairing (no session), and its newest release (and the iPhone app's link)
 //   Lots record where their expiry date came from: by is "typed", "estimated" (from how long such things keep) or "scanned".
 
 import { db } from "./db.js";
@@ -62,6 +62,8 @@ const SOON_DAYS = 5;
 const ID = /^i_[0-9a-f]{10}$/;
 export const SCANNER_TAG = /^scanner-v(\d{1,6})$/;
 export const SCANNER_APK = "pantry-scanner.apk";
+// The iPhone scanner's TestFlight (or App Store) link, if there is one.
+const iosScanner = env => /^https:\/\/(testflight|apps)\.apple\.com\/[\w/.-]+$/.test(env.SCANNER_IOS_URL || "") ? env.SCANNER_IOS_URL : null;
 const ROUTE = /^\/pantry\/api\/(?:key|add|(?:shares|shared)(?:\/[a-z0-9][a-z0-9_-]{2,31})?|receipt(?:\/add)?|scanners(?:\/[0-9a-f]{16})?|barcode\/\d{6,14}|items(?:\/(i_[0-9a-f]{10})(?:\/(use|lots)(?:\/(t_[0-9a-f]{8}))?)?)?)\/?$/;
 const isObj = v => v && typeof v === "object" && !Array.isArray(v);
 const today = () => new Date().toISOString().slice(0, 10);
@@ -492,9 +494,10 @@ export async function pantryScanner(request, env, pathname) {
   }
   if (pathname === "/pantry/scanner/latest.json") {
     // The newest scanner app on GitHub (a scanner-v<N> release, .github/workflows/scanner.yml), for the page's
-    // download link and the app's own update check. {version: null} before the first.
+    // download link and the app's own update check. {version: null} before the first. ios is where the
+    // iPhone app is (scanner-ios/, on TestFlight): the SCANNER_IOS_URL variable, or null until it's set.
     if (request.method !== "GET") return reply({ error: "method not allowed" }, 405);
-    return reply({ version: null, ...await latestOf(env, SCANNER_TAG, SCANNER_APK) });
+    return reply({ version: null, ...await latestOf(env, SCANNER_TAG, SCANNER_APK), ios: iosScanner(env) });
   }
   if (!/^Bearer\s/i.test(request.headers.get("Authorization") || "")) return null;
   if (!pathname.startsWith("/pantry/api/") || /^\/pantry\/api\/(key|scanners)(\/|$)/.test(pathname)) return reply({ error: "a scanner can't do that" }, 403);

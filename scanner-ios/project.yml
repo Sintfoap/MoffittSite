@@ -1,0 +1,53 @@
+# Pantry scanner for iPhone. The Xcode project is made from this file by
+# XcodeGen (brew install xcodegen; then `xcodegen` in scanner-ios/), so there
+# is no .xcodeproj to keep in git. .github/workflows/scanner-ios.yml builds it;
+# see the README's "Pantry scanner (iPhone)" section.
+name: PantryScanner
+options:
+  bundleIdPrefix: xyz.sintfoap
+  deploymentTarget:
+    iOS: "16.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "1.0"
+    CURRENT_PROJECT_VERSION: "1"
+packages:
+  PantryCore:
+    path: Core
+targets:
+  PantryScanner:
+    type: application
+    platform: iOS
+    sources:
+      - App
+    dependencies:
+      - package: PantryCore
+    scheme: {}
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: xyz.sintfoap.scanner
+        PRODUCT_NAME: Pantry scanner
+        TARGETED_DEVICE_FAMILY: "1"
+        CODE_SIGN_STYLE: Automatic
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+    info:
+      path: App/Info.plist
+      properties:
+        CFBundleDisplayName: Pantry scanner
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSRequiresIPhoneOS: true
+        UILaunchScreen:
+          UIColorName: LaunchBackground
+        UIRequiredDeviceCapabilities: [arm64]
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        UIUserInterfaceStyle: Dark
+        ITSAppUsesNonExemptEncryption: false
+        NSCameraUsageDescription: The scanner reads receipts, barcodes and the Pantry page's pairing code with the camera.
+        PantryDefaultSite: https://sintfoap.xyz
+        # The Pantry page's pairing QR code, when the iPhone's Camera app scans it.
+        CFBundleURLTypes:
+          - CFBundleURLName: xyz.sintfoap.scanner.pair
+            CFBundleURLSchemes: [sintfoap-scanner]

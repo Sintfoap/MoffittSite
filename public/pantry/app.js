@@ -580,12 +580,21 @@ async function newPairCode() {
   tick();
   pairTimer = setInterval(tick, 1000);
 }
+// Where to get the app: Android's APK (the newest scanner-v<N> release), and the iPhone's TestFlight link.
+function scannerGet(latest) {
+  const out = ["Get the app on your phone. Android: "];
+  out.push(...(latest.version
+    ? [el("a", { href: latest.url, textContent: `download version ${latest.version}` }), " (Android asks once to allow installing it)."]
+    : ["there's no release to download yet."]));
+  out.push(" iPhone: ", ...(latest.ios
+    ? [el("a", { href: latest.ios, textContent: "get it on TestFlight" }), " (install Apple's TestFlight app first)."]
+    : ["not out yet."]));
+  return out;
+}
 function scannerDialog() {
   run(async () => {
     const [phones, latest] = await Promise.all([api("GET", "scanners"), fetch("/pantry/scanner/latest.json").then(r => r.json()).catch(() => ({}))]);
-    $("#scanner-get").replaceChildren(...(latest.version
-      ? ["Get the app on your phone: ", el("a", { href: latest.url, textContent: `download version ${latest.version}` }), " (Android asks once to allow installing it)."]
-      : ["Get the app on your phone (there's no release to download yet)."]));
+    $("#scanner-get").replaceChildren(...scannerGet(latest));
     renderPhones(phones.scanners);
     await newPairCode();
     $("#scanner-dialog").showModal();
