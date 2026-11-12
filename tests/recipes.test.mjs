@@ -203,6 +203,51 @@ test("saving from a link, editing, and deleting", async () => {
   assert.equal((await ryan.req("POST", "/recipes/api/recipes", { json: { title: "x" }, origin: "https://evil.test" })).status, 403);
 });
 
+test("made it and your stars: yours alone, cleaned, and kept off the board", async () => {
+  const env = makeEnv(), ryan = await cook(env);
+  grantApps(env, "ryan", "recipes", "board");
+  const toast = (await api(ryan, "POST", "recipes", { title: "Toast", ingredients: "bread" })).json;
+  assert.equal(toast.made, "");
+  assert.equal(toast.rating, 0);
+  const marked = await api(ryan, "PATCH", `recipes/${toast.id}`, { made: "2026-11-03", rating: 4 });
+  assert.equal(marked.status, 200, marked.text);
+  assert.equal(marked.json.made, "2026-11-03");
+  assert.equal(marked.json.rating, 4);
+  assert.equal(marked.json.title, "Toast");
+  // Typed in already made.
+  const soup = (await api(ryan, "POST", "recipes", { title: "Soup", made: "2026-10-01", rating: 5 })).json;
+  assert.equal(soup.rating, 5);
+  for (const bad of [{ rating: 6 }, { rating: 2.5 }, { rating: -1 }, { made: "yesterday" }, { made: "2026-13-01" }]) {
+    assert.equal((await api(ryan, "PATCH", `recipes/${toast.id}`, bad)).status, 400, JSON.stringify(bad));
+  }
+  // Taking them off.
+  const off = (await api(ryan, "PATCH", `recipes/${toast.id}`, { made: "", rating: 0 })).json;
+  assert.equal(off.made, "");
+  assert.equal(off.rating, 0);
+  const again = (await api(ryan, "PATCH", `recipes/${toast.id}`, { made: null, rating: null })).json;
+  assert.equal(again.rating, 0);
+  // Recipes saved before there were marks read back without them.
+  run(env, "UPDATE recipes SET data = json_remove(data, '$.made', '$.rating') WHERE id = ?", soup.id);
+  const old = (await ryan.get("/recipes/api/recipes")).json.recipes.find(r => r.id === soup.id);
+  assert.equal(old.made, "");
+  assert.equal(old.rating, 0);
+
+  // Sharing it on the board doesn't share your marks; nor can a post carry them.
+  await api(ryan, "PATCH", `recipes/${toast.id}`, { made: "2026-11-03", rating: 2 });
+  const post = await ryan.req("POST", "/board/api/posts", { json: { recipe_id: toast.id } });
+  assert.equal(post.status, 201, post.text);
+  assert.equal(post.json.recipe.made, undefined);
+  assert.equal(post.json.recipe.rating, undefined);
+  const typed = await ryan.req("POST", "/board/api/posts", { json: { title: "X", recipe: { ingredients: ["a"], rating: 5, made: "2026-11-03" } } });
+  assert.equal(typed.status, 201, typed.text);
+  assert.equal(typed.json.recipe.rating, undefined);
+  assert.equal(typed.json.recipe.made, undefined);
+
+  // Someone else's box is theirs.
+  const sam = await cook(env, "sam");
+  assert.equal((await api(sam, "PATCH", `recipes/${toast.id}`, { rating: 5 })).status, 404);
+});
+
 test("ingredients go to a Drift shopping list, scaled, and to a list shared with you", async () => {
   const env = makeEnv(), ryan = await cook(env);
   pages.set("https://food.test/pancakes", { html: PAGE });

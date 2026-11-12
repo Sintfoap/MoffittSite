@@ -10,6 +10,8 @@
 // /recipes/api/recipes/<id>/photo  POST {data (base64)} → the recipe, with that as its picture (kept here); DELETE → without a picture
 // /recipes/api/photos/<photo>      GET → a picture kept here
 // /recipes/api/recipes/<id>        PATCH → change the fields sent; DELETE → remove it
+//   Your own marks go the same way: made ("YYYY-MM-DD", the day you last made it, or "" for not yet)
+//   and rating (1 to 5 stars, 0 for none). They're yours alone: never sent to the board or Food club.
 //   A recipe's labels come from the site's list (see labelList): sent as ids, read back as [{id, key, value}].
 //   GET also sends label_list, the whole list to pick from.
 // /recipes/api/recipes/suggest-labels  GET → labels each recipe's words point to, to check before adding (src/autolabel.js)
@@ -45,7 +47,7 @@ export const PHOTO_BYTES = 600 * 1024;
 const nowStamp = () => new Date().toISOString().slice(0, 19);
 const isObj = v => v && typeof v === "object" && !Array.isArray(v);
 
-export const RECIPE = { title: "", source: "", image: "", yield: "", servings: null, time: "", ingredients: [], steps: [], notes: "", labels: [], created: "" };
+export const RECIPE = { title: "", source: "", image: "", yield: "", servings: null, time: "", ingredients: [], steps: [], notes: "", labels: [], made: "", rating: 0, created: "" };
 
 function newId() {
   const b = crypto.getRandomValues(new Uint8Array(5));
@@ -139,6 +141,26 @@ export function clean(changes) {
   return out;
 }
 
+// "Made this" and your stars: only on a recipe in your own box (create and
+// updateFor), so clean() (the board's and Food club's too) never takes them.
+const DAY = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
+export function cleanMine(changes) {
+  if (!isObj(changes)) fail("body must be a JSON object");
+  const { made, rating, ...rest } = changes;
+  const out = clean(rest);
+  if (made !== undefined) {
+    const v = made === null || made === false ? "" : String(made).trim();
+    if (v && !(DAY.test(v) && !Number.isNaN(Date.parse(v)))) fail("made must be a date (YYYY-MM-DD), or \"\" for not made yet");
+    out.made = v;
+  }
+  if (rating !== undefined) {
+    const n = rating === null || rating === "" ? 0 : Number(rating);
+    if (!Number.isInteger(n) || n < 0 || n > 5) fail("rating must be a whole number of stars from 1 to 5, or 0 for none");
+    out.rating = n;
+  }
+  return out;
+}
+
 // ── storage ────────────────────────────────────────────────────────────────
 
 const toRecipe = (row, labels = []) => {
@@ -162,7 +184,7 @@ export async function create(env, user, fields) {
   const d = await db(env);
   const { n } = await d.prepare("SELECT COUNT(*) AS n FROM recipes WHERE owner = ?").bind(user.id).first();
   if (n >= LIMITS.recipes) fail(`recipe limit reached (${LIMITS.recipes})`);
-  const data = clean(fields);
+  const data = cleanMine(fields);
   if (!data.title) fail("a recipe needs a title");
   await checkLabels(d, data.labels);
   if (data.servings === undefined) data.servings = servingsOf(data.yield);
@@ -178,7 +200,7 @@ export async function update(env, user, id, changes) {
 
 // Also the Recipe board's: a change to a post that's someone's box recipe is made to the recipe.
 export async function updateFor(d, owner, id, changes) {
-  const patch = clean(changes);
+  const patch = cleanMine(changes);
   await checkLabels(d, patch.labels);
   const before = await rawRecipe(d, owner, id);
   if (!before) return null;

@@ -763,7 +763,7 @@ def test_recipe_box_labels_filter_and_sort_the_shelf(real_site):
         await pilot.press("o")
         await settle(pilot)
         assert [title[i] for i in ids()] == ["Apple pie", "Stew", "Gazpacho", "Toast"]
-        await pilot.press("o")
+        await pilot.press("o", "o", "o")     # then your rating, the last made, and back to the title
         await settle(pilot)
         assert page.sort_key == ""
         # e: labels are edited with the rest of the recipe.
@@ -790,6 +790,66 @@ KEEPER_EXPORT = """<!DOCTYPE html><html><body>
 <div class="recipe-details"><meta content="b2" itemprop="recipeId"><h2 itemprop="name">Brats</h2>
   <meta content="Main Dish" itemprop="recipeCourse"><div class="recipe-ingredients" itemprop="recipeIngredients"></div><hr /></div>
 </body></html>"""
+
+
+def test_recipe_box_marks_made_and_stars_and_filters_on_them(real_site):
+    import datetime as dt
+    site.add_recipe({"title": "Chili", "ingredients": "1 lb beef"})
+    site.add_recipe({"title": "Pho", "ingredients": "broth"})
+    site.add_recipe({"title": "Tacos", "ingredients": "tortillas"})
+
+    async def marks(app, pilot):
+        page = app.screen
+        titles = lambda: [r["title"] for r in page.shelved()]
+        assert page.current()["title"] == "Chili"
+        assert "Not made yet" in str(page.query_one("#marks").render())
+        # m: made today. 4: four stars.
+        await pilot.press("m")
+        await settle(pilot, 0.5)
+        assert page.current()["made"] == dt.date.today().isoformat()
+        assert "Made today" in str(page.query_one("#marks").render())
+        await pilot.press("4")
+        await settle(pilot, 0.5)
+        assert page.current()["rating"] == 4
+        # Stars on one not made yet mark it made too.
+        page.open = next(r["id"] for r in page.data["recipes"] if r["title"] == "Tacos")
+        await pilot.press("2")
+        await settle(pilot, 0.5)
+        tacos = page.current()
+        assert tacos["rating"] == 2 and tacos["made"]
+        # The same again takes the stars off; m again takes the mark off.
+        await pilot.press("2")
+        await settle(pilot, 0.5)
+        assert page.current()["rating"] == 0 and page.current()["made"]
+        await pilot.press("m")
+        await settle(pilot, 0.5)
+        assert not page.current()["made"]
+        # M: only the ones you've made, then only new ones, then all.
+        await pilot.press("M")
+        await settle(pilot)
+        assert titles() == ["Chili"]
+        assert "MADE  before" in str(page.query_one("#filters").render())
+        await pilot.press("M")
+        await settle(pilot)
+        assert titles() == ["Pho", "Tacos"]
+        await pilot.press("M")
+        await settle(pilot)
+        assert titles() == ["Chili", "Pho", "Tacos"]
+        # R: five stars (none), then four and up.
+        await pilot.press("R")
+        await settle(pilot)
+        assert titles() == []
+        await pilot.press("R")
+        await settle(pilot)
+        assert titles() == ["Chili"]
+        # o: with no labels, sorting by your rating comes right after the title.
+        page.rating_filter = ""
+        await pilot.press("o")
+        await settle(pilot)
+        assert page.sort_key == "@rating" and titles()[0] == "Chili"
+        saved = {r["title"]: r for r in site.recipes()["recipes"]}
+        assert saved["Chili"]["rating"] == 4 and saved["Tacos"]["made"] == ""
+    run_app("recipes", marks)
 
 
 def test_recipe_box_imports_a_recipe_keeper_export(real_site, tmp_path):

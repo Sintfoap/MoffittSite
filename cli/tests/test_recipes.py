@@ -144,3 +144,28 @@ def test_tesseract_reads_the_sample_photos_with_their_fractions():
     assert any(t.startswith("1 large egg") for t in page), page          # a real 1 stays a 1
     card = [line["text"] for line in site.ocr_page(str(PHOTOS / "card.jpg"))]
     assert "Nana's Shortbread" in card and "2 cups flour" in card and "½ cup sugar" in card, card
+
+
+def test_made_it_and_stars_filter_and_sort_as_on_the_website():
+    from datetime import date
+    from sintfoap.recipes_page import arranged, made_on, mark_changes, marked
+    a = {"id": "a", "title": "Chili", "made": "2026-11-03", "rating": 4, "labels": [], "ingredients": []}
+    b = {"id": "b", "title": "Pho", "made": "", "rating": 0, "labels": [], "ingredients": []}
+    c = {"id": "c", "title": "Tacos", "made": "2026-11-10", "rating": 2, "labels": [], "ingredients": []}
+    d = {"id": "d", "title": "Old", "labels": [], "ingredients": []}   # saved before marks
+    box = [a, b, c, d]
+    assert marked(a, "made") and not marked(b, "made") and marked(b, "new") and marked(d, "new")
+    assert [r["id"] for r in arranged(box, [], "", made="made")] == ["a", "c"]
+    assert [r["id"] for r in arranged(box, [], "", rating="3")] == ["a"]
+    assert [r["id"] for r in arranged(box, [], "", rating="none")] == ["d", "b"]
+    assert [r["id"] for r in arranged(box, [], "@rating")] == ["a", "c", "d", "b"]
+    assert [r["id"] for r in arranged(box, [], "@made")] == ["c", "a", "d", "b"]
+    today = date(2026, 11, 12)
+    assert made_on("2026-11-12", today) == "today"
+    assert made_on("2026-11-03", today) == "Nov 3"
+    assert made_on("2025-01-09", today) == "Jan 9, 2025"
+    assert mark_changes(b, made=True, today=today) == {"made": "2026-11-12"}
+    assert mark_changes(a, made=False, today=today) == {"made": "", "rating": 0}
+    assert mark_changes(b, rating=3, today=today) == {"rating": 3, "made": "2026-11-12"}
+    assert mark_changes(a, rating=5, today=today) == {"rating": 5}
+    assert mark_changes(a, rating=4, today=today) == {"rating": 0}
