@@ -579,7 +579,9 @@ def test_recipe_box_saves_from_a_link_scales_and_sends_to_drift(real_site):
         drift = site.drift_state()
         shopping = next(c for c in drift["collections"] if c["name"] == "Shopping list")
         titles = sorted(it["title"] for it in drift["items"] if it["collection"] == shopping["id"])
-        assert titles == ["1½ cup milk", "2¼ cups flour", "3 eggs"]
+        # Just the food, amounts in the notes (ryan's whole wheat flour in Pantry isn't plain flour).
+        assert titles == ["Eggs", "Flour", "Milk"]
+        assert next(it for it in drift["items"] if it["title"] == "Milk")["notes"].startswith("1½ cup for ")
         assert any(x["id"] == shopping["id"] for x in page.data["lists"])
         # A page with no recipe on it opens the editor with the link filled in.
         page.query_one("#url").focus()

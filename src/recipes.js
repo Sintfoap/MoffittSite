@@ -26,7 +26,8 @@
 import { db } from "./db.js";
 import { sameOrigin } from "./account.js";
 import { withRail } from "./pages.js";
-import { readJson, BadRequest, writableCollections, addToList } from "./drift.js";
+import { readJson, BadRequest, writableCollections } from "./drift.js";
+import { gather, shopFor, shopSummary } from "./shopping.js";
 import { imageType } from "./food.js";
 import { scaleLine, servingsOf, factorFor, format } from "../public/recipes/scale.js";
 import { photoState, readPhoto, readPhotoBody, saveKey, forgetKey, readText } from "./recipe_photo.js";
@@ -324,12 +325,12 @@ export async function shop(env, user, id, body) {
   if (!recipe) return null;
   const factor = factorFor(recipe, body);
   const pick = Array.isArray(body.lines) ? new Set(body.lines.map(Number)) : null;
-  const titles = recipe.ingredients.filter((_, i) => !pick || pick.has(i)).map(l => scaleLine(l, factor).slice(0, 500));
-  if (!titles.length) fail("pick at least one ingredient");
+  const lines = recipe.ingredients.filter((_, i) => !pick || pick.has(i)).map(l => scaleLine(l, factor).slice(0, 500));
+  if (!lines.length) fail("pick at least one ingredient");
   const servings = recipe.servings ? Math.round(recipe.servings * factor * 100) / 100 : null;
-  const notes = `For ${recipe.title}` + (servings ? ` (${servings} serving${servings === 1 ? "" : "s"})` : factor !== 1 ? ` (×${format(factor)})` : "");
-  const list = body.list ? String(body.list) : null;
-  return addToList(env, user, list, titles, notes);
+  const label = recipe.title + (servings ? ` (${servings} serving${servings === 1 ? "" : "s"})` : factor !== 1 ? ` (×${format(factor)})` : "");
+  const out = await shopFor(env, user, body.list ? String(body.list) : null, gather(lines.map(line => ({ line, for: label }))));
+  return { ...out, summary: shopSummary(out) };
 }
 
 // ── reading a recipe from a web page ───────────────────────────────────────

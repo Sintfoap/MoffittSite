@@ -11,6 +11,7 @@ const el = (tag, props = {}, ...kids) => {
 
 let data = null;          // GET /meals/api/week: {start, days, recipes, shopping, lists, drift, ...}
 const skip = new Set();   // shopping lines (by text) not to send, while the page is open
+const touched = new Set(); // lines ticked or unticked by hand (ones Pantry has start unticked)
 
 const store = {
   get(k) { try { return localStorage.getItem(k); } catch { return null; } },
@@ -164,9 +165,11 @@ function renderShopping() {
     return;
   }
   data.shopping.forEach(s => {
+    if (s.have && !touched.has(s.line)) skip.add(s.line);
     const box = el("input", { type: "checkbox", checked: !skip.has(s.line) });
-    box.addEventListener("change", () => { box.checked ? skip.delete(s.line) : skip.add(s.line); renderShopping(); });
-    ul.append(el("li", {}, el("label", {}, box, el("span", {}, s.line, el("small", { textContent: s.for.join(", ") })))));
+    box.addEventListener("change", () => { touched.add(s.line); box.checked ? skip.delete(s.line) : skip.add(s.line); renderShopping(); });
+    const note = [...(s.needs?.length ? s.needs : s.for), ...(s.have ? [`In Pantry: ${s.have}`] : [])].join(" · ");
+    ul.append(el("li", {}, el("label", {}, box, el("span", {}, s.line, el("small", { textContent: note })))));
   });
   if (!data.drift) {
     send.append(el("p", { className: "empty", textContent: "Ask the site's admin for Drift to send these to a shopping list." }));
@@ -188,7 +191,7 @@ async function sendToList(list) {
   const lines = data.shopping.map((s, i) => skip.has(s.line) ? -1 : i).filter(i => i >= 0);
   await run(async () => {
     const out = await api("POST", `week/${data.start}/shop`, { lines, ...(list ? { list } : {}) });
-    say("done", `Added ${out.added} to ${out.list.name} in Drift.`);
+    say("done", out.summary || `Added ${out.added} to ${out.list.name} in Drift.`);
     data.shopped = out.shopped;
     if (!list && !data.lists.some(l => l.id === out.list.id)) data.lists.unshift({ id: out.list.id, name: out.list.name, owner_name: null });
     renderShopping();

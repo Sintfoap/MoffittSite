@@ -72,7 +72,7 @@ test("filling a week: quick recipes on busy nights, no repeats, locked and out n
   assert.equal(again["2030-01-07"].recipe, "b");
 });
 
-test("the week's shopping is scaled to each night, with lines shared between recipes listed once", () => {
+test("the week's shopping is scaled to each night, as plain foods, each listed once", () => {
   const byId = new Map([
     ["p", R("p", "", 4, ["2 cups flour", "salt to taste"])],
     ["s", R("s", "", 2, ["1 onion", "Salt to taste"])],
@@ -82,9 +82,9 @@ test("the week's shopping is scaled to each night, with lines shared between rec
   nights["2030-01-08"] = { recipe: "s", servings: 2, out: false, locked: false };
   nights["2030-01-09"] = { recipe: "s", servings: 2, out: true, locked: false };
   assert.deepEqual(shoppingFor(nights, WEEK, byId), [
-    { line: "4 cups flour", for: ["p (Mon)"] },
-    { line: "salt to taste", for: ["p (Mon)", "s (Tue)"] },
-    { line: "1 onion", for: ["s (Tue)"] },
+    { line: "Flour", for: ["p (Mon)"], needs: ["4 cups for p (Mon)"] },
+    { line: "Salt", for: ["p (Mon)", "s (Tue)"], needs: ["For p (Mon)", "For s (Tue)"] },
+    { line: "Onion", for: ["s (Tue)"], needs: ["1 for s (Tue)"] },
   ]);
 });
 
@@ -146,7 +146,7 @@ test("planning a week around the calendar, changing a night, and shopping for it
   w = (await api(ryan, "PUT", "week/2030-01-07/2030-01-08", { recipe: stew.id })).json;
   assert.equal(w.days[1].slow, true);
   w = (await api(ryan, "PUT", "week/2030-01-07/2030-01-08", { recipe: tacos.id, servings: 2 })).json;
-  assert.deepEqual(w.shopping.map(s => s.line), ["4 lb beef chuck", "6 carrots", "½ lb beef", "4 tortillas"]);
+  assert.deepEqual(w.shopping.map(s => s.line), ["Beef chuck", "Carrots", "Beef", "Tortillas"]);
 
   // Bad requests.
   assert.equal((await api(ryan, "PUT", "week/2030-01-08/2030-01-08", { out: true })).status, 400, "not a Monday");
@@ -161,8 +161,8 @@ test("planning a week around the calendar, changing a night, and shopping for it
   assert.equal(sent.json.added, 3);
   assert.equal(sent.json.list.name, "Shopping list");
   const items = (await ryan.get("/todo/api/state")).json.items.filter(i => i.collection === sent.json.list.id);
-  assert.deepEqual(items.map(i => i.title).sort(), ["4 lb beef chuck", "4 tortillas", "½ lb beef"]);
-  assert.equal(items.find(i => i.title === "4 tortillas").notes, "For Tacos (Tue)");
+  assert.deepEqual(items.map(i => i.title).sort(), ["Beef", "Beef chuck", "Tortillas"]);
+  assert.equal(items.find(i => i.title === "Tortillas").notes, "4 for Tacos (Tue)");
   assert.equal((await api(ryan, "GET", "week?start=2030-01-07")).json.shopped.added, 3);
 
   // Weeks are kept apart, and other people can't see yours.

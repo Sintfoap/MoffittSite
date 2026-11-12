@@ -69,7 +69,7 @@ export const said = s => tidy(s, RECEIPT_LIMITS.printed).toUpperCase().replace(/
 const storeKey = s => tidy(s, RECEIPT_LIMITS.store).toLowerCase();
 const plainWords = s => String(s || "").toLowerCase().split(/[^a-z0-9]+/).filter(Boolean).map(singular);
 // Words that don't make it a different food.
-const PLAIN = new Set(["whole", "large", "medium", "small", "extra", "jumbo", "organic", "fresh", "natural", "store", "brand", "value", "family", "size", "pack", "grade", "a", "aa", "of", "the", "and"]);
+const PLAIN = new Set(["whole", "large", "medium", "small", "extra", "jumbo", "organic", "fresh", "natural", "store", "brand", "value", "family", "size", "pack", "grade", "all", "purpose", "a", "aa", "of", "the", "and"]);
 const sameName = (a, b) => { const x = plainWords(a).join(" "); return x && x === plainWords(b).join(" "); };
 // `name` is `mine` with only plain words added ("Whole milk" for Milk, not "Brown sugar" for Sugar).
 const plainerName = (mine, name) => {
