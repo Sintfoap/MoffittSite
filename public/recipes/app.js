@@ -28,7 +28,9 @@ const scale = new Map();  // recipe id → {servings} or {factor}, while the pag
 const skip = new Map();   // recipe id → ingredient indexes not to send
 let filters = [];         // [{key, value}] labels a recipe must have: any value of the same key, every key
 let hits = new Map();     // recipe id → its ingredient lines the ingredient search found, while there is one
-let sortKey = "";
+let sortKey = "";         // "" title, "@rating" your stars, "@made" last made, else a label's key
+let madeFilter = "";      // "" either, "made" made it before (something familiar), "new" not yet (something new)
+let ratingFilter = "";    // "" any, "1"–"5" at least that many stars, "none" not rated
 let findBy = "name";      // what the one search box looks for: "name" (titles, labels, ingredients) or "ingredient" (all of these, -nuts leaves out)
 // recipe id → {language, english, fields, on}: its English, from "Translate to English",
 // shown in place of the original while `on`, and only saved over it when asked.
@@ -104,7 +106,81 @@ function allLabels() {
   return [...keys.values()];
 }
 
+// ── made it, and your stars ────────────────────────────────────────────────
+// Yours alone: the day you last made it ("" not yet) and 1–5 stars (0 none).
+
+const stars = n => "★".repeat(n) + "☆".repeat(5 - n);
+const today = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
+function madeOn(day) {
+  const d = new Date(day + "T12:00:00");
+  if (Number.isNaN(+d)) return day;
+  if (day === today()) return "today";
+  const opts = { month: "short", day: "numeric", ...(d.getFullYear() !== new Date().getFullYear() ? { year: "numeric" } : {}) };
+  return d.toLocaleDateString(undefined, opts);
+}
+function marked(r) {
+  if (madeFilter === "made" && !r.made) return false;
+  if (madeFilter === "new" && r.made) return false;
+  if (ratingFilter === "none") return !r.rating;
+  return !ratingFilter || (r.rating || 0) >= Number(ratingFilter);
+}
+
+// Rating one you haven't marked as made marks it made today: you can't rate what you haven't cooked.
+async function mark(r, changes) {
+  if (changes.rating && !r.made) changes = { ...changes, made: today() };
+  await run(async () => {
+    const fresh = await api("PATCH", "recipes/" + r.id, changes);
+    data.recipes = data.recipes.map(x => x.id === r.id ? fresh : x);
+    renderList();
+    renderDetail();
+  });
+}
+const toggleMade = r => mark(r, r.made ? { made: "", rating: 0 } : { made: today() });
+const rate = (r, n) => mark(r, { rating: r.rating === n ? 0 : n });
+
+function marksRow(r) {
+  const row = el("div", { className: "marks" });
+  if (r.made) {
+    row.append(el("span", { className: "when", textContent: `✓ Made ${madeOn(r.made)}` }));
+    const again = el("button", { type: "button", className: "btn quiet", textContent: "Made it again", title: "Mark it made today", hidden: r.made === today() });
+    again.addEventListener("click", () => mark(r, { made: today() }));
+    const undo = el("button", { type: "button", className: "btn quiet", textContent: "Not made", title: "Take the mark (and your stars) off (m)" });
+    undo.addEventListener("click", () => toggleMade(r));
+    row.append(again, undo);
+  } else {
+    const made = el("button", { type: "button", className: "btn", textContent: "I made this", title: "Mark it made today (m)" });
+    made.addEventListener("click", () => toggleMade(r));
+    row.append(made);
+  }
+  const box = el("span", { className: "rate", role: "group" });
+  box.setAttribute("aria-label", "Your rating");
+  const btns = [1, 2, 3, 4, 5].map(n => {
+    const b = el("button", { type: "button", className: n <= (r.rating || 0) ? "on" : "", textContent: "★",
+      title: r.rating === n ? "Take your stars off (0)" : `${n} star${n === 1 ? "" : "s"} (${n})` });
+    b.setAttribute("aria-label", `${n} star${n === 1 ? "" : "s"}`);
+    b.setAttribute("aria-pressed", String(r.rating === n));
+    b.addEventListener("click", () => rate(r, n));
+    b.addEventListener("mouseenter", () => btns.forEach((x, i) => x.classList.toggle("lit", i < n)));
+    return b;
+  });
+  box.addEventListener("mouseleave", () => btns.forEach(x => x.classList.remove("lit")));
+  box.append(...btns, el("small", { textContent: r.rating ? "your rating" : "rate it" }));
+  row.append(box);
+  return row;
+}
+
+// A new filter opens the first recipe it shows, when the open one isn't among them.
+function refilter() {
+  page = 0;
+  renderFilters();
+  renderList();
+  if (!shown.includes(open) && shown.length) pick(shown[0]); else renderDetail();
+}
+$("#made-filter").addEventListener("change", e => { madeFilter = e.target.value; refilter(); });
+$("#rating-filter").addEventListener("change", e => { ratingFilter = e.target.value; refilter(); });
+
 function passes(r) {
+  if (!marked(r)) return false;
   const keys = new Map();
   for (const f of filters) keys.set(low(f.key), [...(keys.get(low(f.key)) || []), f]);
   return [...keys.values()].every(fs => fs.some(f => has(r, f)));
@@ -135,15 +211,22 @@ function renderFilters() {
     sel.append(g);
   }
   const sort = $("#sort");
-  sort.replaceChildren(new Option("Sort: title", ""), ...labels.map(k => new Option(`Sort: ${k.key}`, low(k.key))));
-  if (!labels.some(k => low(k.key) === sortKey)) sortKey = "";
+  sort.replaceChildren(new Option("Sort: title", ""), ...labels.map(k => new Option(`Sort: ${k.key}`, low(k.key))),
+    new Option("Sort: your rating", "@rating"), new Option("Sort: last made", "@made"));
+  if (!sortKey.startsWith("@") && !labels.some(k => low(k.key) === sortKey)) sortKey = "";
   sort.value = sortKey;
-  sort.disabled = !labels.length;
-  $("#active").replaceChildren(...filters.map(f => {
-    const b = el("button", { type: "button", className: "chip on", title: "Stop filtering by this" }, el("b", { textContent: f.key }), f.value ? f.value : "", " ×");
-    b.addEventListener("click", () => toggleFilter(f));
+  $("#made-filter").value = madeFilter;
+  $("#rating-filter").value = ratingFilter;
+  const chip = (key, value, off) => {
+    const b = el("button", { type: "button", className: "chip on", title: "Stop filtering by this" }, el("b", { textContent: key }), value, " ×");
+    b.addEventListener("click", off);
     return b;
-  }));
+  };
+  const clearMarks = which => () => { if (which === "made") madeFilter = ""; else ratingFilter = ""; refilter(); };
+  $("#active").replaceChildren(
+    ...(madeFilter ? [chip(madeFilter === "made" ? "Made before" : "Not made yet", "", clearMarks("made"))] : []),
+    ...(ratingFilter ? [chip("Stars", ratingFilter === "none" ? "none" : ratingFilter === "5" ? "5" : `${ratingFilter}+`, clearMarks("rating"))] : []),
+    ...filters.map(f => chip(f.key, f.value ? f.value : "", () => toggleFilter(f))));
 }
 
 $("#label-filter").addEventListener("change", e => {
@@ -173,8 +256,11 @@ function renderList() {
     if (at) hits.set(r.id, at);
     return !!at;
   });
+  // By your stars (most first), or the last made (latest first); then the title.
+  if (sortKey === "@rating") match = [...match].sort((a, b) => (b.rating || 0) - (a.rating || 0) || by(a.title, b.title));
+  else if (sortKey === "@made") match = [...match].sort((a, b) => by(b.made || "", a.made || "") || by(a.title, b.title));
   // By a label: its value, then the title; recipes without it go last.
-  if (sortKey) match = [...match].sort((a, b) => {
+  else if (sortKey) match = [...match].sort((a, b) => {
     const x = valueOf(a, sortKey), y = valueOf(b, sortKey);
     if ((x === undefined) !== (y === undefined)) return x === undefined ? 1 : -1;
     return by(x || "", y || "") || by(a.title, b.title);
@@ -187,12 +273,15 @@ function renderList() {
   const ul = $("#recipes");
   ul.replaceChildren();
   if (!data.recipes.length) ul.append(el("li", { className: "empty", textContent: "No recipes yet. Paste a link above." }));
-  else if (!match.length) ul.append(el("li", { className: "empty", textContent: "Nothing matches." }));
+  else if (!match.length) ul.append(el("li", { className: "empty", textContent: madeFilter === "new" && !filters.length && !$("#find").value.trim() && !ratingFilter
+    ? "You've made every one. Time to add something new." : "Nothing matches." }));
   for (const r of match.slice(page * PAGE, page * PAGE + PAGE)) {
-    const sorted = sortKey && valueOf(r, sortKey);
+    const sorted = sortKey && !sortKey.startsWith("@") && valueOf(r, sortKey);
+    const mine = r.rating ? el("span", { className: "stars", textContent: "★".repeat(r.rating) }) : r.made ? "✓ made" : null;
     const tags = labelsOf(r).map(labelText).join(" · ");
     const found = (hits.get(r.id) || []).map(i => r.ingredients[i]).join(" · ");
-    const b = el("button", { type: "button" }, r.title, el("small", { textContent: [sorted, r.time, hostOf(r.source)].filter(Boolean).join(" · ") || `${r.ingredients.length} ingredients` }),
+    const sub = [sorted, r.time, hostOf(r.source)].filter(Boolean).join(" · ") || `${r.ingredients.length} ingredients`;
+    const b = el("button", { type: "button" }, r.title, el("small", {}, ...(mine ? [mine, " · "] : []), sub),
       found ? el("small", { className: "found", textContent: found }) : null,
       tags ? el("span", { className: "tagline", textContent: tags }) : null);
     b.setAttribute("aria-current", String(r.id === open));
@@ -253,6 +342,7 @@ function renderDetail() {
     facts.append(el("a", { href: r.source, textContent: hostOf(r.source) || "source", target: "_blank", rel: "noopener noreferrer" }));
   }
   card.append(facts);
+  card.append(marksRow(base));
   if (labelsOf(r).length) {
     card.append(el("div", { className: "chips" }, ...labelsOf(r).map(l => {
       const on = filters.some(f => f.id === l.id);
@@ -905,6 +995,11 @@ document.addEventListener("keydown", e => {
     L: () => suggest(),
     s: () => r && $("#send") && !$("#send").disabled && $("#send").click(),
     // English: translate the open recipe, or flip between it and the original.
+    m: () => r && toggleMade(r),
+    ...Object.fromEntries([1, 2, 3, 4, 5].map(n => [String(n), () => r && rate(r, n)])),
+    0: () => r && r.rating && mark(r, { rating: 0 }),
+    M: () => $("#made-filter").focus(),
+    R: () => $("#rating-filter").focus(),
     E: () => { if (!r) return; const tr = english.get(r.id); if (tr) { tr.on = !tr.on; renderDetail(); } else translate(r); },
   };
   if (keys[e.key]) { e.preventDefault(); keys[e.key](); }

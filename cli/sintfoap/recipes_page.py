@@ -10,12 +10,16 @@ Claude with your key, k) and t from pasted text, for you to check before
 it's saved. l filters the shelf by labels and f by ingredients ("eggs,
 spinach, -nuts"), with the lines it found lit up. L suggests labels for
 the whole box from each recipe's words (a label's name, or the keywords set
-on it in Recipe labels), to untick any that don't fit before they're added."""
+on it in Recipe labels), to untick any that don't fit before they're added.
+m marks the open recipe made (today) and 1 to 5 give it stars, yours alone;
+M shows only the ones you've made, then only the ones you haven't, and R
+only those with at least so many stars."""
 from __future__ import annotations
 
 import asyncio
 import re
 import zipfile
+from datetime import date
 from pathlib import Path
 from typing import Callable
 from urllib.parse import urlparse
@@ -82,10 +86,63 @@ def named(r: dict, q: str) -> bool:
         or any(q in label_text(lb).casefold() for lb in r.get("labels", []))
 
 
-def arranged(recipes: list[dict], filters: list[dict], sort_key: str, terms: list[dict] | None = None, name: str = "") -> list[dict]:
-    """The shelf: the recipes the filters (and the search, by name or ingredient) let through, by title or by a label's value (those without it last)."""
-    shown = [r for r in by_title(recipes) if passes(r, filters) and named(r, name) and (not terms or R.ingredient_hits(r, terms) is not None)]
-    if sort_key:
+# ── made it, and your stars: yours alone, as on the website ──
+# made is the day you last made it ("" not yet), rating 1–5 stars (0 none).
+
+MADE_FILTERS = ["", "made", "new"]                    # M cycles: either, made it before, not made yet
+RATING_FILTERS = ["", "5", "4", "3", "2", "1", "none"]  # R cycles: any, at least so many stars, not rated
+SORTS = {"": "title", "@rating": "your rating", "@made": "last made"}
+
+
+def marked(r: dict, made: str = "", rating: str = "") -> bool:
+    """Whether the made-it and stars filters let r through, as the website's."""
+    if made == "made" and not r.get("made"):
+        return False
+    if made == "new" and r.get("made"):
+        return False
+    if rating == "none":
+        return not r.get("rating")
+    return not rating or (r.get("rating") or 0) >= int(rating)
+
+
+def stars(n: int) -> str:
+    return "★" * n + "☆" * (5 - n)
+
+
+def made_on(day: str, today: date | None = None) -> str:
+    """"today", "Nov 3", or "Nov 3, 2025" for another year."""
+    today = today or date.today()
+    try:
+        d = date.fromisoformat(day)
+    except ValueError:
+        return day
+    if d == today:
+        return "today"
+    out = f"{d.strftime('%b')} {d.day}"
+    return out if d.year == today.year else f"{out}, {d.year}"
+
+
+def mark_changes(r: dict, made: bool | None = None, rating: int | None = None, today: date | None = None) -> dict:
+    """What to send for m (made toggled) or a number key (stars; the same again takes them off).
+    Rating one not marked made marks it made today; unmarking takes the stars off too."""
+    day = (today or date.today()).isoformat()
+    if made is not None:
+        return {"made": day} if made else {"made": "", "rating": 0}
+    n = 0 if rating == r.get("rating") else rating or 0
+    return {"rating": n, **({"made": day} if n and not r.get("made") else {})}
+
+
+def arranged(recipes: list[dict], filters: list[dict], sort_key: str, terms: list[dict] | None = None, name: str = "",
+             made: str = "", rating: str = "") -> list[dict]:
+    """The shelf: the recipes the filters (and the search, by name or ingredient) let through, by title, your stars,
+    the last made, or a label's value (those without it last)."""
+    shown = [r for r in by_title(recipes) if passes(r, filters) and marked(r, made, rating) and named(r, name)
+             and (not terms or R.ingredient_hits(r, terms) is not None)]
+    if sort_key == "@rating":
+        shown.sort(key=lambda r: -(r.get("rating") or 0))
+    elif sort_key == "@made":
+        shown.sort(key=lambda r: -int((r.get("made") or "0").replace("-", "")))   # latest first, then by title
+    elif sort_key:
         shown.sort(key=lambda r: (value_of(r, sort_key) is None, (value_of(r, sort_key) or "").casefold()))
     return shown
 
@@ -399,6 +456,12 @@ class RecipesPage(Page):
         Binding("L", "suggest", "Suggest labels"),
         Binding("f", "ingredients", "Ingredients"),
         Binding("o", "sort", "Sort"),
+        Binding("m", "made", "Made it"),
+        Binding("1", "rate(1)", "Stars 1–5"),
+        *[Binding(str(n), f"rate({n})", f"{n} stars", show=False) for n in (2, 3, 4, 5)],
+        Binding("0", "rate(0)", "No stars", show=False),
+        Binding("M", "made_filter", "Made / new"),
+        Binding("R", "rating_filter", "By stars"),
         Binding("b", "board", "Share on board"),
         # Shown only for a recipe that doesn't read as English (or has its
         # English ready); the second E translates any recipe, as on the website.
@@ -420,7 +483,9 @@ class RecipesPage(Page):
         self.skip: dict[str, set[int]] = {}    # recipe id → ingredient indexes not to send
         self.pending_picture: bytes | None = None   # a photo draft's picture, kept once it's saved if ticked
         self.filters: list[dict] = []          # labels the shelf shows only recipes with
-        self.sort_key = ""                     # "" by title, else a label's key
+        self.sort_key = ""                     # "" by title, "@rating", "@made", else a label's key
+        self.made_filter = ""                  # M: "" either, "made" made it before, "new" not yet
+        self.rating_filter = ""                # R: "" any, "5"…"1" at least that many stars, "none" not rated
         self.ingredients = ""                  # what f looks for: "eggs, spinach, -nuts"
         self.find_name = ""                    # what / looks for; one search at a time, like the website's one box
         self.english: dict[str, dict] = {}     # recipe id → {language, fields, on}: E's translation, shown while on
@@ -437,6 +502,7 @@ class RecipesPage(Page):
                     yield Static(id="english")
                     yield Static(id="title")
                     yield Static(id="facts")
+                    yield Static(id="marks")
                     yield Static(id="tags")
                     yield Static(id="serves")
                     yield Static("INGREDIENTS", classes="group", id="ing-head")
@@ -478,7 +544,7 @@ class RecipesPage(Page):
         return R.ingredient_terms(self.ingredients)
 
     def shelved(self) -> list[dict]:
-        return arranged(self.data["recipes"], self.filters, self.sort_key, self.terms(), self.find_name)
+        return arranged(self.data["recipes"], self.filters, self.sort_key, self.terms(), self.find_name, self.made_filter, self.rating_filter)
 
     def current(self) -> dict | None:
         return next((r for r in (self.data or {}).get("recipes", []) if r["id"] == self.open), None)
@@ -493,14 +559,23 @@ class RecipesPage(Page):
                 shelf.add_option(Option(Text("No recipes yet. Paste a link above.", style=FAINT), disabled=True))
                 return
             if not recipes:
-                why = "Nothing matches. " + " or ".join(k for k, on in (("l", self.filters), ("/", self.find_name.strip()), ("f", self.ingredients.strip())) if on) + " changes the filter."
+                why = "Nothing matches. " + " or ".join(k for k, on in (("l", self.filters), ("/", self.find_name.strip()), ("f", self.ingredients.strip()),
+                                                                     ("M", self.made_filter), ("R", self.rating_filter)) if on) + " changes the filter."
+                if self.made_filter == "new" and not (self.filters or self.find_name.strip() or self.ingredients.strip() or self.rating_filter):
+                    why = "You've made every one. Time to add something new (a, or M to see them all)."
                 shelf.add_option(Option(Text(why, style=FAINT), disabled=True))
                 return
             terms = self.terms()
             for r in recipes:
-                sorted_by = value_of(r, self.sort_key) if self.sort_key else None
+                sorted_by = value_of(r, self.sort_key) if self.sort_key and not self.sort_key.startswith("@") else None
                 sub = " · ".join(x for x in (sorted_by, r.get("time"), host(r.get("source", ""))) if x) or plural(len(r["ingredients"]), "ingredient")
-                t = Text.assemble((r["title"], f"bold {INK}"), ("\n" + sub, FAINT))
+                t = Text.assemble((r["title"], f"bold {INK}"), "\n")
+                if r.get("rating"):
+                    t.append("★" * r["rating"], style=GOLD)
+                    t.append(" · ", style=FAINT)
+                elif r.get("made"):
+                    t.append("✓ made · ", style=FAINT)
+                t.append(sub, style=FAINT)
                 found = " · ".join(r["ingredients"][i] for i in R.ingredient_hits(r, terms) or []) if terms else ""
                 if found:
                     t.append("\n" + found, style=GOLD)
@@ -524,7 +599,18 @@ class RecipesPage(Page):
             bits.append(("   " if bits.plain else "") + "INGREDIENTS  ", style=FAINT)
             bits.append(", ".join(("without " if t["without"] else "") + t["text"] for t in terms), style=f"bold {GOLD}")
             bits.append("   f changes", style=FAINT)
-        if self.sort_key:
+        if self.made_filter:
+            bits.append(("   " if bits.plain else "") + "MADE  ", style=FAINT)
+            bits.append("before" if self.made_filter == "made" else "not yet", style=f"bold {GOLD}")
+            bits.append("   M changes", style=FAINT)
+        if self.rating_filter:
+            bits.append(("   " if bits.plain else "") + "STARS  ", style=FAINT)
+            bits.append("none" if self.rating_filter == "none" else "★" * int(self.rating_filter) + ("" if self.rating_filter == "5" else " and up"), style=f"bold {GOLD}")
+            bits.append("   R changes", style=FAINT)
+        if self.sort_key in SORTS and self.sort_key:
+            bits.append(("   " if bits.plain else "") + "SORT  ", style=FAINT)
+            bits.append(SORTS[self.sort_key], style=f"bold {GOLD}")
+        elif self.sort_key:
             key = next((lb["key"] for lb, _ in all_labels(self.data["recipes"]) if lb["key"].casefold() == self.sort_key), self.sort_key)
             bits.append(("   " if bits.plain else "") + "SORT  ", style=FAINT)
             bits.append(key, style=f"bold {GOLD}")
@@ -552,7 +638,7 @@ class RecipesPage(Page):
                 (f"Translated from {tr['language']}" if tr["on"] else f"In {tr['language']}; the English is ready", MUTED),
                 ("   E ", f"bold {GOLD}"), ("the original" if tr["on"] else "the English", INK),
                 ("   S ", f"bold {GOLD}"), ("save the English", INK)))
-        parts = ["#ing-head", "#ingredients", "#send", "#no-drift", "#steps-head", "#steps", "#notes-head", "#notes", "#serves", "#facts", "#tags"]
+        parts = ["#ing-head", "#ingredients", "#send", "#no-drift", "#steps-head", "#steps", "#notes-head", "#notes", "#serves", "#facts", "#marks", "#tags"]
         for p in parts:
             self.query_one(p).display = bool(r)
         if not r:
@@ -563,6 +649,7 @@ class RecipesPage(Page):
         if r.get("image"):
             bits.append("has a picture (c changes it)")
         self.query_one("#facts", Static).update(" · ".join(bits))
+        self.query_one("#marks", Static).update(self.marks_line(self.current()))
         tags = Text()
         for i, lb in enumerate(r.get("labels", [])):
             tags.append(("" if i == 0 else "   ") + lb["key"], style=f"bold {GOLD}")
@@ -620,6 +707,25 @@ class RecipesPage(Page):
         self.query_one("#notes", Static).update(Text(r.get("notes", ""), style=MUTED))
         self.refresh_bindings()   # E shows in the footer only for a recipe that isn't in English
 
+    def marks_line(self, r: dict) -> Text:
+        """Made it (when) and your stars, with the keys that change them."""
+        line = Text()
+        if r.get("made"):
+            line.append(f"✓ Made {made_on(r['made'])}", style=f"bold {INK}")
+            line.append("   m ", style=f"bold {GOLD}")
+            line.append("not made", style=MUTED)
+        else:
+            line.append("Not made yet", style=MUTED)
+            line.append("   m ", style=f"bold {GOLD}")
+            line.append("I made this", style=INK)
+        line.append("     ")
+        n = r.get("rating") or 0
+        line.append("★" * n, style=f"bold {GOLD}")
+        line.append("☆" * (5 - n), style=GOLD_DIM)
+        line.append("   1–5 ", style=f"bold {GOLD}")
+        line.append("your rating" if n else "rate it", style=MUTED)
+        return line
+
     def show_send(self, r: dict) -> None:
         n = len(r["ingredients"]) - len([i for i in self.skip.get(r["id"], set()) if i < len(r["ingredients"])])
         btn = self.query_one("#send-btn", Button)
@@ -675,7 +781,8 @@ class RecipesPage(Page):
         if action == "english" and not self.offers_english():
             return False   # the footer's E; the hidden one (english_any) still translates
 
-        if action in ("servings", "add", "find", "new", "import_file", "photo", "paste", "key", "edit", "picture", "send", "delete", "refresh", "board", "labels", "suggest", "ingredients", "sort", "english", "english_any", "save_english") and isinstance(self.focused, (Input, TextArea)):
+        if action in ("servings", "add", "find", "new", "import_file", "photo", "paste", "key", "edit", "picture", "send", "delete", "refresh", "board", "labels", "suggest", "ingredients", "sort", "english", "english_any", "save_english",
+                      "made", "rate", "made_filter", "rating_filter") and isinstance(self.focused, (Input, TextArea)):
             return False
         return True
 
@@ -866,12 +973,48 @@ class RecipesPage(Page):
         self.app.notify(f"Added {plural(labels, 'label')} to {plural(recipes, 'recipe')}.{extra}", timeout=6)
 
     def action_sort(self) -> None:
-        """o: sort by title, then by each label's key in turn."""
+        """o: sort by title, then by each label's key in turn, then your rating and the last made."""
         keys = sorted({lb["key"].casefold() for lb, _ in all_labels((self.data or {}).get("recipes", []))})
-        order = [""] + keys
+        order = [""] + keys + ["@rating", "@made"]
         self.sort_key = order[(order.index(self.sort_key) + 1) % len(order)] if self.sort_key in order else ""
         self.reshelve()
-        self.app.notify(f"Sorted by {self.sort_key or 'title'}.", timeout=2)
+        self.app.notify(f"Sorted by {SORTS.get(self.sort_key, self.sort_key)}.", timeout=2)
+
+    # ── made it, and your stars ───────────────────────────────────────────
+
+    @attempt
+    async def mark(self, changes: dict) -> None:
+        r = self.current()
+        if not r:
+            return
+        fresh = await self.fetch(site.update_recipe, r["id"], changes)
+        self.data["recipes"] = [fresh if x["id"] == r["id"] else x for x in self.data["recipes"]]
+        self.reshelve()
+
+    async def action_made(self) -> None:
+        """m: mark the open recipe made today, or take the mark (and its stars) off."""
+        r = self.current()
+        if r:
+            await self.mark(mark_changes(r, made=not r.get("made")))
+
+    async def action_rate(self, n: int) -> None:
+        """1–5: that many stars (the same again, or 0, takes them off)."""
+        r = self.current()
+        if r and (n or r.get("rating")):
+            await self.mark(mark_changes(r, rating=n))
+
+    def action_made_filter(self) -> None:
+        """M: only the ones you've made (something familiar), then only the new ones, then all."""
+        self.made_filter = MADE_FILTERS[(MADE_FILTERS.index(self.made_filter) + 1) % len(MADE_FILTERS)]
+        self.reshelve()
+        self.app.notify({"": "Showing made and not made.", "made": "Showing ones you've made.", "new": "Showing ones you haven't made yet."}[self.made_filter], timeout=2)
+
+    def action_rating_filter(self) -> None:
+        """R: at least 5 stars, then 4, 3, 2, 1, then not rated, then any."""
+        self.rating_filter = RATING_FILTERS[(RATING_FILTERS.index(self.rating_filter) + 1) % len(RATING_FILTERS)]
+        self.reshelve()
+        f = self.rating_filter
+        self.app.notify("Any rating." if not f else "Not rated yet." if f == "none" else f"{stars(int(f))}{'' if f == '5' else ' and up'}.", timeout=2)
 
     def reshelve(self) -> None:
         shown = self.shelved()
