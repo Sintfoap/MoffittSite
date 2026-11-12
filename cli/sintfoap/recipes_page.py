@@ -2,7 +2,8 @@
 
 Your recipes down the left, the open one on the right, scaled to the servings
 you pick (+ and -). Space ticks which ingredients to send, and s sends them to
-a Drift list. A link pasted in the box at the top is read by the site, as on
+a Drift list. With Pantry, lines it already has say so ("Pantry has 2 cans")
+and start unticked, as on the website; tick one to send it anyway. A link pasted in the box at the top is read by the site, as on
 the website; n types one in by hand, i imports a file of them (Recipe
 Keeper's export, with its pictures, or a saved recipe page), p reads one from
 a photo (a cookbook page, a screenshot: by tesseract on this computer, or by
@@ -585,6 +586,7 @@ class RecipesPage(Page):
         self.open: str | None = None
         self.scale: dict[str, dict] = {}       # recipe id → {servings} or {factor}
         self.skip: dict[str, set[int]] = {}    # recipe id → ingredient indexes not to send
+        self.have: dict[str, dict[int, dict] | None] = {}  # recipe id → {index: what Pantry has of that line}, once asked
         self.pending_picture: bytes | None = None   # a photo draft's picture, kept once it's saved if ticked
         self.filters: list[dict] = []          # labels the shelf shows only recipes with
         self.sort_key = ""                     # "" by title, "@rating", "@made", else a label's key
@@ -838,6 +840,10 @@ class RecipesPage(Page):
             line.append(f"   (the recipe makes {R.format_amount(r['servings'])})" if servings is not None else "   of the recipe", style=FAINT)
         self.query_one("#serves", Static).update(line)
 
+        if self.data.get("pantry") and self.data.get("drift") and r["ingredients"] and r["id"] not in self.have:
+            self.have[r["id"]] = None
+            self.run_worker(self.ask_pantry(r["id"]), group="pantry")
+        has_it = self.have.get(r["id"]) or {}
         off = self.skip.get(r["id"], set())
         ing = self.query_one("#ingredients", SelectionList)
         terms = self.terms()
@@ -850,6 +856,8 @@ class RecipesPage(Page):
                 line = Text(scaled, style=f"bold {GOLD}" if scaled != raw else INK)
                 if i in found:
                     line.stylize("on #3a3420")
+                if i in has_it:
+                    line.append(f"   Pantry has {has_it[i]['text']}", style=FAINT)
                 ing.add_option(Selection(line, i, i not in off))
         if at is not None and r["ingredients"]:
             ing.highlighted = min(at, len(r["ingredients"]) - 1)
@@ -1514,6 +1522,22 @@ class RecipesPage(Page):
             await self.action_send()
 
     @attempt
+    async def ask_pantry(self, recipe_id: str) -> None:
+        """What Pantry already has of the recipe's ingredients: shown on those lines, and unticked the first time
+        (as on the website), so s leaves them off unless you tick them."""
+        try:
+            out = await asyncio.to_thread(site.recipe_pantry, recipe_id)
+        except Exception:
+            self.have.pop(recipe_id, None)
+            return
+        got = {h["index"]: h for h in out.get("have", [])}
+        self.have[recipe_id] = got
+        if got and recipe_id not in self.skip:
+            self.skip[recipe_id] = set(got)
+        r = self.current()
+        if r and r["id"] == recipe_id:
+            self.show_recipe()
+
     async def action_send(self) -> None:
         r = self.current()
         if not r or not r["ingredients"] or not self.data.get("drift"):
@@ -1525,7 +1549,8 @@ class RecipesPage(Page):
             return
         s = self.scale.get(r["id"], {})
         to = self.query_one("#list", Select).value
-        out = await self.fetch(lambda: site.shop(r["id"], lines, s.get("servings"), s.get("factor"), to if isinstance(to, str) and to else None))
+        out = await self.fetch(lambda: site.shop(r["id"], lines, s.get("servings"), s.get("factor"), to if isinstance(to, str) and to else None,
+                                                 pantry=r["id"] not in self.have or self.have[r["id"]] is None))
         if not any(x["id"] == out["list"]["id"] for x in self.data["lists"]):
             self.data["lists"].insert(0, {"id": out["list"]["id"], "name": out["list"]["name"], "owner_name": None})
             self.show_send(r)

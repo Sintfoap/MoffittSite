@@ -131,7 +131,7 @@ const SHELL_CSS = `
   .keybar kbd { font-size: 13px; margin-right: 6px; }
   .keybar .end { margin-left: auto; }
   @media (max-width: 820px) {
-    .shell { grid-template-columns: 1fr; padding-bottom: 0; }
+    .shell { grid-template-columns: 1fr; align-content: start; padding-bottom: 0; }
     .page { padding-top: 26px; }
     .keybar { display: none; }
   }

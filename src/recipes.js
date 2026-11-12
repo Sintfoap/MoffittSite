@@ -5,7 +5,7 @@
 // almost every recipe site publishes for search engines), falling back to
 // microdata. Scaling is public/recipes/scale.js, shared with the page.
 //
-// /recipes/api/recipes             GET → {recipes, label_list, lists, drift, board (has Recipe board), labels (keeps Recipe labels), photo}; POST {url} or {title, ...} → a new recipe
+// /recipes/api/recipes             GET → {recipes, label_list, lists, drift, board (has Recipe board), pantry (has Pantry), labels (keeps Recipe labels), photo}; POST {url} or {title, ...} → a new recipe
 // /recipes/api/recipes/import      POST {pages: [html, ...]} → {added, skipped}: many at once, from an export file
 // /recipes/api/recipes/<id>/photo  POST {data (base64)} → the recipe, with that as its picture (kept here); DELETE → without a picture
 // /recipes/api/photos/<photo>      GET → a picture kept here
@@ -18,7 +18,9 @@
 // /recipes/api/recipes/add-labels      POST {add: [{id, labels: [label ids]}], at most 200} → {recipes, labels, full}: added to the ones they have
 // /recipes/api/recipes/<id>/translate  POST → {language, english, fields}: the recipe in English, saved only by a PATCH (src/translate.js)
 // /recipes/api/recipes/<id>/share  GET, POST (make), DELETE (turn off) its public link (src/recipe_share.js); GET recipes carries each one's as `share`
-// /recipes/api/recipes/<id>/shop   POST {servings | factor, lines?, list?} → its ingredients onto a Drift list
+// /recipes/api/recipes/<id>/shop   POST {servings | factor, lines?, list?, pantry?} → its ingredients onto a Drift list
+//                                  (what Pantry has is left off, unless pantry is false: you saw it and picked anyway)
+// /recipes/api/recipes/<id>/pantry GET → {have: [{index, text, pantry}]}: the ingredient lines your pantry has, to show and leave unticked
 // /recipes/api/reviews             GET → {reviews, unread}: what people who made the recipes you shared on the board thought of them,
 //                                    newest first (each with new, since you last looked); POST /recipes/api/reviews/seen → the same, all read
 // /recipes/api/photo, /recipes/api/key   a recipe read from a photo, and the API key it's read with (src/recipe_photo.js)
@@ -27,7 +29,7 @@ import { db } from "./db.js";
 import { sameOrigin } from "./account.js";
 import { withRail } from "./pages.js";
 import { readJson, BadRequest, writableCollections } from "./drift.js";
-import { gather, shopFor, shopSummary } from "./shopping.js";
+import { gather, shopFor, shopSummary, haveFor } from "./shopping.js";
 import { imageType } from "./food.js";
 import { scaleLine, servingsOf, factorFor, format } from "../public/recipes/scale.js";
 import { photoState, readPhoto, readPhotoBody, saveKey, forgetKey, readText } from "./recipe_photo.js";
@@ -42,7 +44,7 @@ export class NotARecipe extends Error {}
 
 const LIMITS = { labels: 20, recipes: 1000, importPages: 10, importBody: 4 * 1024 * 1024, title: 200, url: 2000, yield: 100, time: 50, lines: 100, ingredient: 300, step: 3000, notes: 5000, page: 3 * 1024 * 1024 };
 const ID = /^r_[0-9a-f]{10}$/;
-const ROUTE = /^\/recipes\/api\/recipes(?:\/(import|suggest-labels|add-labels)|\/(r_[0-9a-f]{10})(?:\/(shop|photo|translate|share))?)?\/?$/;
+const ROUTE = /^\/recipes\/api\/recipes(?:\/(import|suggest-labels|add-labels)|\/(r_[0-9a-f]{10})(?:\/(shop|photo|translate|share|pantry))?)?\/?$/;
 const PHOTO = /^\/recipes\/api\/photos\/(p_[0-9a-f]{10})$/;
 const REVIEWS = /^\/recipes\/api\/reviews(?:\/(seen))?\/?$/;
 // A picture kept here (an imported recipe's own photo) instead of a link to a site's.
@@ -329,7 +331,8 @@ export async function shop(env, user, id, body) {
   if (!lines.length) fail("pick at least one ingredient");
   const servings = recipe.servings ? Math.round(recipe.servings * factor * 100) / 100 : null;
   const label = recipe.title + (servings ? ` (${servings} serving${servings === 1 ? "" : "s"})` : factor !== 1 ? ` (×${format(factor)})` : "");
-  const out = await shopFor(env, user, body.list ? String(body.list) : null, gather(lines.map(line => ({ line, for: label }))));
+  // pantry: false when you've seen what Pantry has (the page shows it) and picked the lines yourself.
+  const out = await shopFor(env, user, body.list ? String(body.list) : null, gather(lines.map(line => ({ line, for: label }))), { pantry: body.pantry !== false });
   return { ...out, summary: shopSummary(out) };
 }
 
@@ -782,7 +785,7 @@ export async function recipes(request, env, user, pathname) {
         const drift = user.areas.has("todo");
         const shared = await sharesOf(await db(env), user.id);
         const mine = (await list(env, user)).map(r => ({ ...r, share: shared.get(r.id) || null }));
-        return json({ recipes: mine, label_list: await labelList(await db(env)), drift, board: user.areas.has("board"), labels: user.areas.has("labels"), lists: drift ? await writableCollections(env, user) : [], photo: await photoState(env, user) });
+        return json({ recipes: mine, label_list: await labelList(await db(env)), drift, board: user.areas.has("board"), pantry: user.areas.has("pantry"), labels: user.areas.has("labels"), lists: drift ? await writableCollections(env, user) : [], photo: await photoState(env, user) });
       }
       if (method !== "POST") return notAllowed();
       const body = await readJson(request);
@@ -796,6 +799,11 @@ export async function recipes(request, env, user, pathname) {
       if (method !== "POST") return notAllowed();
       const r = await get(await db(env), user.id, id);
       return r ? json(await translate(env, user, recipeText(r))) : json({ error: "not found" }, 404);
+    }
+    if (sub === "pantry") {
+      if (method !== "GET") return notAllowed();
+      const r = await get(await db(env), user.id, id);
+      return r ? json({ have: await haveFor(env, user, r.ingredients) }) : json({ error: "not found" }, 404);
     }
     if (sub === "share") out = method === "GET" ? await getShare(env, user, id) : method === "POST" ? await makeShare(env, user, id) : method === "DELETE" ? await stopShare(env, user, id) : undefined;
     else if (sub === "photo") out = method === "POST" ? await setPhoto(env, user, id, await readImport(request)) : method === "DELETE" ? await removePhoto(env, user, id) : undefined;

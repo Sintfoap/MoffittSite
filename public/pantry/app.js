@@ -137,7 +137,14 @@ function render() {
   $("#place-list").replaceChildren(...[...new Set([...data.usual_places, ...data.places])].map(p => el("option", { value: p })));
   const box = $("#places");
   if (!data.items.length) {
-    box.replaceChildren(el("section", { className: "card" }, el("p", { className: "empty", textContent: edits() ? "Nothing in your pantry yet. Add food to start, like Whole wheat flour, 10 lb." : "Nothing in this pantry yet." })));
+    // The ways to start, right where you're looking.
+    const add = edits() ? el("button", { type: "button", className: "btn", textContent: "Add food" }) : null;
+    add?.addEventListener("click", () => itemDialog());
+    const rec = stocks() ? el("button", { type: "button", className: "btn quiet", textContent: "Scan a receipt" }) : null;
+    rec?.addEventListener("click", pickReceipt);
+    box.replaceChildren(el("section", { className: "card" },
+      el("p", { className: "empty", textContent: edits() ? "Nothing in your pantry yet. Add food to start, like Whole wheat flour, 10 lb, or scan a grocery receipt." : "Nothing in this pantry yet." }),
+      add || rec ? el("div", { className: "row" }, add, rec) : null));
     return;
   }
   const items = shown();
@@ -145,13 +152,30 @@ function render() {
     box.replaceChildren(el("p", { className: "empty", textContent: filter === "soon" ? "Nothing to use soon." : filter === "low" ? "Nothing's running low." : "Nothing matches." }));
     return;
   }
-  box.replaceChildren(...data.places.map(p => {
+  box.replaceChildren(...[shopBar(items)].filter(Boolean), ...data.places.map(p => {
     const here = items.filter(i => i.place === p);
     if (!here.length) return null;
     return el("section", { className: "card place" },
       el("h2", {}, p, el("small", { textContent: `${here.length}` })),
       el("ul", { className: "items" }, ...here.map(row)));
   }).filter(Boolean));
+}
+
+// Under Running low: put the staples that are low or out on your Drift shopping list (t).
+function shopBar(items) {
+  const low = items.filter(i => i.staple && (i.is_low || i.is_out));
+  if (filter !== "low" || !low.length) return null;
+  if (!data.drift) return el("p", { className: "shopbar empty", textContent: "Ask the site's admin for Drift to put these on a shopping list." });
+  const go = el("button", { type: "button", className: "btn", id: "shop-btn", textContent: "Add to shopping list", title: "t" });
+  go.addEventListener("click", shopLow);
+  return el("div", { className: "shopbar" }, el("span", { textContent: `${low.length} staple${low.length === 1 ? " is" : "s are"} low or out.` }), go);
+}
+function shopLow() {
+  if (!data?.drift || !data.counts.low) return;
+  const b = $("#shop-btn");
+  if (b) b.disabled = true;
+  run(async () => { const out = await api("POST", "shop", {}); say("done", out.summary); })
+    .finally(() => { if (b) b.disabled = false; });
 }
 
 async function load() {
@@ -614,6 +638,7 @@ document.addEventListener("keydown", e => {
   if (e.key === "r" && stocks()) { e.preventDefault(); pickReceipt(); }
   if (e.key === "s" && mine()) { e.preventDefault(); scannerDialog(); }
   if (e.key === "h" && mine()) { e.preventDefault(); shareDialog(); }
+  if (e.key === "t" && data?.counts.low) { e.preventDefault(); filter = "low"; render(); shopLow(); }
 });
 
 run(load);

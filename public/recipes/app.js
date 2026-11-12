@@ -26,6 +26,7 @@ let shown = [];           // the ids in the list, as filtered
 let editing = null;       // the recipe in the editor, or {} for a new one
 const scale = new Map();  // recipe id → {servings} or {factor}, while the page is open
 const skip = new Map();   // recipe id → ingredient indexes not to send
+const have = new Map();   // recipe id → {index → what Pantry has of that line}, once asked (GET recipes/<id>/pantry)
 let filters = [];         // [{key, value}] labels a recipe must have: any value of the same key, every key
 let hits = new Map();     // recipe id → its ingredient lines the ingredient search found, while there is one
 let sortKey = "";         // "" title, "@rating" your stars, "@made" last made, else a label's key
@@ -285,7 +286,11 @@ function renderList() {
       found ? el("small", { className: "found", textContent: found }) : null,
       tags ? el("span", { className: "tagline", textContent: tags }) : null);
     b.setAttribute("aria-current", String(r.id === open));
-    b.addEventListener("click", () => pick(r.id));
+    b.addEventListener("click", () => {
+      pick(r.id);
+      // On a phone the recipe opens under the whole list, so go to it.
+      if (matchMedia("(max-width: 820px)").matches) $("#detail").scrollIntoView({ behavior: "smooth", block: "start" });
+    });
     ul.append(el("li", {}, b));
   }
   const pager = $("#pager");
@@ -444,6 +449,8 @@ function renderDetail() {
     factor !== 1 ? el("small", { className: "empty", textContent: r.servings ? `(the recipe makes ${r.servings})` : "of the recipe" }) : null));
 
   card.append(el("h3", { textContent: "Ingredients" }));
+  if (data.pantry && data.drift && r.ingredients.length && !have.has(base.id)) askPantry(base);
+  const has = have.get(base.id);
   const off = skip.get(r.id) || new Set();
   const ul = el("ul", { className: "ingredients" });
   r.ingredients.forEach((line, i) => {
@@ -455,7 +462,9 @@ function renderDetail() {
       skip.set(r.id, s);
       renderDetail();
     });
-    const li = el("li", {}, el("label", {}, box, el("span", { className: scaled !== line ? "changed" : "", textContent: scaled })));
+    const got = has?.get(i);
+    const li = el("li", {}, el("label", {}, box, el("span", { className: scaled !== line ? "changed" : "", textContent: scaled }),
+      got ? el("small", { className: "pantry", textContent: `Pantry has ${got.text}`, title: `${got.pantry} is in your pantry, so it starts unticked` }) : null));
     if (hits.get(r.id)?.includes(i)) { li.className = "hit"; li.title = "What you searched for"; }
     ul.append(li);
   });
@@ -517,6 +526,8 @@ function openShare(r) {
     $("#share-text").textContent = `Anyone with this link can read ${r.title}, without an account: its picture, ingredients, steps and notes, as you keep them here. Nothing else of yours is on it. Turn it off any time and the link stops working.`;
     $("#share-url").value = fullLink(r.share);
     $("#share-copy").textContent = "Copy link";
+    // The phone's own share sheet (Messages, mail…), where the browser has one.
+    $("#share-send").hidden = !navigator.share;
     renderDetail();
     $("#sharer").showModal();
     $("#share-url").select();
@@ -527,6 +538,10 @@ $("#share-copy").addEventListener("click", async () => {
   try { await navigator.clipboard.writeText(box.value); }
   catch { box.select(); document.execCommand?.("copy"); }
   $("#share-copy").textContent = "Copied";
+});
+$("#share-send").addEventListener("click", () => {
+  const r = sharing;
+  if (r) navigator.share?.({ title: r.title, url: $("#share-url").value }).catch(() => {});
 });
 $("#share-stop").addEventListener("click", () => {
   const r = sharing;
@@ -577,12 +592,26 @@ function translatedBar(r, tr) {
     el("span", { textContent: tr.on ? `Translated from ${tr.language}` : `In ${tr.language}; the English is ready` }), flip, save, hide);
 }
 
+// What Pantry already has of a recipe's ingredients: shown on those lines, and
+// unticked the first time, so sending to a list leaves them off unless you tick them.
+async function askPantry(r) {
+  have.set(r.id, null);
+  try {
+    const out = await api("GET", `recipes/${r.id}/pantry`);
+    const m = new Map(out.have.map(h => [h.index, h]));
+    have.set(r.id, m);
+    if (m.size && !skip.has(r.id)) skip.set(r.id, new Set(m.keys()));
+  } catch { have.delete(r.id); return; }
+  if (open === r.id) renderDetail();
+}
+
 async function sendToList(r, list) {
   const off = skip.get(r.id) || new Set();
   const lines = r.ingredients.map((_, i) => i).filter(i => !off.has(i));
   const s = scale.get(r.id) || {};
   await run(async () => {
-    const out = await api("POST", `recipes/${r.id}/shop`, { ...s, lines, ...(list ? { list } : {}) });
+    // Once the page has shown what Pantry has, what's ticked is what goes, Pantry or not.
+    const out = await api("POST", `recipes/${r.id}/shop`, { ...s, lines, ...(list ? { list } : {}), ...(have.has(r.id) ? { pantry: false } : {}) });
     say("done", out.summary || `Added ${out.added} to ${out.list.name} in Drift.`);
     if (!list && !data.lists.some(l => l.id === out.list.id)) data.lists.unshift({ id: out.list.id, name: out.list.name, owner_name: null });
     renderDetail();

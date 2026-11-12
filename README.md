@@ -58,7 +58,7 @@ src/             the Worker: runs only for the paths in run_worker_first
   recipe_share.js  Recipe box's share links: /r/<token> shows one recipe to anyone, no sign-in, until its owner turns the link off
   autolabel.js     Recipe box's Suggest labels: labels from the list that a recipe's words point to (a label's value, or keywords set on it), no AI
   recipe_photo.js  Recipe box: a recipe read from a photo (by Claude, with Sweep's API key, or by Workers AI's vision model without one) or from text (pasted, or read off a photo on the device), to check before saving
-  pantry.js        Pantry: each person's food as measured things, counted things (whole units) and gauged ones (Full to Empty), any of them a staple with a low point, each purchase with its own expiry
+  pantry.js        Pantry: each person's food as measured things, counted things (whole units) and gauged ones (Full to Empty), any of them a staple with a low point (the ones running low go on your Drift shopping list from Running low), each purchase with its own expiry
   pantry_scanner.js  Pantry: pairing the scanner app (scanner/) with a QR code, its keys, and barcodes (yours, then Open Food Facts)
   pantry_receipt.js  Pantry: a grocery receipt read from photos (through recipe_photo.js), each line matched to what you have or offered as new, with an estimated expiry; store abbreviations remembered
   meals.js         Meal plan: a week of dinners picked from Recipe box, quick ones on busy Drift nights, and the week's shopping sent to a Drift list

@@ -17,7 +17,7 @@ or from a USB barcode scanner) and checks them the same way. s pairs the Pantry 
 app on a phone (a QR code to scan), and unpairs phones. h shares your pantry
 with your household, by username: "full" adds and changes anything, as you do;
 "stock" takes things out and adds what's bought; "use" only takes things out. v switches to a pantry someone shared with you, and
-l leaves it."""
+l leaves it. t puts the staples running low or out on your Drift shopping list (the website's Add to shopping list)."""
 from __future__ import annotations
 
 import datetime as dt
@@ -352,6 +352,7 @@ class PantryPage(Page):
                 Binding("e", "edit", "Edit"), Binding("p", "lots", "Purchases"), Binding("x", "remove", "Remove"),
                 Binding("f", "filter", "Show"), Binding("slash", "find", "Find"), Binding("c", "receipt", "Receipt"), Binding("b", "barcodes", "Barcodes"),
                 Binding("s", "scanner", "Phone scanner"), Binding("h", "share", "Share"), Binding("v", "whose", "Whose pantry"), Binding("l", "leave", "Leave it"),
+                Binding("t", "shop", "Low to list"),
                 Binding("k", "key", "Claude key", show=False), Binding("r", "refresh", "Refresh")]
     # What each role may do in a pantry shared with you (the owner may do everything): "full" changes
     # the food too, "stock" adds what's bought, "use" only takes things out.
@@ -375,6 +376,8 @@ class PantryPage(Page):
             return bool(self.shared)
         if action == "leave":
             return self.role() != "owner"
+        if action == "shop":
+            return bool(self.data.get("drift", True)) and bool(self.data["counts"].get("low"))
         if action in self.OWNER_ONLY:
             return self.role() == "owner"
         if action in self.FULL:
@@ -416,7 +419,8 @@ class PantryPage(Page):
         for f, name in FILTERS:
             tabs += [(name, f"bold {GOLD}" if f == self.filt else MUTED), (f" {c[f]}" if c[f] else "", FAINT), ("   ", "")]
         self.query_one("#sub", Static).update(Text.assemble(*tabs, (f"finding “{self.find}”   " if self.find else "", WARN),
-                                                            ("f switches, / finds, n adds food", FAINT)))
+                                                            ("f switches, / finds, n adds food", FAINT),
+                                                            ("   t puts them on your shopping list" if self.filt == "low" and c["low"] and data.get("drift", True) else "", GOLD)))
         box = self.query_one("#list", OptionList)
         at = self.current()
         keep = keep or (at and at["id"])
@@ -610,6 +614,14 @@ class PantryPage(Page):
     async def remove(self, i: dict) -> None:
         await self.fetch(site.delete_pantry_item, i["id"])
         await self.done({}, f"Removed {i['name']}.")
+
+    @attempt
+    async def action_shop(self) -> None:
+        """The staples running low or out, onto your Drift shopping list (the web page's Add to shopping list)."""
+        out = await self.fetch(site.pantry_shop)
+        self.filt = "low"
+        self.show(self.data)
+        self.app.notify(out.get("summary") or f"Added {out['added']} to {out['list']['name']}.", timeout=6)
 
     def action_filter(self) -> None:
         names = [f for f, _ in FILTERS]

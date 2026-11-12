@@ -17,10 +17,11 @@
 // first guess at an item's kind are public/pantry/units.js, shared with the page.
 //
 // Receipts fill it (src/pantry_receipt.js), and so does the phone scanner app with
-// barcodes and expiry dates (src/pantry_scanner.js, scanner/). Taking from it for
-// recipes on a shopping list comes next (the Pantry plan doc).
+// barcodes and expiry dates (src/pantry_scanner.js, scanner/). Recipe box and Meal plan
+// leave off a shopping list what it has (src/shopping.js), and its running-low staples
+// go onto one from here (/pantry/api/shop).
 //
-// /pantry/api/items                  GET ?day=YYYY-MM-DD → {items, places, counts, limits}
+// /pantry/api/items                  GET ?day=YYYY-MM-DD → {items, places, counts, limits, drift (has Drift, for the shopping list)}
 //                                    POST {name, kind?, staple?, place?, amount?, expires?, low?, unit?, size?, level?, per_cup?, words?} → the new item
 //                                      (kind, place, unit and grams per cup are guessed from the name when left out)
 // /pantry/api/items/<id>             PATCH {name?, place?, words?, staple?, low?, per_cup?, unit?, size?, shows?, level?, expires?, kind?, amount?} → the item
@@ -39,6 +40,8 @@
 //   with, and pairs phones to it.
 // /pantry/api/key                    PUT {key} → {photo}; DELETE → {photo}: the Anthropic key receipts are read with (Sweep's and Recipe box's too)
 // /pantry/api/receipt                POST {images} → what a receipt adds, to check; /pantry/api/receipt/add POST {store, lines} adds it (src/pantry_receipt.js)
+// /pantry/api/shop                   POST {list?} → the staples running low or out onto your Drift list (your Shopping list
+//                                      without one), each once → {list, added, merged, low, summary} (src/shopping.js shopLow)
 // /pantry/api/add                    POST {store?, lines}: the same, for lines not from a receipt (the scanner's barcodes)
 // /pantry/api/barcode/<digits>       GET → what a barcode is, and what it would add
 // /pantry/api/scanners[/<id>]        GET the paired phones, POST a pairing code, DELETE unpairs one (src/pantry_scanner.js)
@@ -49,6 +52,7 @@ import { db } from "./db.js";
 import { sameOrigin } from "./account.js";
 import { withRail } from "./pages.js";
 import { readJson, BadRequest } from "./drift.js";
+import { shopLow } from "./shopping.js";
 import { readPhotoBody, photoState, saveKey, forgetKey } from "./recipe_photo.js";
 import { readReceipt, addReceipt } from "./pantry_receipt.js";
 import { latestOf } from "./phone.js";
@@ -63,7 +67,7 @@ const SOON_DAYS = 5;
 const ID = /^i_[0-9a-f]{10}$/;
 export const SCANNER_TAG = /^scanner-v(\d{1,6})$/;
 export const SCANNER_APK = "pantry-scanner.apk";
-const ROUTE = /^\/pantry\/api\/(?:key|add|(?:shares|shared)(?:\/[a-z0-9][a-z0-9_-]{2,31})?|receipt(?:\/add)?|scanners(?:\/[0-9a-f]{16})?|barcode\/\d{6,14}|items(?:\/(i_[0-9a-f]{10})(?:\/(use|lots)(?:\/(t_[0-9a-f]{8}))?)?)?)\/?$/;
+const ROUTE = /^\/pantry\/api\/(?:key|add|shop|(?:shares|shared)(?:\/[a-z0-9][a-z0-9_-]{2,31})?|receipt(?:\/add)?|scanners(?:\/[0-9a-f]{16})?|barcode\/\d{6,14}|items(?:\/(i_[0-9a-f]{10})(?:\/(use|lots)(?:\/(t_[0-9a-f]{8}))?)?)?)\/?$/;
 const isObj = v => v && typeof v === "object" && !Array.isArray(v);
 const today = () => new Date().toISOString().slice(0, 10);
 const stamp = () => new Date().toISOString().slice(0, 19);
@@ -558,6 +562,12 @@ export async function pantry(request, env, user, pathname, { scanner = false } =
       if (method !== "GET") return notAllowed();
       return json(await lookUp(env, owner, path.split("/")[4], dayOf(request)));
     }
+    if (path === "/pantry/api/shop") {
+      if (method !== "POST") return notAllowed();
+      if (scanner) return json({ error: "a scanner can't do that" }, 403);
+      const body = await readJson(request).catch(() => ({}));
+      return json(await shopLow(env, user, owner, body?.list, dayOf(request)));
+    }
     if (path === "/pantry/api/add") {
       if (method !== "POST") return notAllowed();
       if (!may("stock")) return refuse("stock");
@@ -578,7 +588,7 @@ export async function pantry(request, env, user, pathname, { scanner = false } =
     }
     if (!id) {
       if (method === "GET") {
-        return json({ ...await listItems(env, owner, dayOf(request)), photo: await photoState(env, user),
+        return json({ ...await listItems(env, owner, dayOf(request)), photo: await photoState(env, user), drift: user.areas.has("todo"),
           pantry: { owner: owner.username || "", name: role === "owner" ? "" : owner.display_name || owner.username, role } });
       }
       if (method === "POST") { if (!may("full")) return refuse("full"); return json(await addItem(env, owner, await readJson(request)), 201); }

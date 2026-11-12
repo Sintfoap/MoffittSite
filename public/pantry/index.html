@@ -120,6 +120,10 @@ label.field input, label.field textarea, label.field select { width: 100%; font-
 .lots button:hover { color: var(--gold); }
 .lots button.x:hover { color: var(--bad); }
 
+.shopbar { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; padding: 10px 14px; border-left: 3px solid var(--warn); background: color-mix(in oklch, var(--warn) 8%, transparent); }
+.shopbar span { color: var(--ink); }
+.shopbar .btn { margin: 0; }
+
 /* the dialogs */
 dialog { width: min(600px, calc(100vw - 32px)); max-height: calc(100vh - 32px); background: var(--panel); color: var(--ink); border: 1px solid var(--gold); padding: 22px 24px; }
 dialog::backdrop { background: rgb(0 0 0 / .55); }
@@ -185,14 +189,17 @@ dialog .two { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
   .rline .err { grid-column: 1 / -1; }
 }
 @media (max-width: 820px) {
-  .shell { grid-template-columns: 1fr; padding-bottom: 0; }
+  .shell { grid-template-columns: 1fr; align-content: start; padding-bottom: 0; }
   main { padding-top: 26px; }
   .keybar { display: none; }
-  .tools .adds { margin-left: 0; width: 100%; }
-  .tools .adds .btn { flex: 1; }
+  .tools .adds { margin-left: 0; width: 100%; flex-wrap: wrap; }
+  .tools .adds .btn { flex: 1 1 auto; white-space: nowrap; padding: 8px 10px; }
+  .tools .adds #add-btn { order: -1; flex-basis: 100%; }
+  .tools input[type=search] { max-width: none; }
   .item .line { grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px; }
-  .item .when { grid-column: 1; }
-  .item .acts { grid-column: 2; grid-row: 1 / span 2; flex-direction: column; align-items: stretch; }
+  .item .when { grid-column: 2; grid-row: 2; text-align: right; }
+  .item .acts { grid-column: 1 / -1; }
+  .item .acts .btn { flex: 1; padding: 6px 8px; }
   .kinds { grid-template-columns: 1fr; }
   dialog .two { grid-template-columns: 1fr; }
 }
@@ -215,7 +222,7 @@ details.about p { margin: 8px 0 0; }
   </div>
   <details class="about"><summary>How it works</summary>
     <p>Everything is one of three kinds. <b>Measured</b> things (flour, sugar, oil) are kept exactly, by weight or volume. <b>Counted</b> things (cans, eggs, boxes) go by whole units, so using half a can still uses the can. <b>Gauged</b> things (spices, vanilla) go from Full to Empty, and you move them down yourself. Any of them can be a <b>staple</b>, something you keep stocked: you say when it's running low (2 lb, 3 cans, ½ left), and then it shows under Running low.</p>
-    <p>Each time you buy something it's kept as its own purchase, with its own expiry date, and the soonest to expire is used first. Scanning receipts and barcodes from your phone, and taking what recipes need, are coming next.</p>
+    <p>Each time you buy something it's kept as its own purchase, with its own expiry date, and the soonest to expire is used first. <b>Scan a receipt</b> adds a whole shop at once, and the phone app scans barcodes. Under <b>Running low</b>, <b>Add to shopping list</b> puts the low staples on your Drift shopping list, and Recipe box and Meal plan leave off their lists what you already have.</p>
     <p><b>Share</b> makes it a household's pantry: the people you share it with switch to it here. With <b>Full</b> they add and change anything, as you do; with <b>Stock</b> they take things out and add what they buy; with <b>Use</b> they only take things out. Only you choose who it's shared with.</p>
   </details>
   <div id="error" class="msg bad" role="alert" hidden></div>
@@ -370,7 +377,7 @@ details.about p { margin: 8px 0 0; }
   </form>
 </dialog>
 
-<footer class="keybar" aria-label="Keyboard shortcuts"><span><kbd>n</kbd>add food</span><span><kbd>r</kbd>scan a receipt</span><span><kbd>s</kbd>phone scanner</span><span><kbd>h</kbd>share</span><span><kbd>/</kbd>find</span><span><kbd>g</kbd>then a key from the menu to jump</span><span><kbd>\</kbd>Sidebar</span><a class="end" href="/logout" data-key="o"><kbd>g o</kbd>Sign out</a></footer>
+<footer class="keybar" aria-label="Keyboard shortcuts"><span><kbd>n</kbd>add food</span><span><kbd>r</kbd>scan a receipt</span><span><kbd>s</kbd>phone scanner</span><span><kbd>h</kbd>share</span><span><kbd>t</kbd>low to shopping list</span><span><kbd>/</kbd>find</span><span><kbd>g</kbd>then a key from the menu to jump</span><span><kbd>\</kbd>Sidebar</span><a class="end" href="/logout" data-key="o"><kbd>g o</kbd>Sign out</a></footer>
 <script src="/keys.js" defer></script>
 <script type="module" src="/pantry/app.js"></script>
 </body>
