@@ -139,19 +139,21 @@ async function aliasesOf(d, owner, store) {
   return new Map(results.map(r => [r.said, r.item]));
 }
 
-export async function readReceipt(env, user, body, day = today()) {
+// Read with the reader's own key (or the site's AI), matched against `owner`'s pantry (theirs, or one shared with them).
+export async function readReceipt(env, user, body, day = today(), owner = user) {
   const { found, by, why } = await readPictures(env, user, body, RECEIPT);
   const lines = linesFrom(found);
   if (!lines?.length) fail(`couldn't find a receipt in that picture${found?.notes ? ` (${by === "claude" ? "Claude" : "it"} saw: ${tidy(found.notes, 200)})` : ""}`);
   const store = tidy(found.store, RECEIPT_LIMITS.store);
-  const { items } = await listItems(env, user, day);
-  const aliases = await aliasesOf(await db(env), user.id, store);
+  const { items } = await listItems(env, owner, day);
+  const aliases = await aliasesOf(await db(env), owner.id, store);
   const out = { store, date: /^\d{4}-\d{2}-\d{2}$/.test(found.date || "") ? found.date : "", by, lines: lines.map(l => proposal(l, items, aliases, day)) };
   return why ? { ...out, why } : out;
 }
 
 // The checked lines, into the pantry: each one bought again of an item, or a new item.
-export async function addReceipt(env, user, body) {
+// Into `user`'s pantry (theirs, or a household's shared with `by`), ticking off the shopping lists `by` can write to.
+export async function addReceipt(env, user, body, by = user) {
   if (!isObj(body) || !Array.isArray(body.lines)) fail("send {store, lines: [...]}");
   if (body.lines.length > RECEIPT_LIMITS.lines) fail(`send at most ${RECEIPT_LIMITS.lines} lines at once`);
   const d = await db(env), store = storeKey(body.store);
@@ -194,7 +196,7 @@ export async function addReceipt(env, user, body) {
       ...products.map(([code, item, line]) => rememberProduct(d, user.id, code, item, line)),
     ]);
   }
-  const ticked = await tickOff(env, user, [...into.values()]);
+  const ticked = await tickOff(env, by, [...into.values()]);
   return { added, failed, ticked, items: (await listItems(env, user)).items };
 }
 

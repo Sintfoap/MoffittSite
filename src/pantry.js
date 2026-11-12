@@ -29,6 +29,13 @@
 // /pantry/api/items/<id>/lots/<lot>  PATCH {amount?, expires?} → the item; DELETE → the item without that lot
 // /pantry/api/items/<id>/use         POST {amount} (measured: "1 cup"; counted: how many) or {all: true}, and {tossed?: true};
 //                                      or {level} for a gauged item → the item, with that taken out
+// /pantry/api/shares                 GET → {shares: who yours is shared with, shared: pantries shared with you};
+//                                      PUT {username, role} shares yours ("use" or "stock") or changes their role
+// /pantry/api/shares/<username>      DELETE: stop sharing yours with them → {shares, shared}
+// /pantry/api/shared/<username>      DELETE: leave theirs → {shares, shared}
+//   Any items route takes ?of=<username> to work on a pantry shared with you: "use" can see it and
+//   take things out, "stock" can also add purchases (receipts, barcodes, + More). Only its owner
+//   changes items, their kinds and low points, or who it's shared with.
 // /pantry/api/key                    PUT {key} → {photo}; DELETE → {photo}: the Anthropic key receipts are read with (Sweep's and Recipe box's too)
 // /pantry/api/receipt                POST {images} → what a receipt adds, to check; /pantry/api/receipt/add POST {store, lines} adds it (src/pantry_receipt.js)
 // /pantry/api/add                    POST {store?, lines}: the same, for lines not from a receipt (the scanner's barcodes)
@@ -55,7 +62,7 @@ const SOON_DAYS = 5;
 const ID = /^i_[0-9a-f]{10}$/;
 export const SCANNER_TAG = /^scanner-v(\d{1,6})$/;
 export const SCANNER_APK = "pantry-scanner.apk";
-const ROUTE = /^\/pantry\/api\/(?:key|add|receipt(?:\/add)?|scanners(?:\/[0-9a-f]{16})?|barcode\/\d{6,14}|items(?:\/(i_[0-9a-f]{10})(?:\/(use|lots)(?:\/(t_[0-9a-f]{8}))?)?)?)\/?$/;
+const ROUTE = /^\/pantry\/api\/(?:key|add|(?:shares|shared)(?:\/[a-z0-9][a-z0-9_-]{2,31})?|receipt(?:\/add)?|scanners(?:\/[0-9a-f]{16})?|barcode\/\d{6,14}|items(?:\/(i_[0-9a-f]{10})(?:\/(use|lots)(?:\/(t_[0-9a-f]{8}))?)?)?)\/?$/;
 const isObj = v => v && typeof v === "object" && !Array.isArray(v);
 const today = () => new Date().toISOString().slice(0, 10);
 const stamp = () => new Date().toISOString().slice(0, 19);
@@ -392,6 +399,62 @@ export async function useItem(env, user, id, body) {
   return view(item);
 }
 
+// ── a household's pantry ───────────────────────────────────────────────────
+// The owner shares it by username; it stays stored under the owner, whoever adds or takes.
+
+export const SHARE_ROLES = ["use", "stock"];
+const MAX_SHARES = 20;
+const nameOf = r => r.display_name || r.username;
+
+export async function listShares(env, user) {
+  const d = await db(env);
+  const { results: out } = await d.prepare(`SELECT u.username, u.display_name, s.role FROM pantry_shares s JOIN users u ON u.id = s.user_id
+    WHERE s.owner = ? ORDER BY s.created_at`).bind(user.id).all();
+  const { results: inn } = await d.prepare(`SELECT u.username, u.display_name, s.role FROM pantry_shares s JOIN users u ON u.id = s.owner
+    WHERE s.user_id = ? AND u.disabled = 0 ORDER BY u.username`).bind(user.id).all();
+  return {
+    shares: out.map(r => ({ username: r.username, name: nameOf(r), role: r.role })),
+    shared: inn.map(r => ({ username: r.username, name: nameOf(r), role: r.role })),
+    roles: SHARE_ROLES,
+  };
+}
+
+// Shares your pantry with another account that has Pantry, or changes their role.
+export async function sharePantry(env, user, body) {
+  if (!isObj(body)) fail("body must be a JSON object");
+  const role = String(body.role ?? "use");
+  if (!SHARE_ROLES.includes(role)) fail("role is use (see it and take things out) or stock (also add what's bought)");
+  const username = String(body.username ?? "").trim().toLowerCase().replace(/^@/, "");
+  const d = await db(env);
+  const who = username && await d.prepare(`SELECT u.id, u.username, u.display_name FROM users u
+    JOIN user_areas a ON a.user_id = u.id AND a.area = 'pantry' WHERE u.username = ? AND u.disabled = 0`).bind(username).first();
+  if (!who) fail("there's no one with Pantry by that username");
+  if (who.id === user.id) fail("that's you");
+  const { n, mine } = await d.prepare("SELECT COUNT(*) AS n, SUM(user_id = ?) AS mine FROM pantry_shares WHERE owner = ?").bind(who.id, user.id).first();
+  if (!mine && n >= MAX_SHARES) fail(`a pantry can be shared with at most ${MAX_SHARES} people`);
+  await d.prepare(`INSERT INTO pantry_shares (owner, user_id, role, created_at) VALUES (?, ?, ?, ?)
+    ON CONFLICT (owner, user_id) DO UPDATE SET role = excluded.role`).bind(user.id, who.id, role, Date.now()).run();
+  return listShares(env, user);
+}
+
+// The owner stops sharing with someone, or (leave) you leave the pantry they shared with you.
+export async function unsharePantry(env, user, username, leave = false) {
+  const d = await db(env);
+  const who = await d.prepare("SELECT id FROM users WHERE username = ?").bind(String(username).toLowerCase()).first();
+  if (!who) return null;
+  const [owner, member] = leave ? [who.id, user.id] : [user.id, who.id];
+  const res = await d.prepare("DELETE FROM pantry_shares WHERE owner = ? AND user_id = ?").bind(owner, member).run();
+  return res.meta.changes ? listShares(env, user) : null;
+}
+
+// Whose pantry a request works on: yours, or ?of=<username> shared with you. → {owner, role} or null.
+async function pantryOf(env, user, of) {
+  if (!of || of.toLowerCase() === String(user.username || "").toLowerCase()) return { owner: user, role: "owner" };
+  const r = await (await db(env)).prepare(`SELECT u.id, u.username, u.display_name, s.role FROM pantry_shares s JOIN users u ON u.id = s.owner
+    WHERE u.username = ? AND s.user_id = ? AND u.disabled = 0`).bind(of.toLowerCase(), user.id).first();
+  return r ? { owner: { id: r.id, username: r.username, display_name: r.display_name }, role: r.role } : null;
+}
+
 // For the dashboard's card: what needs looking at first.
 export async function pantryLine(env, user, day) {
   const { counts } = await listItems(env, user, day);
@@ -459,6 +522,26 @@ export async function pantry(request, env, user, pathname, { scanner = false } =
     if (method !== "GET" && !scanner && !sameOrigin(request)) return json({ error: "cross-origin request refused" }, 403);
     const notAllowed = () => json({ error: "method not allowed" }, 405);
     const path = pathname.replace(/\/$/, "");
+    if (path.startsWith("/pantry/api/share")) {
+      if (scanner) return json({ error: "a scanner can't do that" }, 403);
+      const [, , , what, who] = path.split("/");
+      if (what === "shares" && !who && method === "GET") return json(await listShares(env, user));
+      if (what === "shares" && !who && method === "PUT") return json(await sharePantry(env, user, await readJson(request)));
+      if (who && method === "DELETE") {
+        const left = await unsharePantry(env, user, who, what === "shared");
+        return left ? json(left) : json({ error: "not found" }, 404);
+      }
+      return notAllowed();
+    }
+    // Yours, or a household's shared with you (?of=), and what you may do in it.
+    const of = new URL(request.url).searchParams.get("of");
+    const access = await pantryOf(env, user, of);
+    if (!access) return json({ error: "that pantry isn't shared with you" }, 404);
+    const { owner, role } = access;
+    const may = need => role === "owner" || (need === "stock" ? role === "stock" : need === "use");
+    const refuse = need => json({ error: need === "owner" ? "only the pantry's owner can do that"
+      : "you can take things out of this pantry, but not add to it" }, 403);
+    if (role !== "owner" && /^\/pantry\/api\/(key|scanners)(\/|$)/.test(path)) return refuse("owner");
     if (path.startsWith("/pantry/api/scanners")) {
       const sid = path.split("/")[4];
       if (!sid && method === "GET") return json(await listScanners(env, user));
@@ -468,11 +551,12 @@ export async function pantry(request, env, user, pathname, { scanner = false } =
     }
     if (path.startsWith("/pantry/api/barcode/")) {
       if (method !== "GET") return notAllowed();
-      return json(await lookUp(env, user, path.split("/")[4], dayOf(request)));
+      return json(await lookUp(env, owner, path.split("/")[4], dayOf(request)));
     }
     if (path === "/pantry/api/add") {
       if (method !== "POST") return notAllowed();
-      return json(await addReceipt(env, user, { store: "", ...await readJson(request) }));
+      if (!may("stock")) return refuse("stock");
+      return json(await addReceipt(env, owner, { store: "", ...await readJson(request) }, user));
     }
     const [, id, sub, lot] = m;
     let out;
@@ -483,28 +567,36 @@ export async function pantry(request, env, user, pathname, { scanner = false } =
     }
     if (pathname.startsWith("/pantry/api/receipt")) {
       if (method !== "POST") return notAllowed();
-      if (pathname.replace(/\/$/, "").endsWith("/add")) return json(await addReceipt(env, user, await readJson(request)));
-      return json(await readReceipt(env, user, await readPhotoBody(request), dayOf(request)));
+      if (!may("stock")) return refuse("stock");
+      if (pathname.replace(/\/$/, "").endsWith("/add")) return json(await addReceipt(env, owner, await readJson(request), user));
+      return json(await readReceipt(env, user, await readPhotoBody(request), dayOf(request), owner));
     }
     if (!id) {
-      if (method === "GET") return json({ ...await listItems(env, user, dayOf(request)), photo: await photoState(env, user) });
-      if (method === "POST") return json(await addItem(env, user, await readJson(request)), 201);
+      if (method === "GET") {
+        return json({ ...await listItems(env, owner, dayOf(request)), photo: await photoState(env, user),
+          pantry: { owner: owner.username || "", name: role === "owner" ? "" : owner.display_name || owner.username, role } });
+      }
+      if (method === "POST") { if (!may("owner")) return refuse("owner"); return json(await addItem(env, owner, await readJson(request)), 201); }
       return notAllowed();
     }
     if (!ID.test(id)) return json({ error: "not found" }, 404);
     if (sub === "use") {
       if (method !== "POST") return notAllowed();
-      out = await useItem(env, user, id, await readJson(request));
+      out = await useItem(env, owner, id, await readJson(request));
     } else if (sub === "lots" && !lot) {
       if (method !== "POST") return notAllowed();
-      out = await addLot(env, user, id, await readJson(request));
+      if (!may("stock")) return refuse("stock");
+      out = await addLot(env, owner, id, await readJson(request));
       if (out) return json(out, 201);
     } else if (sub === "lots") {
-      if (method === "PATCH") out = await editLot(env, user, id, lot, await readJson(request));
-      else if (method === "DELETE") out = await editLot(env, user, id, lot, null, true);
+      if (!may("owner")) return refuse("owner");
+      if (method === "PATCH") out = await editLot(env, owner, id, lot, await readJson(request));
+      else if (method === "DELETE") out = await editLot(env, owner, id, lot, null, true);
       else return notAllowed();
-    } else if (method === "PATCH") out = await editItem(env, user, id, await readJson(request));
-    else if (method === "DELETE") out = await deleteItem(env, user, id);
+    } else if (method === "PATCH" || method === "DELETE") {
+      if (!may("owner")) return refuse("owner");
+      out = method === "PATCH" ? await editItem(env, owner, id, await readJson(request)) : await deleteItem(env, owner, id);
+    }
     else return notAllowed();
     return out ? json(out) : json({ error: "not found" }, 404);
   } catch (e) {

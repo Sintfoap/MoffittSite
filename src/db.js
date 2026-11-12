@@ -347,6 +347,16 @@ const SCHEMA = [
      updated TEXT NOT NULL,
      PRIMARY KEY (owner, id)
    )`,
+  // A pantry shared with another account, as a household's (src/pantry.js). "use" sees it and
+  // takes things out; "stock" also adds what's bought. Only the owner changes items or shares it.
+  `CREATE TABLE IF NOT EXISTS pantry_shares (
+     owner      TEXT NOT NULL,       -- the pantry's owner (user id)
+     user_id    TEXT NOT NULL,       -- who it's shared with
+     role       TEXT NOT NULL,       -- "use" or "stock"
+     created_at INTEGER NOT NULL,
+     PRIMARY KEY (owner, user_id)
+   )`,
+  `CREATE INDEX IF NOT EXISTS pantry_shares_user ON pantry_shares (user_id)`,
   // Pantry receipts (src/pantry_receipt.js): what a store's receipt line means, learned once you've added it.
   `CREATE TABLE IF NOT EXISTS pantry_aliases (
      owner   TEXT NOT NULL,          -- user id

@@ -861,42 +861,76 @@ def recipe_key(key: str) -> dict:
 # ───────────────────────────────── pantry ───────────────────────────────────
 # /pantry/api/ (src/pantry.js): your food, as measured things, counted things and gauged ones (Full to Empty), any of them a staple with a low point.
 
+# Whose pantry the item calls below work on: "" for yours, or the username of someone who shared theirs with you.
+pantry_of = ""
+
+
+def set_pantry_of(username: str) -> None:
+    global pantry_of
+    pantry_of = username or ""
+
+
+def _of(path: str) -> str:
+    return path if not pantry_of else path + ("&" if "?" in path else "?") + f"of={_q(pantry_of)}"
+
+
 def pantry(day: str = "") -> dict:
-    """{items: [{id, name, kind, staple, place, text, low, low_text, level, lots, expires, soon, expired, is_low, is_out, ...}], places, counts, levels}.
+    """{items: [{id, name, kind, staple, place, text, low, low_text, level, lots, expires, soon, expired, is_low, is_out, ...}], places, counts, levels,
+    pantry: {owner, name, role}} (role is owner, or use or stock in a pantry shared with you).
     day is your own date (YYYY-MM-DD), for what's expiring soon."""
-    return _get("/pantry/api/items" + (f"?day={_q(day)}" if day else ""))
+    return _get(_of("/pantry/api/items" + (f"?day={_q(day)}" if day else "")))
+
+
+def pantry_shares() -> dict:
+    """{shares: who yours is shared with, shared: pantries shared with you}, each [{username, name, role}]."""
+    return _get("/pantry/api/shares")
+
+
+def share_pantry(username: str, role: str = "use") -> dict:
+    """Shares your pantry with them: role "use" (see it and take things out) or "stock" (also add what's bought). {shares, shared} back."""
+    return api("PUT", "/pantry/api/shares", {"username": username, "role": role})
+
+
+def unshare_pantry(username: str) -> dict:
+    """Stops sharing yours with them. {shares, shared} back."""
+    return api("DELETE", f"/pantry/api/shares/{_q(username)}")
+
+
+def leave_pantry(username: str) -> dict:
+    """Leaves the pantry they shared with you. {shares, shared} back."""
+    return api("DELETE", f"/pantry/api/shared/{_q(username)}")
 
 
 def add_pantry_item(item: dict) -> dict:
     """{name, kind?, place?, amount?, expires?, low?, unit?, size?, level?, words?}: kind, place and unit are guessed from the name when left out."""
-    return api("POST", "/pantry/api/items", item)
+    return api("POST", _of("/pantry/api/items"), item)
 
 
 def edit_pantry_item(item_id: str, change: dict) -> dict:
     """{name?, place?, words?, low?, per_cup?, unit?, size?, level?, expires?, kind? (with amount)}."""
-    return api("PATCH", f"/pantry/api/items/{_q(item_id)}", change)
+    return api("PATCH", _of(f"/pantry/api/items/{_q(item_id)}"), change)
 
 
 def delete_pantry_item(item_id: str) -> dict:
-    return api("DELETE", f"/pantry/api/items/{_q(item_id)}")
+    return api("DELETE", _of(f"/pantry/api/items/{_q(item_id)}"))
 
 
 def use_pantry_item(item_id: str, how: dict) -> dict:
     """{amount} ("1 cup", or how many), {all: True}, {all: True, tossed: True}, or {level} for a gauged item."""
-    return api("POST", f"/pantry/api/items/{_q(item_id)}/use", how)
+    return api("POST", _of(f"/pantry/api/items/{_q(item_id)}/use"), how)
 
 
 def add_pantry_lot(item_id: str, amount: str, expires: str = "") -> dict:
     """Another purchase: "5 lb" or how many, and its expiry date (YYYY-MM-DD) if it has one."""
-    return api("POST", f"/pantry/api/items/{_q(item_id)}/lots", {"amount": amount, "expires": expires})
+    return api("POST", _of(f"/pantry/api/items/{_q(item_id)}/lots"), {"amount": amount, "expires": expires})
 
 
 def edit_pantry_lot(item_id: str, lot_id: str, change: dict) -> dict:
-    return api("PATCH", f"/pantry/api/items/{_q(item_id)}/lots/{_q(lot_id)}", change)
+    return api("PATCH", _of(f"/pantry/api/items/{_q(item_id)}/lots/{_q(lot_id)}"), change)
 
 
 def delete_pantry_lot(item_id: str, lot_id: str) -> dict:
-    return api("DELETE", f"/pantry/api/items/{_q(item_id)}/lots/{_q(lot_id)}")
+    return api("DELETE", _of(f"/pantry/api/items/{_q(item_id)}/lots/{_q(lot_id)}"))
 
 
 RECEIPT_PHOTOS = 4
@@ -912,13 +946,13 @@ def read_receipt(paths: list[str], day: str = "") -> dict:
     if len(paths) > RECEIPT_PHOTOS:
         raise SiteError(f"pick at most {RECEIPT_PHOTOS} pictures of one receipt")
     images = [{"data": base64.b64encode(recipe_picture(p)).decode()} for p in paths]
-    return api("POST", "/pantry/api/receipt" + (f"?day={_q(day)}" if day else ""), {"images": images}, timeout=180)
+    return api("POST", _of("/pantry/api/receipt" + (f"?day={_q(day)}" if day else "")), {"images": images}, timeout=180)
 
 
 def add_receipt(store: str, lines: list[dict]) -> dict:
     """The checked lines into the pantry: {added: [{printed, id, name, text}], failed: [{printed, name, error}], items}.
     Each line is {printed, item (an id), amount, expires, expires_by} or a new one {printed, name, kind, place, unit, size, low, amount, ...}."""
-    return api("POST", "/pantry/api/receipt/add", {"store": store, "lines": lines}, timeout=60)
+    return api("POST", _of("/pantry/api/receipt/add"), {"store": store, "lines": lines}, timeout=60)
 
 
 def pantry_scanners() -> dict:

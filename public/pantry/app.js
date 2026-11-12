@@ -12,12 +12,21 @@ const el = (tag, props = {}, ...kids) => {
   return n;
 };
 
-let data = null;            // GET /pantry/api/items: {items, places, counts, levels, usual_places, photo}
+let data = null;            // GET /pantry/api/items: {items, places, counts, levels, usual_places, photo, pantry: {owner, name, role}}
+let shared = [];            // pantries shared with you: [{username, name, role}]
+let of = "";                // whose pantry is showing: "" for yours, or the owner's username
+try { of = localStorage.getItem("pantry-of") || ""; } catch {}
+// What you may do in the pantry showing: everything in yours; "use" takes out; "stock" also adds.
+const role = () => data?.pantry?.role || "owner";
+const mine = () => role() === "owner";
+const stocks = () => role() !== "use";
 let filter = "all";
 const open = new Set();     // items showing their purchases
 const day = () => new Date().toLocaleDateString("sv");
 
 async function api(method, path, body, raw) {
+  // Everything but sharing, the key and phones is about the pantry showing.
+  if (of && !/^(shares?|shared|key|scanners)\b/.test(path)) path += (path.includes("?") ? "&" : "?") + "of=" + encodeURIComponent(of);
   const res = await fetch("/pantry/api/" + path, {
     method, headers: body ? { "Content-Type": "application/json" } : {}, body: raw ?? (body ? JSON.stringify(body) : undefined),
   });
@@ -92,10 +101,10 @@ function row(i) {
     !i.staple && i.is_out ? el("small", { textContent: "Out" }) : null);
   const use = el("button", { type: "button", className: "btn", textContent: "Use", ariaLabel: `Use ${i.name}` });
   use.addEventListener("click", () => useDialog(i));
-  const more = el("button", { type: "button", className: "btn quiet", textContent: i.kind === "gauged" ? "Refill" : "+ More", ariaLabel: `Bought more ${i.name}` });
-  more.addEventListener("click", () => i.kind === "gauged" ? run(async () => { await api("POST", `items/${i.id}/use`, { level: 5 }); say("done", `${i.name} is full again.`); await load(); }) : lotDialog(i));
-  const edit = el("button", { type: "button", className: "btn quiet", textContent: "Edit", ariaLabel: `Edit ${i.name}` });
-  edit.addEventListener("click", () => itemDialog(i));
+  const more = stocks() ? el("button", { type: "button", className: "btn quiet", textContent: i.kind === "gauged" ? "Refill" : "+ More", ariaLabel: `Bought more ${i.name}` }) : null;
+  more?.addEventListener("click", () => i.kind === "gauged" ? run(async () => { await api("POST", `items/${i.id}/use`, { level: 5 }); say("done", `${i.name} is full again.`); await load(); }) : lotDialog(i));
+  const edit = mine() ? el("button", { type: "button", className: "btn quiet", textContent: "Edit", ariaLabel: `Edit ${i.name}` }) : null;
+  edit?.addEventListener("click", () => itemDialog(i));
   const li = el("li", { className: "item" },
     el("div", { className: "line" },
       el("span", { className: "name" }, name, el("span", { className: "kind", textContent: i.kind }), i.staple ? el("span", { className: "kind staple", textContent: "staple" }) : null, extra ? el("small", { textContent: extra }) : null),
@@ -107,6 +116,8 @@ function row(i) {
 function lots(i) {
   if (!i.lots.length) return el("ul", { className: "lots" }, el("li", { textContent: "None left. + More adds what you buy next." }));
   return el("ul", { className: "lots" }, ...i.lots.map(l => {
+    if (!mine()) return el("li", {}, el("b", { textContent: l.text }), el("span", { textContent: `bought ${nice(l.added)}` }),
+      el("span", { textContent: l.expires ? `expires ${nice(l.expires)}` : "no expiry date" }));
     const fix = el("button", { type: "button", textContent: "✎", title: "Correct this purchase", ariaLabel: `Correct the ${l.text} bought ${l.added}` });
     fix.addEventListener("click", () => lotDialog(i, l));
     const x = el("button", { type: "button", className: "x", textContent: "×", title: "Take this purchase off", ariaLabel: `Take off the ${l.text} bought ${l.added}` });
@@ -124,7 +135,7 @@ function render() {
   $("#place-list").replaceChildren(...[...new Set([...data.usual_places, ...data.places])].map(p => el("option", { value: p })));
   const box = $("#places");
   if (!data.items.length) {
-    box.replaceChildren(el("section", { className: "card" }, el("p", { className: "empty", textContent: "Nothing in your pantry yet. Add food to start, like Whole wheat flour, 10 lb." })));
+    box.replaceChildren(el("section", { className: "card" }, el("p", { className: "empty", textContent: mine() ? "Nothing in your pantry yet. Add food to start, like Whole wheat flour, 10 lb." : "Nothing in this pantry yet." })));
     return;
   }
   const items = shown();
@@ -142,9 +153,63 @@ function render() {
 }
 
 async function load() {
+  shared = (await api("GET", "shares")).shared;
+  if (of && !shared.some(p => p.username === of)) pick("");
   data = await api("GET", `items?day=${day()}`);
+  whose();
   render();
 }
+
+// ── a household's pantry ───────────────────────────────────────────────────
+
+function pick(who) {
+  of = who;
+  try { who ? localStorage.setItem("pantry-of", who) : localStorage.removeItem("pantry-of"); } catch {}
+}
+// The switcher (when anyone shares theirs with you), and what you can do in the one showing.
+function whose() {
+  $("#whose").hidden = !shared.length;
+  $("#which").replaceChildren(el("option", { value: "", textContent: "Yours" }),
+    ...shared.map(p => el("option", { value: p.username, textContent: `${p.name}'s` })));
+  $("#which").value = of;
+  $("#whose-role").textContent = mine() ? "" : stocks() ? "You can take things out and add what you buy." : "You can take things out as you use them.";
+  $("#add-btn").hidden = $("#scanner-btn").hidden = $("#share-btn").hidden = !mine();
+  $("#leave-btn").hidden = mine();
+  $("#receipt-btn").hidden = !stocks();
+}
+$("#which").addEventListener("change", () => { pick($("#which").value); open.clear(); run(load); });
+$("#leave-btn").addEventListener("click", () => {
+  const p = shared.find(x => x.username === of);
+  if (!p || !confirm(`Leave ${p.name}'s pantry? You'll need them to share it again to get back in.`)) return;
+  run(async () => { await api("DELETE", "shared/" + encodeURIComponent(p.username)); pick(""); await load(); say("done", `You left ${p.name}'s pantry.`); });
+});
+
+function renderShares(list) {
+  $("#shares").replaceChildren(...(list.length ? list.map(p => {
+    const r = el("select", { ariaLabel: `What ${p.name} can do` }, el("option", { value: "use", textContent: "Use" }), el("option", { value: "stock", textContent: "Stock" }));
+    r.value = p.role;
+    r.addEventListener("change", () => run(async () => renderShares((await api("PUT", "shares", { username: p.username, role: r.value })).shares)));
+    return el("li", {}, el("b", { textContent: p.name }), el("span", { className: "when", textContent: `@${p.username}` }), r,
+      Object.assign(el("button", { className: "btn danger", type: "button", textContent: "Stop sharing" }),
+        { onclick: () => run(async () => renderShares((await api("DELETE", "shares/" + encodeURIComponent(p.username))).shares)) }));
+  }) : [el("li", { className: "hint", textContent: "No one yet." })]));
+}
+function shareDialog() {
+  if (!mine()) return;
+  run(async () => {
+    $("#share-form").reset();
+    renderShares((await api("GET", "shares")).shares);
+    $("#share-dialog").showModal();
+  });
+}
+$("#share-add").addEventListener("click", () => {
+  const f = $("#share-form");
+  run(async () => {
+    renderShares((await api("PUT", "shares", { username: f.username.value.trim(), role: f.role.value })).shares);
+    say("done", `Shared your pantry with ${f.username.value.trim()}.`);
+    f.username.value = "";
+  });
+});
 
 // ── adding and editing food ────────────────────────────────────────────────
 
@@ -536,14 +601,16 @@ $("#find").addEventListener("input", () => render());
 $("#add-btn").addEventListener("click", () => itemDialog());
 $("#receipt-btn").addEventListener("click", pickReceipt);
 $("#scanner-btn").addEventListener("click", scannerDialog);
+$("#share-btn").addEventListener("click", shareDialog);
 
 document.addEventListener("keydown", e => {
   const t = e.target;
   if (e.metaKey || e.ctrlKey || e.altKey || t.isContentEditable || t.matches?.("input, textarea, select") || document.querySelector("dialog[open]")) return;
-  if (e.key === "n") { e.preventDefault(); itemDialog(); }
+  if (e.key === "n" && mine()) { e.preventDefault(); itemDialog(); }
   if (e.key === "/") { e.preventDefault(); $("#find").focus(); }
-  if (e.key === "r") { e.preventDefault(); pickReceipt(); }
-  if (e.key === "s") { e.preventDefault(); scannerDialog(); }
+  if (e.key === "r" && stocks()) { e.preventDefault(); pickReceipt(); }
+  if (e.key === "s" && mine()) { e.preventDefault(); scannerDialog(); }
+  if (e.key === "h" && mine()) { e.preventDefault(); shareDialog(); }
 });
 
 run(load);

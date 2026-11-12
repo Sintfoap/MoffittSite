@@ -135,6 +135,8 @@ dialog .two { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .check b { color: var(--ink); }
 .check input { margin-top: 2px; accent-color: var(--gold); }
 .kind.staple { color: var(--gold); }
+.whose { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin: 0 0 14px; font-size: 13px; color: var(--muted); }
+.whose select { font: inherit; color: var(--ink); background: var(--panel, transparent); border: 1px solid var(--line-2); padding: 4px 8px; margin-left: 6px; }
 .kinds label:has(input:focus-visible) { outline: 2px solid var(--gold); outline-offset: 2px; }
 .reads { font-size: 12px; color: var(--faint); min-height: 1.4em; margin: -8px 0 10px; }
 .reads.bad { color: var(--bad); }
@@ -206,9 +208,15 @@ details.about p { margin: 8px 0 0; }
   <div class="kicker">Kitchen</div>
   <h1>Pantry</h1>
   <p class="lede">What food you have, how much is left, and what to use soon.</p>
+  <div class="whose" id="whose" hidden>
+    <label>Pantry <select id="which" aria-label="Whose pantry"></select></label>
+    <span id="whose-role"></span>
+    <button type="button" class="btn quiet" id="leave-btn" hidden>Leave it</button>
+  </div>
   <details class="about"><summary>How it works</summary>
     <p>Everything is one of three kinds. <b>Measured</b> things (flour, sugar, oil) are kept exactly, by weight or volume. <b>Counted</b> things (cans, eggs, boxes) go by whole units, so using half a can still uses the can. <b>Gauged</b> things (spices, vanilla) go from Full to Empty, and you move them down yourself. Any of them can be a <b>staple</b>, something you keep stocked: you say when it's running low (2 lb, 3 cans, ½ left), and then it shows under Running low.</p>
     <p>Each time you buy something it's kept as its own purchase, with its own expiry date, and the soonest to expire is used first. Scanning receipts and barcodes from your phone, and taking what recipes need, are coming next.</p>
+    <p><b>Share</b> makes it a household's pantry: the people you share it with switch to it here and take things out as they use them (and, if you let them stock it, add what they buy). Only you change items or who it's shared with.</p>
   </details>
   <div id="error" class="msg bad" role="alert" hidden></div>
   <div id="done" class="msg good" role="status" hidden></div>
@@ -220,7 +228,7 @@ details.about p { margin: 8px 0 0; }
       <button type="button" data-filter="low" aria-pressed="false">Running low<small id="n-low"></small></button>
     </div>
     <input type="search" id="find" placeholder="Find…" aria-label="Find in your pantry" autocomplete="off">
-    <span class="adds"><button class="btn quiet" id="scanner-btn" type="button">Phone scanner</button><button class="btn quiet" id="receipt-btn" type="button">Scan a receipt</button><button class="btn" id="add-btn" type="button">Add food</button></span>
+    <span class="adds"><button class="btn quiet" id="share-btn" type="button">Share</button><button class="btn quiet" id="scanner-btn" type="button">Phone scanner</button><button class="btn quiet" id="receipt-btn" type="button">Scan a receipt</button><button class="btn" id="add-btn" type="button">Add food</button></span>
     <input type="file" id="receipt-file" accept="image/*" multiple hidden>
   </div>
 
@@ -334,6 +342,24 @@ details.about p { margin: 8px 0 0; }
   </form>
 </dialog>
 
+<dialog id="share-dialog">
+  <form method="dialog" id="share-form">
+    <h2>Share your pantry</h2>
+    <p class="hint">For a household: the people you share with see your pantry and take things out as they use them. Only you change what's in it, how things are counted, or who it's shared with.</p>
+    <div class="two">
+      <label class="field">Their username<input type="text" name="username" maxlength="40" placeholder="sam" autocomplete="off" autocapitalize="off"></label>
+      <label class="field">They can<select name="role">
+        <option value="use">Use: take things out</option>
+        <option value="stock">Stock: also add to it</option>
+      </select></label>
+    </div>
+    <div class="row"><button class="btn" type="button" id="share-add">Share</button></div>
+    <h3>Shared with</h3>
+    <ul class="phones" id="shares"></ul>
+    <div class="row"><button class="btn quiet" value="close">Close</button></div>
+  </form>
+</dialog>
+
 <dialog id="keyer">
   <form method="dialog" id="key-form">
     <h2>Read receipts with Claude</h2>
@@ -343,7 +369,7 @@ details.about p { margin: 8px 0 0; }
   </form>
 </dialog>
 
-<footer class="keybar" aria-label="Keyboard shortcuts"><span><kbd>n</kbd>add food</span><span><kbd>r</kbd>scan a receipt</span><span><kbd>s</kbd>phone scanner</span><span><kbd>/</kbd>find</span><span><kbd>g</kbd>then a key from the menu to jump</span><span><kbd>\</kbd>Sidebar</span><a class="end" href="/logout" data-key="o"><kbd>g o</kbd>Sign out</a></footer>
+<footer class="keybar" aria-label="Keyboard shortcuts"><span><kbd>n</kbd>add food</span><span><kbd>r</kbd>scan a receipt</span><span><kbd>s</kbd>phone scanner</span><span><kbd>h</kbd>share</span><span><kbd>/</kbd>find</span><span><kbd>g</kbd>then a key from the menu to jump</span><span><kbd>\</kbd>Sidebar</span><a class="end" href="/logout" data-key="o"><kbd>g o</kbd>Sign out</a></footer>
 <script src="/keys.js" defer></script>
 <script type="module" src="/pantry/app.js"></script>
 </body>

@@ -2292,6 +2292,59 @@ def test_pantry_in_the_terminal(real_site):
     assert [i["name"] for i in shown(items, "all", "mil")] == ["Milk"]
 
 
+def test_pantry_shares_a_household_pantry_in_the_terminal(real_site):
+    async def household(app, pilot):
+        page = app.screen
+        # h shares yours, by username; t switches what they can do, x stops it.
+        await pilot.press("h")
+        await settle(pilot, 0.6)
+        d = app.screen
+        assert type(d).__name__ == "ShareDialog" and d.shares == []
+        d.query_one("#username").value = "sam"
+        await pilot.press("enter")
+        await settle(pilot, 0.6)
+        assert [(p["username"], p["role"]) for p in d.shares] == [("sam", "use")]
+        d.query_one("#shares").focus()
+        await pilot.press("t")
+        await settle(pilot, 0.6)
+        assert site.pantry_shares()["shares"][0]["role"] == "stock"
+        await pilot.press("x")
+        await settle(pilot, 0.6)
+        assert d.shares == [] and site.pantry_shares()["shares"] == []
+        assert [p["username"] for p in site.pantry_shares()["shared"]] == ["sam"], "sam's, shared with ryan, stays"
+        await pilot.press("escape")
+        await settle(pilot)
+        # v switches to sam's, shared with ryan to use: he takes things out, but can't add or edit.
+        await pilot.press("v")
+        await settle(pilot, 0.6)
+        assert page.data["pantry"]["role"] == "use"
+        assert [i["name"] for i in page.rows if i] == ["Oat milk"]
+        assert not page.check_action("add", ()) and not page.check_action("more", ()) and page.check_action("use", ())
+        await pilot.press("u")
+        await settle(pilot)
+        app.screen.query_one("#amount").value = "1"
+        await pilot.press("enter")
+        await settle(pilot, 0.6)
+        assert page.current()["text"] == "1 carton"
+        await pilot.press("n")
+        await settle(pilot)
+        assert app.screen is page, "n does nothing in someone else's pantry"
+        # And back to his own.
+        await pilot.press("v")
+        await settle(pilot, 0.6)
+        assert page.data["pantry"]["role"] == "owner" and "Oat milk" not in [i["name"] for i in page.rows if i]
+        # l leaves a pantry shared with him (asking first).
+        await pilot.press("v")
+        await settle(pilot, 0.6)
+        await pilot.press("l")
+        await settle(pilot)
+        await pilot.press("y")
+        await settle(pilot, 0.6)
+        assert page.data["pantry"]["role"] == "owner" and page.shared == [] and site.pantry_shares()["shared"] == []
+    run_app("pantry", household)
+    site.set_pantry_of("")
+
+
 def test_pantry_pairs_a_phone_scanner_in_the_terminal(real_site):
     async def scanner(app, pilot):
         # s shows a code to pair the phone app with, as a QR code.

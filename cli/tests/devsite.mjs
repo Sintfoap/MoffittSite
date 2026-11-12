@@ -12,7 +12,8 @@
 // one browser to send to, and answers every push as delivered.
 // ryan has Recipe box; https://recipes.test/pancakes is a recipe page to save
 // (serves 4), and any other page there has no recipe on it.
-// ryan has Meal plan too (his Recipe box starts empty), and Pantry, with flour, soup and cumin in it;
+// ryan has Meal plan too (his Recipe box starts empty), and Pantry, with flour, soup and cumin in it
+// (and sam's pantry, shared with him to use);
 // any picture of a receipt reads as Walmart: flour, brown sugar, eggs and a bag.
 // ryan has Sweep, and he and sam are in a room "Plans" where sam asked about
 // dinner. The stand-in for Claude suggests that dinner from the first message
@@ -148,6 +149,10 @@ grantApps(env, "ryan", "labels");
 for (const item of [{ name: "Whole wheat flour", amount: "10 lb", low: "2 lb" }, { name: "Tomato soup", amount: 2, size: "16 oz" }, { name: "Ground cumin", level: 2 }]) {
   await ryan.req("POST", "/pantry/api/items", { json: item });
 }
+// sam shares his pantry (oat milk) with ryan, to use.
+grantApps(env, "sam", "pantry");
+await sam.req("POST", "/pantry/api/items", { json: { name: "Oat milk", kind: "counted", amount: 2, unit: "carton" } });
+await sam.req("PUT", "/pantry/api/shares", { json: { username: "ryan", role: "use" } });
 {
   const plans = (await ryan.req("POST", "/chat/api/rooms", { json: { name: "Plans" } })).json.id;
   await sam.req("POST", `/chat/api/rooms/${plans}/join`);
