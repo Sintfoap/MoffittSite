@@ -307,6 +307,86 @@ function pick(id) {
   renderDetail();
 }
 
+// ── the reviews box ────────────────────────────────────────────────────────
+// GET reviews: {reviews, unread}, what people who made the recipes you shared on
+// the board thought of them. Opening the box marks them read; the ones that were
+// new stay lit until it closes.
+
+let inbox = { reviews: [], unread: 0 };
+function ago(iso) {
+  const s = (Date.now() - Date.parse(iso)) / 1000;
+  if (s < 60) return "just now";
+  if (s < 3600) return `${Math.floor(s / 60)} min ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)} hr ago`;
+  if (s < 86400 * 7) return `${Math.floor(s / 86400)} day${s < 86400 * 2 ? "" : "s"} ago`;
+  return new Date(iso).toLocaleDateString(undefined, { day: "numeric", month: "short", year: new Date(iso).getFullYear() === new Date().getFullYear() ? undefined : "numeric" });
+}
+const boardLink = v => "/board/#p=" + encodeURIComponent(v.post);
+// "★★★★☆ Sam made Brownies", or "Sam reviewed Brownies" without stars.
+function reviewLine(v, title = true) {
+  const what = v.edited ? "changed their review" : v.rating != null ? "made" : "reviewed";
+  return [v.rating != null ? el("span", { className: "stars", textContent: stars(v.rating) + " " }) : null,
+    el("b", { textContent: v.by }), ` ${what}`, title ? " " : "", title ? el("b", { textContent: v.title }) : null];
+}
+const reviewWords = v => [v.note, v.changes && `Changed: ${v.changes}`].filter(Boolean).join(" · ");
+
+function renderInbox() {
+  const box = $("#inbox");
+  box.hidden = !data.board && !inbox.reviews.length;
+  $("#inbox-count").textContent = inbox.unread ? String(inbox.unread) : "";
+  $("#inbox").querySelector("summary").title = inbox.unread
+    ? `${inbox.unread} new review${inbox.unread === 1 ? "" : "s"} of the recipes you shared (v)` : "Reviews of the recipes you shared on the board (v)";
+  const list = $("#inbox-list");
+  list.replaceChildren(el("h2", { textContent: "Reviews of your recipes" }));
+  if (!inbox.reviews.length) {
+    list.append(el("p", { className: "empty", textContent: "Share a recipe on the board, and when someone who made it says how it turned out, it shows here." }));
+    return;
+  }
+  for (const v of inbox.reviews) {
+    const words = reviewWords(v);
+    const kids = [...reviewLine(v), words ? el("q", { textContent: words }) : null,
+      el("small", { textContent: ago(v.updated) + (v.recipe_id ? "" : " · on the board") })];
+    // One still in your box opens there (its reviews are under it); the rest open on the board.
+    const n = v.recipe_id && data.recipes.some(r => r.id === v.recipe_id)
+      ? el("button", { type: "button", className: "note" + (v.new ? " new" : "") }, ...kids)
+      : el("a", { className: "note" + (v.new ? " new" : ""), href: boardLink(v) }, ...kids);
+    if (n.tagName === "BUTTON") n.addEventListener("click", () => { box.open = false; follow = true; pick(v.recipe_id); $("#board-reviews")?.scrollIntoView({ block: "center" }); });
+    list.append(n);
+  }
+}
+const inboxBox = $("#inbox");
+inboxBox.addEventListener("toggle", () => {
+  if (inboxBox.open && inbox.unread) {
+    run(async () => { await api("POST", "reviews/seen"); inbox.unread = 0; renderInbox(); });
+  } else if (!inboxBox.open && inbox.reviews.some(v => v.new)) {
+    for (const v of inbox.reviews) v.new = false;
+    renderInbox();
+    renderDetail();
+  }
+});
+inboxBox.addEventListener("keydown", e => { if (e.key === "Escape" && inboxBox.open) { inboxBox.open = false; inboxBox.querySelector("summary").focus(); } });
+document.addEventListener("click", e => { if (inboxBox.open && !inboxBox.contains(e.target)) inboxBox.open = false; });
+async function loadInbox() {
+  inbox = await api("GET", "reviews");
+  renderInbox();
+  renderDetail();
+}
+
+// Under the open recipe, when it's on the board: what the people who made it thought.
+function boardReviews(r) {
+  const mine = inbox.reviews.filter(v => v.recipe_id === r.id);
+  if (!mine.length) return [];
+  const rated = mine.filter(v => v.rating != null);
+  const avg = rated.length ? Math.round(rated.reduce((a, v) => a + v.rating, 0) / rated.length * 10) / 10 : null;
+  const head = el("h3", { id: "board-reviews", textContent: `On the board${avg != null ? ` · ★ ${avg}` : ""} · ${mine.length} review${mine.length === 1 ? "" : "s"}` });
+  const ul = el("ul", { className: "board-reviews" }, ...mine.map(v => {
+    const words = reviewWords(v);
+    return el("li", { className: v.new ? "new" : "" }, ...reviewLine(v, false), " ", el("small", { textContent: ago(v.updated) }), words ? el("q", { textContent: words }) : null);
+  }));
+  const see = el("a", { href: boardLink(mine[0]), textContent: "See it on the board" });
+  return [head, ul, el("p", {}, see)];
+}
+
 // ── the open recipe ────────────────────────────────────────────────────────
 
 function listChoices() {
@@ -406,6 +486,7 @@ function renderDetail() {
     card.append(el("ol", { className: "steps" }, ...r.steps.map(s => el("li", { textContent: s }))));
   }
   if (r.notes) card.append(el("h3", { textContent: "Notes" }), el("p", { className: "notes", textContent: r.notes }));
+  card.append(...boardReviews(base));
 
   const edit = el("button", { className: "btn quiet", type: "button", textContent: "Edit" });
   edit.addEventListener("click", () => openEditor(base));
@@ -1001,6 +1082,8 @@ document.addEventListener("keydown", e => {
     M: () => $("#made-filter").focus(),
     R: () => $("#rating-filter").focus(),
     E: () => { if (!r) return; const tr = english.get(r.id); if (tr) { tr.on = !tr.on; renderDetail(); } else translate(r); },
+    // The reviews box: reviews of the recipes you shared on the board.
+    v: () => { if (!$("#inbox").hidden) { $("#inbox").open = !$("#inbox").open; if ($("#inbox").open) $("#inbox summary").focus(); } },
   };
   if (keys[e.key]) { e.preventDefault(); keys[e.key](); }
 });
@@ -1013,4 +1096,5 @@ run(async () => {
   renderFilters();
   renderList();
   renderDetail();
+  run(loadInbox);
 });

@@ -1835,6 +1835,54 @@ def test_recipe_board_reviews_a_post_with_stars_and_what_was_changed(real_site):
     run_app("board", review)
 
 
+@pytest.fixture
+def reviewed_site(monkeypatch):
+    proc, origin = start_site(monkeypatch, "--reviewed")
+    yield origin
+    proc.kill()
+
+
+def test_recipe_box_says_when_someone_reviews_a_recipe_you_shared(reviewed_site):
+    async def inbox(app, pilot):
+        page = app.screen
+        # sam reviewed ryan's Brownies (shared from his box): a new one, under the title.
+        line = str(page.query_one("#inbox").render())
+        assert "1 new review of the recipes you shared" in line and "v" in line
+        assert page.current()["title"] == "Brownies"
+        reviews = str(page.query_one("#board-reviews").render())
+        assert "Sam made" in reviews and "Fudgy. · Changed: Added walnuts." in reviews
+        assert "ON THE BOARD · ★ 4 · 1 REVIEW" in str(page.query_one("#rev-head").render())
+        # v opens the box, which marks it read.
+        await pilot.press("v")
+        await settle(pilot)
+        box = app.screen
+        assert type(box).__name__ == "ReviewsBox"
+        shown = str(box.query_one("#reviews").get_option_at_index(0).prompt)
+        assert "● ★★★★☆ Sam made Brownies" in shown and "on the board" not in shown
+        assert site.recipe_reviews()["unread"] == 0
+        assert "Reviews of the recipes you shared" in str(page.query_one("#inbox").render())
+        # enter opens the recipe, here.
+        await pilot.press("escape")
+        await settle(pilot)
+        page.open = None
+        await pilot.press("v")
+        await settle(pilot)
+        await pilot.press("enter")
+        await settle(pilot)
+        assert app.screen is page and page.current()["title"] == "Brownies"
+        # One whose recipe isn't in the box opens its post on the board.
+        page.inbox["reviews"][0]["recipe_id"] = None
+        await pilot.press("v")
+        await settle(pilot)
+        await pilot.press("enter")
+        await settle(pilot, 0.8)
+        board = app.screen
+        assert type(board).__name__ == "BoardPage"
+        assert board.at["view"] == "mine" and board.current()["title"] == "Brownies"
+        assert "Fudgy." in str(board.query_one("#reviews").render())
+    run_app("recipes", inbox)
+
+
 def test_g_b_opens_the_terminal_recipe_board(real_site):
     async def go(app, pilot):
         await settle(pilot, 0.5)

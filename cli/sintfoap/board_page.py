@@ -323,8 +323,9 @@ class BoardPage(Page):
         Binding("backslash", "fold", "Side"),
     ]
 
-    def __init__(self, share: str = ""):
+    def __init__(self, share: str = "", post: str = ""):
         super().__init__()
+        self.post_id = post   # a post to open first (from Recipe box's reviews), in whichever view it's in
         self.board: dict | None = None
         self.at: dict = {"view": "feed", "category": "", "label": ""}
         self.posts: list[dict] = []
@@ -362,6 +363,9 @@ class BoardPage(Page):
     async def on_mount(self) -> None:
         await self.action_refresh()
         self.query_one("#side", OptionList).focus()
+        if self.post_id:
+            await self.open_post(self.post_id)
+            self.post_id = ""
         if self.share_id:
             self.action_share(self.share_id)
             self.share_id = ""
@@ -373,6 +377,20 @@ class BoardPage(Page):
         self.board = await self.fetch(site.board)
         self.reviews.clear()
         await self.load()
+
+    @attempt
+    async def open_post(self, pid: str) -> None:
+        """That post, open, under Shared by you (yours) or Everything, with its reviews."""
+        p = await self.fetch(site.board_post, pid)
+        self.at = {"view": "mine" if p.get("yours") else "all", "category": "", "label": ""}
+        await self.load()
+        if not any(x["id"] == pid for x in self.posts):
+            self.posts.insert(0, p)
+        self.open = pid
+        self.show_posts()
+        await self.load_reviews(pid)
+        self.show_post()
+        self.query_one("#posts", OptionList).focus()
 
     async def load(self, older: bool = False) -> None:
         before = self.posts[-1]["created"] if older and self.posts else ""

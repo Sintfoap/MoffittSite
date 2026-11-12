@@ -13,7 +13,10 @@ the whole box from each recipe's words (a label's name, or the keywords set
 on it in Recipe labels), to untick any that don't fit before they're added.
 m marks the open recipe made (today) and 1 to 5 give it stars, yours alone;
 M shows only the ones you've made, then only the ones you haven't, and R
-only those with at least so many stars."""
+only those with at least so many stars. Under the title, a line says when
+someone who made a recipe you shared on the Recipe board has reviewed it,
+and v opens those reviews (the website's Reviews box): enter on one opens
+its recipe here, with its reviews under it, or the post on the board."""
 from __future__ import annotations
 
 import asyncio
@@ -416,6 +419,64 @@ class SuggestLabels(ModalScreen[list | None]):
         self.dismiss(None)
 
 
+# ── the reviews box: reviews of the recipes you shared on the board ──
+
+def review_line(v: dict, title: bool = True) -> Text:
+    """"★★★★☆ Sam made Brownies", or "Sam reviewed Stew" without stars."""
+    t = Text()
+    if v.get("rating") is not None:
+        t.append(stars(v["rating"]) + " ", style=GOLD)
+    t.append(v["by"], style=f"bold {INK}")
+    t.append(" changed their review" if v.get("edited") else " made" if v.get("rating") is not None else " reviewed", style=MUTED)
+    if title:
+        t.append(" " + v["title"], style=f"bold {INK}")
+    return t
+
+
+def review_words(v: dict) -> str:
+    return " · ".join(x for x in (v.get("note"), v.get("changes") and f"Changed: {v['changes']}") if x)
+
+
+class ReviewsBox(ModalScreen[dict | None]):
+    """v: the reviews of the recipes you shared on the board, newest first, new ones marked.
+    Dismisses with the one picked (enter), or None."""
+    BINDINGS = [Binding("escape", "cancel", "Close")]
+    DEFAULT_CSS = """
+    ReviewsBox OptionList { height: auto; max-height: 24; margin-top: 1; }
+    """
+
+    def __init__(self, reviews: list[dict], recipe_ids: set[str]):
+        super().__init__()
+        self.reviews, self.recipe_ids = reviews, recipe_ids
+
+    def compose(self) -> ComposeResult:
+        from .board_page import ago
+        with VerticalScroll(classes="dialog"):
+            yield Label(Text("Reviews of your recipes", style=f"bold {INK}"))
+            yield Static(Text("enter opens the recipe (or its post on the board) · esc closes", style=FAINT))
+            opts = []
+            for v in self.reviews:
+                t = Text("● " if v.get("new") else "  ", style=f"bold {GOLD}")
+                t.append_text(review_line(v))
+                words = review_words(v)
+                if words:
+                    t.append("\n  " + (words if len(words) <= 110 else words[:109] + "…"), style=MUTED)
+                t.append("\n  " + ago(v["updated"]) + ("" if v.get("recipe_id") in self.recipe_ids else " · on the board"), style=FAINT)
+                opts.append(Option(t, id=v["id"]))
+            if not opts:
+                opts.append(Option(Text("Share a recipe on the board (b), and when someone who made it says how it turned out, it shows here.", style=FAINT), disabled=True))
+            yield OptionList(*opts, id="reviews")
+
+    def on_mount(self) -> None:
+        self.query_one(OptionList).focus()
+
+    def on_option_list_option_selected(self, e: OptionList.OptionSelected) -> None:
+        self.dismiss(next((v for v in self.reviews if v["id"] == e.option.id), None))
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
 class RecipesPage(Page):
     WEB_PATH = "/recipes/"
     SIDE = "#shelf"
@@ -437,7 +498,8 @@ class RecipesPage(Page):
     RecipesPage #send {{ height: auto; margin-bottom: 1; }}
     RecipesPage #send-btn {{ margin-top: 1; }}
     RecipesPage #list {{ width: 40; }}
-    RecipesPage #steps, RecipesPage #notes {{ margin-bottom: 1; }}
+    RecipesPage #steps, RecipesPage #notes, RecipesPage #board-reviews {{ margin-bottom: 1; }}
+    RecipesPage #inbox {{ margin-bottom: 1; }}
     """
     BINDINGS = [
         Binding("a", "add", "From a link"),
@@ -463,6 +525,7 @@ class RecipesPage(Page):
         Binding("M", "made_filter", "Made / new"),
         Binding("R", "rating_filter", "By stars"),
         Binding("b", "board", "Share on board"),
+        Binding("v", "reviews", "Reviews"),
         # Shown only for a recipe that doesn't read as English (or has its
         # English ready); the second E translates any recipe, as on the website.
         Binding("E", "english", "English"),
@@ -489,11 +552,13 @@ class RecipesPage(Page):
         self.ingredients = ""                  # what f looks for: "eggs, spinach, -nuts"
         self.find_name = ""                    # what / looks for; one search at a time, like the website's one box
         self.english: dict[str, dict] = {}     # recipe id → {language, fields, on}: E's translation, shown while on
+        self.inbox: dict = {"reviews": [], "unread": 0}   # site.recipe_reviews(): reviews of the recipes you shared on the board
 
     def compose(self) -> ComposeResult:
         yield from self.top()
         with Vertical(id="body"):
             yield Static("R E C I P E   B O X", classes="kicker", id="kicker")
+            yield Static(id="inbox")
             yield Input(placeholder="Paste a link to a recipe (any site, or Recipe Keeper) and press enter (a)", id="url")
             yield Static(id="filters")
             with Horizontal(id="main"):
@@ -515,6 +580,8 @@ class RecipesPage(Page):
                     yield Static(id="steps")
                     yield Static("NOTES", classes="group", id="notes-head")
                     yield Static(id="notes")
+                    yield Static(classes="group", id="rev-head")
+                    yield Static(id="board-reviews")
         yield Footer()
 
     async def on_mount(self) -> None:
@@ -527,6 +594,8 @@ class RecipesPage(Page):
     async def action_refresh(self) -> None:
         self.data = await self.fetch(site.recipes)
         self.data["recipes"] = by_title(self.data["recipes"])
+        self.inbox = await self.fetch(site.recipe_reviews)
+        self.show_inbox()
         # The tabs, as on the website: Recipes here, and Labels for whoever keeps the list.
         kicker = Text("R E C I P E   B O X", style=f"bold {GOLD}")
         if self.data.get("labels"):
@@ -539,6 +608,63 @@ class RecipesPage(Page):
             self.open = shown[0]["id"] if shown else None
         self.show_shelf()
         self.show_recipe()
+
+    def show_inbox(self) -> None:
+        """The line under the title: new reviews of the recipes you shared, or where to find the old ones."""
+        line = self.query_one("#inbox", Static)
+        n, any_ = self.inbox.get("unread", 0), bool(self.inbox.get("reviews"))
+        line.display = any_
+        if n:
+            line.update(Text.assemble(("● ", f"bold {GOLD}"), (plural(n, "new review") + " of the recipes you shared", f"bold {INK}"), ("   v ", f"bold {GOLD}"), ("read", INK)))
+        elif any_:
+            line.update(Text.assemble(("Reviews of the recipes you shared", FAINT), ("   v ", f"bold {GOLD}"), ("read", FAINT)))
+
+    def show_board_reviews(self, r: dict | None) -> None:
+        """Under the open recipe, when it's on the board: what the people who made it thought."""
+        from .board_page import ago
+        mine = [v for v in self.inbox.get("reviews", []) if r and v.get("recipe_id") == r["id"]]
+        self.query_one("#rev-head").display = self.query_one("#board-reviews").display = bool(mine)
+        if not mine:
+            return
+        rated = [v["rating"] for v in mine if v.get("rating") is not None]
+        head = "ON THE BOARD" + (f" · ★ {round(sum(rated) / len(rated), 1):g}" if rated else "") + " · " + plural(len(mine), "review").upper()
+        self.query_one("#rev-head", Static).update(Text(head, style=FAINT))
+        t = Text()
+        for i, v in enumerate(mine):
+            if i:
+                t.append("\n\n")
+            t.append("● " if v.get("new") else "  ", style=f"bold {GOLD}")
+            t.append_text(review_line(v, title=False))
+            t.append("  " + ago(v["updated"]), style=FAINT)
+            words = review_words(v)
+            if words:
+                t.append("\n  " + words, style=MUTED)
+        self.query_one("#board-reviews", Static).update(t)
+
+    @attempt
+    async def action_reviews(self) -> None:
+        """v: the reviews box. Opening it marks them read; enter on one opens its recipe, or its post on the board."""
+        reviews = [dict(v) for v in self.inbox.get("reviews", [])]
+        if self.inbox.get("unread"):
+            self.inbox = await self.fetch(site.recipe_reviews_seen)
+            self.show_inbox()
+            self.show_recipe()
+        ids = {r["id"] for r in (self.data or {}).get("recipes", [])}
+        self.app.push_screen(ReviewsBox(reviews, ids), self.open_review)
+
+    def open_review(self, v: dict | None) -> None:
+        if not v:
+            return
+        if v.get("recipe_id") in {r["id"] for r in (self.data or {}).get("recipes", [])}:
+            if not any(r["id"] == v["recipe_id"] for r in self.shelved()):
+                # Hidden by a filter: show everything again, so it's on the shelf.
+                self.filters, self.find_name, self.ingredients, self.made_filter, self.rating_filter = [], "", "", "", ""
+            self.open = v["recipe_id"]
+            self.show_shelf()
+            self.show_recipe()
+            return
+        from .board_page import BoardPage
+        self.app.push_screen(BoardPage(post=v["post"]))
 
     def terms(self) -> list[dict]:
         return R.ingredient_terms(self.ingredients)
@@ -642,6 +768,7 @@ class RecipesPage(Page):
         for p in parts:
             self.query_one(p).display = bool(r)
         if not r:
+            self.show_board_reviews(None)
             self.query_one("#title", Static).update(Text("Your recipes will show up here. Paste a link above, or press n to type one in.", style=MUTED))
             return
         self.query_one("#title", Static).update(r["title"])
@@ -705,6 +832,7 @@ class RecipesPage(Page):
             steps.append(s, style=INK)
         self.query_one("#steps", Static).update(steps)
         self.query_one("#notes", Static).update(Text(r.get("notes", ""), style=MUTED))
+        self.show_board_reviews(self.current())
         self.refresh_bindings()   # E shows in the footer only for a recipe that isn't in English
 
     def marks_line(self, r: dict) -> Text:
@@ -782,7 +910,7 @@ class RecipesPage(Page):
             return False   # the footer's E; the hidden one (english_any) still translates
 
         if action in ("servings", "add", "find", "new", "import_file", "photo", "paste", "key", "edit", "picture", "send", "delete", "refresh", "board", "labels", "suggest", "ingredients", "sort", "english", "english_any", "save_english",
-                      "made", "rate", "made_filter", "rating_filter") and isinstance(self.focused, (Input, TextArea)):
+                      "made", "rate", "made_filter", "rating_filter", "reviews") and isinstance(self.focused, (Input, TextArea)):
             return False
         return True
 

@@ -514,6 +514,11 @@ const SCHEMA = [
      updated  TEXT NOT NULL,
      UNIQUE (post, user_id)
    )`,
+  // When each person last opened Recipe box's reviews box: reviews of their own posts newer than this are new.
+  `CREATE TABLE IF NOT EXISTS board_review_seen (
+     user_id TEXT PRIMARY KEY,
+     seen    TEXT NOT NULL
+   )`,
   // Food club (src/food.js): a pick a month, who made it and loved it, and photos of their attempts.
   `CREATE TABLE IF NOT EXISTS food_picks (
      id      TEXT PRIMARY KEY,                     -- "f_" + random hex

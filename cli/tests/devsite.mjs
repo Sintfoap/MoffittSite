@@ -1,7 +1,7 @@
 // The site's real Worker (src/) over HTTP on localhost, with an in-memory
 // database, for testing the terminal pages against the real APIs.
 //
-//   node cli/tests/devsite.mjs [--admin] [--notify]
+//   node cli/tests/devsite.mjs [--admin] [--notify] [--reviewed]
 //
 // Prints one line of JSON, {origin, token}: a terminal session for "ryan"
 // (made through the same code-approval flow `sintfoap login` uses), then
@@ -24,6 +24,8 @@
 // ryan and sam have Trip planner, Recipe board, where sam shared Shortbread (Course: Dessert),
 // and Food club, where sam picked last month (Pavlova).
 // ryan and sam have Feedback; sam sent the admins "Pavlova cracked", linking that pick.
+// --reviewed: ryan has Brownies in his Recipe box, shared on the board, and sam reviewed it
+// (4 stars, "Fudgy.", with walnuts); ryan also typed Stew straight onto the board.
 // Workers AI (the stand-in) translates the Spanish in WORDS below into English, line for line.
 import http from "node:http";
 import worker from "../../src/worker.js";
@@ -133,6 +135,12 @@ grantApps(env, "ryan", "labels");
 {
   await sam.req("POST", "/board/api/posts", { json: { labels: ["l_0000000006"], title: "Shortbread", note: "Three ingredients!",
     recipe: { ingredients: ["2 cups flour", "1 cup butter", "1/2 cup sugar"], steps: ["Rub together", "Bake at 160C for 40 min"], servings: 12 } } });
+}
+if (process.argv.includes("--reviewed")) {
+  const brownies = (await ryan.req("POST", "/recipes/api/recipes", { json: { title: "Brownies", ingredients: ["1 cup cocoa"], steps: ["Bake"] } })).json;
+  const shared = (await ryan.req("POST", "/board/api/posts", { json: { recipe_id: brownies.id, labels: ["l_0000000006"] } })).json;
+  await ryan.req("POST", "/board/api/posts", { json: { title: "Stew", recipe: { ingredients: ["1 lb beef"], steps: ["Simmer"] } } });
+  await sam.req("PUT", `/board/api/posts/${shared.id}/reviews`, { json: { rating: 4, note: "Fudgy.", changes: "Added walnuts." } });
 }
 {
   const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - 1);

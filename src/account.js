@@ -632,7 +632,7 @@ async function admin(request, env, me, pathname, method) {
           // Their recipe board posts, follows, saves and reviews go (and the reviews of their posts).
           d.prepare("DELETE FROM board_reviews WHERE user_id = ? OR post IN (SELECT id FROM board_posts WHERE author = ?)").bind(target.id, target.id),
           d.prepare("DELETE FROM board_saves WHERE user_id = ? OR post IN (SELECT id FROM board_posts WHERE author = ?)").bind(target.id, target.id),
-          ...["board_follows", "board_seen"].map(t => d.prepare(`DELETE FROM ${t} WHERE user_id = ?`).bind(target.id)),
+          ...["board_follows", "board_seen", "board_review_seen"].map(t => d.prepare(`DELETE FROM ${t} WHERE user_id = ?`).bind(target.id)),
           d.prepare("DELETE FROM board_posts WHERE author = ?").bind(target.id),
           // Feedback they sent goes with them; replies they wrote on others' notes too.
           ...["feedback_photos", "feedback_replies"].map(t => d.prepare(`DELETE FROM ${t} WHERE item IN (SELECT id FROM feedback WHERE author = ?)`).bind(target.id)),

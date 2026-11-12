@@ -617,6 +617,18 @@ def add_labels_to_recipes(add: list[dict]) -> dict:
     return api("POST", "/recipes/api/recipes/add-labels", {"add": add})
 
 
+def recipe_reviews() -> dict:
+    """{reviews, unread}: what people who made the recipes you shared on the Recipe board thought of them, newest first.
+    Each is {id, post, title, recipe_id (the Recipe box recipe it was shared from, or None), by, rating (1–5 or None),
+    note, changes, created, updated, edited, new (since you last looked)}."""
+    return _get("/recipes/api/reviews")
+
+
+def recipe_reviews_seen() -> dict:
+    """Marks every review of your recipes read; recipe_reviews() back."""
+    return api("POST", "/recipes/api/reviews/seen")
+
+
 def update_recipe(recipe_id: str, changes: dict) -> dict:
     return api("PATCH", f"/recipes/api/recipes/{_q(recipe_id)}", changes)
 
@@ -1161,6 +1173,11 @@ def add_board_post(fields: dict) -> dict:
     """{note?, labels?} and the recipe: {recipe_id} from your Recipe box, {url} to read one from a page, or {title, recipe: {...}}.
     labels (ids from the label list) file it under their keys; from your Recipe box, the recipe's own labels come along unless sent."""
     return api("POST", "/board/api/posts", fields)
+
+
+def board_post(post_id: str) -> dict:
+    """One post, as board_posts lists them."""
+    return _get(f"/board/api/posts/{_q(post_id)}")
 
 
 def update_board_post(post_id: str, changes: dict) -> dict:

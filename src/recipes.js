@@ -18,6 +18,8 @@
 // /recipes/api/recipes/add-labels      POST {add: [{id, labels: [label ids]}], at most 200} → {recipes, labels, full}: added to the ones they have
 // /recipes/api/recipes/<id>/translate  POST → {language, english, fields}: the recipe in English, saved only by a PATCH (src/translate.js)
 // /recipes/api/recipes/<id>/shop   POST {servings | factor, lines?, list?} → its ingredients onto a Drift list
+// /recipes/api/reviews             GET → {reviews, unread}: what people who made the recipes you shared on the board thought of them,
+//                                    newest first (each with new, since you last looked); POST /recipes/api/reviews/seen → the same, all read
 // /recipes/api/photo, /recipes/api/key   a recipe read from a photo, and the API key it's read with (src/recipe_photo.js)
 
 import { db } from "./db.js";
@@ -39,6 +41,7 @@ const LIMITS = { labels: 20, recipes: 1000, importPages: 10, importBody: 4 * 102
 const ID = /^r_[0-9a-f]{10}$/;
 const ROUTE = /^\/recipes\/api\/recipes(?:\/(import|suggest-labels|add-labels)|\/(r_[0-9a-f]{10})(?:\/(shop|photo|translate))?)?\/?$/;
 const PHOTO = /^\/recipes\/api\/photos\/(p_[0-9a-f]{10})$/;
+const REVIEWS = /^\/recipes\/api\/reviews(?:\/(seen))?\/?$/;
 // A picture kept here (an imported recipe's own photo) instead of a link to a site's.
 const OWN_PHOTO = /^\/recipes\/api\/photos\/p_[0-9a-f]{10}$/;
 export const PHOTO_BYTES = 600 * 1024;
@@ -699,6 +702,40 @@ const PAGE_CSP = [
   "form-action 'self'", "frame-ancestors 'none'", "base-uri 'none'",
 ].join("; ");
 
+// ── reviews of yours: Recipe box's notification box ───────────────────────
+// Reviews (src/board.js) left on the board posts you shared, newest change first.
+// A review is new until you open the box after it was written or changed.
+
+const REVIEW_INBOX = 50;
+const reviewSeen = async (d, user) => (await d.prepare("SELECT seen FROM board_review_seen WHERE user_id = ?").bind(user.id).first())?.seen || "";
+
+export async function reviewsForYou(env, user) {
+  const d = await db(env);
+  const seen = await reviewSeen(d, user);
+  const yours = "FROM board_reviews v JOIN board_posts p ON p.id = v.post LEFT JOIN users u ON u.id = v.user_id WHERE p.author = ? AND v.user_id != ?";
+  const { results } = await d.prepare(`SELECT v.*, u.username, u.display_name, json_extract(p.data, '$.title') AS title, json_extract(p.data, '$.from') AS from_id
+    ${yours} ORDER BY v.updated DESC, v.id DESC LIMIT ?`).bind(user.id, user.id, REVIEW_INBOX).all();
+  const { n } = await d.prepare(`SELECT COUNT(*) AS n ${yours} AND v.updated > ?`).bind(user.id, user.id, seen).first();
+  // The Recipe box recipe the post was shared from, while it's still there.
+  const ids = [...new Set(results.map(r => r.from_id).filter(Boolean))];
+  const have = new Set(ids.length ? (await d.prepare(`SELECT id FROM recipes WHERE owner = ? AND id IN (${ids.map(() => "?").join(",")})`).bind(user.id, ...ids).all()).results.map(r => r.id) : []);
+  return {
+    unread: n,
+    reviews: results.map(r => ({
+      id: r.id, post: r.post, title: r.title || "", recipe_id: have.has(r.from_id) ? r.from_id : null,
+      by: r.display_name || r.username || "A former member", rating: r.rating ?? null, note: r.note, changes: r.changes,
+      created: r.created, updated: r.updated, edited: r.updated !== r.created, new: r.updated > seen,
+    })),
+  };
+}
+
+export async function markReviewsSeen(env, user) {
+  const d = await db(env);
+  await d.prepare("INSERT INTO board_review_seen (user_id, seen) VALUES (?, ?) ON CONFLICT (user_id) DO UPDATE SET seen = excluded.seen")
+    .bind(user.id, new Date().toISOString()).run();
+  return reviewsForYou(env, user);
+}
+
 const json = (obj, status = 200) => new Response(JSON.stringify(obj), { status, headers: { "Content-Type": "application/json", "Cache-Control": "no-store" } });
 
 export async function recipes(request, env, user, pathname) {
@@ -724,6 +761,11 @@ export async function recipes(request, env, user, pathname) {
     }
     const ph = pathname.match(PHOTO);
     if (ph) return method === "GET" ? await photoFile(env, ph[1]) : notAllowed();
+    const rv = pathname.match(REVIEWS);
+    if (rv) {
+      if (rv[1]) return method === "POST" ? json(await markReviewsSeen(env, user)) : notAllowed();
+      return method === "GET" ? json(await reviewsForYou(env, user)) : notAllowed();
+    }
     const m = pathname.match(ROUTE);
     if (!m) return json({ error: "not found" }, 404);
     const [, bulk, id, sub] = m;
