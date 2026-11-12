@@ -261,15 +261,35 @@ test("ingredients go to a Drift shopping list, scaled, and to a list shared with
   const list = drift.collections.find(c => c.name === "Shopping list");
   assert.deepEqual(list.plugins, ["checklist", "list"]);
   const items = drift.items.filter(it => it.collection === list.id);
-  assert.deepEqual(items.map(it => it.title).sort(), ["3 cups flour", "3 cups milk", "salt to taste"]);
-  assert.equal(items[0].notes, "For Best Pancakes & Syrup (8 servings)");
+  // Just the food; the amount and the recipe go in the notes.
+  assert.deepEqual(items.map(it => it.title).sort(), ["Flour", "Milk", "Salt"]);
+  assert.equal(items.find(it => it.title === "Flour").notes, "3 cups for Best Pancakes & Syrup (8 servings)");
+  assert.equal(items.find(it => it.title === "Salt").notes, "For Best Pancakes & Syrup (8 servings)");
   assert.equal(items[0].meta.checklist.done, false);
+  assert.equal(sent.json.summary, "Added 3 items to Shopping list.");
 
-  // Again: the same list, not a second one.
-  await api(ryan, "POST", `recipes/${id}/shop`, { servings: 4 });
+  // Again: the same list, not a second one, and what's already open there gets the new amount instead of a copy.
+  const again = (await api(ryan, "POST", `recipes/${id}/shop`, { servings: 4 })).json;
+  assert.deepEqual([again.added, again.merged], [1, 3]);
   const after = (await ryan.get("/todo/api/state")).json;
   assert.equal(after.collections.filter(c => c.name === "Shopping list").length, 1);
-  assert.equal(after.items.filter(it => it.collection === list.id).length, 7);
+  const mine = after.items.filter(it => it.collection === list.id);
+  assert.deepEqual(mine.map(it => it.title).sort(), ["Eggs", "Flour", "Milk", "Salt"]);
+  assert.equal(mine.find(it => it.title === "Flour").notes,
+    "3 cups for Best Pancakes & Syrup (8 servings)\n1 1/2 cups for Best Pancakes & Syrup (4 servings)");
+  // A ticked-off item isn't added to: the food goes on again as a new line.
+  const flour = mine.find(it => it.title === "Flour");
+  await ryan.req("PATCH", `/todo/api/items/${flour.id}`, { json: { meta: { checklist: { done: true } } } });
+  assert.equal((await api(ryan, "POST", `recipes/${id}/shop`, { lines: [0] })).json.added, 1);
+
+  // With Pantry: what's on the shelf is left off, but not what's running low.
+  grantApps(env, "ryan", "pantry");
+  assert.equal((await ryan.req("POST", "/pantry/api/items", { json: { name: "Eggs", kind: "counted", amount: "12" } })).status, 201);
+  assert.equal((await ryan.req("POST", "/pantry/api/items", { json: { name: "Milk", kind: "measured", amount: "1 cup", staple: true, low: "1 qt" } })).status, 201);
+  const skipped = (await api(ryan, "POST", `recipes/${id}/shop`, { lines: [1, 2] })).json;
+  assert.deepEqual(skipped.have.map(h => [h.name, h.text]), [["Eggs", "12 eggs"]]);
+  assert.deepEqual([skipped.added, skipped.merged], [0, 1]);
+  assert.equal(skipped.summary, "Added 0 items to Shopping list; 1 already there got the amounts added. Left off what Pantry has: eggs.");
   assert.equal((await api(ryan, "POST", `recipes/${id}/shop`, { lines: [] })).status, 400);
 
   // sam shares a list with ryan to edit; ryan can send to it.
@@ -279,9 +299,9 @@ test("ingredients go to a Drift shopping list, scaled, and to a list shared with
   await sam.req("POST", `/todo/api/collections/${shared.id}/shares`, { json: { username: "ryan", role: "edit" } });
   const lists = (await ryan.get("/recipes/api/recipes")).json.lists;
   assert.ok(lists.some(l => l.id === shared.id && l.owner_name === "sam"));
-  const toShared = await api(ryan, "POST", `recipes/${id}/shop`, { list: shared.id, lines: [1] });
+  const toShared = await api(ryan, "POST", `recipes/${id}/shop`, { list: shared.id, lines: [0] });
   assert.equal(toShared.json.list.name, "House groceries");
-  assert.equal((await sam.get("/todo/api/state")).json.items.filter(it => it.collection === shared.id)[0].title, "2 eggs");
+  assert.equal((await sam.get("/todo/api/state")).json.items.filter(it => it.collection === shared.id)[0].title, "Flour");
   // A list that's only shared to view isn't offered, and can't be sent to.
   await sam.req("POST", `/todo/api/collections/${shared.id}/shares`, { json: { username: "ryan", role: "view" } });
   assert.equal((await api(ryan, "POST", `recipes/${id}/shop`, { list: shared.id })).status, 400);

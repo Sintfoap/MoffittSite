@@ -1529,4 +1529,4 @@ class RecipesPage(Page):
         if not any(x["id"] == out["list"]["id"] for x in self.data["lists"]):
             self.data["lists"].insert(0, {"id": out["list"]["id"], "name": out["list"]["name"], "owner_name": None})
             self.show_send(r)
-        self.app.notify(f"Added {plural(out['added'], 'ingredient')} to {out['list']['name']} in Drift.", timeout=3)
+        self.app.notify(out.get("summary") or f"Added {plural(out['added'], 'ingredient')} to {out['list']['name']} in Drift.", timeout=5)

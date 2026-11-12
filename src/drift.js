@@ -434,10 +434,8 @@ export async function writableCollections(env, user) {
   return [...own.map(c => ({ id: c.id, name: c.name, owner_name: null })), ...shared.map(c => ({ id: c.id, name: c.name, owner_name: c.owner_name }))];
 }
 
-// Adds each line as a checklist item to collection `id`, or when there's none,
-// to your collection called `name` ("Shopping list"; made if you don't have one).
-// `notes` is one note for every line, or a list with one per line.
-export async function addToList(env, user, id, titles, notes = "", name = SHOPPING) {
+// Collection `id` if you can add to it, or your collection called `name` (made if you don't have one).
+export async function listFor(env, user, id, name = SHOPPING) {
   let list;
   if (id) {
     list = (await writableCollections(env, user)).find(c => c.id === id);
@@ -446,6 +444,14 @@ export async function addToList(env, user, id, titles, notes = "", name = SHOPPI
     list = (await writableCollections(env, user)).find(c => !c.owner_name && c.name.toLowerCase() === name.toLowerCase());
     if (!list) list = await createCollection(env, user.id, { name, plugins: ["checklist", "list"], view: "checklist" });
   }
+  return list;
+}
+
+// Adds each line as a checklist item to collection `id`, or when there's none,
+// to your collection called `name` ("Shopping list"; made if you don't have one).
+// `notes` is one note for every line, or a list with one per line.
+export async function addToList(env, user, id, titles, notes = "", name = SHOPPING) {
+  const list = await listFor(env, user, id, name);
   let added = 0;
   for (const [i, title] of titles.entries()) {
     await createItem(env, user, { title, notes: Array.isArray(notes) ? notes[i] : notes, collection: list.id, meta: { checklist: { done: false, priority: 0 } } });

@@ -121,6 +121,7 @@ class MealsPage(Page):
         self.data: dict | None = None
         self.at = 0                     # the open night, 0 for Monday
         self.skip: set[str] = set()     # shopping lines (by text) not to send
+        self.touched: set[str] = set()  # lines ticked or unticked by hand (ones Pantry has start unticked)
 
     def compose(self) -> ComposeResult:
         yield from self.top()
@@ -239,7 +240,13 @@ class MealsPage(Page):
         with self.prevent(SelectionList.SelectedChanged):
             lst.clear_options()
             for i, s in enumerate(items):
-                lst.add_option(Selection(Text.assemble((s["line"], INK), (f"   {', '.join(s['for'])}", FAINT)), i, s["line"] not in self.skip))
+                if s.get("have") and s["line"] not in self.touched:
+                    self.skip.add(s["line"])
+                note = " · ".join(s.get("needs") or s["for"])
+                label = Text.assemble((s["line"], INK), (f"   {note}", FAINT))
+                if s.get("have"):
+                    label.append(f"   in Pantry: {s['have']}", style=GOOD)
+                lst.add_option(Selection(label, i, s["line"] not in self.skip))
         if at is not None and items:
             lst.highlighted = min(at, len(items) - 1)
         lst.display = bool(items)
@@ -285,7 +292,9 @@ class MealsPage(Page):
 
     def on_selection_list_selected_changed(self, e: SelectionList.SelectedChanged) -> None:
         on = set(e.selection_list.selected)
-        self.skip = {s["line"] for i, s in enumerate(self.data["shopping"]) if i not in on}
+        skip = {s["line"] for i, s in enumerate(self.data["shopping"]) if i not in on}
+        self.touched |= skip ^ self.skip
+        self.skip = skip
         if self.data["drift"]:
             self.show_send()
 
@@ -363,4 +372,4 @@ class MealsPage(Page):
         if not any(x["id"] == out["list"]["id"] for x in self.data["lists"]):
             self.data["lists"].insert(0, {"id": out["list"]["id"], "name": out["list"]["name"], "owner_name": None})
         self.show_shopping()
-        self.app.notify(f"Added {plural(out['added'], 'thing')} to {out['list']['name']} in Drift.", timeout=3)
+        self.app.notify(out.get("summary") or f"Added {plural(out['added'], 'thing')} to {out['list']['name']} in Drift.", timeout=4)

@@ -15,7 +15,8 @@
 import { db } from "./db.js";
 import { sameOrigin } from "./account.js";
 import { withRail } from "./pages.js";
-import { readJson, BadRequest, state, visitorNow, writableCollections, addToList } from "./drift.js";
+import { readJson, BadRequest, state, visitorNow, writableCollections } from "./drift.js";
+import { gather, shopFor, shopSummary, pantryItems, inPantry } from "./shopping.js";
 import { list as allRecipes } from "./recipes.js";
 import { scaleLine, factorFor } from "../public/recipes/scale.js";
 
@@ -164,22 +165,23 @@ async function calendar(env, user, days) {
 }
 
 // The week's shopping: every planned recipe's ingredients, scaled to that
-// night's servings. The same line from two recipes is listed once.
+// night's servings, as plain foods (src/shopping.js): flour from two recipes is
+// one line, "Flour", with each amount in `needs`. → [{line, for, needs}]
 export function shoppingFor(nights, days, byId) {
-  const lines = new Map();
+  const wants = [];
   for (const [i, d] of days.entries()) {
     const n = nights[d], r = byId.get(n.recipe);
     if (!r || n.out) continue;
     const f = factorFor(r, { servings: n.servings });
-    for (const raw of r.ingredients) {
-      const line = scaleLine(raw, f).slice(0, 500);
-      const key = line.toLowerCase();
-      if (!lines.has(key)) lines.set(key, { line, for: [] });
-      const tag = `${r.title} (${NAMES[i]})`;
-      if (!lines.get(key).for.includes(tag)) lines.get(key).for.push(tag);
-    }
+    for (const raw of r.ingredients) wants.push({ line: scaleLine(raw, f).slice(0, 500), for: `${r.title} (${NAMES[i]})` });
   }
-  return [...lines.values()];
+  return gather(wants).map(g => ({ line: g.name, for: g.for, needs: g.needs }));
+}
+
+// Each line your pantry has gets `have`: what's there ("5 lb"), so the page can say so.
+async function withPantry(env, user, shopping) {
+  const stock = await pantryItems(env, user);
+  return shopping.map(s => { const p = inPantry(stock, s.line); return p ? { ...s, have: p.text } : s; });
 }
 
 // Everything the page shows for a week.
@@ -204,7 +206,7 @@ async function week(env, user, monday, plan) {
       };
     }),
     recipes: recipes.map(r => ({ id: r.id, title: r.title, time: r.time, minutes: minutesOf(r.time), quick: isQuick(r), servings: r.servings })),
-    shopping: shoppingFor(plan.nights, days, byId),
+    shopping: await withPantry(env, user, shoppingFor(plan.nights, days, byId)),
     shopped: plan.shopped,
     quick: QUICK,
     drift,
@@ -278,10 +280,10 @@ export async function shop(env, user, monday, body) {
   const pick = Array.isArray(body.lines) ? new Set(body.lines.map(Number)) : null;
   const chosen = all.filter((_, i) => !pick || pick.has(i));
   if (!chosen.length) fail("pick at least one thing to buy");
-  const out = await addToList(env, user, body.list ? String(body.list) : null, chosen.map(c => c.line), chosen.map(c => `For ${c.for.join(", ")}`));
-  plan.shopped = { at: new Date().toISOString().slice(0, 19), list: out.list.name, added: out.added };
+  const out = await shopFor(env, user, body.list ? String(body.list) : null, chosen.map(c => ({ name: c.line, needs: c.needs })), { pantry: false });
+  plan.shopped = { at: new Date().toISOString().slice(0, 19), list: out.list.name, added: out.added + out.merged };
   await saveNights(d, user.id, monday, plan);
-  return { ...out, shopped: plan.shopped };
+  return { ...out, summary: shopSummary(out), shopped: plan.shopped };
 }
 
 // ── the page and its API ───────────────────────────────────────────────────

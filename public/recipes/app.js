@@ -583,7 +583,7 @@ async function sendToList(r, list) {
   const s = scale.get(r.id) || {};
   await run(async () => {
     const out = await api("POST", `recipes/${r.id}/shop`, { ...s, lines, ...(list ? { list } : {}) });
-    say("done", `Added ${out.added} to ${out.list.name} in Drift.`);
+    say("done", out.summary || `Added ${out.added} to ${out.list.name} in Drift.`);
     if (!list && !data.lists.some(l => l.id === out.list.id)) data.lists.unshift({ id: out.list.id, name: out.list.name, owner_name: null });
     renderDetail();
   });
