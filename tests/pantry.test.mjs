@@ -236,7 +236,7 @@ test("the dashboard's card says what needs looking at", async () => {
   assert.match(await line(), /1 thing in your pantry/);
 });
 
-test("a pantry can be shared as a household's: use takes things out, stock also adds, only the owner changes it", async () => {
+test("a pantry can be shared as a household's: use takes things out, stock also adds, full changes it too", async () => {
   const env = makeEnv(), kim = await member(env, "kim", "pantry"), sam = await member(env, "sam", "pantry"), joe = await member(env, "joe", "pantry");
   await member(env, "nopantry");
   const flour = await add(kim, { name: "Flour", amount: "10 lb", low: "2 lb" });
@@ -244,8 +244,8 @@ test("a pantry can be shared as a household's: use takes things out, stock also 
   // Shared by username, with someone who has Pantry.
   assert.match((await api(kim, "PUT", "shares", { username: "nopantry" })).json.error, /no one with Pantry/);
   assert.match((await api(kim, "PUT", "shares", { username: "kim" })).json.error, /that's you/);
-  assert.match((await api(kim, "PUT", "shares", { username: "sam", role: "boss" })).json.error, /role is use/);
-  const shared = (await api(kim, "PUT", "shares", { username: "sam" })).json;
+  assert.match((await api(kim, "PUT", "shares", { username: "sam", role: "boss" })).json.error, /role is full/);
+  const shared = (await api(kim, "PUT", "shares", { username: "sam", role: "use" })).json;
   assert.deepEqual(shared.shares.map(s => [s.username, s.role]), [["sam", "use"]]);
   await api(kim, "PUT", "shares", { username: "@Joe", role: "stock" });
   assert.deepEqual((await api(sam, "GET", "shares")).json.shared.map(s => [s.username, s.role]), [["kim", "use"]]);
@@ -261,7 +261,7 @@ test("a pantry can be shared as a household's: use takes things out, stock also 
   // ...but can't add, change or share it.
   assert.equal((await api(sam, "POST", `items/${soup.id}/lots?of=kim`, { amount: 1 })).status, 403);
   assert.equal((await api(sam, "POST", "add?of=kim", { lines: [{ item: soup.id, amount: "1" }] })).status, 403);
-  assert.match((await api(sam, "PATCH", `items/${soup.id}?of=kim`, { name: "Soup" })).json.error, /only the pantry's owner/);
+  assert.match((await api(sam, "PATCH", `items/${soup.id}?of=kim`, { name: "Soup" })).json.error, /hasn't let you change/);
   assert.equal((await api(sam, "DELETE", `items/${soup.id}?of=kim`)).status, 403);
   assert.equal((await api(sam, "POST", "items?of=kim", { name: "Rice", amount: "1 lb" })).status, 403);
   assert.equal((await api(sam, "GET", "scanners?of=kim")).status, 403);
@@ -274,11 +274,21 @@ test("a pantry can be shared as a household's: use takes things out, stock also 
   // Sharing both ways, stopping one leaves the other.
   await api(sam, "PUT", "shares", { username: "kim" });
   assert.deepEqual((await api(kim, "DELETE", "shares/sam")).json.shared.map(p => p.username), ["sam"]);
-  await api(kim, "PUT", "shares", { username: "sam" });
+  await api(kim, "PUT", "shares", { username: "sam", role: "use" });
+  // "full", the default, is equal rights to the food: add, edit and remove it. Not who it's shared with.
+  const dee = await member(env, "dee", "pantry");
+  assert.equal((await api(kim, "PUT", "shares", { username: "dee" })).json.shares.find(s => s.username === "dee").role, "full");
+  const oats = await api(dee, "POST", "items?of=kim", { name: "Rolled oats", amount: "3 lb" });
+  assert.equal(oats.status, 201, oats.text);
+  assert.equal((await api(dee, "PATCH", `items/${oats.json.id}?of=kim`, { staple: true, low: "1 lb" })).json.low_text, "1 lb");
+  assert.equal((await api(dee, "PATCH", `items/${flour.id}/lots/${(await api(kim, "GET", "items")).json.items.find(i => i.id === flour.id).lots[0].id}?of=kim`, { amount: "4 lb" })).status, 200);
+  assert.equal((await api(dee, "DELETE", `items/${oats.json.id}?of=kim`)).json.removed, true);
+  assert.equal((await api(dee, "GET", "scanners?of=kim")).status, 403);
+  assert.match((await api(joe, "POST", "items?of=kim", { name: "Rice", amount: "1 lb" })).json.error, /hasn't let you change/);
   // Leaving, or being taken off, ends it.
   assert.deepEqual((await api(sam, "DELETE", "shared/kim")).json.shared, []);
   assert.equal((await api(sam, "GET", "items?of=kim")).status, 404);
-  assert.deepEqual((await api(kim, "DELETE", "shares/joe")).json.shares, []);
+  assert.deepEqual((await api(kim, "DELETE", "shares/joe")).json.shares.map(s => s.username), ["dee"]);
   assert.equal((await api(joe, "POST", `items/${soup.id}/use?of=kim`, { amount: 1 })).status, 404);
   assert.equal((await api(kim, "DELETE", "shares/joe")).status, 404);
 });

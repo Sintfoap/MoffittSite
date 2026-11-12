@@ -886,8 +886,9 @@ def pantry_shares() -> dict:
     return _get("/pantry/api/shares")
 
 
-def share_pantry(username: str, role: str = "use") -> dict:
-    """Shares your pantry with them: role "use" (see it and take things out) or "stock" (also add what's bought). {shares, shared} back."""
+def share_pantry(username: str, role: str = "full") -> dict:
+    """Shares your pantry with them: role "full" (add and change anything, as you do), "stock" (take things out and add
+    what's bought) or "use" (only take things out). {shares, shared} back."""
     return api("PUT", "/pantry/api/shares", {"username": username, "role": role})
 
 
