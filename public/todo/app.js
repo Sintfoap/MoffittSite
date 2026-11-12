@@ -95,6 +95,25 @@ async function removeItem(id) {
   toast(`Deleted “${it.title}”`, async () => { replaceItem(await req("PATCH", "items/" + id, { deleted: false })); render(); });
 }
 
+// Several at once (Checklist's "Clear checked"), with one undo for all of them.
+async function removeItems(ids, label) {
+  const gone = state.items.filter(x => ids.includes(x.id) && writable(colById(x.collection)));
+  if (!gone.length) return;
+  const set = new Set(gone.map(x => x.id));
+  state.items = state.items.filter(x => !set.has(x.id));
+  if (set.has(state.sel)) state.sel = null;
+  render();
+  const out = await Promise.allSettled(gone.map(it => req("DELETE", "items/" + it.id)));
+  const done = gone.filter((_, i) => out[i].status === "fulfilled");
+  if (done.length < gone.length) { toast("Couldn’t clear them all"); refresh(); if (!done.length) return; }
+  toast(label(done.length), async () => {
+    const back = await Promise.allSettled(done.map(it => req("PATCH", "items/" + it.id, { deleted: false })));
+    for (const r of back) if (r.status === "fulfilled") replaceItem(r.value);
+    if (back.some(r => r.status === "rejected")) { toast("Couldn’t put them all back"); refresh(); }
+    render();
+  });
+}
+
 // View-only shared collections can be read but not changed.
 const writable = col => Boolean(col) && col.role !== "view";
 function canEdit(it) {
@@ -156,7 +175,7 @@ function ctx() {
     collection: cur.col, collections: state.collections, tab: cur.tab, items: all.filter(matches), scopeItems: all, filtered: Boolean(state.q),
     pending: state.pending, viewState: (state.viewState[key] ||= {}),
     all: state.items, selected: state.sel, open: openItem,
-    row, group, empty, render, setMeta, update, toast,
+    row, group, empty, render, setMeta, update, toast, removeItems, writable: writable(cur.col),
     setBases: bases => cur.col && setBases(cur.col.id, bases),
     // Notes for a calendar day from the plugins that are on (on Calendar: on in any collection).
     dayNote: (day, long = false) => PLUGINS.filter(p => p.day && !p.store && (cur.col ? cur.col.plugins : state.collections.flatMap(x => x.plugins)).includes(p.id))

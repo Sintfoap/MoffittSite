@@ -54,6 +54,11 @@ export default {
   actions: {
     toggle,
     showDone: (_, ctx) => { ctx.viewState.showDone = !ctx.viewState.showDone; ctx.render(); },
+    // Clears the ticked items the Done group counts (with a search on, just the matches); the toast undoes it.
+    clearDone: (_, ctx) => {
+      const ids = ctx.items.filter(it => it.meta.checklist?.done && !ctx.pending.has(it.id)).map(it => it.id);
+      ctx.removeItems?.(ids, n => `Cleared ${n} checked item${n === 1 ? "" : "s"}`);
+    },
   },
   keys: {
     x: toggle, " ": toggle,
@@ -73,7 +78,8 @@ export default {
       if (done.length) {
         const shown = ctx.viewState.showDone ? done : [];
         html += `<div class="group"><h2>Done<small>${done.length}</small>
-          <button class="ghost tiny" data-act="checklist:showDone">${ctx.viewState.showDone ? "Hide" : "Show"}</button></h2>
+          <button class="ghost tiny" data-act="checklist:showDone">${ctx.viewState.showDone ? "Hide" : "Show"}</button>
+          ${ctx.collection && ctx.writable && ctx.removeItems ? `<button class="ghost tiny" data-act="checklist:clearDone">Clear checked</button>` : ""}</h2>
           <ul class="items">${shown.map(it => ctx.row(it)).join("")}</ul></div>`;
       }
       return html;
