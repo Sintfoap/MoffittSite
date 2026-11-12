@@ -334,27 +334,19 @@ class ScannerDialog(ModalScreen[None]):
     the phones already paired, x unpairing the highlighted one. n makes a new code."""
     BINDINGS = [Binding("escape", "close", "Close"), Binding("x", "unpair", "Unpair"), Binding("n", "new", "New code")]
 
-    def __init__(self, pairing: dict, phones: list[dict], release: dict | None = None):
+    def __init__(self, pairing: dict, phones: list[dict]):
         super().__init__()
-        self.pairing, self.phones, self.release = pairing, phones, release or {}
+        self.pairing, self.phones = pairing, phones
 
     def compose(self) -> ComposeResult:
         with VerticalScroll(classes="dialog"):
             yield Label(Text("Scan with your phone", style=f"bold {INK}"))
-            yield Static(Text("In the Pantry scanner app (Android or iPhone), tap Scan the code and point it at this code, or type the code.", style=MUTED))
-            yield Static(self.where(), id="get")
+            yield Static(Text("In the Pantry scanner app (Android), tap Pair and point it at this code, or type the code.", style=MUTED))
             yield Static(self.qr(), id="qr")
             yield Static("", id="code")
             yield Label("Paired phones", classes="lbl")
             yield OptionList(id="phones")
             yield Static(Text("n new code · x unpairs the highlighted phone · esc closes", style=FAINT))
-
-    def where(self) -> Text:
-        """Where to get the app: the newest Android release, and the iPhone's TestFlight link."""
-        r = self.release
-        android = (f"version {r['version']}: {r['url']}" if r.get("version") and r.get("url") else "no release to download yet")
-        iphone = (f"on TestFlight: {r['ios']}" if r.get("ios") else "not out yet")
-        return Text.assemble(("Android  ", MUTED), (android, INK), ("\niPhone   ", MUTED), (iphone, INK))
 
     def qr(self) -> Text:
         # A white margin all round, which cameras need to find the code.

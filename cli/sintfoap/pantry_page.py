@@ -19,7 +19,6 @@ also adds what's bought. v switches to a pantry someone shared with you, and
 l leaves it."""
 from __future__ import annotations
 
-import asyncio
 import datetime as dt
 
 from rich.text import Text
@@ -721,8 +720,4 @@ class PantryPage(Page):
     async def action_scanner(self) -> None:
         code = await self.fetch(site.pair_pantry_scanner)
         phones = (await self.fetch(site.pantry_scanners))["scanners"]
-        try:
-            release = await asyncio.to_thread(site.pantry_scanner_release)
-        except Exception:
-            release = {}   # where to get the app is a nicety: pairing works without it
-        self.app.push_screen(ScannerDialog(code, phones, release))
+        self.app.push_screen(ScannerDialog(code, phones))

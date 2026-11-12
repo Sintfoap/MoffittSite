@@ -2352,8 +2352,6 @@ def test_pantry_pairs_a_phone_scanner_in_the_terminal(real_site):
         await settle(pilot, 0.8)
         d = app.screen
         assert type(d).__name__ == "ScannerDialog"
-        # Where to get the app, for Android and the iPhone.
-        assert "Android" in d.where().plain and "iPhone" in d.where().plain
         assert len(d.pairing["code"]) == 9 and "▀" in d.pairing["qr_text"] or "█" in d.pairing["qr_text"]
         first = d.pairing["code"]
         # The phone sends it back for its key (what the app does).

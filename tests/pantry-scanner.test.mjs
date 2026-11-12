@@ -186,15 +186,6 @@ test("the newest scanner app is offered for download", async () => {
   assert.equal(r.status, 200);
   assert.equal(r.json.version, 2);
   assert.match(r.json.url, /pantry-scanner\.apk$/);
-  assert.equal(r.json.ios, null);
-});
-
-test("the iPhone scanner's TestFlight link is offered once it's set", async () => {
-  const env = makeEnv({ SCANNER_IOS_URL: "https://testflight.apple.com/join/AbCd1234" });
-  const r = await new Browser(env).req("GET", "/pantry/scanner/latest.json");
-  assert.equal(r.json.ios, "https://testflight.apple.com/join/AbCd1234");
-  const odd = await new Browser(makeEnv({ SCANNER_IOS_URL: "javascript:alert(1)" })).req("GET", "/pantry/scanner/latest.json");
-  assert.equal(odd.json.ios, null);
 });
 
 test("a gauged thing comes in as full as you say", async () => {
