@@ -637,6 +637,7 @@ class ItemList(OptionList):
         Binding("3", "screen.priority(3)", "High", show=False),
         Binding("t", "screen.date_today", "Today", show=False),
         Binding("h", "screen.show_done", "Show done", show=False),
+        Binding("C", "screen.clear_done", "Clear checked", show=False),
         Binding("greater_than_sign", "screen.move('indent')", "Nest", show=False),
         Binding("less_than_sign", "screen.move('outdent')", "Unnest", show=False),
         Binding("K", "screen.move('up')", "Move up", show=False),
@@ -701,7 +702,8 @@ class DriftPage(Page):
         self.day = R.today()
         self.month = self.day[:7]
         self.q = ""
-        self.undo: tuple[str, str] | None = None     # (kind, id) of the last delete
+        # (kind, id) of the last delete; ("items", [ids]) after Clear checked.
+        self.undo: tuple[str, str | list[str]] | None = None
         self.loaded = False
         # The Map view's route (p): how you get around, which of the orders, and the plan the site sent.
         self.route_on, self.profile, self.option = False, "driving-car", 0
@@ -880,7 +882,8 @@ class DriftPage(Page):
             else:
                 group("Open", open_, "All done.")
                 if done:
-                    opts.append(Option(header("Done", len(done), "h to " + ("hide" if self.show_done else "show")), disabled=True))
+                    note = "h to " + ("hide" if self.show_done else "show") + (" · C clears them" if writable(col) else "")
+                    opts.append(Option(header("Done", len(done), note), disabled=True))
                     if self.show_done:
                         rows(done)
         elif tab == "list":
@@ -1521,12 +1524,45 @@ class DriftPage(Page):
         self.app.notify(f"Deleted “{it['title']}”. Press u to undo.", timeout=5)
 
     @attempt
+    async def action_clear_done(self) -> None:
+        """Clears the ticked items the Done group counts (with a search on, just the matches); u puts them back."""
+        kind, col, tab = self.current()
+        if kind != "col" or tab != "checklist" or not col:
+            return
+        if not writable(col):
+            self.app.notify("You can view this collection but not change it.", timeout=3)
+            return
+        done = [it for it in self.state["items"] if it["collection"] == col["id"] and self.matches(it)
+                and (it["meta"].get("checklist") or {}).get("done")]
+        if not done:
+            self.app.notify("Nothing checked to clear.", timeout=2)
+            return
+        cleared: list[str] = []
+        try:
+            for it in done:
+                await self.fetch(site.delete_item, it["id"])
+                cleared.append(it["id"])
+        finally:
+            if cleared:
+                gone = set(cleared)
+                self.state["items"] = [x for x in self.state["items"] if x["id"] not in gone]
+                self.undo = ("items", cleared)
+                self.render_all()
+                self.render_items()
+        self.app.notify(f"Cleared {plural(len(cleared), 'checked item')}. Press u to undo.", timeout=5)
+
+    @attempt
     async def action_undo(self) -> None:
         if not self.undo:
             return
         kind, xid = self.undo
         self.undo = None
-        if kind == "item":
+        if kind == "items":
+            for iid in xid:
+                self.put(await self.fetch(site.update_item, iid, {"deleted": False}))
+            self.render_all()
+            self.render_items()
+        elif kind == "item":
             self.put(await self.fetch(site.update_item, xid, {"deleted": False}))
             self.render_all()
             self.render_items(keep=xid)

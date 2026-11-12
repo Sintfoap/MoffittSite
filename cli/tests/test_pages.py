@@ -168,6 +168,28 @@ def test_drift_ticks_edits_and_deletes_with_undo(real_site):
     run_app("drift", keys)
 
 
+def test_drift_clears_checked_items_with_undo(real_site):
+    col = site.drift_state()["collections"][0]
+    for title, done in [("Milk", True), ("Eggs", True), ("Bread", False)]:
+        site.add_item({"title": title, "collection": col["id"], "meta": {"checklist": {"done": done, "priority": 0}}})
+
+    async def clear(app, pilot):
+        page = app.screen
+        page.view = "c:" + col["id"]
+        page.render_all()
+        page.query_one("#items").focus()
+        await settle(pilot)
+        await pilot.press("C")
+        await settle(pilot, 0.6)
+        assert [it["title"] for it in page.state["items"]] == ["Bread"]
+        assert [it["title"] for it in site.drift_state()["items"]] == ["Bread"]
+        await pilot.press("u")
+        await settle(pilot, 0.6)
+        assert sorted(it["title"] for it in page.state["items"]) == ["Bread", "Eggs", "Milk"]
+    run_app("drift", clear)
+    assert sorted(it["title"] for it in site.drift_state()["items"]) == ["Bread", "Eggs", "Milk"]
+
+
 def test_drift_list_view_nests_and_today_shows_dated_items(real_site):
     col = site.drift_state()["collections"][0]
     site.update_collection(col["id"], {"view": "list"})

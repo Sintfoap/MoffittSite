@@ -81,6 +81,7 @@ The composer takes the same quick-add as the web page: `Lunch #family +home !2 ^
 | `d` | delete (`u` undoes) |
 | `v` | next view |
 | `h` | show or hide done items |
+| `C` | Checklist: clear every checked item (`u` puts them back) |
 | `>` `<` `K` `J` | List: nest, unnest, move up, move down |
 | `[` `]` `{` `}` `.` | Calendar: day, month, today (Map: `[` `]` `.`) |
 | `o` | open the item's place in OpenStreetMap |
