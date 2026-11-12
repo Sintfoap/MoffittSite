@@ -6,12 +6,14 @@ import FoundationNetworking
 /// The site's answer was an error: its message, as the site said it.
 public struct SiteError: Error, LocalizedError {
     public let message: String, status: Int
+    public init(message: String, status: Int) { self.message = message; self.status = status }
     public var errorDescription: String? { message }
 }
 
 /// This phone's key was unpaired (or its owner lost Pantry): pair again.
 public struct Unpaired: Error, LocalizedError {
     public let message: String
+    public init(message: String) { self.message = message }
     public var errorDescription: String? { message }
 }
 
