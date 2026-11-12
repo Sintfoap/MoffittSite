@@ -159,3 +159,42 @@ test("deleting an account takes its feedback with it", async () => {
   assert.ok(res.status < 400, res.text);
   for (const t of ["feedback", "feedback_photos", "feedback_replies"]) assert.equal(sql(env, `SELECT * FROM ${t}`).length, 0, t);
 });
+
+test("unread notes and replies show on the rail, in the lists and on each reply, until they're read", async () => {
+  const env = makeEnv(), ryan = await owner(env), josh = await person(env, "josh", "feedback");
+  const count = async b => (await api(b, "GET", "unread")).json.unread;
+  assert.equal(await count(ryan), 0);
+  // Every page's rail has a Feedback entry rail.js can count on, and server pages may fetch the count.
+  const dash = await ryan.get("/dashboard");
+  assert.match(dash.text, /data-nav="feedback"/);
+  assert.match(dash.headers.get("Content-Security-Policy"), /connect-src 'self'/);
+
+  const id = (await api(josh, "POST", "items", { kind: "idea", subject: "Dark mode for the board" })).json.id;
+  assert.equal(await count(ryan), 1, "a new note waits for the admins");
+  assert.equal(await count(josh), 0, "your own note isn't news to you");
+  assert.equal((await api(ryan, "GET", "feedback")).json.inbox[0].why, "note");
+
+  const first = (await api(ryan, "GET", `items/${id}`)).json;
+  assert.equal(first.new_to_you, true, "the first look says it's new");
+  assert.equal(await count(ryan), 0, "opening it reads it");
+  assert.equal((await api(ryan, "GET", `items/${id}`)).json.new_to_you, false);
+
+  await api(ryan, "POST", `items/${id}/replies`, { text: "Good idea" });
+  await api(ryan, "POST", `items/${id}/replies`, { text: "Planned for next week" });
+  assert.equal(await count(ryan), 0, "your own reply isn't unread");
+  assert.equal(await count(josh), 1, "the sender has a reply waiting");
+  const mine = (await api(josh, "GET", "feedback")).json.mine[0];
+  assert.deepEqual([mine.unread, mine.why], [true, "reply"]);
+  const seen = (await api(josh, "GET", `items/${id}`)).json;
+  assert.deepEqual(seen.replies.map(r => r.unread), [true, true], "both replies are new to josh");
+  assert.equal(seen.new_to_you, false);
+  assert.equal(await count(josh), 0);
+  assert.deepEqual((await api(josh, "GET", `items/${id}`)).json.replies.map(r => r.unread), [false, false]);
+
+  await api(josh, "POST", `items/${id}/replies`, { text: "Thanks!" });
+  assert.equal(await count(ryan), 1, "the sender's answer is news to the admins");
+  assert.equal((await api(ryan, "GET", "feedback")).json.inbox[0].why, "reply");
+  assert.deepEqual((await api(ryan, "GET", `items/${id}`)).json.replies.map(r => r.unread), [false, false, true], "only the new one");
+  assert.equal(await count(ryan), 0);
+  assert.equal((await api(ryan, "POST", "unread")).status, 405);
+});

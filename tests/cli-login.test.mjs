@@ -230,3 +230,23 @@ test("the terminal's settings page reads and changes what doesn't need the passw
   assert.equal((await b.get("/dashboard")).status, 303, "the browser was signed out");
   assert.equal((await term.get("/login/cli/dashboard")).status, 200);
 });
+
+test("the terminal's menu counts feedback waiting for you, as the web rail does", async () => {
+  const env = makeEnv(), b = new Browser(env), term = new Terminal(env), josh = new Browser(env);
+  await b.signup("ryan");
+  grantApps(env, "ryan", "feedback");
+  await josh.signup("josh");
+  run(env, "INSERT INTO user_areas (user_id, area) SELECT id, 'admin' FROM users WHERE username = 'josh'");
+  await enable2fa(josh, env);
+  const s = await term.start();
+  await approve(b, s.json.user_code);
+  term.cookie = (await term.poll(s.json.device_code)).json.token;
+  const badge = async () => (await term.get("/login/cli/dashboard")).json.nav.find(n => n.id === "feedback").badge;
+
+  const id = (await b.req("POST", "/feedback/api/items", { json: { subject: "Hello" } })).json.id;
+  assert.equal(await badge(), undefined, "nothing to read yet");
+  await josh.req("POST", `/feedback/api/items/${id}/replies`, { json: { text: "Hi back" } });
+  assert.equal(await badge(), 1, "the admin's reply waits");
+  await b.get(`/feedback/api/items/${id}`);
+  assert.equal(await badge(), undefined, "read on the web, gone in the terminal");
+});

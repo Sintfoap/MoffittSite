@@ -15,6 +15,7 @@
 // open someone's own recipe or Drift item, and because the thing may be gone later.
 //
 // /feedback/api/feedback                       GET → {mine, inbox?, owner, kinds, statuses, sources}
+// /feedback/api/unread                         GET → {unread}: how many notes wait for you (the rail's badge)
 // /feedback/api/linkable?app=<source>&q=<text> GET → {items: [{app, id, title, sub}]}: what you could link
 // /feedback/api/items                          POST {kind, subject, message, links?} → the new note
 // /feedback/api/items/<id>                     GET → the whole note; PATCH {kind?, subject?, message?, links?} (sender) or {status} (admins); DELETE
@@ -190,10 +191,12 @@ function summary(user, r) {
   const owner = isAdmin(user);
   // Unread: for the sender, a reply from the admins since they last looked; for the admins, anything since they did.
   const seen = r.author === user.id ? r.author_seen : r.owner_seen;
+  const unread = r.author === user.id ? !!(r.last_reply_by_owner && (!seen || seen < r.last_at)) : owner ? !seen || seen < r.last_at : false;
   return { id: r.id, kind: data.kind, subject: data.subject || clip(data.message, 80) || "(no words)", status: r.status,
     by: nameOf(r), yours: r.author === user.id, created: r.created, last_at: r.last_at,
-    photos: r.photos, links: data.links.length, replies: r.replies,
-    unread: r.author === user.id ? !!(r.last_reply_by_owner && (!seen || seen < r.last_at)) : owner ? !seen || seen < r.last_at : false };
+    photos: r.photos, links: data.links.length, replies: r.replies, unread,
+    // Why it's unread: "note" for one the admins haven't opened yet, "reply" for a new answer on one already read.
+    why: !unread ? null : r.author !== user.id && !seen ? "note" : "reply" };
 }
 
 const LIST_SQL = `SELECT f.*, u.username, u.display_name,
@@ -224,6 +227,8 @@ export async function getNote(env, user, id, { look = false } = {}) {
   const r = await row(d, id);
   if (!canSee(user, r)) return null;
   // Opening it counts as reading it, for whichever side you're on.
+  // Replies after the last time you looked are new to you (the ones you wrote aren't).
+  const before = r.author === user.id ? r.author_seen : r.owner_seen;
   if (look) {
     const col = r.author === user.id ? "author_seen" : "owner_seen";
     await d.prepare(`UPDATE feedback SET ${col} = ? WHERE id = ?`).bind(new Date().toISOString(), id).run();
@@ -236,9 +241,11 @@ export async function getNote(env, user, id, { look = false } = {}) {
   return {
     id, ...data, links: data.links.map(l => ({ ...l, what: l.app === "url" ? "Link" : SOURCES[l.app]?.name || l.app })), status: r.status, by: nameOf(r), username: r.username || "", yours: mine, owner: isAdmin(user),
     created: r.created, updated: r.updated, last_at: r.last_at, seen_by_owner: !!r.owner_seen,
+    new_to_you: !mine && !before,
     can_edit: mine, can_add_photos: mine, can_set_status: isAdmin(user), can_delete: mine || isAdmin(user),
     photos: photos.map(p => ({ ...p, can_remove: mine || isAdmin(user) })),
-    replies: replies.map(x => ({ id: x.id, by: nameOf(x), yours: x.user_id === user.id, from_owner: x.user_id !== r.author, text: x.text, created: x.created })),
+    replies: replies.map(x => ({ id: x.id, by: nameOf(x), yours: x.user_id === user.id, from_owner: x.user_id !== r.author, text: x.text, created: x.created,
+      unread: x.user_id !== user.id && (!before || before < x.created) })),
   };
 }
 
@@ -387,6 +394,10 @@ export async function feedback(request, env, user, pathname, ctx) {
       if (method !== "GET") return notAllowed();
       return json({ mine: await listMine(env, user), inbox: await listInbox(env, user), owner: isAdmin(user),
         kinds: KINDS, statuses: STATUSES, sources: sourcesFor(user), photos_each: PHOTOS_EACH, links_each: LINKS_EACH });
+    }
+    if (pathname === "/feedback/api/unread") {
+      if (method !== "GET") return notAllowed();
+      return json({ unread: await waiting(env, user) });
     }
     if (pathname === "/feedback/api/linkable") {
       if (method !== "GET") return notAllowed();

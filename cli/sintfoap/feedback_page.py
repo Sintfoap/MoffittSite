@@ -346,10 +346,14 @@ class FeedbackPage(Page):
         self.show_all()
 
     def read_open(self) -> None:
-        """Opening a note reads it: its line in the list stops being unread."""
+        """Opening a note reads it: its line in the list stops being unread, and
+        the Feedback count at the top (and in the g menu) goes down to match."""
         for n in self.data["mine"] + (self.data.get("inbox") or []):
             if n["id"] == self.open:
                 n["unread"] = False
+        waiting = self.data["inbox"] if self.data.get("owner") else self.data["mine"]
+        if hasattr(self.app, "set_badge"):
+            self.app.set_badge("feedback", sum(1 for n in waiting if n["unread"]))
 
     def show_all(self) -> None:
         self.show_headline()
@@ -383,7 +387,9 @@ class FeedbackPage(Page):
                 for count, word in ((n["photos"], "photo"), (n["links"], "link"), (n["replies"], "reply")):
                     if count:
                         bits.append(plural(count, word) if word != "reply" else f"{count} {'reply' if count == 1 else 'replies'}")
+                new = ("UNREAD " if n.get("why") == "note" else "NEW REPLY ") if n["unread"] else ""
                 box.add_option(Option(Text.assemble(("● " if n["unread"] else "", BAD), (STATUS.get(n["status"], n["status"]).upper() + " ", STATUS_STYLE.get(n["status"], FAINT)),
+                                                    (new, f"bold {BAD}"),
                                                     (n["subject"], f"bold {INK}"), ("\n" + " · ".join(bits), FAINT)), id=n["id"]))
                 if n["id"] == self.open:
                     at = box.option_count - 1
@@ -401,7 +407,7 @@ class FeedbackPage(Page):
                 "Ideas, bugs, praise or questions go straight to the site's owner, and only to them. Press n to write one.", style=MUTED))
             return
         self.query_one("#when", Static).update(" · ".join([KIND.get(n["kind"], n["kind"]).upper(), STATUS.get(n["status"], n["status"]).upper(), when(n["created"])]))
-        self.query_one("#title", Static).update(n["subject"] or "(no subject)")
+        self.query_one("#title", Static).update(Text.assemble(n["subject"] or "(no subject)", ("  ● NEW" if n.get("new_to_you") else "", f"bold {BAD}")))
         self.query_one("#by", Static).update(
             ("From you · the owner has read it" if n["seen_by_owner"] else "From you · not read yet") if n["yours"]
             else f"From {n['by']}" + (f" ({n['username']})" if n.get("username") else ""))
@@ -445,11 +451,15 @@ class FeedbackPage(Page):
         for i, r in enumerate(n["replies"]):
             if i:
                 replies.append("\n\n")
-            replies.append("│ " if r["from_owner"] else "  ", GOLD)
+            # A reply since you last looked has a red bar and says NEW.
+            bar, bar_style = ("│ ", BAD) if r.get("unread") else ("│ " if r["from_owner"] else "  ", GOLD)
+            replies.append(bar, bar_style)
             replies.append("You" if r["yours"] else r["by"], f"bold {INK}")
-            replies.append((" · the owner" if r["from_owner"] and not r["yours"] else "") + f" · {when(r['created'])}\n", FAINT)
-            replies.append("│ " if r["from_owner"] else "  ", GOLD)
-            replies.append(r["text"].replace("\n", "\n" + ("│ " if r["from_owner"] else "  ")), INK)
+            replies.append((" · the owner" if r["from_owner"] and not r["yours"] else "") + f" · {when(r['created'])}", FAINT)
+            replies.append("  ● NEW" if r.get("unread") else "", f"bold {BAD}")
+            replies.append("\n")
+            replies.append(bar, bar_style)
+            replies.append(r["text"].replace("\n", "\n" + bar), INK)
         self.query_one("#replies", Static).update(replies)
         self.query_one("#replies").display = bool(n["replies"])
 

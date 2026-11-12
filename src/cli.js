@@ -29,6 +29,7 @@ import { mailReady } from "./mail.js";
 import { sameOrigin } from "./account.js";
 import { agenda, visitorNow } from "./drift.js";
 import { siteNav } from "./nav.js";
+import { waiting as feedbackWaiting } from "./feedback.js";
 import { installed } from "./store.js";
 import { html, page, esc, messagePage } from "./pages.js";
 
@@ -156,13 +157,19 @@ async function dashboard(request, env) {
   const places = setup ? [] : PLACES.filter(a => canUse(user, a));
   // The web dashboard's live line on each card (src/glance.js), as `now`.
   const now = await glance(env, user, places, { day: clock.day, agenda: today && { late: today.late, due: today.due } });
+  // A count on a menu entry, as the web rail shows it: feedback notes waiting for you.
+  const nav = siteNav(user);
+  const badges = {};
+  if (nav.some(n => n.id === "feedback")) {
+    try { badges.feedback = await feedbackWaiting(env, user); } catch (e) { console.error("feedback badge failed:", e); }
+  }
   return json({
     site: origin,
     user: { username: user.username, display_name: user.display_name, admin: user.areas.has("admin") },
     apps: places.map(a => ({ id: a.id, name: a.name, blurb: a.blurb, url: origin + a.href, group: a.group || "site", ...(now[a.id] ? { now: now[a.id] } : {}) })),
     // The site's menu, the same one the web rail shows (src/nav.js): what the
     // terminal offers and which "g" letters work, in order.
-    nav: siteNav(user).map(n => ({ id: n.id, label: n.label, url: origin + n.href, key: n.key, group: n.group })),
+    nav: nav.map(n => ({ id: n.id, label: n.label, url: origin + n.href, key: n.key, group: n.group, ...(badges[n.id] ? { badge: badges[n.id] } : {}) })),
     account: {
       two_factor: !!user.totp_secret, sessions, recovery_codes_left: await recoveryCodesLeft(env, user.id),
       email: user.email || null, email_confirmed: !!user.email_verified, setup_needed: setup, url: origin + "/account",

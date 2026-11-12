@@ -2226,6 +2226,25 @@ def test_feedback_inbox_for_admins_sets_status_and_replies(admin_site):
     run_app("feedback", inbox)
 
 
+def test_feedback_unread_shows_at_the_top_and_in_the_list_until_read(admin_site):
+    async def unread(app, pilot):
+        await settle(pilot, 0.5)
+        # sam's note waits: a count at the top of every page, and in the g menu.
+        assert next(n for n in app.data["nav"] if n["id"] == "feedback")["badge"] == 1
+        assert "● 1 feedback" in str(app.screen.query_one("#who").render())
+        app.go("k")
+        await settle(pilot, 0.8)
+        page = app.screen
+        assert type(page).__name__ == "FeedbackPage"
+        # Opening it (the page opens the unread one) says it's new, and reading it clears the count.
+        assert page.note["new_to_you"] is True
+        assert "NEW" in str(page.query_one("#title").render())
+        assert "badge" not in next(n for n in app.data["nav"] if n["id"] == "feedback")
+        assert "feedback" not in str(page.query_one("#who").render())
+        assert site.feedback()["inbox"][0]["unread"] is False
+    run_app("dashboard", unread)
+
+
 def test_feedback_status_filter():
     from sintfoap.feedback_page import matches
     assert [s for s in ("new", "planned", "done", "closed") if matches({"status": s}, "open")] == ["new", "planned"]

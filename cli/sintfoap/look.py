@@ -253,7 +253,7 @@ class GoTo(ModalScreen[str | None]):
     def __init__(self, nav: list | None = None, admin: bool = False):
         super().__init__()
         if nav:
-            self.keys = {n["key"]: n["label"] for n in nav if n.get("key")}
+            self.keys = {n["key"]: n["label"] + (f" ●{n['badge']}" if n.get("badge") else "") for n in nav if n.get("key")}
         else:
             self.keys = {k: v for k, v in self.KEYS.items() if k != "a" or admin}
         self.keys["o"] = "sign out"

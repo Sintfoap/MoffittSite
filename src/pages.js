@@ -6,7 +6,7 @@ import { siteNav } from "./nav.js";
 export const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
 const CSP = [
-  "default-src 'none'", "script-src 'self'", "style-src 'unsafe-inline' https://fonts.googleapis.com", "font-src https://fonts.gstatic.com",
+  "default-src 'none'", "script-src 'self'", "connect-src 'self'", "style-src 'unsafe-inline' https://fonts.googleapis.com", "font-src https://fonts.gstatic.com",
   "img-src 'self' data:", "manifest-src 'self'", "form-action 'self'", "frame-ancestors 'none'", "base-uri 'none'",
 ].join("; ");
 
@@ -67,6 +67,11 @@ const RAIL_CSS = `
           color: var(--muted); font: 400 14px var(--mono); letter-spacing: 0; text-transform: none; text-align: left; filter: none; }
   .rail button.go::before, .rail button.go::after { content: none; }
   .rail button.go.theme { margin-top: auto; }
+  /* a count on an entry (feedback waiting for you, from /rail.js); on a phone the Menu button shows a dot too */
+  .rail .go .badge { margin-left: auto; min-width: 18px; padding: 0 5px; font: 700 11px/18px var(--mono); text-align: center; color: #fff; background: var(--bad, #b4412f); }
+  .rail .go .badge + kbd { margin-left: 8px; }
+  .rail .menu-btn.has-badge { position: relative; }
+  .rail .menu-btn.has-badge::after { content: ""; position: absolute; top: 4px; right: 4px; width: 8px; height: 8px; border-radius: 50%; background: var(--bad, #b4412f); }
   .rail .me { padding: 14px 10px 0; border-top: 1px solid var(--line); font-size: 12.5px; color: var(--muted); display: grid; gap: 2px; }
   .rail .me b, .rail .me .mono { color: var(--ink); font-weight: 700; overflow-wrap: anywhere; }
   .rail .me a { color: var(--gold); text-decoration: none; justify-self: start; margin-top: 6px; }
@@ -78,6 +83,8 @@ const RAIL_CSS = `
     .rail-min .rail h3 { height: 1px; margin: 12px 6px; overflow: hidden; color: transparent; background: var(--line); }
     .rail-min .rail .go { justify-content: center; padding: 8px 0; }
     .rail-min .rail .go svg { width: 18px; height: 18px; }
+    .rail-min .rail .go { position: relative; }
+    .rail-min .rail .go .badge { position: absolute; top: 2px; right: 6px; min-width: 8px; height: 8px; padding: 0; font-size: 0; line-height: 0; }
     .rail-min .rail button.go.fold svg { transform: scaleX(-1); }
     .rail-min .rail .me { padding: 12px 0 0; justify-items: center; }
     .rail-min .rail .me a { margin: 0; padding: 4px; }
@@ -315,7 +322,7 @@ const FONTS = `<link rel="preconnect" href="https://fonts.googleapis.com"><link 
 export function rail(user, here) {
   const nav = siteNav(user);
   const at = nav.find(n => n.id === here);
-  const link = n => `<a class="go" href="${esc(n.href)}" data-key="${n.key}" aria-label="${esc(n.label)}" title="${esc(n.label)}"${here === n.id ? ` aria-current="page"` : ""}>${icon(n.icon)}<span>${esc(n.label)}</span><kbd aria-hidden="true">g ${n.key}</kbd></a>`;
+  const link = n => `<a class="go" href="${esc(n.href)}" data-key="${n.key}" data-nav="${esc(n.id)}" aria-label="${esc(n.label)}" title="${esc(n.label)}"${here === n.id ? ` aria-current="page"` : ""}>${icon(n.icon)}<span>${esc(n.label)}</span><kbd aria-hidden="true">g ${n.key}</kbd></a>`;
   // /rail.js runs before the rail is drawn, so a folded rail never flashes open.
   return `<script src="/rail.js"></script><nav class="rail" aria-label="Site">
     <a class="brand" href="/" aria-label="sintfoap.xyz home">${CREST}<span>sintfoap</span></a>
