@@ -99,10 +99,14 @@ export default {
     label: "List",
     render(ctx) {
       if (!ctx.items.length) return ctx.empty("This list is empty", "Add an item above. Tab nests it under the one before.");
-      if (ctx.filtered) return ctx.group("Matches", [...ctx.items].sort((a, b) => orderOf(a) - orderOf(b)));
+      // With Checklist on too, ticked items stay in the outline; Checklist's Clear checked clears them here as well.
+      const ticked = ctx.items.filter(it => it.meta.checklist?.done && !ctx.pending.has(it.id)).length;
+      const clear = ticked && ctx.collection && ctx.writable && ctx.removeItems
+        ? `<div class="group"><h2>Checked<small>${ticked}</small><button class="ghost tiny" data-act="checklist:clearDone">Clear checked</button></h2></div>` : "";
+      if (ctx.filtered) return clear + ctx.group("Matches", [...ctx.items].sort((a, b) => orderOf(a) - orderOf(b)));
       const { kids } = outline(ctx.items);
       const walk = (p, depth) => kids(p).map(it => ctx.row(it, { depth, trail: TRAIL }) + walk(it.id, depth + 1)).join("");
-      return `<div class="group outline"><ul class="items">${walk(null, 0)}</ul></div>`;
+      return clear + `<div class="group outline"><ul class="items">${walk(null, 0)}</ul></div>`;
     },
   },
 };

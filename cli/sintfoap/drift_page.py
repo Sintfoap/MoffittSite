@@ -892,7 +892,9 @@ class DriftPage(Page):
             elif self.q:
                 group("Matches", sorted(shown, key=R.list_order))
             else:
-                opts.append(Option(Text("\n> nest   < unnest   K J move", style=FAINT), disabled=True))
+                ticked = sum(1 for it in shown if (it["meta"].get("checklist") or {}).get("done"))
+                hint = "\n> nest   < unnest   K J move" + (f"   C clears {ticked} checked" if ticked and writable(col) else "")
+                opts.append(Option(Text(hint, style=FAINT), disabled=True))
                 for it, depth in R.walk_outline(shown):
                     opts.append(Option(item_row(it, depth=depth, col_name=name_of(it), wx=self.wx_chip(it)), id=it["id"]))
         elif tab == "location":
@@ -1525,9 +1527,10 @@ class DriftPage(Page):
 
     @attempt
     async def action_clear_done(self) -> None:
-        """Clears the ticked items the Done group counts (with a search on, just the matches); u puts them back."""
+        """Clears the ticked items on screen (Checklist's Done group, or ticked rows in List; with a search on,
+        just the matches); u puts them back."""
         kind, col, tab = self.current()
-        if kind != "col" or tab != "checklist" or not col:
+        if kind != "col" or tab not in ("checklist", "list") or not col:
             return
         if not writable(col):
             self.app.notify("You can view this collection but not change it.", timeout=3)

@@ -190,6 +190,28 @@ def test_drift_clears_checked_items_with_undo(real_site):
     assert sorted(it["title"] for it in site.drift_state()["items"]) == ["Bread", "Eggs", "Milk"]
 
 
+def test_drift_clears_checked_items_in_the_list_view_too(real_site):
+    col = site.add_collection({"name": "Groceries", "plugins": ["checklist", "list"], "view": "list"})
+    for title, done in [("Milk", True), ("Bread", False)]:
+        site.add_item({"title": title, "collection": col["id"], "meta": {"checklist": {"done": done, "priority": 0}}})
+
+    async def clear(app, pilot):
+        page = app.screen
+        await page.action_refresh()
+        page.view = "c:" + col["id"]
+        page.render_all()
+        page.query_one("#items").focus()
+        await settle(pilot)
+        assert page.current()[2] == "list"
+        await pilot.press("C")
+        await settle(pilot, 0.6)
+        assert [it["title"] for it in site.drift_state()["items"] if it["collection"] == col["id"]] == ["Bread"]
+        await pilot.press("u")
+        await settle(pilot, 0.6)
+    run_app("drift", clear)
+    assert sorted(it["title"] for it in site.drift_state()["items"] if it["collection"] == col["id"]) == ["Bread", "Milk"]
+
+
 def test_drift_list_view_nests_and_today_shows_dated_items(real_site):
     col = site.drift_state()["collections"][0]
     site.update_collection(col["id"], {"view": "list"})
