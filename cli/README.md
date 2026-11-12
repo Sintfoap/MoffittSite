@@ -147,6 +147,7 @@ The same recipes as `/recipes/`: the list on the left, the open one on the right
 | `space` | on the ingredients: tick which to send |
 | `s` | send the ticked ingredients, scaled, to a Drift list: your Shopping list (made the first time), or any list you can add to |
 | `b` | share the recipe on the Recipe board (if you have it) |
+| `v` | the reviews of the recipes you shared on the Recipe board, newest first. A line under the title says when there's a new one; opening them marks them read. `enter` on one opens its recipe (its reviews show under it) or, if it isn't in your box, its post on the board |
 | `E` | the recipe in English, in place of the original (scaling works on it too); `E` again flips back, `S` saves the English over the original |
 | `l` | filter the shelf by labels: tick any (two values of one key show either; different keys show only recipes with both); `c` clears |
 | `f` | find recipes by ingredient: `eggs, spinach` shows only recipes with both, `-nuts` leaves out any with nuts (walnuts too); singular and plural both match, and the lines it found are lit up. Works with `l`; empty clears |

@@ -54,7 +54,7 @@ src/             the Worker: runs only for the paths in run_worker_first
   gifs.js          chat's GIF picker: search, trending and categories from GIPHY (or KLIPY), and favorites
   push.js          sending Web Push: encryption (RFC 8291) and VAPID signing, with WebCrypto
   notify.js        notifications: settings, browsers, Chat's pushes and Drift's reminders
-  recipes.js       Recipe box: recipes (with labels like Season: Fall, picked from the Recipe labels list) read from a link's schema.org data (Recipe Keeper's shared recipes too) or imported in bulk from a file (Recipe Keeper's export, its folder or .zip, with pictures kept in R2, see photos.js), and their ingredients sent to a Drift list; each person's own "made it" day and 1–5 stars, to filter and sort by
+  recipes.js       Recipe box: recipes (with labels like Season: Fall, picked from the Recipe labels list) read from a link's schema.org data (Recipe Keeper's shared recipes too) or imported in bulk from a file (Recipe Keeper's export, its folder or .zip, with pictures kept in R2, see photos.js), and their ingredients sent to a Drift list; each person's own "made it" day and 1–5 stars, to filter and sort by; the Reviews box: reviews of the recipes you shared on the Recipe board, new until you look
   recipe_share.js  Recipe box's share links: /r/<token> shows one recipe to anyone, no sign-in, until its owner turns the link off
   autolabel.js     Recipe box's Suggest labels: labels from the list that a recipe's words point to (a label's value, or keywords set on it), no AI
   recipe_photo.js  Recipe box: a recipe read from a photo (by Claude, with Sweep's API key, or by Workers AI's vision model without one) or from text (pasted, or read off a photo on the device), to check before saving

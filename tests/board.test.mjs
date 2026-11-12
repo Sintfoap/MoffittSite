@@ -382,3 +382,49 @@ test("reviews: people who made it give stars, say how it turned out and what the
   await api(ryan, "DELETE", `posts/${p.id}`);
   assert.equal(sql(env, "SELECT * FROM board_reviews").length, 0);
 });
+
+test("Recipe box's reviews box: reviews of the recipes you shared, new until you look", async () => {
+  const env = await board(), ryan = await member(env, "ryan", "recipes"), sam = await member(env, "sam"), josh = await member(env, "josh");
+  const box = (b, method = "GET", path = "") => b.req(method, "/recipes/api/reviews" + path);
+  let r = (await box(ryan)).json;
+  assert.deepEqual(r, { unread: 0, reviews: [] });
+  // One shared from Recipe box, one typed straight onto the board.
+  const recipe = (await ryan.req("POST", "/recipes/api/recipes", { json: { title: "Brownies", ...RECIPE } })).json;
+  const shared = (await api(ryan, "POST", "posts", { recipe_id: recipe.id, labels: [L.baking] })).json;
+  const typed = (await api(ryan, "POST", "posts", { title: "Stew", recipe: RECIPE })).json;
+  const theirs = (await api(sam, "POST", "posts", { title: "Sam's soup", recipe: RECIPE })).json;
+  await api(sam, "PUT", `posts/${shared.id}/reviews`, { rating: 4, note: "Fudgy.", changes: "Walnuts." });
+  await new Promise(done => setTimeout(done, 5));
+  await api(josh, "PUT", `posts/${typed.id}/reviews`, { note: "Hearty." });
+  await api(josh, "PUT", `posts/${theirs.id}/reviews`, { rating: 2 });   // not ryan's: not in his box
+  r = (await box(ryan)).json;
+  assert.equal(r.unread, 2);
+  assert.deepEqual(r.reviews.map(x => [x.title, x.by, x.rating, x.new]), [["Stew", "Josh", null, true], ["Brownies", "Sam", 4, true]]);
+  // The one from Recipe box links back to it; the typed one only to the board.
+  assert.equal(r.reviews[1].recipe_id, recipe.id);
+  assert.equal(r.reviews[0].recipe_id, null);
+  assert.equal(r.reviews[1].post, shared.id);
+  assert.equal(r.reviews[1].changes, "Walnuts.");
+  assert.equal(r.reviews[1].edited, false);
+  // Only POSTs to mark them read; looking with GET doesn't.
+  assert.equal((await box(ryan, "PUT", "/seen")).status, 405);
+  assert.equal((await box(ryan, "POST")).status, 405);
+  assert.equal((await box(ryan)).json.unread, 2);
+  r = (await box(ryan, "POST", "/seen")).json;
+  assert.equal(r.unread, 0);
+  assert.ok(r.reviews.every(x => !x.new));
+  // Changing a review makes it new again.
+  await new Promise(done => setTimeout(done, 5));
+  await api(sam, "PUT", `posts/${shared.id}/reviews`, { rating: 5 });
+  r = (await box(ryan)).json;
+  assert.equal(r.unread, 1);
+  assert.deepEqual(r.reviews.map(x => [x.title, x.rating, x.new, x.edited]), [["Brownies", 5, true, true], ["Stew", null, false, false]]);
+  // It's Recipe box's, so it needs Recipe box.
+  assert.equal((await box(sam)).status, 403);
+  // Deleting the recipe in the box keeps the review, without the link back.
+  await ryan.req("DELETE", `/recipes/api/recipes/${recipe.id}`);
+  assert.equal((await box(ryan)).json.reviews[0].recipe_id, null);
+  // Deleting the post takes its reviews out of the box.
+  await api(ryan, "DELETE", `posts/${typed.id}`);
+  assert.deepEqual((await box(ryan)).json.reviews.map(x => x.title), ["Brownies"]);
+});

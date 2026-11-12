@@ -626,7 +626,15 @@ run(async () => {
   const key = h.startsWith("c=") ? catOf(decodeURIComponent(h.slice(2))) : null;
   const lab = h.startsWith("l=") ? board.categories.find(c => valueOf(c, h.slice(2))) : null;
   const where = lab ? { category: lab.id, label: h.slice(2) } : key ? { category: key.id } : VIEWS.some(v => v.id === h) ? { view: h } : { view: "feed" };
-  await go(where);
+  // #p=<post>, from Recipe box's reviews box: that post, open, in the view it's in.
+  const linked = h.startsWith("p=") ? await api("GET", "posts/" + encodeURIComponent(h.slice(2))).catch(() => null) : null;
+  await go(linked ? { view: linked.yours ? "mine" : "all" } : where);
+  if (linked) {
+    if (!posts.some(x => x.id === linked.id)) posts.unshift(linked);
+    openId = linked.id; focus = posts.findIndex(x => x.id === linked.id);
+    renderPosts();
+    document.querySelector(`.post[data-id="${CSS.escape(linked.id)}"]`)?.scrollIntoView({ block: "start" });
+  }
   // From Recipe box's "Share on the board".
   if (share && board.recipes.some(r => r.id === share)) {
     try { history.replaceState(null, "", location.pathname + location.hash); } catch {}
