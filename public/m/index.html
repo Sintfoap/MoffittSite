@@ -316,6 +316,46 @@ body[data-screen="chat"].focus #main { overflow: hidden; padding-bottom: 0; }
 .quick-reacts button:active { transform: scale(1.2); }
 .quick-reacts button[aria-pressed="true"] { background: var(--gold-soft); box-shadow: inset 0 0 0 2px var(--gold); }
 
+/* Pantry's scanner */
+.scan-btns { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin: 6px 0 4px; }
+.scan-btns .btn { padding: 0 8px; gap: 6px; font-size: 15px; white-space: nowrap; }
+.scan-btns svg { width: 18px; height: 18px; flex: none; }
+.said { margin: 12px 4px 4px; color: var(--gold); font-size: 15.5px; }
+.said.err { color: var(--bad); }
+.shots { padding: 14px; }
+.shots .hint { padding: 10px 0 12px; }
+.thumbs { display: flex; gap: 8px; overflow-x: auto; }
+.thumbs img { height: 110px; border-radius: 10px; flex: none; }
+.basket { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 12px; }
+.line { background: var(--panel); border-radius: var(--r); box-shadow: var(--shadow); padding: 6px 6px 14px 0; }
+.line.off { padding-bottom: 6px; }
+.line.has-error { box-shadow: var(--shadow), inset 0 0 0 1.5px var(--bad); }
+.line-top { display: flex; align-items: center; gap: 4px; }
+.line-name { flex: 1; min-width: 0; display: grid; gap: 1px; }
+.line-name small { color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.line-name b { font-size: 17px; overflow-wrap: anywhere; }
+.line.off .line-name b { color: var(--faint); text-decoration: line-through; }
+.tick { flex: none; width: 56px; height: 52px; display: grid; place-items: center; border: 0; background: none; color: transparent; cursor: pointer; }
+.tick svg { width: 28px; height: 28px; padding: 5px; border-radius: 8px; box-shadow: inset 0 0 0 2px var(--line-2); stroke-width: 3; }
+.tick[aria-pressed="true"] { color: var(--on-gold); }
+.tick[aria-pressed="true"] svg { background: var(--gold); box-shadow: none; }
+.line-form { gap: 12px; padding: 4px 8px 0 18px; }
+.line-note { color: var(--faint); font: 400 14px var(--sans); margin: 0 4px 0 18px; }
+.line-form .line-note { margin: 0; }
+.line-form .quick .pill { height: 36px; padding: 0 13px; font-size: 14.5px; }
+.check-date { color: var(--gold) !important; }
+.check-date input { border-color: var(--gold) !important; }
+.basket-bar { position: sticky; bottom: -28px; z-index: 3; margin: 14px calc(var(--pad) * -1) -28px; padding: 10px var(--pad) 12px; background: var(--bg); box-shadow: 0 -1px 0 var(--line); }
+.basket-bar .row { display: flex; gap: 10px; }
+.basket-bar .row .btn:first-child { flex: 1; }
+.camera { display: flex; flex-direction: column; height: calc(100 * var(--vh)); margin: 0 calc(var(--pad) * -1); }
+.viewfinder { flex: 1; min-height: 0; position: relative; background: #000; overflow: hidden; }
+.viewfinder video { width: 100%; height: 100%; object-fit: cover; display: block; }
+.aim { position: absolute; left: 10%; right: 10%; top: 50%; height: 2px; background: var(--gold); box-shadow: 0 0 12px var(--gold); }
+.cam-panel { display: grid; gap: 6px; padding: 14px var(--pad) calc(16px + var(--safe-b)); background: var(--panel); }
+.cam-panel .said { margin: 0 2px; color: var(--ink); }
+.cam-panel .fine { margin: 0 2px 6px; text-align: left; }
+body[data-screen="pantry"].focus #main { padding-bottom: 0; overflow: hidden; }
 #toast { position: fixed; z-index: 20; left: 16px; right: 16px; bottom: calc(var(--tabs) + 90px + var(--safe-b)); display: flex; align-items: center; justify-content: space-between; gap: 12px; max-width: 520px; margin: 0 auto; padding: 14px 18px; border-radius: 16px; background: var(--ink); color: var(--bg); font-size: 15.5px; box-shadow: 0 10px 30px rgb(0 0 0 / .35); animation: enter .25s var(--ease); }
 #toast button { border: 0; background: none; color: var(--gold); font: 700 15.5px var(--sans); filter: brightness(.8); padding: 6px; }
 body.focus #toast { bottom: calc(96px + var(--safe-b)); }

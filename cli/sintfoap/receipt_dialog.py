@@ -4,6 +4,8 @@ something you have, or new, with how much and when it expires). ctrl+s adds
 the ticked ones. A line that can't go in comes back here saying why."""
 from __future__ import annotations
 
+import re
+
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -16,12 +18,21 @@ from .look import BAD, FAINT, GOLD, INK, MUTED
 
 LEVELS = ["Empty", "Almost out", "¼ left", "½ left", "¾ left", "Full"]
 KINDS = (("Measured: by weight or volume, like flour", "measured"), ("Counted: whole units, like cans", "counted"), ("Gauged: full to empty, like spices", "gauged"))
-HOW = {"remembered": "remembered from this store", "name": "matched by name"}
+HOW = {"remembered": "remembered from this store", "name": "matched by name", "barcode": "known barcode"}
 
 
 def _nice(day: str) -> str:
     from .pantry_page import nice
     return nice(day) if day else ""
+
+
+def bump(amount: str, each: str) -> str:
+    """One more of the same thing: "10 lb" and "10 lb" make "20 lb"; "2" and "1" make "3". Otherwise as it was."""
+    a, b = (re.match(r"^\s*(\d+(?:\.\d+)?)\s*(.*)$", x or "") for x in (amount, each))
+    if not a or not b or a[2].strip().lower() != b[2].strip().lower():
+        return amount
+    n = round(float(a[1]) + float(b[1]), 3)
+    return f"{n:g} {a[2].strip()}".strip()
 
 
 class ReceiptDialog(ModalScreen[list[dict] | None]):
@@ -50,9 +61,33 @@ class ReceiptDialog(ModalScreen[list[dict] | None]):
         return rows
 
     @staticmethod
+    def barcode_rows(found: list[tuple[str, int, dict]]) -> list[dict]:
+        """Barcodes looked up (code, how many were scanned, what the site said) as rows to check, like the
+        phone scanner's: a known one adds to what it was last time; one nobody knows is new, to name."""
+        rows = []
+        for code, n, out in found:
+            line, product = out.get("line"), out.get("product")
+            if product and line:
+                r = ReceiptDialog.rows_from([{"skip": False, "amount": "", **line, "printed": f"barcode {code}"}])[0]
+                r.update(brand=product.get("brand", ""), size=product.get("size") or r["size"])
+            else:
+                r = {"printed": f"barcode {code}", "said": "", "on": True, "skip": False, "item": "", "match": None, "name": "",
+                     "kind": "counted", "place": "", "unit": "", "size": "", "staple": False, "low": "", "amount": "1",
+                     "expires": "", "expires_by": "", "error": "", "brand": ""}
+            each = r["amount"] or "1"
+            for _ in range(n - 1):
+                r["amount"] = bump(r["amount"] or "1", each)
+            rows.append({**r, "barcode": code, "key": code})
+        return rows
+
+    @staticmethod
     def line(r: dict) -> dict:
         """A row as the site takes it."""
         lot = {"printed": r["printed"], "amount": r["amount"], "expires": r["expires"], "expires_by": r["expires_by"] if r["expires"] else ""}
+        if r.get("key"):
+            lot["key"] = r["key"]
+        if r.get("barcode"):
+            lot.update(barcode=r["barcode"], size=r["size"], brand=r.get("brand", ""), name=r["name"])
         if r.get("level") is not None:
             lot["level"] = r["level"]
         if r["item"]:
@@ -91,9 +126,11 @@ class ReceiptDialog(ModalScreen[list[dict] | None]):
         return t
 
     def compose(self) -> ComposeResult:
-        bits = [b for b in (f"bought {_nice(self.date)}" if self.date else "", "read by Claude" if self.by == "claude" else "read by the site's AI") if b]
+        by = {"claude": "read by Claude", "barcodes": "scanned"}.get(self.by, "read by the site's AI")
+        bits = [b for b in (f"bought {_nice(self.date)}" if self.date else "", by) if b]
+        what = "the barcodes" if self.by == "barcodes" else f"the {self.store} receipt" if self.store else "the receipt"
         with Vertical(classes="dialog"):
-            yield Label(Text.assemble((f"Check the {self.store} receipt" if self.store else "Check the receipt", f"bold {INK}"),
+            yield Label(Text.assemble((f"Check {what}", f"bold {INK}"),
                                       ("   " + " · ".join(bits), FAINT)))
             yield Static(Text("Untick anything that isn't for the pantry. Lines already in your pantry add to what's there; the rest are new. "
                               "(est.) dates are estimates from how long such things usually keep.", style=MUTED))

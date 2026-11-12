@@ -5,6 +5,7 @@
 //   #home              your day: Drift's today and chat rooms with something new
 //   #drift[/<view>]    Drift: today, calendar, or a collection (drift.js)
 //   #chat[/<room id>]  Chat: the room list, or one room (chat.js)
+//   #pantry[/scan]     Pantry's scanner: snap receipts, scan barcodes, check and add (pantry.js)
 //   #more              your account, and the rest of the site
 //
 // Tabs only appear for the apps the admin page has turned on for you (the
@@ -18,9 +19,10 @@ const TABS = [
   { id: "home", label: "Home", icon: "home" },
   { id: "drift", label: "Drift", icon: "drift" },
   { id: "chat", label: "Chat", icon: "chat" },
+  { id: "pantry", label: "Pantry", icon: "pantry" },
   { id: "more", label: "More", icon: "more" },
 ];
-const SCREENS = { home: () => ({ show: showHome }), more: () => ({ show: showMore }), drift: () => import("./drift.js"), chat: () => import("./chat.js") };
+const SCREENS = { home: () => ({ show: showHome }), more: () => ({ show: showMore }), drift: () => import("./drift.js"), chat: () => import("./chat.js"), pantry: () => import("./pantry.js") };
 
 function drawTabs(on) {
   $("#tabs").innerHTML = TABS.filter(t => t.id === "home" || t.id === "more" || app.has.has(t.id)).map(t =>
@@ -132,7 +134,7 @@ async function showHome(main) {
 async function showMore(main) {
   const d = app.dash;
   // What the phone app doesn't have its own screens for opens on the full site.
-  const elsewhere = d.nav.filter(n => !["home", "drift", "chat", "account"].includes(n.id));
+  const elsewhere = d.nav.filter(n => !["home", "drift", "chat", "pantry", "account"].includes(n.id));
   main.innerHTML = `<header class="bar"><h1>More</h1></header>
     <section class="card me"><div class="avatar" aria-hidden="true">${esc((d.user.display_name || d.user.username)[0].toUpperCase())}</div>
       <div><b>${esc(d.user.display_name)}</b><span class="mono">${esc(d.user.username)}${d.user.admin ? " · admin" : ""}</span></div></section>

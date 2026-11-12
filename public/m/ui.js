@@ -42,6 +42,9 @@ const P = {
   search: '<circle cx="11" cy="11" r="6"/><path d="m16 16 4 4"/>',
   x: '<path d="M6 6l12 12M18 6 6 18"/>',
   note: '<path d="M6 4h9l3 3v13H6z"/><path d="M9 11h6M9 15h4"/>',
+  pantry: '<path d="M9 3.5h6v3H9z"/><path d="M8 6.5h8a2 2 0 0 1 2 2V18a2.5 2.5 0 0 1-2.5 2.5h-7A2.5 2.5 0 0 1 6 18V8.5a2 2 0 0 1 2-2z"/><path d="M6 13h12"/>',
+  barcode: '<path d="M4 7V5h3M17 5h3v2M20 17v2h-3M7 19H4v-2"/><path d="M8 8v8M11 8v8M13.5 8v8M16 8v8"/>',
+  camera: '<path d="M4 8.5A1.5 1.5 0 0 1 5.5 7h2l1.5-2h6l1.5 2h2A1.5 1.5 0 0 1 20 8.5v9a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 17.5z"/><circle cx="12" cy="13" r="3.5"/>',
   pin: '<path d="M12 21s-6.5-6.2-6.5-11.2a6.5 6.5 0 0 1 13 0C18.5 14.8 12 21 12 21z"/><circle cx="12" cy="9.8" r="2.3"/>',
 };
 export const icon = (name, size = 22) =>

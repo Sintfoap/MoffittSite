@@ -171,6 +171,7 @@ The same food as `/pantry/`: everything down the left by where it's kept, with h
 | `c` | read a grocery receipt from a photo file (several, separated by commas, for a long one): each line to check, `space` ticks, `enter` changes what it adds to, how much and its expiry, `ctrl+s` adds them. Dates marked (est.) are estimates |
 | `k` | add your Anthropic API key, for Claude to read receipts (without one, the site's AI does) |
 | `s` | pair the Pantry scanner app on a phone: a QR code to scan (or its code to type); `n` makes a new code, `x` unpairs the highlighted phone |
+| `b` | barcodes, typed or from a USB barcode scanner (it types them), with spaces between; the same one twice is two of it. Each is looked up and checked like a receipt's lines: a known one adds to what it was last time, a new one is named once |
 | `h` | share your pantry with your household, by username: they get **full** (add and change anything, as you do), **stock** (take things out and add what's bought) or **use** (only take things out); `t` switches the highlighted one, `x` stops sharing |
 | `v` | switch to a pantry someone shared with you (and back); `l` leaves it |
 | `f` | all, use soon, or running low |

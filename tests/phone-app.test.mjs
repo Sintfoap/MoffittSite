@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import { readFileSync, existsSync } from "node:fs";
 import { today, addDays } from "../public/todo/lib.js";
 import * as D from "../public/m/drift-logic.js";
+import * as PL from "../public/m/pantry-logic.js";
 import * as C from "../public/m/chat-logic.js";
 
 const item = (id, meta = {}, extra = {}) => ({ id, title: id, collection: "c_1", tags: [], notes: "", created: "2026-01-01T00:00:00", meta, ...extra });
@@ -109,7 +110,7 @@ test("the phone app installs as its own app, and its page loads every file it na
   const html = readFileSync(new URL("../public/m/index.html", import.meta.url), "utf8");
   for (const [, src] of html.matchAll(/(?:src|href)="(\/[^"]+)"/g)) assert.ok(existsSync(new URL("../public" + src, import.meta.url)), src);
   // Every module the app imports is there (relative imports, as the browser resolves them).
-  for (const f of ["app.js", "ui.js", "drift.js", "chat.js", "drift-logic.js", "chat-logic.js"]) {
+  for (const f of ["app.js", "ui.js", "drift.js", "chat.js", "drift-logic.js", "chat-logic.js", "pantry.js", "pantry-logic.js", "barcode.js"]) {
     const url = new URL(`../public/m/${f}`, import.meta.url);
     for (const [, spec] of readFileSync(url, "utf8").matchAll(/(?:from|import\()\s*"(\.[^"]+)"/g)) assert.ok(existsSync(new URL(spec, url)), `${f} → ${spec}`);
   }
@@ -134,4 +135,90 @@ test("the phone's Map lists the day's places, and the item sheet sets a place", 
   assert.deepEqual(D.itemChanges(it, { ...base, place: "" }, kinds).meta.location, null);
   assert.deepEqual(D.freshMeta({ plugins: ["event", "location"] }, { place: "Coit Tower" }, { dated: true, day: "2026-11-02" }),
     { event: { start: "2026-11-02", end: null }, location: { place: "Coit Tower", lat: null, lng: null } });
+});
+
+// ── Pantry's scanner (public/m/pantry.js) ──────────────────────────────────
+
+test("the phone's Pantry scanner sends lines as the scanner app does", () => {
+  const p = { printed: "GV WW FLR 10LB", name: "Whole wheat flour", skip: false,
+    match: { id: "i_0000000001", name: "Whole wheat flour", kind: "measured", how: "remembered", text: "2 lb" },
+    amount: "10 lb", expires: "2027-02-09", expires_by: "estimated" };
+  const l = PL.fromProposal(p, { store: "Walmart" });
+  assert.equal(l.target, "i_0000000001");
+  assert.equal(l.how, "remembered");
+  const sent = PL.toSend(l);
+  assert.equal(sent.item, "i_0000000001");
+  assert.equal(sent.expires_by, "estimated");
+  assert.equal(sent.kind, undefined);
+  const bag = PL.fromProposal({ printed: "BAG FEE", name: "Bag", skip: true, match: null, new: { kind: "counted", place: "Cupboard" }, amount: "1" });
+  assert.equal(bag.on, false);
+  assert.ok(PL.isNew(bag));
+
+  // A new one, a staple: low at an amount, or at a mark on the gauge (Almost out unless picked).
+  assert.equal(PL.toSend(PL.blank({ name: "Tomato soup", kind: "counted", staple: true, low: "2" })).low, "2");
+  assert.equal(PL.toSend(PL.blank({ name: "Vanilla", kind: "gauged", staple: true })).low, 1);
+  assert.equal(PL.toSend(PL.blank({ name: "Vanilla", kind: "gauged", staple: true, lowLevel: 3, level: 2 })).level, 2);
+  assert.equal(PL.toSend(PL.blank({ name: "Oat milk", kind: "counted" })).low, undefined);
+  // A date that was never set isn't "estimated".
+  assert.equal(PL.toSend(PL.blank({ name: "Rice", expiresBy: "estimated" })).expires_by, "");
+});
+
+test("the phone's Pantry scanner counts the same barcode again, and reads a UPC-A as Android does", () => {
+  assert.equal(PL.bump("10 lb", "10 lb"), "20 lb");
+  assert.equal(PL.bump("2", "1"), "3");
+  assert.equal(PL.bump("1 gallon", "0.5 gallon"), "1.5 gallon");
+  assert.equal(PL.bump("10 lb", "2 cups"), "10 lb");
+  assert.equal(PL.sameBarcode("0012345678905"), "012345678905");
+  assert.equal(PL.sameBarcode("5000159484695"), "5000159484695");
+  assert.equal(PL.scan([], "hello"), null);
+  const first = PL.scan([], "0012345678905");
+  assert.equal(first.look, "012345678905");
+  const known = PL.fromBarcode("012345678905", { product: { name: "Black beans", size: "15 oz", brand: "Goya" },
+    line: { name: "Black beans", amount: "1 can", match: null, new: { kind: "counted", unit: "can" } } });
+  assert.equal(known.brand, "Goya");
+  assert.equal(known.size, "15 oz");
+  const again = PL.scan([known], "012345678905");
+  assert.equal(again.again.amount, "2 can");
+  const unknown = PL.fromBarcode("4000000000006", { product: null, line: null });
+  assert.equal(unknown.amount, "1");
+  assert.equal(PL.unnamed([unknown]).barcode, "4000000000006");
+});
+
+test("the phone's Pantry scanner keeps what the site wouldn't take, with its reason", () => {
+  const a = PL.blank({ name: "Flour", store: "Walmart" }), b = PL.blank({ name: "Bag", store: "Walmart" }), c = PL.blank({ name: "Milk", barcode: "123456" }), d = PL.blank({ name: "x", on: false });
+  const bs = PL.batches([a, b, c, d]);
+  assert.deepEqual(bs.map(x => [x.store, x.lines.length]), [["Walmart", 2], ["", 1]]);
+  const left = PL.afterAdd([a, b, c, d], bs[0].lines, { added: [{ name: "Flour" }], failed: [{ key: b.key, error: "say how much" }], ticked: [{ title: "flour" }] });
+  assert.deepEqual(left.map(l => l.name), ["Bag", "Milk", "x"]);
+  assert.equal(left[0].error, "say how much");
+  assert.equal(PL.addedLine([{ added: [{ name: "Flour" }], ticked: [{ title: "flour" }] }], left), "Added 1: Flour. Ticked off your shopping list: flour. 1 still needs a fix.");
+  assert.ok(PL.dateMatters(PL.blank({ expires: "2026-11-18", expiresBy: "estimated" }), "2026-11-11"));
+  assert.ok(!PL.dateMatters(PL.blank({ expires: "2028-11-10", expiresBy: "estimated" }), "2026-11-11"));
+  assert.equal(PL.nice("2027-02-09", "2026-11-11"), "Feb 9, 2027");
+});
+
+test("the phone's barcode reader reads groceries' barcodes without the browser's help (iPhones)", async () => {
+  const Z = await import("../public/m/vendor/zxing.mjs");
+  const { decodePixels } = await import("../public/m/barcode.js");
+  // EAN-13, drawn as a camera would see it: black bars on white, a quiet zone either side.
+  const L = ["0001101", "0011001", "0010011", "0111101", "0100011", "0110001", "0101111", "0111011", "0110111", "0001011"];
+  const G = L.map(c => [...c].reverse().map(x => x === "0" ? "1" : "0").join("")), R = L.map(c => [...c].map(x => x === "0" ? "1" : "0").join(""));
+  const PAR = ["LLLLLL", "LLGLGG", "LLGGLG", "LLGGGL", "LGLLGG", "LGGLLG", "LGGGLL", "LGLGLG", "LGLGGL", "LGGLGL"];
+  const draw = code => {
+    const d = [...code].map(Number);
+    let bits = "101";
+    for (let i = 0; i < 6; i++) bits += (PAR[d[0]][i] === "L" ? L : G)[d[i + 1]];
+    bits += "01010";
+    for (let i = 7; i < 13; i++) bits += R[d[i]];
+    bits += "101";
+    const mod = 3, quiet = 30, height = 60, width = bits.length * mod + 2 * quiet, data = new Uint8ClampedArray(width * height * 4).fill(255);
+    for (let y = 0; y < height; y++) for (let x = 0; x < bits.length * mod; x++)
+      if (bits[Math.floor(x / mod)] === "1") { const j = (y * width + quiet + x) * 4; data[j] = data[j + 1] = data[j + 2] = 0; }
+    return { data, width, height };
+  };
+  const hints = new Map([[Z.DecodeHintType.POSSIBLE_FORMATS, [Z.BarcodeFormat.EAN_13, Z.BarcodeFormat.UPC_A]]]);
+  const one = new Z.MultiFormatOneDReader(hints);
+  assert.equal(decodePixels(Z, one, hints, draw("5000159484695")), "5000159484695");
+  assert.equal(decodePixels(Z, one, hints, draw("0012345678905")), "012345678905");   // a UPC-A: 12 digits, as Android reads it
+  assert.equal(decodePixels(Z, one, hints, { data: new Uint8ClampedArray(400 * 4).fill(255), width: 100, height: 4 }), null);
 });

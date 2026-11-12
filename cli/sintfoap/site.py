@@ -956,6 +956,12 @@ def add_receipt(store: str, lines: list[dict]) -> dict:
     return api("POST", _of("/pantry/api/receipt/add"), {"store": store, "lines": lines}, timeout=60)
 
 
+def pantry_barcode(code: str, day: str = "") -> dict:
+    """What a barcode is and what it would add: {code, product: {name, size, brand, from} | None, line}
+    (line shaped like a receipt's, matched to what's in the pantry). See src/pantry_scanner.js."""
+    return api("GET", _of(f"/pantry/api/barcode/{_q(code)}" + (f"?day={day}" if day else "")))
+
+
 def pantry_scanners() -> dict:
     """Phones paired as Pantry scanners: {scanners: [{id, name, prefix, created, last_used}]}."""
     return _get("/pantry/api/scanners")
