@@ -17,6 +17,7 @@
 // /recipes/api/recipes/suggest-labels  GET → labels each recipe's words point to, to check before adding (src/autolabel.js)
 // /recipes/api/recipes/add-labels      POST {add: [{id, labels: [label ids]}], at most 200} → {recipes, labels, full}: added to the ones they have
 // /recipes/api/recipes/<id>/translate  POST → {language, english, fields}: the recipe in English, saved only by a PATCH (src/translate.js)
+// /recipes/api/recipes/<id>/share  GET, POST (make), DELETE (turn off) its public link (src/recipe_share.js); GET recipes carries each one's as `share`
 // /recipes/api/recipes/<id>/shop   POST {servings | factor, lines?, list?} → its ingredients onto a Drift list
 // /recipes/api/photo, /recipes/api/key   a recipe read from a photo, and the API key it's read with (src/recipe_photo.js)
 
@@ -31,13 +32,14 @@ import { SweepError } from "./sweep.js";
 import { storePhoto, unstorePhoto, photoResponse, photoIds, dropPhotos } from "./photos.js";
 import { suggestFor, termsOf } from "./autolabel.js";
 import { translate, recipeText, TranslateError } from "./translate.js";
+import { sharesOf, getShare, makeShare, stopShare } from "./recipe_share.js";
 
 const fail = msg => { throw new BadRequest(msg); };
 export class NotARecipe extends Error {}
 
 const LIMITS = { labels: 20, recipes: 1000, importPages: 10, importBody: 4 * 1024 * 1024, title: 200, url: 2000, yield: 100, time: 50, lines: 100, ingredient: 300, step: 3000, notes: 5000, page: 3 * 1024 * 1024 };
 const ID = /^r_[0-9a-f]{10}$/;
-const ROUTE = /^\/recipes\/api\/recipes(?:\/(import|suggest-labels|add-labels)|\/(r_[0-9a-f]{10})(?:\/(shop|photo|translate))?)?\/?$/;
+const ROUTE = /^\/recipes\/api\/recipes(?:\/(import|suggest-labels|add-labels)|\/(r_[0-9a-f]{10})(?:\/(shop|photo|translate|share))?)?\/?$/;
 const PHOTO = /^\/recipes\/api\/photos\/(p_[0-9a-f]{10})$/;
 // A picture kept here (an imported recipe's own photo) instead of a link to a site's.
 const OWN_PHOTO = /^\/recipes\/api\/photos\/p_[0-9a-f]{10}$/;
@@ -269,6 +271,8 @@ export async function remove(env, user, id) {
   if (!res.meta.changes) return null;
   await d.batch([
     d.prepare("DELETE FROM recipe_photos WHERE owner = ? AND recipe = ?").bind(user.id, id),
+    // Its share link stops working.
+    d.prepare("DELETE FROM recipe_shares WHERE owner = ? AND recipe = ?").bind(user.id, id),
     // Its posts on the board stay, as it last was.
     d.prepare("UPDATE board_posts SET data = json_remove(data, '$.from') WHERE author = ? AND json_extract(data, '$.from') = ?").bind(user.id, id),
   ]);
@@ -733,7 +737,9 @@ export async function recipes(request, env, user, pathname) {
     if (!id) {
       if (method === "GET") {
         const drift = user.areas.has("todo");
-        return json({ recipes: await list(env, user), label_list: await labelList(await db(env)), drift, board: user.areas.has("board"), labels: user.areas.has("labels"), lists: drift ? await writableCollections(env, user) : [], photo: await photoState(env, user) });
+        const shared = await sharesOf(await db(env), user.id);
+        const mine = (await list(env, user)).map(r => ({ ...r, share: shared.get(r.id) || null }));
+        return json({ recipes: mine, label_list: await labelList(await db(env)), drift, board: user.areas.has("board"), labels: user.areas.has("labels"), lists: drift ? await writableCollections(env, user) : [], photo: await photoState(env, user) });
       }
       if (method !== "POST") return notAllowed();
       const body = await readJson(request);
@@ -748,7 +754,8 @@ export async function recipes(request, env, user, pathname) {
       const r = await get(await db(env), user.id, id);
       return r ? json(await translate(env, user, recipeText(r))) : json({ error: "not found" }, 404);
     }
-    if (sub === "photo") out = method === "POST" ? await setPhoto(env, user, id, await readImport(request)) : method === "DELETE" ? await removePhoto(env, user, id) : undefined;
+    if (sub === "share") out = method === "GET" ? await getShare(env, user, id) : method === "POST" ? await makeShare(env, user, id) : method === "DELETE" ? await stopShare(env, user, id) : undefined;
+    else if (sub === "photo") out = method === "POST" ? await setPhoto(env, user, id, await readImport(request)) : method === "DELETE" ? await removePhoto(env, user, id) : undefined;
     else if (sub) out = method === "POST" ? await shop(env, user, id, await readJson(request)) : undefined;
     else if (method === "PATCH") out = await update(env, user, id, await readJson(request));
     else if (method === "DELETE") out = await remove(env, user, id);

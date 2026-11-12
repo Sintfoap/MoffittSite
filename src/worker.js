@@ -11,6 +11,7 @@
 // items from chat rooms (src/sweep.js), /trips, Trip planner (src/trips.js), /board,
 // the Recipe board (src/board.js), /labels, Recipe labels (src/labels.js), /food, Food club (src/food.js), and /feedback,
 // notes to the site's owner (src/feedback.js), which admins can always open.
+// /r/<token> is a recipe shared by link, for anyone (src/recipe_share.js).
 // /mcp is the MCP server AI agents use Drift through, with an API key (src/mcp.js).
 // /login/cli is signing in from a terminal (src/cli.js). /app and
 // /.well-known/assetlinks.json are the Android app's download page, release
@@ -29,6 +30,7 @@ import { handlePhone, PHONE_PATHS } from "./phone.js";
 import { withRail } from "./pages.js";
 import { chat } from "./chat.js";
 import { recipes } from "./recipes.js";
+import { sharedPage, SHARE_PATHS } from "./recipe_share.js";
 import { sweepApp } from "./sweep.js";
 import { meals } from "./meals.js";
 import { pantry, pantryScanner } from "./pantry.js";
@@ -148,6 +150,8 @@ export default {
     if (pathname.startsWith("/sweep/")) {
       return protect(request, env, areaOf("sweep"), user => sweepApp(request, env, user, pathname));
     }
+    // A recipe someone shared by link: anyone can read it, signed in or not (src/recipe_share.js).
+    if (SHARE_PATHS.test(pathname)) return sharedPage(request, env, pathname);
     // The frame store plugins run in. It holds no data and needs no sign-in.
     if (pathname.startsWith("/sandbox/")) return sandbox(request, env);
     if (pathname === "/_matrix/push/v1/notify") return pushGateway(request, env, ctx ? p => ctx.waitUntil(p) : undefined);
