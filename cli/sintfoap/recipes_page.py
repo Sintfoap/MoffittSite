@@ -8,7 +8,8 @@ Keeper's export, with its pictures, or a saved recipe page), p reads one from
 a photo (a cookbook page, a screenshot: by tesseract on this computer, or by
 Claude with your key, k) and t from pasted text, for you to check before
 it's saved. l filters the shelf by labels and f by ingredients ("eggs,
-spinach, -nuts"), with the lines it found lit up. L suggests labels for
+spinach, -nuts"), with the lines it found lit up. u makes a link anyone
+can read the recipe at without signing in, to copy or turn off. L suggests labels for
 the whole box from each recipe's words (a label's name, or the keywords set
 on it in Recipe labels), to untick any that don't fit before they're added."""
 from __future__ import annotations
@@ -359,6 +360,45 @@ class SuggestLabels(ModalScreen[list | None]):
         self.dismiss(None)
 
 
+class ShareDialog(ModalScreen[str | None]):
+    """u: the open recipe's share link, to copy (c) or turn off (x). Dismisses with "copy", "stop" or None."""
+    BINDINGS = [Binding("escape", "close", "Close"), Binding("c", "copy", "Copy link"), Binding("x", "stop", "Turn it off")]
+
+    def __init__(self, title: str, url: str):
+        super().__init__()
+        self._title, self._url = title, url
+
+    def compose(self) -> ComposeResult:
+        with Vertical(classes="dialog"):
+            yield Label(Text("Share link", style=f"bold {INK}"))
+            yield Static(Text(f"Anyone with this link can read {self._title}, without an account: its picture, ingredients, "
+                              "steps and notes, as you keep them here. Nothing else of yours is on it.", style=MUTED))
+            yield Input(self._url, id="share-url")
+            with Horizontal(classes="buttons"):
+                yield Button("Copy link (c)", id="copy")
+                yield Button("Close", id="close", classes="quiet")
+                yield Button("Turn it off (x)", id="stop", classes="danger")
+
+    def on_mount(self) -> None:
+        self.query_one("#copy", Button).focus()
+
+    def on_input_changed(self, e: Input.Changed) -> None:
+        if e.value != self._url:   # it's there to read and select, not to change
+            e.input.value = self._url
+
+    def on_button_pressed(self, e: Button.Pressed) -> None:
+        self.dismiss(None if e.button.id == "close" else e.button.id)
+
+    def action_copy(self) -> None:
+        self.dismiss("copy")
+
+    def action_stop(self) -> None:
+        self.dismiss("stop")
+
+    def action_close(self) -> None:
+        self.dismiss(None)
+
+
 class RecipesPage(Page):
     WEB_PATH = "/recipes/"
     SIDE = "#shelf"
@@ -400,6 +440,7 @@ class RecipesPage(Page):
         Binding("f", "ingredients", "Ingredients"),
         Binding("o", "sort", "Sort"),
         Binding("b", "board", "Share on board"),
+        Binding("u", "share", "Share link"),
         # Shown only for a recipe that doesn't read as English (or has its
         # English ready); the second E translates any recipe, as on the website.
         Binding("E", "english", "English"),
@@ -562,6 +603,8 @@ class RecipesPage(Page):
         bits = [b for b in (r.get("time"), r.get("yield") if r.get("yield") and not r["yield"].replace(".", "").isdigit() else "", host(r.get("source", ""))) if b]
         if r.get("image"):
             bits.append("has a picture (c changes it)")
+        if r.get("share"):
+            bits.append("shared by link (u)")
         self.query_one("#facts", Static).update(" · ".join(bits))
         tags = Text()
         for i, lb in enumerate(r.get("labels", [])):
@@ -675,7 +718,7 @@ class RecipesPage(Page):
         if action == "english" and not self.offers_english():
             return False   # the footer's E; the hidden one (english_any) still translates
 
-        if action in ("servings", "add", "find", "new", "import_file", "photo", "paste", "key", "edit", "picture", "send", "delete", "refresh", "board", "labels", "suggest", "ingredients", "sort", "english", "english_any", "save_english") and isinstance(self.focused, (Input, TextArea)):
+        if action in ("servings", "add", "find", "new", "share", "import_file", "photo", "paste", "key", "edit", "picture", "send", "delete", "refresh", "board", "labels", "suggest", "ingredients", "sort", "english", "english_any", "save_english") and isinstance(self.focused, (Input, TextArea)):
             return False
         return True
 
@@ -891,6 +934,34 @@ class RecipesPage(Page):
         if r and (self.data or {}).get("board"):
             from .board_page import BoardPage
             self.app.push_screen(BoardPage(share=r["id"]))
+
+    # ── share links ───────────────────────────────────────────────────────
+
+    @attempt
+    async def action_share(self) -> None:
+        """u: a link anyone can read the open recipe at, no account needed; made the first time, then the same one until it's turned off."""
+        r = self.current()
+        if not r:
+            return
+        if not r.get("share"):
+            r["share"] = (await self.fetch(site.share_recipe, r["id"]))["share"]
+            self.show_recipe()
+        url = site.site_url(r["share"])
+
+        async def answer(what: str | None) -> None:
+            if what == "copy":
+                self.app.copy_to_clipboard(url)
+                self.app.notify(f"Copied the link to {r['title']}: {url}", timeout=5)
+            elif what == "stop":
+                await self.unshare(r)
+        self.app.push_screen(ShareDialog(r["title"], url), answer)
+
+    @attempt
+    async def unshare(self, r: dict) -> None:
+        await self.fetch(site.unshare_recipe, r["id"])
+        r["share"] = None
+        self.show_recipe()
+        self.app.notify(f"The link to {r['title']} is off; it won't open any more.", timeout=4)
 
     # ── importing a file ──────────────────────────────────────────────────
 

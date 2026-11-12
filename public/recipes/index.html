@@ -195,6 +195,7 @@ dialog .two { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
   .menu-list { left: 0; right: auto; }
   dialog .two { grid-template-columns: 1fr; }
 }
+#share-url { font-size: 13px; }
 details.about { margin: -8px 0 18px; font-size: 13px; color: var(--muted); max-width: 70ch; }
 details.about summary { cursor: pointer; color: var(--gold); width: max-content; }
 details.about p { margin: 8px 0 0; }
@@ -295,6 +296,16 @@ details.about p { margin: 8px 0 0; }
   </form>
 </dialog>
 
+<dialog id="sharer">
+  <form method="dialog">
+    <h2>Share link</h2>
+    <p id="share-text"></p>
+    <label class="field">Link<input type="text" id="share-url" readonly></label>
+    <div class="row"><button class="btn" type="button" id="share-copy">Copy link</button><button class="btn quiet" value="close">Close</button>
+      <button class="btn danger end" type="button" id="share-stop">Turn the link off</button></div>
+  </form>
+</dialog>
+
 <dialog id="keyer">
   <form method="dialog" id="key-form">
     <h2>Read photos with Claude</h2>
@@ -304,7 +315,7 @@ details.about p { margin: 8px 0 0; }
   </form>
 </dialog>
 
-<footer class="keybar" aria-label="Keyboard shortcuts"><span><kbd>a</kbd>from a link</span><span><kbd>n</kbd>by hand</span><span><kbd>/</kbd>find</span><span><kbd>f</kbd>by ingredient</span><span><kbd>l</kbd>filter by label</span><span><kbd>j k</kbd>next, previous</span><span><kbd>[ ]</kbd>page</span><span><kbd>+ -</kbd>servings</span><span><kbd>s</kbd>send to list</span><span><kbd>e</kbd>edit</span><span><kbd>E</kbd>English</span><span><kbd>p</kbd>from a photo</span><span><kbd>t</kbd>paste text</span><span><kbd>i</kbd>import a file</span><span><kbd>L</kbd>suggest labels</span><span><kbd>g</kbd>then a key from the menu to jump</span><span><kbd>\</kbd>Sidebar</span><a class="end" href="/logout" data-key="o"><kbd>g o</kbd>Sign out</a></footer>
+<footer class="keybar" aria-label="Keyboard shortcuts"><span><kbd>a</kbd>from a link</span><span><kbd>n</kbd>by hand</span><span><kbd>/</kbd>find</span><span><kbd>f</kbd>by ingredient</span><span><kbd>l</kbd>filter by label</span><span><kbd>j k</kbd>next, previous</span><span><kbd>[ ]</kbd>page</span><span><kbd>+ -</kbd>servings</span><span><kbd>s</kbd>send to list</span><span><kbd>e</kbd>edit</span><span><kbd>E</kbd>English</span><span><kbd>u</kbd>share link</span><span><kbd>p</kbd>from a photo</span><span><kbd>t</kbd>paste text</span><span><kbd>i</kbd>import a file</span><span><kbd>L</kbd>suggest labels</span><span><kbd>g</kbd>then a key from the menu to jump</span><span><kbd>\</kbd>Sidebar</span><a class="end" href="/logout" data-key="o"><kbd>g o</kbd>Sign out</a></footer>
 <script src="/keys.js" defer></script>
 <script type="module" src="/recipes/app.js"></script>
 </body>

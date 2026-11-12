@@ -580,6 +580,14 @@ const SCHEMA = [
      created TEXT NOT NULL
    )`,
   `CREATE INDEX IF NOT EXISTS recipe_photos_recipe ON recipe_photos (owner, recipe)`,
+  // Recipe box's share links (src/recipe_share.js): /r/<token> shows the recipe to anyone, no sign-in.
+  `CREATE TABLE IF NOT EXISTS recipe_shares (
+     token   TEXT PRIMARY KEY,                     -- 24 random bytes, base64url
+     owner   TEXT NOT NULL,
+     recipe  TEXT NOT NULL,
+     created TEXT NOT NULL
+   )`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS recipe_shares_recipe ON recipe_shares (owner, recipe)`,
 ];
 
 // Indexes on columns that ADDED_COLUMNS may have only just added.

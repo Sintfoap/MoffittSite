@@ -582,6 +582,42 @@ def test_recipe_box_saves_from_a_link_scales_and_sends_to_drift(real_site):
     run_app("recipes", recipes)
 
 
+def test_recipe_box_share_link_is_made_copied_and_turned_off(real_site):
+    import urllib.error
+    import urllib.request
+    rid = site.add_recipe({"title": "Chili", "ingredients": ["1 lb beef"], "steps": ["Simmer."]})["id"]
+
+    async def share(app, pilot):
+        page = app.screen
+        copied = []
+        app.copy_to_clipboard = copied.append
+        await pilot.press("u")
+        await settle(pilot, 0.6)
+        dialog = app.screen
+        assert type(dialog).__name__ == "ShareDialog"
+        url = dialog.query_one("#share-url").value
+        assert url.startswith(real_site + "/r/")
+        assert page.current()["share"] and "shared by link" in str(page.query_one("#facts").render())
+        await pilot.press("c")
+        await settle(pilot)
+        assert copied == [url]
+        # Signed out, the link opens the recipe.
+        with urllib.request.urlopen(url) as res:
+            assert "Simmer." in res.read().decode()
+        # u again: the same link; x turns it off.
+        await pilot.press("u")
+        await settle(pilot, 0.6)
+        assert app.screen.query_one("#share-url").value == url
+        await pilot.press("x")
+        await settle(pilot, 0.6)
+        assert page.current()["share"] is None
+        with pytest.raises(urllib.error.HTTPError) as gone:
+            urllib.request.urlopen(url)
+        assert gone.value.code == 404
+    run_app("recipes", share)
+    assert site.recipes()["recipes"][0]["share"] is None and rid
+
+
 def test_recipe_box_suggests_labels_from_keywords(real_site):
     from sintfoap.recipes_page import by_label
     fall, irish, spanish = "l_0000000001", "l_0000000003", "l_0000000004"   # tests/devsite.mjs
