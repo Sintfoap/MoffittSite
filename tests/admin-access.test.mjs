@@ -43,9 +43,12 @@ test("the admin page has a toggle for every app on every account, and they work"
     const on = await ryan.post("/admin/access", { user_id: id, app: a.id, on: "1" });
     assert.match(on.text, new RegExp(`${a.name} is on for josh`));
     assert.match(on.text, new RegExp(`value="${a.id}" checked aria-label="${a.name} for josh"`));
-    assert.equal((await josh.get(PATHS[a.id])).status, 200, `${a.id} on`);
+    // Recipe box for AI agents has no page: it's the recipe tools an API key gets (tests/mcp.test.mjs), told on /account.
+    const check = PATHS[a.id] ? async () => (await josh.get(PATHS[a.id])).status
+      : async () => /in Recipe box: find/.test((await josh.get("/account")).text) ? 200 : 403;
+    assert.equal(await check(), 200, `${a.id} on`);
     await ryan.post("/admin/access", { user_id: id, app: a.id, on: "0" });
-    assert.equal((await josh.get(PATHS[a.id])).status, 403, `${a.id} off`);
+    assert.equal(await check(), 403, `${a.id} off`);
     if (a.parent) await ryan.post("/admin/access", { user_id: id, app: a.parent, on: "0" });
   }
   assert.equal((await ryan.post("/admin/access", { user_id: id, app: "nope", on: "1" })).status, 400);

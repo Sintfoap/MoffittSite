@@ -18,6 +18,9 @@
 //   GET  /login/cli/account            → what /account shows, for the terminal's settings page
 //   POST /login/cli/account            {display_name} → saved, answers like GET
 //   POST /login/cli/account/sessions   → signs out every other device, answers like GET
+//   POST /login/cli/account/apikeys/revoke  {id} → that API key stops working, answers like GET
+//   GET's `agents` is what /account's API keys card shows: {tools: ["drift", "recipes"], mcp, keys}, or null
+//   for an account with neither Drift nor Recipe box for AI agents. Making a key needs the password, so it's on /account.
 // Anything that needs the password (two-factor, recovery codes, email, the
 // password itself) stays on /account, so the terminal never handles it.
 
@@ -26,6 +29,7 @@ import { db, now } from "./db.js";
 import { randomBytes, randomToken, sha256 } from "./crypto.js";
 import { createSession, currentSession, clientIp, getUser, recoveryCodesLeft, endUserSessions, cleanDisplayName, AuthError, PLACES, canUse } from "./auth.js";
 import { mailReady } from "./mail.js";
+import { listKeys, revokeKey, toolSets } from "./apikeys.js";
 import { sameOrigin } from "./account.js";
 import { agenda, visitorNow } from "./drift.js";
 import { siteNav } from "./nav.js";
@@ -79,7 +83,7 @@ export async function handleCli(request, env) {
     if (pathname === "/login/cli/token") return method === "POST" ? await token(request, env) : json({ error: "method not allowed" }, 405);
     if (pathname === "/login/cli/me") return method === "GET" ? await me(request, env) : json({ error: "method not allowed" }, 405);
     if (pathname === "/login/cli/dashboard") return method === "GET" ? await dashboard(request, env) : json({ error: "method not allowed" }, 405);
-    if (pathname === "/login/cli/account" || pathname === "/login/cli/account/sessions") return await account(request, env, pathname, method);
+    if (pathname === "/login/cli/account" || pathname === "/login/cli/account/sessions" || pathname === "/login/cli/account/apikeys/revoke") return await account(request, env, pathname, method);
     if (pathname === "/login/cli" || pathname === "/login/cli/") return await approvePage(request, env, method);
     return json({ error: "not found" }, 404);
   } catch (e) {
@@ -196,6 +200,10 @@ async function account(request, env, pathname, method) {
     const d = await db(env);
     if (pathname === "/login/cli/account/sessions") {
       await endUserSessions(env, user.id, { exceptHash: s.session.id_hash });
+    } else if (pathname === "/login/cli/account/apikeys/revoke") {
+      const b = await body(request);
+      if (!b || typeof b !== "object" || typeof b.id !== "string") return json({ error: "invalid request" }, 400);
+      if (!await revokeKey(env, user.id, b.id)) return json({ error: "that key is already gone" }, 404);
     } else {
       const b = await body(request);
       if (!b || typeof b !== "object") return json({ error: "invalid request" }, 400);
@@ -208,11 +216,13 @@ async function account(request, env, pathname, method) {
   }
   const d = await db(env), origin = new URL(request.url).origin;
   const sessions = (await d.prepare("SELECT COUNT(*) AS n FROM sessions WHERE user_id = ? AND stage = 'full'").bind(user.id).first()).n;
+  const tools = toolSets(user);
   return json({
     username: user.username, display_name: user.display_name, admin: user.areas.has("admin"),
     two_factor: !!user.totp_secret, sessions, recovery_codes_left: await recoveryCodesLeft(env, user.id),
     email: user.email || null, email_confirmed: !!user.email_verified, mail: mailReady(env),
     must_change_pw: !!user.must_change_pw, url: origin + "/account",
+    agents: tools.length ? { tools, mcp: origin + "/mcp", keys: (await listKeys(env, user.id)).map(k => ({ id: k.id_hash, name: k.name, prefix: k.prefix, created_at: k.created_at, last_used: k.last_used })) } : null,
   });
 }
 

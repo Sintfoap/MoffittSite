@@ -255,6 +255,11 @@ def sign_out_others() -> dict:
     return api("POST", "/login/cli/account/sessions")
 
 
+def revoke_api_key(key_id: str) -> dict:
+    """Stops one of your API keys working (the MCP server's, for AI agents). Answers like account()."""
+    return api("POST", "/login/cli/account/apikeys/revoke", {"id": key_id})
+
+
 # ──────────────────────────────── Drift ─────────────────────────────────────
 # /todo/api/ (src/worker.js, src/drift.js)
 

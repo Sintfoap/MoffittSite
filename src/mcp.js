@@ -1,5 +1,7 @@
-// The MCP server for Drift: lets an AI agent do what a signed-in person can do
-// in Drift, using an API key made on /account (src/apikeys.js).
+// The MCP server: lets an AI agent do what a signed-in person can do in Drift,
+// and in Recipe box (src/mcp_recipes.js), using an API key made on /account
+// (src/apikeys.js). Each account sees the tools for the apps it has: Drift's
+// with Drift, Recipe box's with Recipe box and its "for AI agents" toggle.
 //
 // Streamable HTTP, stateless, plain JSON replies (no streaming):
 //   POST /mcp   one JSON-RPC message, or an array of them. `Authorization: Bearer sf_…`.
@@ -8,8 +10,8 @@
 // Every tool calls the same functions as Drift's web API (src/drift.js), so
 // validation, ownership and sharing rules are identical.
 
-import { findKey, touchKey } from "./apikeys.js";
-import { getUser, areaOf } from "./auth.js";
+import { findKey, touchKey, toolSets } from "./apikeys.js";
+import { getUser } from "./auth.js";
 import { state, agenda, getItem, createItem, updateItem, createCollection, updateCollection, setBases, shareCollection, unshareCollection, BadRequest, ID } from "./drift.js";
 import { planDay } from "./routing.js";
 import { hasPlaces, searchPlaces, nameOf } from "./places.js";
@@ -17,6 +19,7 @@ import { routeImage, stopLabel } from "./mapimage.js";
 import { PROFILES, niceDuration, straightNote } from "../public/todo/route.js";
 import { withLink, withoutLink, label } from "../public/todo/plugins/graph.js";
 import { install, uninstall, PLUGIN_ID } from "./store.js";
+import { RECIPE_TOOLS } from "./mcp_recipes.js";
 
 export const MCP_PATHS = /^\/mcp\/?$/;
 const MAX_BODY = 64 * 1024;
@@ -271,13 +274,18 @@ const TOOLS = [
     inputSchema: obj({ id: { type: "string", description: "Store plugin id." } }, ["id"]),
     run: async (env, user, a) => PLUGIN_ID.test(String(a.id)) ? uninstall(env, user.id, String(a.id)) : fail("not found") },
 ];
-const BY_NAME = Object.fromEntries(TOOLS.map(t => [t.name, t]));
-export const TOOL_NAMES = TOOLS.map(t => t.name);
+for (const t of TOOLS) t.app = "drift";
+for (const t of RECIPE_TOOLS) t.app = "recipes";
+const ALL = [...TOOLS, ...RECIPE_TOOLS];
+const BY_NAME = Object.fromEntries(ALL.map(t => [t.name, t]));
+export const TOOL_NAMES = ALL.map(t => t.name);
+
+const toolsFor = user => { const sets = toolSets(user); return ALL.filter(t => sets.includes(t.app)); };
 
 // ── JSON-RPC ───────────────────────────────────────────────────────────────
 async function callTool(env, user, params) {
   const tool = BY_NAME[params?.name];
-  if (!tool) return { error: [-32602, `unknown tool: ${params?.name}`] };
+  if (!tool || !toolSets(user).includes(tool.app)) return { error: [-32602, `unknown tool: ${params?.name}`] };
   const args = params.arguments ?? {};
   if (!args || typeof args !== "object" || Array.isArray(args)) return { error: [-32602, "arguments must be an object"] };
   try {
@@ -288,6 +296,12 @@ async function callTool(env, user, params) {
     throw e;
   }
 }
+
+const INSTRUCTIONS = {
+  drift: "Drift is a personal collection-and-items organiser. Call drift_get_state first to learn collection and item ids.",
+  recipes: "Recipe box holds the person's saved recipes. Call recipes_search to find them and recipes_get to read one whole.",
+};
+const instructionsFor = user => [...toolSets(user).map(s => INSTRUCTIONS[s]), "Full guide: /llm.txt on this site."].join(" ");
 
 async function dispatch(env, user, msg) {
   if (!msg || typeof msg !== "object" || Array.isArray(msg) || msg.jsonrpc !== "2.0" || typeof msg.method !== "string") {
@@ -303,12 +317,12 @@ async function dispatch(env, user, msg) {
         return ok({
           protocolVersion: VERSIONS.includes(asked) ? asked : VERSIONS[0],
           capabilities: { tools: {} },
-          serverInfo: { name: "drift", version: "1.0.0" },
-          instructions: "Drift is a personal collection-and-items organiser. Call drift_get_state first to learn collection and item ids. Full guide: /llm.txt on this site.",
+          serverInfo: { name: "drift", version: "1.1.0" },
+          instructions: instructionsFor(user),
         });
       }
       case "ping": return ok({});
-      case "tools/list": return ok({ tools: TOOLS.map(({ name, description, inputSchema }) => ({ name, description, inputSchema })) });
+      case "tools/list": return ok({ tools: toolsFor(user).map(({ name, description, inputSchema }) => ({ name, description, inputSchema })) });
       case "tools/call": {
         const out = await callTool(env, user, msg.params);
         return out.error ? bad(...out.error) : ok(out.result);
@@ -331,7 +345,7 @@ async function authenticate(env, request) {
   // The same conditions protect() applies to a signed-in person.
   if (user.disabled) return { res: denied(403, "this account is disabled") };
   if (user.must_change_pw || (user.areas.has("admin") && !user.totp_secret)) return { res: denied(403, "finish setting up your account first") };
-  if (!user.areas.has(areaOf("drift"))) return { res: denied(403, "no access to Drift") };
+  if (!toolSets(user).length) return { res: denied(403, "no access to Drift or to Recipe box for AI agents") };
   await touchKey(env, key);
   return { user };
 }

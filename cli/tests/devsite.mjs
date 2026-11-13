@@ -124,7 +124,9 @@ const ryan = new Browser(env), sam = new Browser(env);
 await ryan.signup("ryan", undefined, "Ryan M");
 await sam.signup("sam", undefined, "Sam");
 for (const who of ["ryan", "sam"]) grantApps(env, who, "plugins", "chat");
-grantApps(env, "ryan", "chat-bridges", "recipes", "meals", "pantry", "sweep");
+grantApps(env, "ryan", "chat-bridges", "recipes", "recipes-mcp", "meals", "pantry", "sweep");
+// An API key for an AI agent (made on /account, with the password), for the settings page's keys card.
+await ryan.post("/account/apikeys", { name: "my assistant", password: "correct horse battery" });
 for (const who of ["ryan", "sam"]) grantApps(env, who, "trips", "board", "food");
 // The label list (Recipe labels, which ryan keeps): Season (Fall, Summer), Cuisine (Irish, Spanish)
 // and Course (Breakfast, Dessert). Its keys are the Recipe board's categories.

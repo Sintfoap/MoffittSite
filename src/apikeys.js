@@ -4,7 +4,15 @@
 
 import { db, now } from "./db.js";
 import { randomToken, sha256 } from "./crypto.js";
-import { AuthError } from "./auth.js";
+import { AuthError, areaOf } from "./auth.js";
+
+// What a key can reach on the MCP server (src/mcp.js), by its owner's apps:
+// "drift" with Drift; "recipes" with Recipe box and its "for AI agents" toggle
+// (off until an admin turns it on). An account with neither can't make keys.
+export const toolSets = user => [
+  ...(user.areas.has(areaOf("drift")) ? ["drift"] : []),
+  ...(user.areas.has(areaOf("recipes")) && user.areas.has(areaOf("recipes-mcp")) ? ["recipes"] : []),
+];
 
 const MAX_KEYS = 10;
 const NAME_MAX = 60;
