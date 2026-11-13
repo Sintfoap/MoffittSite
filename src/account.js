@@ -7,13 +7,13 @@ import { db, now } from "./db.js";
 import { randomToken, safeEqual } from "./crypto.js";
 import { renderSVG } from "./vendor/uqr.mjs";
 import {
-  AuthError, APPS, PLACES, areaOf, canUse, getUser, createUser, setPassword, checkLogin, checkSignupAllowed, recordSignup,
+  AuthError, APPS, PLACES, canUse, getUser, createUser, setPassword, checkLogin, checkSignupAllowed, recordSignup,
   createSession, currentSession, endSession, endUserSessions, sessionCookie, clearCookie,
   startTotp, otpauthUri, confirmTotp, replaceRecoveryCodes, disableTotp, checkSecondFactor, recoveryCodesLeft, resetWithRecoveryCode,
   adminExists, cleanDisplayName, clientIp,
   setEmail, confirmEmail, startEmailReset, emailResetUser, resetWithEmailToken,
 } from "./auth.js";
-import { createKey, listKeys, revokeKey } from "./apikeys.js";
+import { createKey, listKeys, revokeKey, toolSets } from "./apikeys.js";
 import { mailReady, sendMail, MailError } from "./mail.js";
 import { agenda, visitorNow } from "./drift.js";
 import { installed } from "./store.js";
@@ -285,9 +285,9 @@ async function account(request, env, pathname, method) {
     if (user.must_change_pw) return html(changePasswordRequiredPage({ user, error: extra.error }), { status });
     const d = await db(env);
     const sessionCount = (await d.prepare("SELECT COUNT(*) AS n FROM sessions WHERE user_id = ? AND stage = 'full'").bind(user.id).first()).n;
-    const hasDrift = user.areas.has(areaOf("drift"));
+    const sets = toolSets(user);
     return html(accountPage({
-      user, sessionCount, apiKeys: hasDrift ? await listKeys(env, user.id) : null, keyNonce: randomToken(12), origin: new URL(request.url).origin, recoveryLeft: await recoveryCodesLeft(env, user.id), mail: mailReady(env),
+      user, sessionCount, apiKeys: sets.length ? await listKeys(env, user.id) : null, toolSets: sets, keyNonce: randomToken(12), origin: new URL(request.url).origin, recoveryLeft: await recoveryCodesLeft(env, user.id), mail: mailReady(env),
       adminNeeds2fa: user.areas.has("admin") && !user.totp_secret, ...extra,
     }), { status });
   };
@@ -366,7 +366,7 @@ async function account(request, env, pathname, method) {
     // Keys let an AI agent act as you in Drift, so they need the password too.
     case "/account/apikeys":
       try {
-        if (!user.areas.has(areaOf("drift"))) throw new AuthError("Your account doesn't have Drift.", { status: 403 });
+        if (!toolSets(user).length) throw new AuthError("Your account doesn't have Drift or Recipe box for AI agents.", { status: 403 });
         await checkLogin(env, request, user.username, f.password);
         const made = await createKey(env, user.id, f.name, f.nonce);
         return show({ newKey: { key: made.key, name: String(f.name).trim() } });

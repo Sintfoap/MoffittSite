@@ -1,9 +1,11 @@
-"""Account settings in the terminal: the same cards as /account.
+"""Account settings in the terminal: the same cards as /account, API keys for AI agents included.
 
 Anything that needs your password (two-factor, recovery codes, email, the
 password itself) opens /account in the browser instead, so the terminal never
 asks for it."""
 from __future__ import annotations
+
+import time
 
 from rich.text import Text
 from textual.app import ComposeResult
@@ -27,6 +29,9 @@ class SettingsPage(Page):
     SettingsPage .row {{ height: auto; margin-top: 1; }}
     SettingsPage #name {{ width: 1fr; margin-right: 2; }}
     SettingsPage #save {{ margin-top: 1; }}
+    SettingsPage #keys {{ height: auto; }}
+    SettingsPage .key {{ height: auto; margin-top: 1; }}
+    SettingsPage .key Static {{ width: 1fr; }}
     """
     BINDINGS = [Binding("r", "refresh", "Refresh")]
 
@@ -65,6 +70,10 @@ class SettingsPage(Page):
                     with Horizontal(classes="row"):
                         yield Button("Sign out everywhere else", id="others", classes="quiet")
                         yield Button("Sign out this terminal", id="this", classes="danger")
+                with Vertical(classes="card", id="agents"):
+                    yield Static("API keys for AI agents", classes="card-title")
+                    yield Static(id="agents-text")
+                    yield Vertical(id="keys")
         yield Footer()
 
     async def on_mount(self) -> None:
@@ -115,8 +124,34 @@ class SettingsPage(Page):
 
         self.query_one("#sessions-text", Static).update(Text.assemble(
             (f"Signed in on {plural(a['sessions'], 'device')}, including this terminal.", MUTED)))
+        self.show_agents(a.get("agents"))
         for b in self.query("#save, #name, #others"):
             b.disabled = a["must_change_pw"]
+
+    def show_agents(self, ag: dict | None) -> None:
+        """The MCP server's keys: what they reach, and each one with Revoke. Making one needs the password."""
+        self.query_one("#agents").display = bool(ag)
+        if not ag:
+            return
+        reach = [what for tool, what in (("drift", "Drift (your items and collections)"),
+                                          ("recipes", "Recipe box (find, add and change your recipes, mark what you made, shop for them)"))
+                 if tool in ag["tools"]]
+        t = Text("An AI agent with one of your keys can act as you in ", style=MUTED)
+        t.append(" and ".join(reach) + ", through the MCP server at ", style=MUTED)
+        t.append(ag["mcp"], style=f"bold {INK}")
+        t.append(". Treat a key like a password. Making one " + WEB_ONLY, style=MUTED)
+        if not ag["keys"]:
+            t.append("\n\nNo keys yet.", style=MUTED)
+        self.query_one("#agents-text", Static).update(t)
+        box = self.query_one("#keys", Vertical)
+        box.remove_children()
+        when = lambda ts: time.strftime("%Y-%m-%d", time.localtime(ts)) if ts else "never"
+        for k in ag["keys"]:
+            revoke = Button("Revoke", classes="danger revoke")
+            revoke.api_key = k
+            box.mount(Horizontal(
+                Static(Text.assemble((k["name"], f"bold {INK}"), (f"  {k['prefix']}…  made {when(k['created_at'])}, last used {when(k['last_used'])}", MUTED))),
+                revoke, classes="key"))
 
     async def on_input_submitted(self, e: Input.Submitted) -> None:
         if e.input.id == "name":
@@ -128,6 +163,10 @@ class SettingsPage(Page):
         elif e.button.id == "others":
             self.app.push_screen(Confirm("Sign out everywhere else?", "Every other browser and terminal signed in to your account is signed out. This one stays signed in.",
                                          yes="Sign them out"), self.sign_out_others)
+        elif e.button.has_class("revoke"):
+            k = e.button.api_key
+            self.app.push_screen(Confirm(f"Revoke {k['name']}?", "Any AI agent using this key loses access straight away. This can't be undone.",
+                                         yes="Revoke", danger=True), lambda yes: self.revoke(yes, k))
         elif e.button.id == "this":
             where = site.logout()
             self.app.signed_out = True
@@ -141,6 +180,13 @@ class SettingsPage(Page):
         if self.app.data:
             self.app.data["user"]["display_name"] = self.acct["display_name"]
             self.set_who()
+
+    @attempt
+    async def revoke(self, yes: bool | None, key: dict) -> None:
+        if not yes:
+            return
+        self.show(await self.fetch(site.revoke_api_key, key["id"]))
+        self.app.notify(f"Revoked {key['name']}.", timeout=3)
 
     @attempt
     async def sign_out_others(self, yes: bool | None) -> None:

@@ -38,6 +38,9 @@ export const APPS = [
   { id: "chat-bridges", area: "chat-bridges", parent: "chat", name: "Chat connections", href: "/chat/#connections", icon: "chat",
     blurb: "Bring your Matrix rooms into Chat." },
   { id: "recipes", area: "recipes", name: "Recipe box", href: "/recipes/", icon: "recipes", key: "r", group: "kitchen", blurb: "Save recipes from any link, scale them, and shop for them in Drift." },
+  // Recipe box's MCP tools (src/mcp_recipes.js): an AI agent with one of your API keys can use your recipes.
+  { id: "recipes-mcp", area: "recipes-mcp", parent: "recipes", name: "Recipe box for AI agents", href: "/account#apikeys", icon: "recipes", group: "kitchen",
+    blurb: "Let an AI agent find, add and change your recipes with an API key, through the site's MCP server." },
   { id: "meals", area: "meals", name: "Meal plan", href: "/meals/", icon: "meals", key: "m", group: "kitchen", blurb: "Plans the week's dinners from your recipes around your Drift calendar." },
   { id: "pantry", area: "pantry", name: "Pantry", href: "/pantry/", icon: "pantry", key: "y", group: "kitchen", blurb: "What food you have, how much is left, and what to use soon." },
   { id: "sweep", area: "sweep", name: "Sweep", href: "/sweep/", icon: "sweep", key: "w", blurb: "Suggests Drift events, tasks and list items from your chat rooms." },

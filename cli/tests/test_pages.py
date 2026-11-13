@@ -443,11 +443,11 @@ def test_admins_switch_apps_on_and_off_in_the_terminal(admin_site):
         page = app.screen
         assert type(page).__name__ == "AdminPage"
         apps = [a["id"] for a in page.data["apps"]]
-        assert apps == ["drift", "admin", "plugins", "chat", "chat-bridges", "recipes", "meals", "pantry", "sweep", "trips", "board", "labels", "food", "feedback", "notifications"]
+        assert apps == ["drift", "admin", "plugins", "chat", "chat-bridges", "recipes", "recipes-mcp", "meals", "pantry", "sweep", "trips", "board", "labels", "food", "feedback", "notifications"]
         # Grouped as the menu is, with Chat connections under Chat.
         assert [(t, [a["id"] for a in xs]) for t, xs in grouped(page.data["apps"])] == [
             ("APPS", ["drift", "plugins", "chat", "chat-bridges", "sweep", "trips", "feedback"]),
-            ("KITCHEN", ["recipes", "labels", "meals", "pantry", "board", "food"]),
+            ("KITCHEN", ["recipes", "recipes-mcp", "labels", "meals", "pantry", "board", "food"]),
             ("ACCOUNT", ["admin", "notifications"])]
         # The feedback inbox's counts: sam's note is waiting.
         assert page.data["feedback"] == {"total": 1, "unread": 1, "open": 1}
@@ -1292,6 +1292,22 @@ def test_settings_renames_and_signs_out_other_devices(real_site):
         assert "needs your password" in str(page.query_one("#twofa-text").render())
     run_app("settings", settings)
     assert site.account()["display_name"] == "Ryan Moffitt"
+
+
+def test_settings_lists_and_revokes_ai_agent_keys(real_site):
+    async def keys(app, pilot):
+        page = app.screen
+        text = str(page.query_one("#agents-text").render())
+        assert "Drift" in text and "Recipe box" in text and "/mcp" in text and "needs your password" in text
+        assert "my assistant" in str(page.query_one("#keys .key Static").render())
+        page.query_one("#keys .revoke").press()
+        await settle(pilot)
+        await pilot.press("y")
+        await settle(pilot, 0.5)
+        assert not page.query("#keys .key")
+        assert "No keys yet" in str(page.query_one("#agents-text").render())
+    run_app("settings", keys)
+    assert site.account()["agents"]["keys"] == []
 
 
 def test_dashboard_cards_open_the_terminal_pages(real_site):

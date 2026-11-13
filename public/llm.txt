@@ -1,9 +1,15 @@
-# sintfoap.xyz — Drift for AI agents (llm.txt)
+# sintfoap.xyz — Drift and Recipe box for AI agents (llm.txt)
 
 Drift is a personal organiser on sintfoap.xyz. This site runs an MCP server
 that lets you, an AI agent, do everything the person who gave you a key can do
 in Drift: read and change their collections and items, share collections with
 other Drift users, and add store plugins. You act as that person.
+
+If the site's admin has turned on "Recipe box for AI agents" for them, the same
+server also has their Recipe box: find, read, add and change recipes, mark what
+they made with stars, and send a recipe's ingredients to a Drift shopping list.
+tools/list shows only the tools the key's owner can use: drift_* with Drift,
+recipes_* with Recipe box for AI agents.
 
 ## Connect
 
@@ -25,10 +31,11 @@ After making a key the account page shows a ready-to-run `claude mcp add` comman
 3. Copy the key now; it is shown once. Give it to the agent.
 4. To cut the agent off, press Revoke on the same page.
 
-A key has full Drift access as its owner. Treat it like a password. Changing
+A key has full Drift access (and Recipe box access, if turned on) as its owner. Treat it like a password. Changing
 the password or signing out everywhere does NOT revoke keys; revoke them on
-the account page. A key stops working if the account is disabled, loses Drift
-access, or is deleted.
+the account page. A key stops working if the account is disabled, loses both
+Drift and Recipe box for AI agents, or is deleted; losing one of them takes
+away just its tools.
 
 ## Data model
 
@@ -107,6 +114,29 @@ access, or is deleted.
 - drift_install_plugin            {id}  Add an approved store plugin (ids in drift_get_state's `store`).
 - drift_uninstall_plugin          {id}
 
+Recipe box (with Recipe box for AI agents):
+
+- recipes_search                  {query?, ingredients?, labels?, made?, min_rating?, sort?, limit?, cursor?}
+                                  Summaries of the person's recipes (id, title, labels, servings, time, made, rating;
+                                  no steps), by title unless sort is rating | made | newest. query matches words
+                                  anywhere; ingredients is "eggs, spinach, -nuts" (needs eggs and spinach, leaves out
+                                  any with nuts) and adds matching_ingredients; labels needs each one named, as an id,
+                                  "Key: Value" ("Season: Fall") or just a key. Pages of 50 (limit up to 200), next_cursor.
+- recipes_get {id, servings?, factor?}  The whole recipe. With servings (or factor), ingredients come back scaled,
+                                  the unscaled ones as original_ingredients.
+- recipes_labels                  The site's label list [{id, key, value}], shared by everyone; recipes pick from it.
+- recipes_create                  {url} reads the recipe from a recipe page; or {title, ingredients?, steps?, yield?,
+                                  servings?, time?, notes?, source?, image?, labels?, made?, rating?}. Fields sent
+                                  with url replace what was read.
+- recipes_update                  {id, ...those fields}  Only sent fields change; lists are replaced whole.
+- recipes_made_it {id, day, rating?}  The day they made it (YYYY-MM-DD) and optional stars, 1-5. Private to them.
+- recipes_shop                    {id, servings?, factor?, lines?, list?, pantry?}  The ingredients, scaled, onto a
+                                  Drift list (default their "Shopping list"); needs Drift. With Pantry, what they
+                                  have is left off (listed in have) unless pantry is false.
+
+Recipe ids are r_ + 10 hex digits; label ids l_ + 10. Deleting a recipe, its
+picture, share links and Recipe board posts stay on the website.
+
 Results are JSON in a text block (drift_get_map: an image block, then the JSON). Mistakes (bad field, not found, view-only,
 limits) come back with `isError: true` and a plain message; fix and retry.
 Not-found is also what you get for another person's ids.
@@ -137,7 +167,17 @@ Add a few stops for a day and see the route:
 Share a collection read-only:
   drift_share_collection {"id":"c_...","username":"josh","role":"view"}
 
+Find a dinner with what's in the fridge, then shop for four:
+  recipes_search {"ingredients":"chicken, spinach, -mushroom","sort":"rating"}
+  recipes_get {"id":"r_...","servings":4}
+  recipes_shop {"id":"r_...","servings":4}
+
+Save a recipe from a link and say they made it:
+  recipes_create {"url":"https://example.com/best-lasagna"}
+  recipes_made_it {"id":"r_...","day":"2026-03-05","rating":5}
+
 ## Not available
 
-Chat, Recipe box, notifications, and writing or reviewing store plugins are
-not part of this server; neither are accounts, passwords or keys.
+Chat, Meal plan, Pantry, the Recipe board, notifications, and writing or
+reviewing store plugins are not part of this server; neither are accounts,
+passwords or keys.

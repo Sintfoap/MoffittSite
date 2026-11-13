@@ -89,7 +89,7 @@ test("protocol: initialize, ping, tools/list, notifications, errors, batches", a
   assert.deepEqual((await a.rpc("ping")).result, {});
 
   const list = (await a.rpc("tools/list")).result.tools;
-  assert.deepEqual(list.map(t => t.name), TOOL_NAMES);
+  assert.deepEqual(list.map(t => t.name), TOOL_NAMES.filter(n => n.startsWith("drift_")), "Drift's tools only, without Recipe box for AI agents");
   for (const t of list) { assert.ok(t.description.length > 20, t.name); assert.equal(t.inputSchema.type, "object", t.name); }
 
   const note = await a.raw({ jsonrpc: "2.0", method: "notifications/initialized" });
