@@ -256,24 +256,35 @@ export async function listPosts(env, user, { view = "feed", category: cat = "", 
 }
 
 // The recipe of the day: one post off the shared board, picked by the day alone,
-// so everyone gets the same one (yours too, when it's your turn). It's drawn from
-// the posts shared before that day began, so a post shared or taken down later in
-// the day doesn't change it; a board that's newer than that draws from what it has.
+// so everyone gets the same one (yours too, when it's your turn), and a new one
+// each day. The posts take turns: the day goes to the one that's waited longest
+// since it was last the recipe of the day (or never has been), and never to the
+// day before's or the day after's while there's another. The first ask of a day
+// keeps its pick, so a post shared or taken down later that day doesn't change it.
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 export async function featured(env, user, day = "") {
   if (!DAY.test(day)) day = new Date().toISOString().slice(0, 10);
   const d = await db(env);
-  let pool = "WHERE p.created < ?", args = [`${day}T00:00:00.000Z`];
-  let { n } = await d.prepare(`SELECT COUNT(*) AS n FROM board_posts p ${pool}`).bind(...args).first();
-  if (!n) {
-    pool = "", args = [];
-    ({ n } = await d.prepare("SELECT COUNT(*) AS n FROM board_posts").first());
-  }
-  if (!n) return null;
-  const hash = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`recipe-of-the-day|${day}`)));
-  const at = ((hash[0] << 24) | (hash[1] << 16) | (hash[2] << 8) | hash[3]) >>> 0;
-  const r = await d.prepare(`${POST_SELECT} ${pool} ORDER BY p.id LIMIT 1 OFFSET ?`).bind(user.id, ...args, at % n).first();
+  const id = await featuredId(d, day);
+  if (!id) return null;
+  const r = await d.prepare(`${POST_SELECT} WHERE p.id = ?`).bind(user.id, id).first();
   return r ? { ...toPost(r, user, undefined, await labelList(d)), day } : null;
+}
+
+const KEPT = "SELECT f.post FROM board_featured f JOIN board_posts p ON p.id = f.post WHERE f.day = ?";
+async function featuredId(d, day) {
+  const kept = await d.prepare(KEPT).bind(day).first();
+  if (kept) return kept.post;
+  const t = Date.parse(`${day}T00:00:00Z`), near = [-1, 1].map(n => new Date(t + n * 86400000).toISOString().slice(0, 10));
+  const pick = await d.prepare(`SELECT p.id FROM board_posts p ORDER BY
+      p.id IN (SELECT post FROM board_featured WHERE day IN (?, ?)),
+      COALESCE((SELECT MAX(day) FROM board_featured f WHERE f.post = p.id AND f.day < ?), ''),
+      p.created, p.id LIMIT 1`).bind(...near, day).first();
+  if (!pick) return null;
+  // Taken by whoever asks first; a pick whose post has since gone is picked again.
+  await d.prepare(`INSERT INTO board_featured (day, post) VALUES (?, ?) ON CONFLICT (day) DO UPDATE SET post = excluded.post
+    WHERE NOT EXISTS (SELECT 1 FROM board_posts WHERE id = board_featured.post)`).bind(day, pick.id).run();
+  return (await d.prepare(KEPT).bind(day).first())?.post || pick.id;
 }
 
 async function postRow(d, id) {
