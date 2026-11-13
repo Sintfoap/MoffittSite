@@ -494,6 +494,11 @@ const SCHEMA = [
      user_id TEXT PRIMARY KEY,
      seen    TEXT NOT NULL                         -- the feed was last read up to here
    )`,
+  // The recipe of the day, kept once it's been picked so it holds all day for everyone.
+  `CREATE TABLE IF NOT EXISTS board_featured (
+     day  TEXT PRIMARY KEY,                        -- YYYY-MM-DD
+     post TEXT NOT NULL
+   )`,
   `CREATE TABLE IF NOT EXISTS board_saves (
      post      TEXT NOT NULL,
      user_id   TEXT NOT NULL,

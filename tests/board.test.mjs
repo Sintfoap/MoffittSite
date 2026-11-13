@@ -232,6 +232,10 @@ test("the recipe of the day is the same for everyone, all day", async () => {
     picks.set(d, f.title);
   }
   assert.ok(new Set(picks.values()).size > 1, [...picks.values()].join());
+  // A new one every day, and they take turns: every post gets a day before any comes round again.
+  const order = [...picks.values()];
+  for (let i = 1; i < order.length; i++) assert.notEqual(order[i], order[i - 1], [...picks.keys()][i]);
+  assert.equal(new Set(order.slice(0, 4)).size, 4, order.slice(0, 4).join());
   assert.ok([...picks.values()].includes("Ryan's own"), [...picks.values()].join());
   // Today's is drawn from the board as it was when the day began, so a post shared today doesn't change it.
   run(env, "UPDATE board_posts SET created = '2026-01-01T12:00:00.000Z'");
@@ -240,6 +244,22 @@ test("the recipe of the day is the same for everyone, all day", async () => {
   for (const who of [ryan, sam, kim]) assert.equal((await day(who, now)).json.featured.id, before.id);
   // A bad day falls back to today (UTC).
   assert.equal((await day(ryan, "tomorrow")).json.featured.day, new Date().toISOString().slice(0, 10));
+});
+
+test("the recipe of the day still changes the morning after the board grows", async () => {
+  const env = await board(), ryan = await member(env, "ryan"), sam = await member(env, "sam");
+  for (const t of ["A", "B", "C", "D"]) await api(sam, "POST", "posts", { title: t, recipe: RECIPE });
+  const ids = sql(env, "SELECT id FROM board_posts ORDER BY created").map(r => r.id);
+  // Two on the board from New Year, a third shared on the 2nd of March and a fourth on the 9th.
+  run(env, "UPDATE board_posts SET created = '2026-01-01T12:00:00.000Z' WHERE id IN (?, ?)", ids[0], ids[1]);
+  run(env, "UPDATE board_posts SET created = '2026-03-02T12:00:00.000Z' WHERE id = ?", ids[2]);
+  run(env, "UPDATE board_posts SET created = '2026-03-09T12:00:00.000Z' WHERE id = ?", ids[3]);
+  let last;
+  for (let t = Date.parse("2026-02-01"); t <= Date.parse("2026-03-31"); t += 86400000) {
+    const d = new Date(t).toISOString().slice(0, 10), f = (await api(ryan, "GET", `board?day=${d}`)).json.featured;
+    assert.notEqual(f.id, last, d);
+    last = f.id;
+  }
 });
 
 test("a recipe's labels go to the board and back into Recipe box", async () => {
