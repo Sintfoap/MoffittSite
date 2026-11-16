@@ -152,7 +152,7 @@ The same recipes as `/recipes/`: the list on the left, the open one on the right
 | `E` | the recipe in English, in place of the original (scaling works on it too); `E` again flips back, `S` saves the English over the original |
 | `l` | filter the shelf by labels: tick any (two values of one key show either; different keys show only recipes with both); `c` clears |
 | `f` | find recipes by ingredient: `eggs, spinach` shows only recipes with both, `-nuts` leaves out any with nuts (walnuts too); singular and plural both match, and the lines it found are lit up. Works with `l`; empty clears |
-| `o` | sort the shelf by title, then by each label in turn (recipes without that label go last) |
+| `o` | sort the shelf by title, then the newest added (recipes saved before the box kept the day go last), then by each label in turn (recipes without that label go last), then your stars and the last made |
 | `L` | suggest labels for the whole box from each recipe's words: a label's value (Irish) or the keywords set on it in Recipe labels (pumpkin for Season: Fall). No AI. They're grouped by label, all ticked: `space` unticks one, `g` a whole label, `a`/`u` all or none, `enter` adds them |
 | `e` | edit it (`ctrl+s` saves); labels are ticked from the Recipe labels list, so everyone uses the same ones |
 | `c` | give it a picture from a file (JPEG, PNG, WebP or GIF up to 600 KB), or leave the path empty to take its picture off; on the website the editor has a Picture field that shrinks bigger ones |

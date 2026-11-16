@@ -571,6 +571,28 @@ def test_g_n_opens_the_terminal_notifications_page(notify_site):
 
 # ── recipe box ─────────────────────────────────────────────────────────────
 
+@pytest.fixture
+def recipes_site(monkeypatch):
+    proc, origin = start_site(monkeypatch, "--recipes")
+    yield origin
+    proc.kill()
+
+
+def test_recipe_box_sorts_by_newest_added_with_older_recipes_last(recipes_site):
+    async def newest(app, pilot):
+        page = app.screen
+        await settle(pilot, 0.6)
+        assert [r["title"] for r in page.shelved()] == ["Colcannon", "Gazpacho", "Paella", "Pumpkin soup", "Soda bread"]
+        await pilot.press("o")      # title, then newest
+        await settle(pilot)
+        assert page.sort_key == "@added"
+        # Newest first; Colcannon was saved before the box kept the day, so it goes last.
+        assert [r["title"] for r in page.shelved()] == ["Soda bread", "Paella", "Pumpkin soup", "Gazpacho", "Colcannon"]
+        assert "added " in str(page.query_one("#shelf").get_option_at_index(0).prompt)
+        assert "SORT  newest" in str(page.query_one("#filters").content)
+    run_app("recipes", newest)
+
+
 def test_recipe_box_saves_from_a_link_scales_and_sends_to_drift(real_site):
     async def recipes(app, pilot):
         page = app.screen

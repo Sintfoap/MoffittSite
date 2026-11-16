@@ -24,7 +24,7 @@ from __future__ import annotations
 import asyncio
 import re
 import zipfile
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Callable
 from urllib.parse import urlparse
@@ -96,7 +96,20 @@ def named(r: dict, q: str) -> bool:
 
 MADE_FILTERS = ["", "made", "new"]                    # M cycles: either, made it before, not made yet
 RATING_FILTERS = ["", "5", "4", "3", "2", "1", "none"]  # R cycles: any, at least so many stars, not rated
-SORTS = {"": "title", "@rating": "your rating", "@made": "last made"}
+SORTS = {"": "title", "@added": "newest", "@rating": "your rating", "@made": "last made"}
+
+
+def added_on(stamp: str, today: date | None = None) -> str:
+    """"Nov 16", or "Nov 16, 2025" when it isn't this year: the day a recipe went into the box (kept in UTC, shown in local time)."""
+    try:
+        when = datetime.fromisoformat(stamp)
+    except (TypeError, ValueError):
+        return ""
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=timezone.utc)
+    d = when.astimezone().date()
+    text = f"{d:%b} {d.day}"
+    return text if d.year == (today or date.today()).year else f"{text}, {d.year}"
 
 
 def marked(r: dict, made: str = "", rating: str = "") -> bool:
@@ -140,10 +153,12 @@ def mark_changes(r: dict, made: bool | None = None, rating: int | None = None, t
 def arranged(recipes: list[dict], filters: list[dict], sort_key: str, terms: list[dict] | None = None, name: str = "",
              made: str = "", rating: str = "") -> list[dict]:
     """The shelf: the recipes the filters (and the search, by name or ingredient) let through, by title, your stars,
-    the last made, or a label's value (those without it last)."""
+    the newest added (those saved before the box kept the day last), the last made, or a label's value (those without it last)."""
     shown = [r for r in by_title(recipes) if passes(r, filters) and marked(r, made, rating) and named(r, name)
              and (not terms or R.ingredient_hits(r, terms) is not None)]
-    if sort_key == "@rating":
+    if sort_key == "@added":
+        shown.sort(key=lambda r: r.get("created") or "", reverse=True)   # stable, so ties stay by title
+    elif sort_key == "@rating":
         shown.sort(key=lambda r: -(r.get("rating") or 0))
     elif sort_key == "@made":
         shown.sort(key=lambda r: -int((r.get("made") or "0").replace("-", "")))   # latest first, then by title
@@ -589,7 +604,7 @@ class RecipesPage(Page):
         self.have: dict[str, dict[int, dict] | None] = {}  # recipe id → {index: what Pantry has of that line}, once asked
         self.pending_picture: bytes | None = None   # a photo draft's picture, kept once it's saved if ticked
         self.filters: list[dict] = []          # labels the shelf shows only recipes with
-        self.sort_key = ""                     # "" by title, "@rating", "@made", else a label's key
+        self.sort_key = ""                     # "" by title, "@added", "@rating", "@made", else a label's key
         self.made_filter = ""                  # M: "" either, "made" made it before, "new" not yet
         self.rating_filter = ""                # R: "" any, "5"…"1" at least that many stars, "none" not rated
         self.ingredients = ""                  # what f looks for: "eggs, spinach, -nuts"
@@ -737,6 +752,8 @@ class RecipesPage(Page):
             terms = self.terms()
             for r in recipes:
                 sorted_by = value_of(r, self.sort_key) if self.sort_key and not self.sort_key.startswith("@") else None
+                if self.sort_key == "@added" and r.get("created"):
+                    sorted_by = "added " + added_on(r["created"])
                 sub = " · ".join(x for x in (sorted_by, r.get("time"), host(r.get("source", ""))) if x) or plural(len(r["ingredients"]), "ingredient")
                 t = Text.assemble((r["title"], f"bold {INK}"), "\n")
                 if r.get("rating"):
@@ -1152,9 +1169,9 @@ class RecipesPage(Page):
         self.app.notify(f"Added {plural(labels, 'label')} to {plural(recipes, 'recipe')}.{extra}", timeout=6)
 
     def action_sort(self) -> None:
-        """o: sort by title, then by each label's key in turn, then your rating and the last made."""
+        """o: sort by title, the newest added, then by each label's key in turn, then your rating and the last made."""
         keys = sorted({lb["key"].casefold() for lb, _ in all_labels((self.data or {}).get("recipes", []))})
-        order = [""] + keys + ["@rating", "@made"]
+        order = ["", "@added"] + keys + ["@rating", "@made"]
         self.sort_key = order[(order.index(self.sort_key) + 1) % len(order)] if self.sort_key in order else ""
         self.reshelve()
         self.app.notify(f"Sorted by {SORTS.get(self.sort_key, self.sort_key)}.", timeout=2)
