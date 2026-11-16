@@ -848,8 +848,11 @@ def test_recipe_box_labels_filter_and_sort_the_shelf(real_site):
         page.filters.append(next(lb for lb in page.data["label_list"] if lb["id"] == summer))
         page.reshelve()
         assert [title[i] for i in ids()] == ["Apple pie", "Gazpacho", "Stew"]
-        # o: by Cuisine, then Season; recipes without the label go last.
+        # o: by the newest added, then Cuisine, then Season; recipes without the label go last.
         page.filters = []
+        await pilot.press("o")
+        await settle(pilot)
+        assert page.sort_key == "@added"
         await pilot.press("o")
         await settle(pilot)
         assert page.sort_key == "cuisine"
@@ -936,9 +939,9 @@ def test_recipe_box_marks_made_and_stars_and_filters_on_them(real_site):
         await pilot.press("R")
         await settle(pilot)
         assert titles() == ["Chili"]
-        # o: with no labels, sorting by your rating comes right after the title.
+        # o: with no labels, sorting by your rating comes right after the title and the newest added.
         page.rating_filter = ""
-        await pilot.press("o")
+        await pilot.press("o", "o")
         await settle(pilot)
         assert page.sort_key == "@rating" and titles()[0] == "Chili"
         saved = {r["title"]: r for r in site.recipes()["recipes"]}
