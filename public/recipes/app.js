@@ -29,7 +29,7 @@ const skip = new Map();   // recipe id → ingredient indexes not to send
 const have = new Map();   // recipe id → {index → what Pantry has of that line}, once asked (GET recipes/<id>/pantry)
 let filters = [];         // [{key, value}] labels a recipe must have: any value of the same key, every key
 let hits = new Map();     // recipe id → its ingredient lines the ingredient search found, while there is one
-let sortKey = "";         // "" title, "@rating" your stars, "@made" last made, else a label's key
+let sortKey = "";         // "" title, "@added" newest added first, "@rating" your stars, "@made" last made, else a label's key
 let madeFilter = "";      // "" either, "made" made it before (something familiar), "new" not yet (something new)
 let ratingFilter = "";    // "" any, "1"–"5" at least that many stars, "none" not rated
 let findBy = "name";      // what the one search box looks for: "name" (titles, labels, ingredients) or "ingredient" (all of these, -nuts leaves out)
@@ -212,7 +212,8 @@ function renderFilters() {
     sel.append(g);
   }
   const sort = $("#sort");
-  sort.replaceChildren(new Option("Sort: title", ""), ...labels.map(k => new Option(`Sort: ${k.key}`, low(k.key))),
+  sort.replaceChildren(new Option("Sort: title", ""), new Option("Sort: newest", "@added"),
+    ...labels.map(k => new Option(`Sort: ${k.key}`, low(k.key))),
     new Option("Sort: your rating", "@rating"), new Option("Sort: last made", "@made"));
   if (!sortKey.startsWith("@") && !labels.some(k => low(k.key) === sortKey)) sortKey = "";
   sort.value = sortKey;
@@ -243,6 +244,14 @@ $("#sort").addEventListener("change", e => {
 
 // ── the list ───────────────────────────────────────────────────────────────
 
+// "Nov 16", or "Nov 16, 2025" when it isn't this year: the day a recipe went into the box.
+function addedOn(stamp) {
+  const d = new Date(/^\d{4}-\d\d-\d\dT[\d:]+$/.test(stamp) ? stamp + "Z" : stamp);   // kept in UTC, shown in your time
+  if (Number.isNaN(d.getTime())) return "";
+  const year = d.getFullYear() !== new Date().getFullYear();
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric", ...(year ? { year: "numeric" } : {}) });
+}
+
 function renderList() {
   const q = findBy === "name" ? $("#find").value.trim().toLowerCase() : "";
   const terms = findBy === "ingredient" ? ingredientTerms($("#find").value) : [];
@@ -257,8 +266,10 @@ function renderList() {
     if (at) hits.set(r.id, at);
     return !!at;
   });
-  // By your stars (most first), or the last made (latest first); then the title.
-  if (sortKey === "@rating") match = [...match].sort((a, b) => (b.rating || 0) - (a.rating || 0) || by(a.title, b.title));
+  // Newest added first (recipes saved before the box kept that day go last), your stars (most first),
+  // or the last made (latest first); then the title.
+  if (sortKey === "@added") match = [...match].sort((a, b) => by(b.created || "", a.created || "") || by(a.title, b.title));
+  else if (sortKey === "@rating") match = [...match].sort((a, b) => (b.rating || 0) - (a.rating || 0) || by(a.title, b.title));
   else if (sortKey === "@made") match = [...match].sort((a, b) => by(b.made || "", a.made || "") || by(a.title, b.title));
   // By a label: its value, then the title; recipes without it go last.
   else if (sortKey) match = [...match].sort((a, b) => {
@@ -281,7 +292,8 @@ function renderList() {
     const mine = r.rating ? el("span", { className: "stars", textContent: "★".repeat(r.rating) }) : r.made ? "✓ made" : null;
     const tags = labelsOf(r).map(labelText).join(" · ");
     const found = (hits.get(r.id) || []).map(i => r.ingredients[i]).join(" · ");
-    const sub = [sorted, r.time, hostOf(r.source)].filter(Boolean).join(" · ") || `${r.ingredients.length} ingredients`;
+    const added = sortKey === "@added" && r.created ? `added ${addedOn(r.created)}` : "";
+    const sub = [sorted || added, r.time, hostOf(r.source)].filter(Boolean).join(" · ") || `${r.ingredients.length} ingredients`;
     const b = el("button", { type: "button" }, r.title, el("small", {}, ...(mine ? [mine, " · "] : []), sub),
       found ? el("small", { className: "found", textContent: found }) : null,
       tags ? el("span", { className: "tagline", textContent: tags }) : null);

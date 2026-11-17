@@ -571,6 +571,28 @@ def test_g_n_opens_the_terminal_notifications_page(notify_site):
 
 # ── recipe box ─────────────────────────────────────────────────────────────
 
+@pytest.fixture
+def recipes_site(monkeypatch):
+    proc, origin = start_site(monkeypatch, "--recipes")
+    yield origin
+    proc.kill()
+
+
+def test_recipe_box_sorts_by_newest_added_with_older_recipes_last(recipes_site):
+    async def newest(app, pilot):
+        page = app.screen
+        await settle(pilot, 0.6)
+        assert [r["title"] for r in page.shelved()] == ["Colcannon", "Gazpacho", "Paella", "Pumpkin soup", "Soda bread"]
+        await pilot.press("o")      # title, then newest
+        await settle(pilot)
+        assert page.sort_key == "@added"
+        # Newest first; Colcannon was saved before the box kept the day, so it goes last.
+        assert [r["title"] for r in page.shelved()] == ["Soda bread", "Paella", "Pumpkin soup", "Gazpacho", "Colcannon"]
+        assert "added " in str(page.query_one("#shelf").get_option_at_index(0).prompt)
+        assert "SORT  newest" in str(page.query_one("#filters").content)
+    run_app("recipes", newest)
+
+
 def test_recipe_box_saves_from_a_link_scales_and_sends_to_drift(real_site):
     async def recipes(app, pilot):
         page = app.screen
@@ -826,8 +848,11 @@ def test_recipe_box_labels_filter_and_sort_the_shelf(real_site):
         page.filters.append(next(lb for lb in page.data["label_list"] if lb["id"] == summer))
         page.reshelve()
         assert [title[i] for i in ids()] == ["Apple pie", "Gazpacho", "Stew"]
-        # o: by Cuisine, then Season; recipes without the label go last.
+        # o: by the newest added, then Cuisine, then Season; recipes without the label go last.
         page.filters = []
+        await pilot.press("o")
+        await settle(pilot)
+        assert page.sort_key == "@added"
         await pilot.press("o")
         await settle(pilot)
         assert page.sort_key == "cuisine"
@@ -914,9 +939,9 @@ def test_recipe_box_marks_made_and_stars_and_filters_on_them(real_site):
         await pilot.press("R")
         await settle(pilot)
         assert titles() == ["Chili"]
-        # o: with no labels, sorting by your rating comes right after the title.
+        # o: with no labels, sorting by your rating comes right after the title and the newest added.
         page.rating_filter = ""
-        await pilot.press("o")
+        await pilot.press("o", "o")
         await settle(pilot)
         assert page.sort_key == "@rating" and titles()[0] == "Chili"
         saved = {r["title"]: r for r in site.recipes()["recipes"]}

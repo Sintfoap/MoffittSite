@@ -1,7 +1,7 @@
 // The site's real Worker (src/) over HTTP on localhost, with an in-memory
 // database, for testing the terminal pages against the real APIs.
 //
-//   node cli/tests/devsite.mjs [--admin] [--notify] [--reviewed]
+//   node cli/tests/devsite.mjs [--admin] [--notify] [--reviewed] [--recipes]
 //
 // Prints one line of JSON, {origin, token}: a terminal session for "ryan"
 // (made through the same code-approval flow `sintfoap login` uses), then
@@ -26,6 +26,8 @@
 // ryan and sam have Feedback; sam sent the admins "Pavlova cracked", linking that pick.
 // --reviewed: ryan has Brownies in his Recipe box, shared on the board, and sam reviewed it
 // (4 stars, "Fudgy.", with walnuts); ryan also typed Stew straight onto the board.
+// --recipes: ryan's Recipe box has five recipes added on different days (Soda bread today, Paella two days ago,
+// Pumpkin soup last week, Gazpacho in the summer), and Colcannon from before the box kept the day it was added.
 // Workers AI (the stand-in) translates the Spanish in WORDS below into English, line for line.
 import http from "node:http";
 import worker from "../../src/worker.js";
@@ -143,6 +145,15 @@ if (process.argv.includes("--reviewed")) {
   const shared = (await ryan.req("POST", "/board/api/posts", { json: { recipe_id: brownies.id, labels: ["l_0000000006"] } })).json;
   await ryan.req("POST", "/board/api/posts", { json: { title: "Stew", recipe: { ingredients: ["1 lb beef"], steps: ["Simmer"] } } });
   await sam.req("PUT", `/board/api/posts/${shared.id}/reviews`, { json: { rating: 4, note: "Fudgy.", changes: "Added walnuts." } });
+}
+if (process.argv.includes("--recipes")) {
+  const ago = days => new Date(Date.now() - days * 864e5).toISOString().slice(0, 19);
+  for (const [title, labels, time, added] of [["Colcannon", ["l_0000000003"], "40 min", null], ["Gazpacho", ["l_0000000002", "l_0000000004"], "20 min", 120],
+    ["Pumpkin soup", ["l_0000000001"], "1 hr", 7], ["Paella", ["l_0000000004"], "1 hr 15 min", 2], ["Soda bread", ["l_0000000003"], "50 min", 0]]) {
+    const r = (await ryan.req("POST", "/recipes/api/recipes", { json: { title, labels, time, ingredients: ["2 cups flour"], steps: ["Cook"] } })).json;
+    if (added === null) run(env, "UPDATE recipes SET data = json_remove(data, '$.created') WHERE id = ?", r.id);
+    else if (added) run(env, "UPDATE recipes SET data = json_set(data, '$.created', ?) WHERE id = ?", ago(added), r.id);
+  }
 }
 {
   const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - 1);

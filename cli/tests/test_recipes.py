@@ -169,3 +169,18 @@ def test_made_it_and_stars_filter_and_sort_as_on_the_website():
     assert mark_changes(b, rating=3, today=today) == {"rating": 3, "made": "2026-11-12"}
     assert mark_changes(a, rating=5, today=today) == {"rating": 5}
     assert mark_changes(a, rating=4, today=today) == {"rating": 0}
+
+
+def test_recently_added_sorts_newest_first_and_old_recipes_last():
+    from datetime import date
+    from sintfoap.recipes_page import added_on, arranged
+    box = [
+        {"id": "old-b", "title": "Pho", "labels": [], "ingredients": []},                         # saved before the box kept the day
+        {"id": "new", "title": "Chili", "created": "2026-11-16T22:05:00", "labels": [], "ingredients": []},
+        {"id": "mid", "title": "Tacos", "created": "2026-10-02T09:00:00", "labels": [], "ingredients": []},
+        {"id": "old-a", "title": "Biscuits", "created": "", "labels": [], "ingredients": []},
+    ]
+    assert [r["id"] for r in arranged(box, [], "@added")] == ["new", "mid", "old-a", "old-b"]
+    assert added_on("2026-10-02T09:00:00", date(2026, 11, 16)) == "Oct 2"
+    assert added_on("2025-06-15T12:00:00", date(2026, 11, 16)) == "Jun 15, 2025"
+    assert added_on("") == ""
