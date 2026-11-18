@@ -308,6 +308,16 @@ ${SHELL_CSS}
   table.stats td:first-child, table.stats td:nth-child(2) { white-space: nowrap; }
   table.stats td.store { width: 230px; }
   table.stats td.store .hint { white-space: normal; }
+  table.stats tr.sub td:first-child { padding-left: 22px; }
+  .figures { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px 18px; margin: 0 0 14px; }
+  .figures div b { display: block; font-size: 18px; color: var(--gold); font-variant-numeric: tabular-nums; }
+  .figures div span { font-size: 12px; color: var(--muted); }
+  .weeks { display: flex; align-items: flex-end; gap: 2px; height: 90px; padding-top: 16px; border-bottom: 1px solid var(--line); }
+  .weeks div { flex: 1; height: 100%; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; position: relative; }
+  .weeks div i { display: block; width: 100%; max-width: 28px; background: var(--gold); border-radius: 4px 4px 0 0; min-height: 0; }
+  .weeks div:hover i { filter: brightness(1.2); }
+  .weeks div small { position: absolute; top: -2px; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .weeks-axis { display: flex; justify-content: space-between; font-size: 11px; color: var(--faint); margin-top: 4px; }
 `;
 
 // The tab icon, web app manifest and home-screen icon, so the site can be added to a
@@ -730,15 +740,17 @@ const meter = (part, whole, share = false) => {
 };
 
 export function adminStatsPage({ user, stats }) {
-  const { accounts: a, storage: st, users, kinds, totals, columns } = stats;
+  const { accounts: a, storage: st, users, kinds, totals, columns, activity: act, weeks, apps } = stats;
+  const r2 = st.r2;
   const n = (v, cls = "n") => `<td class="${cls}${v ? "" : " zero"}">${v ? v.toLocaleString("en-US") : "0"}</td>`;
   const pct = (part, whole) => whole ? `${Math.round(100 * part / whole)}%` : "—";
   const d1 = st.d1, d1Known = d1.bytes != null;
   const top = Math.max(1, ...users.map(u => u.total_bytes));
   const tiles = [
     [`${a.total}<small style="font-size:14px;color:var(--faint)"> / ${a.max}</small>`, `accounts (MAX_USERS) · signups ${a.signups}`, meter(a.total, a.max)],
-    [a.active_7d, `active this week`], [a.active_30d, `active in 30 days`], [a.joined_30d, `joined in 30 days`],
+    [a.active_1d, `active today`], [a.active_7d, `active this week`], [a.active_30d, `active in 30 days`], [a.joined_30d, `joined in 30 days`],
     [d1Known ? bytes(d1.bytes) : bytes(d1.data_bytes + d1.photo_bytes), d1Known ? `D1 of ${bytes(d1.limit_bytes)}` : "kept in D1 (rows)", meter(d1Known ? d1.bytes : d1.data_bytes + d1.photo_bytes, d1.limit_bytes)],
+    r2.bound ? [bytes(r2.bucket_bytes), `R2 of ${bytes(r2.limit_bytes)}`, meter(r2.bucket_bytes, r2.limit_bytes)] : [`—`, `R2 (PHOTOS isn't bound)`],
   ];
   const people = users.map(u => {
     const cols = columns.map(c => n(c.ids.reduce((s, id) => s + (u.counts[id] || 0), 0))).join("");
@@ -752,9 +764,20 @@ export function adminStatsPage({ user, stats }) {
   }).join("");
   const kindRows = kinds.map(k => {
     const ph = k.photos ? totals.photos[k.id] : null;
-    return `<tr><td>${esc(k.label)}</td><td class="hint">${esc(k.app_name)}</td>${n(totals.counts[k.id])}
+    return `<tr><td>${esc(k.label)}</td><td class="hint">${esc(k.app_name)}</td>${n(totals.counts[k.id])}${n(totals.changed_7d?.[k.id])}
       <td class="n">${ph && ph.count ? `${bytes(ph.d1_bytes)} in D1${ph.r2_bytes ? ` · ${bytes(ph.r2_bytes)} in R2` : ""}` : ""}</td></tr>`;
   }).join("");
+  const r2Meter = r2.bound
+    ? `<p><b>${bytes(r2.bucket_bytes)}</b> of R2's ${bytes(r2.limit_bytes)} is used (${pct(r2.bucket_bytes, r2.limit_bytes)}), in ${r2.objects.toLocaleString("en-US")} object${r2.objects === 1 ? "" : "s"}${r2.partial ? " (more than could be listed; the total is short)" : ""}.</p>${meter(r2.bucket_bytes, r2.limit_bytes)}`
+    : "";
+  const loose = r2.bound && r2.loose_count ? ` ${r2.loose_count} object${r2.loose_count === 1 ? "" : "s"} (${bytes(r2.loose_bytes)}) in the bucket ${r2.loose_count === 1 ? "isn't" : "aren't"} any picture's any more.` : "";
+  const most = Math.max(1, ...weeks.map(w => w.joined));
+  const weekBars = weeks.map(w => `<div title="${w.joined} joined in the week to ${date(w.start + 7 * 86400)}">${w.joined ? `<small>${w.joined}</small>` : ""}<i style="height:${(100 * w.joined / most).toFixed(1)}%"></i></div>`).join("");
+  const figures = [[act.devices, "signed-in devices"], [act.api_keys, `API key${act.api_keys === 1 ? "" : "s"}, ${act.api_keys_used_30d} used in 30 days`],
+    [act.push_devices, "devices getting notifications"], [act.chat_rooms, `chat room${act.chat_rooms === 1 ? "" : "s"}`],
+    [act.changed_7d, "things added or changed this week"], [act.feedback_new, "new feedback notes"]];
+  const appRows = apps.map(x => `<tr${x.parent ? ` class="sub"` : ""}><td>${esc(x.name)}</td>${n(x.people)}${n(x.active_30d)}<td class="store">${meter(x.people, a.total, true)}</td></tr>`).join("");
+  const tableRows = st.tables.map(x => `<tr><td class="mono">${esc(x.name)}</td>${n(x.rows)}</tr>`);
   const r2Line = st.r2.bound
     ? `<b>${bytes(st.r2.bytes)}</b> in R2 across ${st.r2.photo_count} picture${st.r2.photo_count === 1 ? "" : "s"}${st.r2.partial ? " (more than could be listed; the total is short)" : ""}.`
     : st.r2.photo_count ? `${st.r2.photo_count} picture${st.r2.photo_count === 1 ? " is" : "s are"} in R2; its sizes show once the PHOTOS bucket is bound.` : `No pictures in R2 yet.`;
@@ -765,15 +788,33 @@ export function adminStatsPage({ user, stats }) {
     <section class="card" id="storage"><h2>Storage</h2>
       ${d1Known ? `<p><b>${bytes(d1.bytes)}</b> of D1's ${bytes(d1.limit_bytes)} limit is used (${pct(d1.bytes, d1.limit_bytes)}).</p>${meter(d1.bytes, d1.limit_bytes)}`
         : `<p class="hint">D1 didn't report the database's size here, so this counts the rows below.</p>`}
-      <p>People's own things take <b>${bytes(d1.data_bytes)}</b> and pictures still in D1 take <b>${bytes(d1.photo_bytes)}</b> (${d1.photo_count} picture${d1.photo_count === 1 ? "" : "s"}, kept as base64). ${r2Line}</p>
-      <p class="hint">Set the D1_LIMIT_MB variable to your plan's limit (500 MB on Workers Free, 10 GB on Paid). ${a.left} account${a.left === 1 ? "" : "s"} left before MAX_USERS; at today's average of ${bytes(a.total ? (d1.data_bytes + d1.photo_bytes) / a.total : 0)} a person, ${a.max} accounts would keep about ${bytes(a.total ? (d1.data_bytes + d1.photo_bytes) / a.total * a.max : 0)} in D1.</p>
+      <p>People's own things take <b>${bytes(d1.data_bytes)}</b> and pictures still in D1 take <b>${bytes(d1.photo_bytes)}</b> (${d1.photo_count} picture${d1.photo_count === 1 ? "" : "s"}, kept as base64). ${r2Line}${loose}</p>
+      ${r2Meter}
+      <p class="hint">Set the D1_LIMIT_MB variable to your plan's limit (500 MB on Workers Free, 10 GB on Paid), and R2_LIMIT_GB if you pay for more than R2's free 10 GB. ${a.left} account${a.left === 1 ? "" : "s"} left before MAX_USERS; at today's average of ${bytes(a.total ? (d1.data_bytes + d1.photo_bytes) / a.total : 0)} a person, ${a.max} accounts would keep about ${bytes(a.total ? (d1.data_bytes + d1.photo_bytes) / a.total * a.max : 0)} in D1.</p>
+    </section>
+    <section class="card" id="activity"><h2>Activity</h2>
+      <div class="figures">${figures.map(([v, label]) => `<div><b>${Number(v).toLocaleString("en-US")}</b><span>${label}</span></div>`).join("")}</div>
+      <h3>Sign-ups, week by week</h3>
+      <div class="weeks" role="img" aria-label="Sign-ups in each of the last ${weeks.length} weeks: ${weeks.map(w => w.joined).join(", ")}">${weekBars}</div>
+      <div class="weeks-axis"><span>${date(weeks[0].start)}</span><span>this week</span></div>
     </section>
     <section class="card scroll" id="people"><h2>People</h2>
       <p class="hint">Biggest first. Last active is the latest of a signed-in page, an API key or a chat message. Storage is what their rows and pictures take.</p>
       <table class="stats"><tr><th>Who</th><th>Last active</th><th class="n">Apps</th>${columns.map(c => `<th class="n">${esc(c.name)}</th>`).join("")}<th class="n">Storage</th></tr>${people}</table>
     </section>
     <section class="card scroll" id="apps"><h2>By app</h2>
-      <table class="stats"><tr><th>What</th><th>App</th><th class="n">Count</th><th class="n">Pictures</th></tr>${kindRows}</table>
+      <p class="hint">This week counts what was added or changed in the last 7 days (chat messages and Sweep suggestions: added).</p>
+      <table class="stats"><tr><th>What</th><th>App</th><th class="n">Count</th><th class="n">This week</th><th class="n">Pictures</th></tr>${kindRows}</table>
+    </section>
+    <section class="card scroll" id="app-use"><h2>Who has each app</h2>
+      <p class="hint">People with the app turned on on the Accounts tab, and how many of them were active in the last 30 days.</p>
+      <table class="stats"><tr><th>App</th><th class="n">People</th><th class="n">Active</th><th></th></tr>${appRows}</table>
+    </section>
+    <section class="card scroll" id="tables"><h2>D1 tables</h2>
+      ${tableRows.length ? `<p class="hint">Every table in the database by row count, most first.</p>
+      <table class="stats"><tr><th>Table</th><th class="n">Rows</th></tr>${tableRows.slice(0, 10).join("")}</table>
+      ${tableRows.length > 10 ? `<details><summary class="hint">The other ${tableRows.length - 10}</summary><table class="stats">${tableRows.slice(10).join("")}</table></details>` : ""}`
+        : `<p class="hint">D1 didn't list its tables.</p>`}
     </section>`, { user, wide: true, here: "admin" });
 }
 

@@ -70,7 +70,7 @@ src/             the Worker: runs only for the paths in run_worker_first
   trips.js         Trip planner: shared trips, their itinerary, pinned places, and packing lists sent to Drift
   food.js          Food club: the month's pick and its recipe (from a link or Recipe box), who made and loved it, and photos (photos.js)
   feedback.js      Feedback: notes to the admins, photos (photos.js), links to things the sender can see (kept as a snapshot), statuses and replies
-  stats.js         /admin/stats: accounts against MAX_USERS, who's active, and what each person keeps in each app and in D1 and R2 (bytes)
+  stats.js         /admin/stats: accounts against MAX_USERS, who's active, and what each person keeps in each app and in D1 and R2 (bytes); the whole R2 bucket against R2_LIMIT_GB, what changed this week, who has each app, sign-ups by week, devices and keys, and D1's tables by rows
   bridges.js       chat connections: other platforms' rooms in chat, with sealed credentials
   matrix.js        the Matrix provider for those
   vendor/uqr.mjs   QR codes for two-factor setup (MIT)
