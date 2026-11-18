@@ -45,7 +45,8 @@ test("stats count each person's things and pictures, and where the pictures are"
   assert.ok(u.data_bytes > 0 && u.total_bytes === u.data_bytes + 4000);
   assert.equal(s.storage.d1.photo_bytes, 4000);
   assert.equal(s.storage.d1.photo_count, 1);
-  assert.deepEqual(s.storage.r2, { bound: false, bytes: null, photo_count: 1, partial: false });
+  assert.deepEqual(s.storage.r2, { bound: false, bytes: null, photo_count: 1, partial: false,
+    bucket_bytes: null, objects: null, loose_count: null, loose_bytes: null, limit_bytes: 10 * 1024 ** 3 });
   assert.equal(s.totals.counts.recipes, 2);
   assert.equal(s.storage.d1.limit_bytes, 500 * 1024 * 1024);
 
@@ -59,16 +60,59 @@ test("stats count each person's things and pictures, and where the pictures are"
 });
 
 test("R2 sizes come from the bucket's listing when it's bound", async () => {
-  const objects = [{ key: "recipe_photos/p_2", size: 900000 }];
-  const PHOTOS = { list: async ({ prefix }) => ({ objects: objects.filter(o => o.key.startsWith(prefix)), truncated: false }) };
-  const env = makeEnv({ PHOTOS, D1_LIMIT_MB: "10240" }), ryan = await admin(env);
+  // p_2 is a picture's; old/x is left over from one that's gone.
+  const objects = [{ key: "recipe_photos/p_2", size: 900000 }, { key: "food_photos/old", size: 1000 }];
+  const PHOTOS = { list: async ({ prefix = "" }) => ({ objects: objects.filter(o => o.key.startsWith(prefix)), truncated: false }) };
+  const env = makeEnv({ PHOTOS, D1_LIMIT_MB: "10240", R2_LIMIT_GB: "20" }), ryan = await admin(env);
   const r = sqlOne(env, "SELECT id FROM users WHERE username = 'ryan'").id;
   run(env, "INSERT INTO recipe_photos (id, owner, recipe, type, data, created) VALUES ('p_2', ?, 'r_2', 'image/png', '', 'x')", r);
   const s = (await ryan.get("/admin/api/stats")).json;
-  assert.deepEqual(s.storage.r2, { bound: true, bytes: 900000, photo_count: 1, partial: false });
+  assert.deepEqual(s.storage.r2, { bound: true, bytes: 900000, photo_count: 1, partial: false,
+    bucket_bytes: 901000, objects: 2, loose_count: 1, loose_bytes: 1000, limit_bytes: 20 * 1024 ** 3 });
   assert.equal(s.users[0].photos.r2_bytes, 900000);
   assert.equal(s.storage.d1.limit_bytes, 10240 * 1024 * 1024);
-  assert.match((await ryan.get("/admin/stats")).text, /879 KB<\/b> in R2 across 1 picture/);
+  const text = (await ryan.get("/admin/stats")).text;
+  assert.match(text, /879 KB<\/b> in R2 across 1 picture/);
+  assert.match(text, /880 KB<\/b> of R2's 20 GB is used \(0%\), in 2 objects/);
+  assert.match(text, /1 object \(1000 B\) in the bucket isn't any picture's any more/);
+});
+
+test("stats show this week's changes, who has each app, sign-ups by week, devices and D1's tables", async () => {
+  const env = makeEnv(), ryan = await admin(env), josh = new Browser(env);
+  await josh.signup("josh");
+  const j = sqlOne(env, "SELECT id FROM users WHERE username = 'josh'").id;
+  const old = new Date(Date.now() - 30 * 86400e3).toISOString(), fresh = new Date().toISOString();
+  run(env, "INSERT INTO recipes (owner, id, data, updated) VALUES (?, 'r_1', '{}', ?), (?, 'r_2', '{}', ?)", j, old, j, fresh);
+  run(env, "INSERT INTO user_areas (user_id, area) VALUES (?, 'recipes')", j);
+  run(env, "INSERT INTO api_keys (id_hash, user_id, name, prefix, created_at, last_used) VALUES ('h', ?, 'agent', 'sk', 1, ?)", j, Math.floor(Date.now() / 1000));
+  run(env, "UPDATE users SET created_at = created_at - 14 * 86400 WHERE id = ?", j);
+
+  const s = (await ryan.get("/admin/api/stats")).json;
+  assert.equal(s.totals.counts.recipes, 2);
+  assert.equal(s.totals.changed_7d.recipes, 1, "only the one changed this week");
+  assert.equal(s.activity.changed_7d, 1);
+  assert.equal(s.activity.devices, 2);
+  assert.equal(s.activity.api_keys, 1);
+  assert.equal(s.activity.api_keys_used_30d, 1);
+  assert.equal(s.accounts.active_1d, 2);
+  const rec = s.apps.find(a => a.id === "recipes"), drift = s.apps.find(a => a.id === "drift");
+  assert.deepEqual([rec.people, rec.active_30d], [1, 1]);
+  assert.equal(drift.people, 2);
+  assert.ok(!s.apps.some(a => a.id === "admin"));
+  assert.equal(s.weeks.length, 12);
+  assert.equal(s.weeks.at(-1).joined, 1, "ryan this week");
+  assert.equal(s.weeks.at(-3).joined, 1, "josh two weeks ago");
+  assert.equal(s.weeks.reduce((n, w) => n + w.joined, 0), 2);
+  const users = s.storage.tables.find(t => t.name === "users");
+  assert.equal(users.rows, 2);
+  assert.ok(s.storage.tables.every((t, i, l) => !i || l[i - 1].rows >= t.rows), "most rows first");
+
+  const page = (await ryan.get("/admin/stats")).text;
+  assert.match(page, /<h2>Activity<\/h2>/);
+  assert.match(page, /1 used in 30 days/);
+  assert.match(page, /<h2>Who has each app<\/h2>/);
+  assert.match(page, /<h2>D1 tables<\/h2>/);
+  assert.match(page, /aria-label="Sign-ups in each of the last 12 weeks: 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1"/);
 });
 
 test("stats count pictures from every table photos.js keeps them in", () => {

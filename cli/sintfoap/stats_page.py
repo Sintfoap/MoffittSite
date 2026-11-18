@@ -1,8 +1,9 @@
 """Admin stats in the terminal: the same numbers as /admin/stats.
 
 How many accounts there are against MAX_USERS and who's been active, how full
-D1 is (and what's moved to R2), then each person's things and storage, biggest
-first, and the totals app by app. Admins only; t on the admin page opens it."""
+D1 and R2 are, devices, keys and sign-ups week by week, then each person's
+things and storage, biggest first, the totals app by app (and what changed this
+week), who has each app, and D1's tables by row count. Admins only; t on the admin page opens it."""
 from __future__ import annotations
 
 import time
@@ -59,7 +60,8 @@ def summary(s: dict) -> Text:
     t = Text.assemble((f"{a['total']}", f"bold {GOLD}"), (f" / {a['max']} accounts", INK), ("  (MAX_USERS)  ", FAINT))
     t.append_text(meter(a["total"], a["max"]))
     t.append(f"   signups {a['signups']}, {plural(a['left'], 'place')} left\n", style=MUTED)
-    t.append_text(Text.assemble((f"{a['active_7d']}", f"bold {GOLD}"), (" active this week   ", INK),
+    t.append_text(Text.assemble((f"{a.get('active_1d', 0)}", f"bold {GOLD}"), (" active today   ", INK),
+                                (f"{a['active_7d']}", f"bold {GOLD}"), (" active this week   ", INK),
                                 (f"{a['active_30d']}", f"bold {GOLD}"), (" in 30 days   ", INK),
                                 (f"{a['joined_30d']}", f"bold {GOLD}"), (" joined in 30 days", INK)))
     return t
@@ -78,7 +80,15 @@ def storage(s: dict) -> Text:
     t.append_text(Text.assemble(("    people's things ", MUTED), (size(d1["data_bytes"]), INK),
                                 ("   pictures in D1 ", MUTED), (size(d1["photo_bytes"]), INK), (f" ({plural(d1['photo_count'], 'picture')})\n", FAINT)))
     t.append("R2  ", style=f"bold {INK}")
-    if r2["bound"]:
+    if r2["bound"] and r2.get("bucket_bytes") is not None:
+        t.append_text(Text.assemble((size(r2["bucket_bytes"]), f"bold {GOLD}"), (f" of {size(r2['limit_bytes'])}  ", MUTED)))
+        t.append_text(meter(r2["bucket_bytes"], r2["limit_bytes"], 32))
+        t.append(f"  {round(100 * r2['bucket_bytes'] / r2['limit_bytes'])}%" if r2["limit_bytes"] else "", style=MUTED)
+        t.append(f"  {plural(r2['objects'], 'object')}" + (" (more than could be listed)" if r2["partial"] else "") + "\n", style=FAINT)
+        t.append_text(Text.assemble(("    pictures ", MUTED), (size(r2["bytes"]), INK), (f" ({plural(r2['photo_count'], 'picture')})", FAINT)))
+        if r2.get("loose_count"):
+            t.append_text(Text.assemble(("   left over ", MUTED), (size(r2["loose_bytes"]), INK), (f" ({plural(r2['loose_count'], 'object')} no picture points at)", FAINT)))
+    elif r2["bound"]:
         t.append_text(Text.assemble((size(r2["bytes"]), f"bold {GOLD}"), (f" across {plural(r2['photo_count'], 'picture')}", MUTED),
                                     (" (more than could be listed)" if r2["partial"] else "", FAINT)))
     elif r2["photo_count"]:
@@ -88,6 +98,64 @@ def storage(s: dict) -> Text:
     each = rows / a["total"] if a["total"] else 0
     t.append(f"\n\nAbout {size(each)} a person: {a['max']} accounts would keep about {size(each * a['max'])} in D1.", style=FAINT)
     return t
+
+
+BARS = " ▁▂▃▄▅▆▇█"
+
+
+def sparkline(values: list[int]) -> str:
+    """One character a value, taller for more: [0, 2, 4] → " ▄█"."""
+    top = max([1, *values])
+    return "".join(BARS[0] if not v else BARS[max(1, round(8 * v / top))] for v in values)
+
+
+def activity(s: dict) -> Text:
+    act, weeks = s.get("activity") or {}, s.get("weeks") or []
+    figs = [(act.get("devices", 0), "signed-in devices"),
+            (act.get("api_keys", 0), f"API keys ({act.get('api_keys_used_30d', 0)} used in 30 days)"),
+            (act.get("push_devices", 0), "getting notifications"),
+            (act.get("chat_rooms", 0), "chat room" if act.get("chat_rooms") == 1 else "chat rooms"),
+            (act.get("changed_7d", 0), "added or changed this week"), (act.get("feedback_new", 0), "new feedback")]
+    t = Text()
+    for i, (v, label) in enumerate(figs):
+        t.append_text(Text.assemble((f"{v:,}", f"bold {GOLD}"), (f" {label}", INK)))
+        t.append("\n" if i % 3 == 2 else "   ")
+    if weeks:
+        joined = [w["joined"] for w in weeks]
+        t.append("\nSign-ups by week  ", style=MUTED)
+        t.append(sparkline(joined), style=GOLD)
+        t.append(f"  {sum(joined)} in {len(joined)} weeks, {joined[-1]} this week", style=FAINT)
+    return t
+
+
+def app_use_table(s: dict) -> Table:
+    tb = Table(box=None, expand=True, header_style=FAINT, pad_edge=False)
+    tb.add_column("APP", style=INK, no_wrap=True)
+    tb.add_column("PEOPLE", justify="right")
+    tb.add_column("ACTIVE", justify="right")
+    tb.add_column("", no_wrap=True)
+    total = s["accounts"]["total"]
+    num = lambda n: Text(f"{n:,}", style=INK if n else FAINT)  # noqa: E731
+    for x in s.get("apps") or []:
+        name = ("  " if x.get("parent") else "") + x["name"]
+        tb.add_row(Text(name, style=MUTED if x.get("parent") else INK), num(x["people"]), num(x["active_30d"]),
+                   meter(x["people"], total, 16, share=True))
+    return tb
+
+
+def tables_table(s: dict, limit: int = 10) -> Table | Text:
+    rows = s["storage"].get("tables") or []
+    if not rows:
+        return Text("D1 didn't list its tables.", style=FAINT)
+    tb = Table(box=None, expand=True, header_style=FAINT, pad_edge=False)
+    tb.add_column("TABLE", style=GOLD_DIM, no_wrap=True)
+    tb.add_column("ROWS", justify="right")
+    for x in rows[:limit]:
+        tb.add_row(x["name"], Text(f"{x['rows']:,}", style=INK if x["rows"] else FAINT))
+    if len(rows) > limit:
+        rest = rows[limit:]
+        tb.add_row(Text(f"{len(rest)} more", style=FAINT), Text(f"{sum(x['rows'] for x in rest):,}", style=FAINT))
+    return tb
 
 
 def people_table(s: dict) -> Table:
@@ -118,12 +186,15 @@ def apps_table(s: dict) -> Table:
     tb.add_column("WHAT", style=INK)
     tb.add_column("APP", style=GOLD_DIM)
     tb.add_column("COUNT", justify="right")
+    tb.add_column("THIS WEEK", justify="right")
     tb.add_column("PICTURES", justify="right", style=MUTED)
     for k in s["kinds"]:
         n = s["totals"]["counts"].get(k["id"], 0)
         ph = s["totals"]["photos"].get(k["id"]) if k.get("photos") else None
         where = f"{size(ph['d1_bytes'])} in D1" + (f" · {size(ph['r2_bytes'])} in R2" if ph["r2_bytes"] else "") if ph else ""
-        tb.add_row(k["label"], k.get("app_name", k["app"]), Text(f"{n:,}", style=INK if n else FAINT), where)
+        w = (s["totals"].get("changed_7d") or {}).get(k["id"], 0)
+        tb.add_row(k["label"], k.get("app_name", k["app"]), Text(f"{n:,}", style=INK if n else FAINT),
+                   Text(f"{w:,}", style=INK if w else FAINT), where)
     return tb
 
 
@@ -143,12 +214,15 @@ class StatsPage(Page):
         with VerticalScroll(id="body"):
             yield Static("A D M I N", classes="kicker")
             yield Static(Text("Stats", style=f"bold {INK}"), classes="h1")
-            yield Static(Text("Accounts against MAX_USERS, how full D1 is, and what each person keeps, biggest first. "
+            yield Static(Text("Accounts against MAX_USERS, how full D1 and R2 are, and what each person keeps, biggest first. "
                               "Last active is the latest of a signed-in page, an API key or a chat message.", style=MUTED), classes="sub")
             yield Static(id="summary", classes="card")
             yield Static(id="storage", classes="card")
+            yield Static(id="activity", classes="card")
             yield Static(id="people", classes="card")
             yield Static(id="apps", classes="card")
+            yield Static(id="app-use", classes="card")
+            yield Static(id="tables", classes="card")
         yield Footer()
 
     async def on_mount(self) -> None:
@@ -171,3 +245,8 @@ class StatsPage(Page):
         ap = self.query_one("#apps", Static)
         ap.border_title = "By app"
         ap.update(apps_table(s))
+        for wid, title, body in [("activity", "Activity", activity(s)), ("app-use", "Who has each app", app_use_table(s)),
+                                 ("tables", "D1 tables", tables_table(s))]:
+            w = self.query_one(f"#{wid}", Static)
+            w.border_title = title
+            w.update(body)

@@ -497,12 +497,27 @@ def test_admin_stats_in_the_terminal(admin_site):
         page = app.screen
         assert type(page).__name__ == "StatsPage"
         s = page.data
-        assert s == site.admin_stats() | {"now": s["now"]}
+        # now, and the weeks counted back from it, move between the two calls.
+        assert s | {"weeks": None} == site.admin_stats() | {"now": s["now"], "weeks": None}
+        assert len(s["weeks"]) == 12
         assert s["accounts"]["total"] == len(s["users"]) and s["accounts"]["max"] > 0
         assert [c["name"] for c in s["columns"]] == ["Drift", "Recipes", "Pantry", "Messages", "Photos"]
         summary = str(page.query_one("#summary").render())
         assert f"{s['accounts']['total']} / {s['accounts']['max']} accounts" in summary
         assert "D1" in str(page.query_one("#storage").render())
+        assert "active today" in summary
+        act = str(page.query_one("#activity").render())
+        assert "signed-in devices" in act and "Sign-ups by week" in act
+        assert page.query_one("#app-use").border_title == "Who has each app"
+        from rich.console import Console
+        from sintfoap.stats_page import app_use_table, tables_table, apps_table
+        def text(r):
+            c = Console(width=140, record=True)
+            c.print(r)
+            return c.export_text()
+        assert "Recipe box" in text(app_use_table(s))
+        assert "users" in text(tables_table(s))
+        assert "THIS WEEK" in text(apps_table(s))
         people = page.query_one("#people")
         assert people.border_title.endswith("people")
         # Biggest first, as on the website.
@@ -511,6 +526,8 @@ def test_admin_stats_in_the_terminal(admin_site):
         await pilot.press("escape")
         await settle(pilot)
         assert type(app.screen).__name__ == "AdminPage"
+    from sintfoap.stats_page import sparkline
+    assert sparkline([0, 2, 4]) == " ▄█" and sparkline([0, 0]) == "  "
     assert size(1536) == "1.5 KB" and size(None) == "—" and ago(None) == "never" and ago(1000, 1030) == "just now"
     run_app("admin", stats)
 
